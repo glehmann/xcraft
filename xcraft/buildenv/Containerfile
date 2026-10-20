@@ -1,0 +1,15 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+ARG PACKAGES
+RUN rm -f /etc/yum.repos.d/*.repo
+COPY upstream.repo /etc/yum.repos.d/
+COPY macros.xcraft /etc/rpm/
+COPY versionlock.list /etc/dnf/plugins/
+# keep the downloaded packages in the dnf cache volume; the base image packages
+# get the locked versions, or the latest ones when they are not locked yet
+RUN echo keepcache=1 >> /etc/dnf/dnf.conf \
+    && dnf -y install python3-dnf-plugin-versionlock && dnf -y distro-sync \
+    && dnf -y --setopt=install_weak_deps=False install ${PACKAGES} && dnf clean all
+RUN useradd -u 1000 builder && echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
+USER builder
+WORKDIR /home/builder
