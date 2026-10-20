@@ -1,0 +1,30 @@
+name: Static code checkers
+
+# the pull requests of forks too, which the pushes of the repository do not cover: they run with a read-only token,
+# without secrets
+on: [push, pull_request]
+
+permissions: {}
+
+env:
+  PREK_COLOR: "always"
+
+jobs:
+  check:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        hook: [ruff, ruff-format, ty, typos]
+    name: ${{ matrix.hook }}
+    env:
+      FORCE_COLOR: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/uv-setup
+      - run: prek -a "$HOOK"
+        env:
+          HOOK: ${{ matrix.hook }}

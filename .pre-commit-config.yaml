@@ -1,0 +1,65 @@
+# package sources, kept as upstream wrote them, and the lock, generated
+exclude: ^(specs|locks)/
+repos:
+  - repo: local
+    hooks:
+      - id: "ruff"
+        name: "ruff"
+        language: "system"
+        require_serial: true
+        entry: "uv run ruff check"
+        types: ["python"]
+        stages: ["manual"]
+      - id: "ruff-fix"
+        name: "ruff-fix"
+        language: "system"
+        require_serial: true
+        entry: "uv run ruff check --fix --show-fixes"
+        types: ["python"]
+      - id: "ruff-format"
+        name: "ruff-format"
+        language: "system"
+        require_serial: true
+        entry: "uv run ruff format --check"
+        types: ["python"]
+        stages: ["manual"]
+      - id: "ruff-format-fix"
+        name: "ruff-format-fix"
+        language: "system"
+        require_serial: true
+        entry: "uv run ruff format"
+        types: ["python"]
+      - id: "ty"
+        name: "ty"
+        language: "system"
+        require_serial: true
+        entry: "uv run ty check"
+        pass_filenames: false
+        types: ["python"]
+      - id: "typos"
+        name: "typos"
+        language: "system"
+        require_serial: true
+        entry: "uv run typos --force-exclude"
+        types: ["text"]
+        stages: ["manual"]
+      - id: "typos-fix"
+        name: "typos-fix"
+        language: "system"
+        require_serial: true
+        entry: "uv run typos --force-exclude --write-changes"
+        types: ["text"]
+      - id: "zizmor"
+        name: "zizmor"
+        language: "system"
+        require_serial: true
+        entry: "uv run zizmor ."
+        pass_filenames: false
+        types: ["yaml"]
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
