@@ -1,0 +1,148 @@
+"""Patchsets: the commits of a git branch, exported as patches of a package.
+
+The patches are listed in the spec in a block managed by xcraft, recording
+where they come from, and applied by ``%autosetup`` or ``%autopatch``, in
+the order of their numbers.
+"""
+
+from __future__ import annotations
+
+import re
+import subprocess
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from xcraft.importer import git
+
+if TYPE_CHECKING:
+    from xcraft.specs import Package
+
+BEGIN = "# xcraft patchset: "
+END = "# end of xcraft patchset"
+_PATCH_RE = re.compile(r"^Patch(\d+)\s*:\s*(\S+)\s*$", re.MULTILINE)
+
+
+class PatchsetError(RuntimeError):
+    """Raised when a patchset cannot be exported."""
+
+
+def repo_name(repo: Path) -> str:
+    """Return the name of a git repository: the one of its origin remote, or of its directory."""
+    try:
+        url = git("-C", str(repo), "remote", "get-url", "origin")
+    except subprocess.CalledProcessError:
+        return repo.resolve().name
+    return url.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1].removesuffix(".git")
+
+
+def guess_package(name: str, packages: dict[str, Package], specs: Path) -> str | None:
+    """Return the package of the project `name`: same directory or spec name, or a Source0 named after it."""
+    for package, metadata in sorted(packages.items()):
+        spec = next(specs.joinpath(package).glob("*.spec")).read_text()
+        source0 = re.search(r"^Source0?\s*:\s*(\S+)", spec, re.MULTILINE)
+        if name in (package, metadata.binaries[0].name if metadata.binaries else None) or (
+            source0 and re.fullmatch(rf"{re.escape(name)}-[\d%].*", source0.group(1).rsplit("/", 1)[-1])
+        ):
+            return package
+    return None
+
+
+def guess_base(repo: Path, version: str) -> str:
+    """Return the tag of `version` in the repository, which must be an ancestor of HEAD."""
+    for tag in (f"v{version}", version):
+        try:
+            git("-C", str(repo), "merge-base", "--is-ancestor", tag, "HEAD")
+        except subprocess.CalledProcessError:
+            continue
+        return tag
+    msg = f"no tag v{version} or {version} under HEAD, give the base of the patchset with --base"
+    raise PatchsetError(msg)
+
+
+def export(repo: Path, base: str, dest: Path) -> list[Path]:
+    """Export the commits of `base`..HEAD in `repo` as patches in `dest`, in order."""
+    # --zero-commit: the patches stay the same when the commits are only rebased
+    output = git(
+        "-C", str(repo), "format-patch", "--no-numbered", "--no-signature", "--zero-commit",
+        "-o", str(dest), f"{base}..HEAD",
+    )  # fmt: skip
+    return [Path(line) for line in output.splitlines()]
+
+
+def _subject(patch: str) -> str:
+    m = re.search(r"^Subject: (?:\[PATCH[^]]*\] )?(.*(?:\n .*)*)", patch, re.MULTILINE)
+    return " ".join(m.group(1).split()) if m else ""
+
+
+@dataclass
+class Update:
+    """The changes of a patchset update."""
+
+    added: list[str]
+    removed: list[str]
+    replaced: list[str]
+    """Patches of the spec outside of a patchset block, replaced as previous exports of the same commits."""
+
+
+def update_patchset(pkg_dir: Path, spec: Path, repo: Path, base: str, first: int) -> Update:
+    """Replace the patchset of the package in `pkg_dir` with the commits of `base`..HEAD in `repo`."""
+    text = spec.read_text()
+    if not re.search(r"^%(autosetup|autopatch)\b", text, re.MULTILINE):
+        msg = f"{spec.name} applies its patches explicitly: a patchset needs %autosetup or %autopatch"
+        raise PatchsetError(msg)
+    with tempfile.TemporaryDirectory(prefix="xcraft-patchset-") as tmp:
+        patches = export(repo, base, Path(tmp))
+        if not patches:
+            msg = f"no commit in {base}..HEAD"
+            raise PatchsetError(msg)
+        subjects = {_subject(p.read_text()) for p in patches}
+        lines = text.splitlines(keepends=True)
+        start = next((i for i, line in enumerate(lines) if line.startswith(BEGIN)), None)
+        if start is not None:
+            end = next(i for i in range(start, len(lines)) if lines[i].startswith(END)) + 1
+            old = [m.group(2) for line in lines[start:end] if (m := _PATCH_RE.match(line))]
+            replaced = []
+        else:
+            # previous exports of the same commits, by subject
+            matching = {
+                i: m.group(2) for i, line in enumerate(lines)
+                if (m := _PATCH_RE.match(line)) and (pkg_dir / m.group(2)).is_file()
+                and _subject((pkg_dir / m.group(2)).read_text(errors="replace")) in subjects
+            }  # fmt: skip
+            old = replaced = list(matching.values())
+            if matching:
+                start = min(matching)
+                end = start + 1
+                lines = [line for i, line in enumerate(lines) if i == start or i not in matching]
+            else:
+                # after the last patch, or the last source
+                last = [i for i, line in enumerate(lines) if re.match(r"^(Patch|Source)\d*\s*:", line)]
+                start = end = (max(last) + 1) if last else 0
+        others = {int(m.group(1)) for m in _PATCH_RE.finditer("".join(lines[:start] + lines[end:]))}
+        numbers = range(first, first + len(patches))
+        if clashes := sorted(others & set(numbers)):
+            msg = f"patch numbers {first}-{numbers[-1]} are used by other patches ({clashes[0]}...), see --first"
+            raise PatchsetError(msg)
+        names = [p.name for p in patches]
+        if clobbered := sorted(name for name in set(names) - set(old) if (pkg_dir / name).exists()):
+            msg = f"the patches would overwrite files of the package outside of the patchset: {', '.join(clobbered)}"
+            raise PatchsetError(msg)
+        head = git("-C", str(repo), "rev-parse", "--short=12", "HEAD")
+        branch = git("-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD")
+        try:
+            origin = git("-C", str(repo), "remote", "get-url", "origin")
+        except subprocess.CalledProcessError:
+            origin = str(repo.resolve())
+        block = [
+            f"{BEGIN}{origin} {branch} {base}..{head}\n",
+            *(f"Patch{number}: {patch.name}\n" for number, patch in zip(numbers, patches, strict=True)),
+            f"{END}\n",
+        ]
+        spec.write_text("".join(lines[:start] + block + lines[end:]))
+        for name in set(old) - set(names):
+            (pkg_dir / name).unlink(missing_ok=True)
+        for patch in patches:
+            (pkg_dir / patch.name).write_text(patch.read_text())
+    return Update(added=sorted(set(names) - set(old)), removed=sorted(set(old) - set(names)), replaced=replaced)
