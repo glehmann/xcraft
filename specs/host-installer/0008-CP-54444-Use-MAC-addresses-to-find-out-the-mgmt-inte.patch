@@ -1,0 +1,50 @@
+From 96cf5fb7376cb073c187c4cb39ec33bb5af12016 Mon Sep 17 00:00:00 2001
+From: Ming Lu <ming.lu@cloud.com>
+Date: Mon, 12 May 2025 17:00:48 +0800
+Subject: [PATCH 08/10] CP-54444: Use MAC addresses to find out the mgmt
+ interface.
+
+The interface-rename functionality will be deprecated. Consequently, the
+names of the network interfaces will not be renamed as eth<N>. To setup
+the host installer's own networking, it can not use the name of
+management interface in product since the name is returned from
+networkd_db command and will not present in the new host installer's
+running environment.
+
+The solution is to use MAC address to find the interface. This also
+requires the networkd_db change to return the MAC address.
+
+Signed-off-by: Ming Lu <ming.lu@cloud.com>
+---
+ product.py | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/product.py b/product.py
+index 22de1ee..6140914 100644
+--- a/product.py
++++ b/product.py
+@@ -268,9 +268,20 @@ class ExistingInstallation:
+                 if not d.get('interfaces') and 'parent' in d:
+                     p = fetchIfaceInfoFromNetworkdbAsDict(d['parent'])
+                     d['interfaces'] = p['interfaces']
++                    d['hwaddrs'] = p.get('hwaddrs')
+ 
+                 results['net-admin-bridge'] = mgmt_iface
+-                results['net-admin-interface'] = d.get('interfaces').split(',')[0]
++                hwaddrs = d.get('hwaddrs')
++                if hwaddrs:
++                    net_admin_ifaces = []
++                    nics = [(name, netutil.getHWAddr(name)) for name in netutil.getNetifList()]
++                    for mac in hwaddrs.lower().split(','):
++                        net_admin_ifaces.extend([name for (name, hwaddr) in nics if mac == hwaddr])
++                    if not net_admin_ifaces:
++                        raise SettingsNotAvailable("Could not find any net admin interface")
++                    results['net-admin-interface'] = net_admin_ifaces[0]
++                else:
++                    results['net-admin-interface'] = d.get('interfaces').split(',')[0]
+ 
+                 if_hwaddr = netutil.getHWAddr(results['net-admin-interface'])
+ 
+-- 
+2.39.5
+

@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Julian Vetter <julian.vetter@vates.tech>
+Date: Fri, 24 Jul 2026 16:31:22 +0200
+Subject: [PATCH] xenopsd/xc: mirror altp2m_count from
+ Xenctrl.domctl_create_config
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+Content-Type: text/plain; charset = "utf-8"
+Content-Transfert-Encoding: 8bit
+
+domctl_create_config here is a mirror of Xenctrl.domctl_create_config.
+Xen's OCaml bindings gained the altp2m_count field in:
+
+5699554de9a9 tools/ocaml: Add altp2m_count parameter
+                      (Petr Beneš, 2025-08-25)
+
+exposing the pre-existing altp2m.nr count (xen_domctl_createdomain),
+alongside the existing altp2m_opts.
+
+Signed-off-by: Julian Vetter <julian.vetter@vates.tech>
+
+diff --git a/ocaml/xenopsd/xc/domain.ml b/ocaml/xenopsd/xc/domain.ml
+index 1ae8c486b1cf..059333b9acf9 100644
+--- a/ocaml/xenopsd/xc/domain.ml
++++ b/ocaml/xenopsd/xc/domain.ml
+@@ -108,6 +108,7 @@ type domctl_create_config = Xenctrl.domctl_create_config = {
+   ; max_maptrack_frames: int
+   ; max_grant_version: int
+   ; altp2m_opts: int32
++  ; altp2m_count: int32
+   ; vmtrace_buf_kb: int32
+   ; cpupool_id: int32
+   ; arch: arch_domainconfig
+@@ -518,6 +519,7 @@ let make ~xc ~xs vm_info vcpus domain_config uuid final_uuid no_sharept
+             1
+         )
+     ; altp2m_opts= 0l
++    ; altp2m_count= 0l
+     ; vmtrace_buf_kb= 0l
+     ; cpupool_id= 0l
+     ; arch= domain_config

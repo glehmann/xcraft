@@ -1,0 +1,29 @@
+From 133f4c47baef6002b2ccb4904a035cda2303c6e5 Mon Sep 17 00:00:00 2001
+From: Christian Hesse <mail@eworm.de>
+Date: Sat, 25 Aug 2018 13:53:08 +0200
+Subject: [PATCH] [build] Handle R_X86_64_PLT32 from binutils 2.31
+
+Starting from binutils 2.31.0 (commit bd7ab16b) x86-64 assembler
+generates R_X86_64_PLT32 instead of R_X86_64_PC32.
+
+Acked-by: John Jolly <jjolly@suse.com>
+Signed-off-by: Michael Brown <mcb30@ipxe.org>
+---
+ src/util/elf2efi.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/util/elf2efi.c b/src/util/elf2efi.c
+index 6718df77..2c5b9df8 100644
+--- a/src/util/elf2efi.c
++++ b/src/util/elf2efi.c
+@@ -636,6 +636,7 @@ static void process_reloc ( struct elf_file *elf, const Elf_Shdr *shdr,
+ 		case ELF_MREL ( EM_ARM, R_ARM_THM_JUMP24 ) :
+ 		case ELF_MREL ( EM_ARM, R_ARM_V4BX ):
+ 		case ELF_MREL ( EM_X86_64, R_X86_64_PC32 ) :
++		case ELF_MREL ( EM_X86_64, R_X86_64_PLT32 ) :
+ 		case ELF_MREL ( EM_AARCH64, R_AARCH64_CALL26 ) :
+ 		case ELF_MREL ( EM_AARCH64, R_AARCH64_JUMP26 ) :
+ 		case ELF_MREL ( EM_AARCH64, R_AARCH64_ADR_PREL_LO21 ) :
+-- 
+2.39.5
+

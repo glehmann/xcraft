@@ -1,0 +1,73 @@
+diff --git a/cliserv.c b/cliserv.c
+index 46a790e67536..7819484dce84 100644
+--- a/cliserv.c
++++ b/cliserv.c
+@@ -78,6 +78,12 @@ void err(const char *s) {
+ 	exit(EXIT_FAILURE);
+ }
+ 
++void err_code(const char *s, int code) {
++	err_nonfatal(s);
++	fprintf(stderr, "Exiting.\n");
++	exit(abs(code));
++}
++
+ void logging(const char* name) {
+ #ifdef ISSERVER
+ 	openlog(name, LOG_PID, LOG_DAEMON);
+diff --git a/cliserv.h b/cliserv.h
+index 1333802d6d16..9ebc222ccd6a 100644
+--- a/cliserv.h
++++ b/cliserv.h
+@@ -77,6 +77,7 @@ void setmysockopt(int sock);
+ void err_nonfatal(const char *s);
+ 
+ void nbd_err(const char *s) G_GNUC_NORETURN;
++void err_code(const char *s, int code) G_GNUC_NORETURN;
+ #define err(S) nbd_err(S)
+ 
+ void logging(const char* name);
+diff --git a/nbd-client.c b/nbd-client.c
+index c187e8c17102..acfdfc325030 100644
+--- a/nbd-client.c
++++ b/nbd-client.c
+@@ -173,6 +173,7 @@ static void netlink_configure(int index, int *sockfds, int num_connects,
+ 	struct nlattr *sock_attr;
+ 	struct nl_msg *msg;
+ 	int driver_id, i;
++	int ret = 0;
+ 
+ 	socket = get_nbd_socket(&driver_id);
+ 	nl_socket_modify_cb(socket, NL_CB_VALID, NL_CB_CUSTOM, callback, NULL);
+@@ -203,8 +204,9 @@ static void netlink_configure(int index, int *sockfds, int num_connects,
+ 	}
+ 	nla_nest_end(msg, sock_attr);
+ 
+-	if (nl_send_sync(socket, msg) < 0)
+-		err("Failed to setup device, check dmesg\n");
++	ret = nl_send_sync(socket, msg);
++	if (ret < 0)
++		err_code("Failed to setup device, check dmesg\n", ret);
+ 	return;
+ nla_put_failure:
+ 	err("Failed to create netlink message\n");
+@@ -214,6 +216,7 @@ static void netlink_disconnect(char *nbddev) {
+ 	struct nl_sock *socket;
+ 	struct nl_msg *msg;
+ 	int driver_id;
++	int ret = 0;
+ 
+ 	int index = -1;
+ 	if (nbddev) {
+@@ -231,8 +234,9 @@ static void netlink_disconnect(char *nbddev) {
+ 	genlmsg_put(msg, NL_AUTO_PORT, NL_AUTO_SEQ, driver_id, 0, 0,
+ 		    NBD_CMD_DISCONNECT, 0);
+ 	NLA_PUT_U32(msg, NBD_ATTR_INDEX, index);
+-	if (nl_send_sync(socket, msg) < 0)
+-		err("Failed to disconnect device, check dmsg\n");
++	ret = nl_send_sync(socket, msg);
++	if (ret < 0)
++		err_code("Failed to disconnect device, check dmsg\n", ret);
+ 	nl_socket_free(socket);
+ 	return;
+ nla_put_failure:

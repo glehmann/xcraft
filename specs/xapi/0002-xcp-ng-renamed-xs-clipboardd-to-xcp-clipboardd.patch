@@ -1,0 +1,23 @@
+From 4a4e15616a2ac1d671bee7709ced00dfa3845a02 Mon Sep 17 00:00:00 2001
+From: Guillaume <guillaume.thouvenin@vates.tech>
+Date: Mon, 31 Mar 2025 11:11:46 +0200
+Subject: [PATCH] [xcp-ng] renamed xs-clipboardd to xcp-clipboardd
+
+Signed-off-by: Guillaume <guillaume.thouvenin@vates.tech>
+---
+ ocaml/xenopsd/scripts/qemu-wrapper | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ocaml/xenopsd/scripts/qemu-wrapper b/ocaml/xenopsd/scripts/qemu-wrapper
+index 554590d07..e4a0c2846 100644
+--- a/ocaml/xenopsd/scripts/qemu-wrapper
++++ b/ocaml/xenopsd/scripts/qemu-wrapper
+@@ -293,7 +293,7 @@ def main(argv):
+ 
+     print("Exec: %s %s" % (qemu_dm, " ".join(qemu_args)))
+ 
+-    clipboardd = '/opt/xensource/libexec/xs-clipboardd'
++    clipboardd = '/opt/xensource/libexec/xcp-clipboardd'
+     subprocess.call([clipboardd, "-d", str(domid), "-s", str(s2.fileno())],
+                     pass_fds=[s2.fileno()])
+ 

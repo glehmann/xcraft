@@ -1,0 +1,14 @@
+--- ipxe-efi-20180514gite7f67d5/src/arch/x86/prefix/dskprefix.S.orig	2024-11-08 14:49:44.919377606 +0100
++++ ipxe-efi-20180514gite7f67d5/src/arch/x86/prefix/dskprefix.S	2024-11-08 14:50:10.376379073 +0100
+@@ -26,10 +26,10 @@
+ 
+ 	.section ".note.GNU-stack", "", @progbits
+ 	.org	0
+-	.arch i386
+ 	.text
+ 	.section ".prefix", "ax", @progbits
+ 	.code16
++	.arch i386
+ 	.globl	_dsk_start
+ _dsk_start:
+ 

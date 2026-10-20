@@ -1,0 +1,5 @@
+# The recommendations for pool. Each line with a format of <key>=<value> for each recommendation config. E.g.:
+# k1 = v1
+# k2 = v2
+# ...
+max-vm-anti-affinity-groups = 5

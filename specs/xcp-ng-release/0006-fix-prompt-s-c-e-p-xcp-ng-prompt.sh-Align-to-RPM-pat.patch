@@ -1,0 +1,38 @@
+From 8a4015ac1aefff5ed452bfd0c2789965eef99918 Mon Sep 17 00:00:00 2001
+From: Philippe Coval <philippe.coval@vates.tech>
+Date: Tue, 6 Jan 2026 10:26:46 +0100
+Subject: [PATCH] fix(prompt): s/c/e/p/xcp-ng-prompt.sh: Align to RPM patch
+
+The patch released in RPM differs than the reviewed one
+(I wrongly using my fork as origin and not upstream)
+
+This change is an adaptation of:
+
+xcp-ng-release-rpm/SOURCES/0004-s-s-c-e-p-xcp-ng-prompt.sh-Fix-prompt-on-testing-tpu.patch
+
+There are some advantages of using printf over echo:
+
+https://unix.stackexchange.com/questions/65803/why-is-printf-better-than-echo/65819#65819
+
+Anyway the impact is null, but this will make the export patch queue
+more consistant.
+
+Relate-to: https://github.com/xcp-ng-rpms/xcp-ng-release/commit/56f7e57d1662dc71f2a368b57fd61a010fccf795#r173966316
+Signed-off-by: Philippe Coval <philippe.coval@vates.tech>
+---
+ src/common/etc/profile.d/xcp-ng-prompt.sh | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/common/etc/profile.d/xcp-ng-prompt.sh b/src/common/etc/profile.d/xcp-ng-prompt.sh
+index a298a56..a7ed2af 100644
+--- a/src/common/etc/profile.d/xcp-ng-prompt.sh
++++ b/src/common/etc/profile.d/xcp-ng-prompt.sh
+@@ -3,7 +3,7 @@
+ ########################################
+ 
+ # BASH : Configure things differently if current terminal has >= 8 colors.
+-if [ "$PS1" ] && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
++if [ "$PS1" ] && [ "$(tput colors 2>/dev/null || printf 0)" -ge 8 ]; then
+     PS1='\[\e[0;38;5;160m\][\[\e[0;2m\]\A \[\e[0;1;38;5;105m\]\h \[\e[0m\]\W\[\e[0;38;5;160m\]]\[\e[0m\]\$ '
+ else
+     PS1='[\A \h \W]\$ '

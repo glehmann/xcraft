@@ -1,0 +1,65 @@
+From 59b30336b5723abb31d1a8ea6e92cd1b4ec78908 Mon Sep 17 00:00:00 2001
+From: Thierry Escande <thierry.escande@vates.tech>
+Date: Thu, 4 Apr 2024 19:10:58 +0200
+Subject: [PATCH 1/2] Auth: Add support to make KEK and DB files optional
+Content-Type: text/plain; charset = "utf-8"
+Content-Transfert-Encoding: 8bit
+
+If the host doesn't have the authentication files correctly configured
+for secure boot, the VM NVRAM state is always in setup mode and allows
+the VM to boot even if it has SecureBoot enabled.
+
+This change allows varstored and varstore-sb-state to copy only the PK
+file (which is always present) and switch the VM to user mode. This will
+prevent the VM to boot if it has SecureBoot enabled, which is fine.
+Otherwise, the VM is stuck in setup mode allowing it to boot but with
+SecureBoot disabled, giving a false impression of security.
+
+It's opt-out by default so DB and KEK files are set to not required only
+if the build macro AUTH_ONLY_PK_REQUIRED is defined.
+
+Signed-off-by: Thierry Escande <thierry.escande@vates.tech>
+---
+ handler.c | 18 ++++++++++++++++--
+ 1 file changed, 16 insertions(+), 2 deletions(-)
+
+diff --git a/handler.c b/handler.c
+index 9305f88..85b8889 100644
+--- a/handler.c
++++ b/handler.c
+@@ -147,6 +147,20 @@ static const uint8_t EFI_IMAGE_SECURITY_DATABASE2[] = {'d',0,'b',0,'t',0};
+ 
+ #define AUTH_PATH_PREFIX "/var/lib/varstored"
+ 
++/*
++ * The macro AUTH_ONLY_PK_REQUIRED makes KEK and DB files optional, allowing
++ * varstored and varstore-sb-state to copy only the PK file (which is always
++ * present) and switch the VM to user mode. This will prevent the VM to boot
++ * if it has SecureBoot enabled by the user but UEFI certificates are missing.
++ */
++#ifdef AUTH_ONLY_PK_REQUIRED
++#define AUTH_DB_REQUIRED false
++#define AUTH_KEK_REQUIRED false
++#else
++#define AUTH_DB_REQUIRED true
++#define AUTH_KEK_REQUIRED true
++#endif
++
+ /*
+  * Array of auth_info structs containing the information about the keys
+  * we need. Avoid switching to user mode before importing other keys by
+@@ -157,9 +171,9 @@ static struct auth_info auth_info[] = {
+     {"dbx", EFI_IMAGE_SECURITY_DATABASE1, sizeof(EFI_IMAGE_SECURITY_DATABASE1),
+      &gEfiImageSecurityDatabaseGuid, AUTH_PATH_PREFIX "/dbx.auth", true, false},
+     {"db", EFI_IMAGE_SECURITY_DATABASE, sizeof(EFI_IMAGE_SECURITY_DATABASE),
+-     &gEfiImageSecurityDatabaseGuid, AUTH_PATH_PREFIX "/db.auth", false, true},
++     &gEfiImageSecurityDatabaseGuid, AUTH_PATH_PREFIX "/db.auth", false, AUTH_DB_REQUIRED},
+     {"KEK", EFI_KEY_EXCHANGE_KEY_NAME, sizeof(EFI_KEY_EXCHANGE_KEY_NAME),
+-     &gEfiGlobalVariableGuid, AUTH_PATH_PREFIX "/KEK.auth", false, true},
++     &gEfiGlobalVariableGuid, AUTH_PATH_PREFIX "/KEK.auth", false, AUTH_KEK_REQUIRED},
+     {"PK", EFI_PLATFORM_KEY_NAME, sizeof(EFI_PLATFORM_KEY_NAME),
+      &gEfiGlobalVariableGuid, AUTH_PATH_PREFIX "/PK.auth", false, true},
+ };
+-- 
+2.43.0
+

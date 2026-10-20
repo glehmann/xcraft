@@ -1,0 +1,32 @@
+From 312346d1f30292d9b32fd8bf3a00c773df0ff2ba Mon Sep 17 00:00:00 2001
+From: Lin Liu <Lin.Liu01@cloud.com>
+Date: Thu, 8 May 2025 12:21:01 +0800
+Subject: [PATCH 06/10] CA-410647: Displaying select network interface should
+ order by name
+
+Previous the interfaces are renamed as ethX, thus X is used to
+order and display the interfaces.
+Now the interface names are decided by kernel/systemd, so just
+order the interface by its name
+
+Signed-off-by: Lin Liu <Lin.Liu01@cloud.com>
+---
+ tui/network.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tui/network.py b/tui/network.py
+index 1abd8de..b139f20 100644
+--- a/tui/network.py
++++ b/tui/network.py
+@@ -140,7 +140,7 @@ def select_netif(text, conf, offer_existing=False, default=None):
+     """
+ 
+     netifs = list(conf.keys())
+-    netifs.sort(key=lambda netif: int(netif[3:]))
++    netifs.sort()
+ 
+     if default not in netifs:
+         # find first link that is up
+-- 
+2.39.5
+

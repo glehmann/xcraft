@@ -1,0 +1,37 @@
+From 0a7e6b531b1b04ede5542fecaabda37379ea6e9f Mon Sep 17 00:00:00 2001
+From: Yann Dirson <yann.dirson@vates.tech>
+Date: Tue, 22 Jul 2025 13:51:10 +0200
+Subject: [PATCH] Force-switch tty to UTF-8 not ISO-8859-1
+
+If NEWT was obeying the locale setting, this explicit switch would
+just need to be dropped, but since it outputs unicode chars whatever
+locale gets selected, the most suitable workaround is to tell the tty
+what to expect.
+
+Signed-off-by: Yann Dirson <yann.dirson@vates.tech>
+Co-authored-by: Bernhard Kaindl <bernhard.kaindl@cloud.com>
+---
+ init | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/init b/init
+index 54c03f0..df65593 100755
+--- a/init
++++ b/init
+@@ -163,9 +163,10 @@ def main(args):
+ 
+     # start the user interface:
+     if ui:
+-        # switch to ISO 8859-1 mode so line drawing characters work as expected on
+-        # vt100 terminals.
+-        print("\033%@")
++        # switch to UTF-8 mode for line drawing characters, to reflect
++        # NEWT's behaviour of forcefully outputint UTF-8 regardless of
++        # the locale
++        print("\033%G")
+ 
+         logger.log("Starting 'init' user interface on %s" % tty)
+         ui.init_ui()
+-- 
+2.39.5
+

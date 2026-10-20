@@ -1,0 +1,34 @@
+From 082e270b803bd712b75c6554940af9344f645815 Mon Sep 17 00:00:00 2001
+From: Philippe Coval <philippe.coval@vates.tech>
+Date: Thu, 6 Nov 2025 10:08:27 +0100
+Subject: [PATCH] fix(prompt): s/c/e/p/xcp-ng-prompt.sh: Fix prompt on testing
+ tput output
+
+Harden the prompt test, in case tput is failing or output is null.
+
+For the record this issue can be reproduced when passing an undeclared TERM
+
+   TERM=''  ssh $host
+   -bash: [: -ge: unary operator expected
+   [13:53 xcp-ng-pcl-11 ~]# echo $PS1
+   [\A \h \W]\$
+
+Relate-to: https://github.com/xcp-ng/xcp/issues/682
+Signed-off-by: Philippe Coval <philippe.coval@vates.tech>
+---
+ src/common/etc/profile.d/xcp-ng-prompt.sh | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/common/etc/profile.d/xcp-ng-prompt.sh b/src/common/etc/profile.d/xcp-ng-prompt.sh
+index 98fcc4b..a298a56 100644
+--- a/src/common/etc/profile.d/xcp-ng-prompt.sh
++++ b/src/common/etc/profile.d/xcp-ng-prompt.sh
+@@ -3,7 +3,7 @@
+ ########################################
+ 
+ # BASH : Configure things differently if current terminal has >= 8 colors.
+-if [ "$PS1" ] && [ $(tput colors 2>/dev/null) -ge 8 ]; then
++if [ "$PS1" ] && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
+     PS1='\[\e[0;38;5;160m\][\[\e[0;2m\]\A \[\e[0;1;38;5;105m\]\h \[\e[0m\]\W\[\e[0;38;5;160m\]]\[\e[0m\]\$ '
+ else
+     PS1='[\A \h \W]\$ '

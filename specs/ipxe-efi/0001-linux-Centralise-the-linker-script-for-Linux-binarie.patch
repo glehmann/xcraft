@@ -1,0 +1,206 @@
+From 475c0dfa8e5b841ff29d3fbf7d6828e3cdd05ad5 Mon Sep 17 00:00:00 2001
+From: Michael Brown <mcb30@ipxe.org>
+Date: Sun, 22 Jan 2023 12:05:14 +0000
+Subject: [PATCH] [linux] Centralise the linker script for Linux binaries
+
+Reduce duplication between i386 and x86_64 by providing a single
+shared linker script that both architectures can include.
+
+Signed-off-by: Michael Brown <mcb30@ipxe.org>
+---
+ src/Makefile.linux                    |   4 +
+ src/arch/i386/Makefile.linux          |   4 +-
+ src/arch/x86_64/Makefile.linux        |   4 +-
+ src/arch/x86_64/scripts/linux.lds     | 106 --------------------------
+ src/{arch/i386 => }/scripts/linux.lds |   7 +-
+ 5 files changed, 9 insertions(+), 116 deletions(-)
+ delete mode 100644 src/arch/x86_64/scripts/linux.lds
+ rename src/{arch/i386 => }/scripts/linux.lds (91%)
+
+diff --git a/src/Makefile.linux b/src/Makefile.linux
+index 85d9c643..b278c8c0 100644
+--- a/src/Makefile.linux
++++ b/src/Makefile.linux
+@@ -8,6 +8,10 @@ SYMBOL_PREFIX	= _ipxe__
+ #
+ CFLAGS		+= -UNVALGRIND
+ 
++# The Linux linker script
++#
++LDSCRIPT	= scripts/linux.lds
++
+ # Use a two-stage link
+ #
+ LDFLAGS		+= -r -d
+diff --git a/src/arch/i386/Makefile.linux b/src/arch/i386/Makefile.linux
+index fe4229e9..5992b062 100644
+--- a/src/arch/i386/Makefile.linux
++++ b/src/arch/i386/Makefile.linux
+@@ -1,8 +1,8 @@
+ # -*- makefile -*- : Force emacs to use Makefile mode
+ 
+-# Linker script
++# Starting virtual address
+ #
+-LDSCRIPT = arch/i386/scripts/linux.lds
++LDFLAGS += -Ttext=0x08048000
+ 
+ # Compiler flags for building host API wrapper
+ #
+diff --git a/src/arch/x86_64/Makefile.linux b/src/arch/x86_64/Makefile.linux
+index c41ee49d..3372d70b 100644
+--- a/src/arch/x86_64/Makefile.linux
++++ b/src/arch/x86_64/Makefile.linux
+@@ -1,8 +1,8 @@
+ # -*- makefile -*- : Force emacs to use Makefile mode
+ 
+-# Linker script
++# Starting virtual address
+ #
+-LDSCRIPT = arch/x86_64/scripts/linux.lds
++LDFLAGS += -Ttext=0x400000
+ 
+ # Include generic Linux Makefile
+ #
+diff --git a/src/arch/x86_64/scripts/linux.lds b/src/arch/x86_64/scripts/linux.lds
+deleted file mode 100644
+index a093787e..00000000
+--- a/src/arch/x86_64/scripts/linux.lds
++++ /dev/null
+@@ -1,106 +0,0 @@
+-/* -*- sh -*- */
+-
+-/*
+- * Linker script for x86_64 Linux images
+- *
+- */
+-
+-OUTPUT_FORMAT ( "elf64-x86-64", "elf64-x86-64", "elf64-x86-64" )
+-OUTPUT_ARCH ( i386:x86-64 )
+-
+-SECTIONS {
+-	_max_align = 32;
+-
+-	. = 0x400000;
+-
+-	/*
+-	 * The text section
+-	 *
+-	 */
+-
+-	. = ALIGN ( _max_align );
+-	.text : {
+-		_text = .;
+-		*(.text)
+-		*(.text.*)
+-		_etext = .;
+-	}
+-
+-	/*
+-	 * The rodata section
+-	 *
+-	 */
+-
+-	. = ALIGN ( _max_align );
+-	.rodata : {
+-		_rodata = .;
+-		*(.rodata)
+-		*(.rodata.*)
+-		_erodata = .;
+-	}
+-
+-	/*
+-	 * The data section
+-	 *
+-	 * Adjust the address for the data segment.  We want to adjust up to
+-	 * the same address within the page on the next page up.
+-	 */
+-
+-	. = ALIGN (CONSTANT (MAXPAGESIZE)) - ((CONSTANT (MAXPAGESIZE) - .) & (CONSTANT (MAXPAGESIZE) - 1));
+-	. = DATA_SEGMENT_ALIGN (CONSTANT (MAXPAGESIZE), CONSTANT (COMMONPAGESIZE));
+-	.data : {
+-		_data = .;
+-		*(.data)
+-		*(.data.*)
+-		KEEP(*(SORT(.tbl.*)))
+-		KEEP(*(.provided))
+-		KEEP(*(.provided.*))
+-		_edata = .;
+-	}
+-
+-	/*
+-	 * The bss section
+-	 *
+-	 */
+-
+-	. = ALIGN ( _max_align );
+-	.bss : {
+-		_bss = .;
+-		*(.bss)
+-		*(.bss.*)
+-		*(COMMON)
+-		_ebss = .;
+-	}
+-
+-	/*
+-	 * Weak symbols that need zero values if not otherwise defined
+-	 *
+-	 */
+-
+-	.weak 0x0 : {
+-		_weak = .;
+-		*(.weak)
+-		*(.weak.*)
+-		_eweak = .;
+-	}
+-	_assert = ASSERT ( ( _weak == _eweak ), ".weak is non-zero length" );
+-
+-	/*
+-	 * Dispose of the comment and note sections to make the link map
+-	 * easier to read
+-	 *
+-	 */
+-
+-	/DISCARD/ : {
+-		*(.comment)
+-		*(.comment.*)
+-		*(.note)
+-		*(.note.*)
+-		*(.rel)
+-		*(.rel.*)
+-		*(.discard)
+-		*(.discard.*)
+-		*(.sbat)
+-		*(.sbat.*)
+-	}
+-}
+diff --git a/src/arch/i386/scripts/linux.lds b/src/scripts/linux.lds
+similarity index 91%
+rename from src/arch/i386/scripts/linux.lds
+rename to src/scripts/linux.lds
+index 8c3a7b0b..afc0128f 100644
+--- a/src/arch/i386/scripts/linux.lds
++++ b/src/scripts/linux.lds
+@@ -1,18 +1,13 @@
+ /* -*- sh -*- */
+ 
+ /*
+- * Linker script for i386 Linux images
++ * Linker script for Linux images
+  *
+  */
+ 
+-OUTPUT_FORMAT ( "elf32-i386", "elf32-i386", "elf32-i386" )
+-OUTPUT_ARCH ( i386 )
+-
+ SECTIONS {
+ 	_max_align = 32;
+ 
+-	. = 0x08048000;
+-
+ 	/*
+ 	 * The text section
+ 	 *
+-- 
+2.39.5
+

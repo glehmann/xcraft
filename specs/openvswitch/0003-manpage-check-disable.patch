@@ -1,0 +1,53 @@
+From a057794dba61c0211e67fba472003f763be1065b Mon Sep 17 00:00:00 2001
+From: Yann Dirson <yann.dirson@vates.tech>
+Date: Mon, 7 Jul 2025 14:55:04 +0200
+Subject: [PATCH 3/4] manpage-check: disable
+
+2.17 manpages produce warnings on Alma10, we don't really care at this
+point.
+---
+ Makefile.am | 28 ++++++++++++++--------------
+ 1 file changed, 14 insertions(+), 14 deletions(-)
+
+diff --git a/Makefile.am b/Makefile.am
+index 36b543a50..5d568112c 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -363,20 +363,20 @@ check-ifconfig:
+ 	fi
+ .PHONY: check-ifconfig
+ 
+-if HAVE_GROFF
+-ALL_LOCAL += manpage-check
+-manpage-check: $(man_MANS) $(dist_man_MANS) $(noinst_man_MANS)
+-	@error=false; \
+-	set -x; \
+-	for manpage in $?; do \
+-	  LANG=en_US.UTF-8 groff -w mac -w delim -w escape -w input -w missing -w tab -T utf8 -man -p -z $$manpage >$@.tmp 2>&1; \
+-	  if grep warning: $@.tmp; then error=:; fi; \
+-	  rm -f $@.tmp; \
+-	done; \
+-	if $$error; then echo >&2 "manpage-check found warnings"; exit 1; else touch $@; fi
+-	$(AM_V_GEN) touch -c $@
+-CLEANFILES += manpage-check
+-endif
++# if HAVE_GROFF
++# ALL_LOCAL += manpage-check
++# manpage-check: $(man_MANS) $(dist_man_MANS) $(noinst_man_MANS)
++# 	@error=false; \
++# 	set -x; \
++# 	for manpage in $?; do \
++# 	  LANG=en_US.UTF-8 groff -w mac -w delim -w escape -w input -w missing -w tab -T utf8 -man -p -z $$manpage >$@.tmp 2>&1; \
++# 	  if grep warning: $@.tmp; then error=:; fi; \
++# 	  rm -f $@.tmp; \
++# 	done; \
++# 	if $$error; then echo >&2 "manpage-check found warnings"; exit 1; else touch $@; fi
++# 	$(AM_V_GEN) touch -c $@
++# CLEANFILES += manpage-check
++# endif
+ 
+ if HAVE_FLAKE8
+ ALL_LOCAL += flake8-check
+-- 
+2.39.5
+

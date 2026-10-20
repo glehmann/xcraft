@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tu Dinh <ngoc-tu.dinh@vates.tech>
+Date: Tue, 19 May 2026 15:24:25 +0200
+Subject: [PATCH] Suppress "HashAlg unsupported by PCR bank" error
+
+The list of enabled PCR banks depends on each VM's individual firmware
+settings. As the default EDK2 build we use is a debug build, this causes
+useless errors to be printed into daemon.log multiple times every boot.
+Lower their severity from DEBUG_ERROR to DEBUG_INFO to only show in
+actual debug builds.
+
+Signed-off-by: Tu Dinh <ngoc-tu.dinh@vates.tech>
+
+diff --git a/OvmfPkg/Tcg/TdTcg2Dxe/TdTcg2Dxe.c b/OvmfPkg/Tcg/TdTcg2Dxe/TdTcg2Dxe.c
+index 8547c76d4cab..0e3af11c1173 100644
+--- a/OvmfPkg/Tcg/TdTcg2Dxe/TdTcg2Dxe.c
++++ b/OvmfPkg/Tcg/TdTcg2Dxe/TdTcg2Dxe.c
+@@ -1131,7 +1131,7 @@ CopyDigestListBinToBuffer (
+       DigestListCount++;
+       (*HashAlgorithmMaskCopied) |= GetHashMaskFromAlgo (HashAlg);
+     } else {
+-      DEBUG ((DEBUG_ERROR, "WARNING: CopyDigestListBinToBuffer Event log has HashAlg unsupported by PCR bank (0x%x)\n", HashAlg));
++      DEBUG ((DEBUG_INFO, "WARNING: CopyDigestListBinToBuffer Event log has HashAlg unsupported by PCR bank (0x%x)\n", HashAlg));
+     }
+ 
+     DigestListBin = (UINT8 *)DigestListBin + DigestSize;
+diff --git a/SecurityPkg/Library/Tpm2CommandLib/Tpm2Help.c b/SecurityPkg/Library/Tpm2CommandLib/Tpm2Help.c
+index ac802733d316..2a8b463684d0 100644
+--- a/SecurityPkg/Library/Tpm2CommandLib/Tpm2Help.c
++++ b/SecurityPkg/Library/Tpm2CommandLib/Tpm2Help.c
+@@ -273,7 +273,7 @@ CopyDigestListToBuffer (
+   Buffer             = (UINT8 *)Buffer + sizeof (DigestList->count);
+   for (Index = 0; Index < DigestList->count; Index++) {
+     if (!IsHashAlgSupportedInHashAlgorithmMask (DigestList->digests[Index].hashAlg, HashAlgorithmMask)) {
+-      DEBUG ((DEBUG_ERROR, "WARNING: TPM2 Event log has HashAlg unsupported by PCR bank (0x%x)\n", DigestList->digests[Index].hashAlg));
++      DEBUG ((DEBUG_INFO, "WARNING: TPM2 Event log has HashAlg unsupported by PCR bank (0x%x)\n", DigestList->digests[Index].hashAlg));
+       continue;
+     }
+ 
+diff --git a/SecurityPkg/Tcg/Tcg2Dxe/Tcg2Dxe.c b/SecurityPkg/Tcg/Tcg2Dxe/Tcg2Dxe.c
+index 2fa37c47e1d3..f5e6581432f3 100644
+--- a/SecurityPkg/Tcg/Tcg2Dxe/Tcg2Dxe.c
++++ b/SecurityPkg/Tcg/Tcg2Dxe/Tcg2Dxe.c
+@@ -1111,7 +1111,7 @@ CopyDigestListBinToBuffer (
+       DigestListCount++;
+       (*HashAlgorithmMaskCopied) |= GetHashMaskFromAlgo (HashAlg);
+     } else {
+-      DEBUG ((DEBUG_ERROR, "WARNING: CopyDigestListBinToBuffer Event log has HashAlg unsupported by PCR bank (0x%x)\n", HashAlg));
++      DEBUG ((DEBUG_INFO, "WARNING: CopyDigestListBinToBuffer Event log has HashAlg unsupported by PCR bank (0x%x)\n", HashAlg));
+     }
+ 
+     DigestListBin = (UINT8 *)DigestListBin + DigestSize;

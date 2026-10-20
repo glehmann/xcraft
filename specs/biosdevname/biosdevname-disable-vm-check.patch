@@ -1,0 +1,12 @@
+diff -ru biosdevname-0.3.7-orig/src/bios_dev_name.c biosdevname-0.3.7-new/src/bios_dev_name.c
+--- biosdevname-0.3.7-orig/src/bios_dev_name.c	2011-02-16 15:08:32.000000000 +0000
++++ biosdevname-0.3.7-new/src/bios_dev_name.c	2011-06-23 13:13:00.000000000 +0100
+@@ -139,8 +139,6 @@
+ 
+ 	if (!running_as_root())
+ 		exit(3);
+-	if (running_in_virtual_machine())
+-		exit(4);
+ 	cookie = setup_bios_devices(opts.namingpolicy, opts.prefix);
+ 	if (!cookie) {
+ 		rc = 1;

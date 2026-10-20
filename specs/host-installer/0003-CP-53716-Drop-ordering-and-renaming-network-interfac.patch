@@ -1,0 +1,186 @@
+From 048bbe5dfe500f0d8264e42136d0c0847cbf3f64 Mon Sep 17 00:00:00 2001
+From: Lin Liu <Lin.Liu01@cloud.com>
+Date: Tue, 1 Apr 2025 09:56:02 +0000
+Subject: [PATCH 03/10] CP-53716: Drop ordering and renaming network interface
+
+Add unittest
+
+Signed-off-by: Lin Liu <Lin.Liu01@cloud.com>
+---
+ test/import_helper.py |  46 ++++++++++++++++++
+ test/test_netutil.py  | 110 ++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 156 insertions(+)
+ create mode 100644 test/import_helper.py
+ create mode 100644 test/test_netutil.py
+
+diff --git a/test/import_helper.py b/test/import_helper.py
+new file mode 100644
+index 0000000..8616597
+--- /dev/null
++++ b/test/import_helper.py
+@@ -0,0 +1,46 @@
++"""helpers for unit-testing functions in scripts without permanent global mocks"""
++import sys
++from contextlib import contextmanager
++from types import ModuleType
++
++from typing import Generator
++from mock import Mock
++
++
++@contextmanager
++def mocked_modules(*module_names: str) -> Generator[None, None, None]:
++    """Context manager that temporarily mocks the specified modules.
++
++    :param module_names: Variable number of names of the modules to be mocked.
++    :yields: None
++
++    During the context, the specified modules are added to the sys.modules
++    dictionary as instances of the ModuleType class.
++    This effectively mocks the modules, allowing them to be imported and used
++    within the context. After the context, the mocked modules are removed
++    from the sys.modules dictionary.
++
++    Example usage:
++    ```python
++    with mocked_modules("module1", "module2"):
++        # Code that uses the mocked modules
++    ```
++    """
++    for module_name in module_names:
++        sys.modules[module_name] = Mock()
++    yield
++    for module_name in module_names:
++        sys.modules.pop(module_name)
++
++def create_mock_module(name, attributes=None):
++    """
++    Create a mock module with the given name and attributes.
++    :param name: Name of the module.
++    :param attributes: Dictionary of attributes to add to the module.
++    :return: Mocked module.
++    """
++    mock_module = ModuleType(name)
++    if attributes:
++        for attr_name, attr_value in attributes.items():
++            setattr(mock_module, attr_name, attr_value)
++    return mock_module
+diff --git a/test/test_netutil.py b/test/test_netutil.py
+new file mode 100644
+index 0000000..f3074e0
+--- /dev/null
++++ b/test/test_netutil.py
+@@ -0,0 +1,110 @@
++""" Unit test module for netutil"""
++import unittest
++import sys
++import re  # Import re for the regular expression
++import os.path
++
++from import_helper import mocked_modules, create_mock_module
++
++sys.path.append(os.path.join(os.path.abspath(os.path.dirname(__file__)), '..'))
++
++
++# Following are stolen from python-xcp-lib to decouple the runtime deps
++
++_SBDF = (r"(?:(?P<segment> [\da-dA-F]{4}):)?" # Segment (optional)
++        r"     (?P<bus>     [\da-fA-F]{2}):"   # Bus
++        r"     (?P<device>  [\da-fA-F]{2})\."  # Device
++        r"     (?P<function>[\da-fA-F])"       # Function
++        )
++
++VALID_SBDFI = re.compile(
++        r"^(?P<sbdf>%s)"
++        r"  (?:[\[](?P<index>[\d]{1,2})[\]])?$"   # Index (optional)
++        % _SBDF
++        , re.X)
++
++VALID_COLON_MAC = re.compile(r"^([\da-fA-F]{1,2}:){5}[\da-fA-F]{1,2}$")
++
++mock_xcp_pci = create_mock_module("xcp.pci", { "VALID_SBDFI": VALID_SBDFI})
++mock_xcp_net_mac = create_mock_module("xcp.net.mac", { "VALID_COLON_MAC": VALID_COLON_MAC})
++
++sys.modules["xcp.pci"] = mock_xcp_pci
++sys.modules["xcp.net.mac"] = mock_xcp_net_mac
++
++with mocked_modules("xcp", "version", "diskutil", "xcp.net", "xcp.net.biosdevname", "xcp.logger"):
++    # Import the module under test
++    import netutil
++    from netutil import Rule, parse_interface_slot, parse_rule, generate_interface_rules, save_inteface_rules
++
++
++class TestInterfaceRules(unittest.TestCase):
++    """Test class"""
++    def test_slot(self):
++        """
++        slot number can be [eth]X for backword compatbility
++        """
++        rule1 = Rule(1, "mac", "00:11:22:33:44:55")
++        rule2 = parse_rule("eth1:s:00:11:22:33:44:55")
++        rule3 = parse_rule("1:s:00:11:22:33:44:55")
++        self.assertEqual(rule1, rule2)
++        self.assertEqual(rule1, rule3)
++
++    def test_rule_type(self):
++        """
++        rule type (dynamic|static) just ignored
++        """
++        rule1 = Rule(1, "mac", "00:11:22:33:44:55")
++        rule2 = parse_rule("eth1:s:00:11:22:33:44:55")
++        rule3 = parse_rule("1:d:00:11:22:33:44:55")
++        rule4 = parse_rule("1:00:11:22:33:44:55")
++        self.assertEqual(rule1, rule2)
++        self.assertEqual(rule1, rule3)
++        self.assertEqual(rule1, rule4)
++
++    def test_invalid_interface_by_mac(self):
++        """
++        invalid mac should got no rule
++        """
++        rule = parse_rule("eth1:s:00:11:22:33:44:55:88")
++        self.assertEqual(rule, None)
++
++    def test_valid_interface_by_label(self):
++        """
++        Interface can be identified by label
++        """
++        label= "ens4"
++        rule = parse_rule(f'1:"{label}"')
++        self.assertEqual(rule, Rule(1, "label", "ens4"))
++
++    def test_valid_interface_by_pci(self):
++        """
++        Interface can be identified by pci address
++        """
++        pci = "0000:00:1f.0"
++        rule = parse_rule(f'1:{pci}')
++        self.assertEqual(rule, Rule(1, "pci", "0000:00:1f.0"))
++
++    def  test_ignore_duplicated_slot(self):
++        """
++        Later duplicated rule will just be ingored
++        """
++        generate_interface_rules(['1:"ens4"', '1:"ens5"'])
++        self.assertListEqual(netutil.interface_rules, [Rule(1, "label", "ens4")])
++
++    def test_rule_print_format(self):
++        """
++        Output rules should match format
++        """
++        rule = Rule(1, "mac", "00:11:22:33:44:55")
++        self.assertEqual('1:mac="00:11:22:33:44:55"', str(rule))
++
++    def test_generate_rules(self):
++        """
++        Generate multiple rules, sorted by slot
++        """
++        generate_interface_rules(['1:"ens4"', '3:"ens6"', '2:"ens5"'])
++        self.assertListEqual(netutil.interface_rules,
++                             [ Rule(1, "label", "ens4"),
++                               Rule(2, "label", "ens5"),
++                               Rule(3, "label", "ens6")]
++                            )
+-- 
+2.39.5
+

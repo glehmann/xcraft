@@ -1,0 +1,26 @@
+From 4d5e3c7696637de56d9c7f96ab4d7cc25a674c6a Mon Sep 17 00:00:00 2001
+From: Yann Dirson <yann.dirson@vates.tech>
+Date: Mon, 7 Jul 2025 14:20:14 +0200
+Subject: [PATCH 2/4] manpage-check: be explicit that it fails because of a
+ *warning*
+
+---
+ Makefile.am | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Makefile.am b/Makefile.am
+index 9e1975bee..36b543a50 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -373,7 +373,7 @@ manpage-check: $(man_MANS) $(dist_man_MANS) $(noinst_man_MANS)
+ 	  if grep warning: $@.tmp; then error=:; fi; \
+ 	  rm -f $@.tmp; \
+ 	done; \
+-	if $$error; then exit 1; else touch $@; fi
++	if $$error; then echo >&2 "manpage-check found warnings"; exit 1; else touch $@; fi
+ 	$(AM_V_GEN) touch -c $@
+ CLEANFILES += manpage-check
+ endif
+-- 
+2.39.5
+

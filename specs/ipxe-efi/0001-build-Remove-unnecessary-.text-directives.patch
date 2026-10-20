@@ -1,0 +1,290 @@
+From e66552eeede19a91b1a52468a550b58fd031777b Mon Sep 17 00:00:00 2001
+From: Michael Brown <mcb30@ipxe.org>
+Date: Sun, 14 Jan 2024 11:51:16 +0000
+Subject: [PATCH] [build] Remove unnecessary ".text" directives
+
+The .text directive is entirely redundant when followed by a .section
+directive giving an explicit section name and attributes.
+
+Remove these unnecessary directives to simplify the code.
+
+Signed-off-by: Michael Brown <mcb30@ipxe.org>
+---
+ src/arch/arm32/libgcc/lldivmod.S            | 1 -
+ src/arch/arm32/libgcc/llshift.S             | 1 -
+ src/arch/x86/core/patch_cf.S                | 1 -
+ src/arch/x86/drivers/net/undiisr.S          | 1 -
+ src/arch/x86/interface/pcbios/e820mangler.S | 1 -
+ src/arch/x86/prefix/bootpart.S              | 1 -
+ src/arch/x86/prefix/dskprefix.S             | 1 -
+ src/arch/x86/prefix/exeprefix.S             | 1 -
+ src/arch/x86/prefix/hdprefix.S              | 1 -
+ src/arch/x86/prefix/lkrnprefix.S            | 1 -
+ src/arch/x86/prefix/mbr.S                   | 1 -
+ src/arch/x86/prefix/mromprefix.S            | 1 -
+ src/arch/x86/prefix/nbiprefix.S             | 1 -
+ src/arch/x86/prefix/nullprefix.S            | 1 -
+ src/arch/x86/prefix/pxeprefix.S             | 1 -
+ src/arch/x86/prefix/rawprefix.S             | 1 -
+ src/arch/x86/prefix/romprefix.S             | 1 -
+ src/arch/x86/prefix/undiloader.S            | 1 -
+ src/arch/x86/prefix/unlzma.S                | 1 -
+ src/arch/x86/prefix/usbdisk.S               | 1 -
+ src/arch/x86/transitions/libkir.S           | 1 -
+ 21 files changed, 21 deletions(-)
+
+diff --git a/src/arch/arm32/libgcc/lldivmod.S b/src/arch/arm32/libgcc/lldivmod.S
+index 746fa8fd..c9c22450 100644
+--- a/src/arch/arm32/libgcc/lldivmod.S
++++ b/src/arch/arm32/libgcc/lldivmod.S
+@@ -1,7 +1,6 @@
+ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ 
+ 	.section ".note.GNU-stack", "", %progbits
+-	.text
+ 	.thumb
+ 
+ /**
+diff --git a/src/arch/arm32/libgcc/llshift.S b/src/arch/arm32/libgcc/llshift.S
+index c1b51e77..592e28e6 100644
+--- a/src/arch/arm32/libgcc/llshift.S
++++ b/src/arch/arm32/libgcc/llshift.S
+@@ -1,7 +1,6 @@
+ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ 
+ 	.section ".note.GNU-stack", "", %progbits
+-	.text
+ 	.arm
+ 
+ /**
+diff --git a/src/arch/x86/core/patch_cf.S b/src/arch/x86/core/patch_cf.S
+index 63730c3f..ebf62876 100644
+--- a/src/arch/x86/core/patch_cf.S
++++ b/src/arch/x86/core/patch_cf.S
+@@ -23,7 +23,6 @@
+ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ 
+ 	.section ".note.GNU-stack", "", @progbits
+-	.text
+ 	.arch i386
+ 	.code16
+ 
+diff --git a/src/arch/x86/drivers/net/undiisr.S b/src/arch/x86/drivers/net/undiisr.S
+index a1098b83..aa8991d7 100644
+--- a/src/arch/x86/drivers/net/undiisr.S
++++ b/src/arch/x86/drivers/net/undiisr.S
+@@ -11,7 +11,6 @@ FILE_LICENCE ( GPL2_OR_LATER )
+ #define PIC2_ICR 0xa0
+ 	
+ 	.section ".note.GNU-stack", "", @progbits
+-	.text
+ 	.arch i386
+ 	.code16
+ 
+diff --git a/src/arch/x86/interface/pcbios/e820mangler.S b/src/arch/x86/interface/pcbios/e820mangler.S
+index 46e1cab4..40f84c70 100644
+--- a/src/arch/x86/interface/pcbios/e820mangler.S
++++ b/src/arch/x86/interface/pcbios/e820mangler.S
+@@ -24,7 +24,6 @@
+ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ 
+ 	.section ".note.GNU-stack", "", @progbits
+-	.text
+ 	.arch i386
+ 	.code16
+ 
+diff --git a/src/arch/x86/prefix/bootpart.S b/src/arch/x86/prefix/bootpart.S
+index 575cb1c0..cf75ff79 100644
+--- a/src/arch/x86/prefix/bootpart.S
++++ b/src/arch/x86/prefix/bootpart.S
+@@ -6,7 +6,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ #define STACK_SIZE	0x2000
+ 	
+ 	.section ".note.GNU-stack", "", @progbits
+-	.text
+ 	.arch i386
+ 	.section ".prefix", "awx", @progbits
+ 	.code16
+diff --git a/src/arch/x86/prefix/dskprefix.S b/src/arch/x86/prefix/dskprefix.S
+index bc194887..f9d30195 100644
+--- a/src/arch/x86/prefix/dskprefix.S
++++ b/src/arch/x86/prefix/dskprefix.S
+@@ -27,7 +27,6 @@ FILE_LICENCE ( GPL2_ONLY )
+ 	.section ".note.GNU-stack", "", @progbits
+ 	.org	0
+ 	.arch i386
+-	.text
+ 	.section ".prefix", "ax", @progbits
+ 	.code16
+ 	.globl	_dsk_start
+diff --git a/src/arch/x86/prefix/exeprefix.S b/src/arch/x86/prefix/exeprefix.S
+index 5b2605e8..86333489 100644
+--- a/src/arch/x86/prefix/exeprefix.S
++++ b/src/arch/x86/prefix/exeprefix.S
+@@ -37,7 +37,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ #define PSP_CMDLINE_START 0x81
+ 
+ 	.section ".note.GNU-stack", "", @progbits
+-	.text
+ 	.arch i386
+ 	.org 0
+ 	.code16
+diff --git a/src/arch/x86/prefix/hdprefix.S b/src/arch/x86/prefix/hdprefix.S
+index fbf8d2e4..1bbf72dd 100644
+--- a/src/arch/x86/prefix/hdprefix.S
++++ b/src/arch/x86/prefix/hdprefix.S
+@@ -3,7 +3,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ #include <librm.h>
+ 
+ 	.section ".note.GNU-stack", "", @progbits
+-	.text
+ 	.arch i386
+ 	.section ".prefix", "awx", @progbits
+ 	.code16
+diff --git a/src/arch/x86/prefix/lkrnprefix.S b/src/arch/x86/prefix/lkrnprefix.S
+index 2c17f79d..9f1a2f09 100644
+--- a/src/arch/x86/prefix/lkrnprefix.S
++++ b/src/arch/x86/prefix/lkrnprefix.S
+@@ -5,7 +5,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ #define BZI_LOAD_HIGH_ADDR 0x100000
+ 
+ 	.section ".note.GNU-stack", "", @progbits
+-	.text
+ 	.arch i386
+ 	.code16
+ 	.section ".prefix", "ax", @progbits
+diff --git a/src/arch/x86/prefix/mbr.S b/src/arch/x86/prefix/mbr.S
+index 928bb338..b37eed71 100644
+--- a/src/arch/x86/prefix/mbr.S
++++ b/src/arch/x86/prefix/mbr.S
+@@ -1,7 +1,6 @@
+ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ 
+ 	.section ".note.GNU-stack", "", @progbits
+-	.text
+ 	.arch i386
+ 	.section ".prefix", "awx", @progbits
+ 	.code16
+diff --git a/src/arch/x86/prefix/mromprefix.S b/src/arch/x86/prefix/mromprefix.S
+index 5f3496b2..543fd006 100644
+--- a/src/arch/x86/prefix/mromprefix.S
++++ b/src/arch/x86/prefix/mromprefix.S
+@@ -42,7 +42,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ #include "pciromprefix.S"
+ 
+ 	.section ".note.GNU-stack", "", @progbits
+-	.text
+ 	.arch i386
+ 	.code16
+ 
+diff --git a/src/arch/x86/prefix/nbiprefix.S b/src/arch/x86/prefix/nbiprefix.S
+index cae1009b..0a74ca71 100644
+--- a/src/arch/x86/prefix/nbiprefix.S
++++ b/src/arch/x86/prefix/nbiprefix.S
+@@ -3,7 +3,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ #include <librm.h>
+ 
+ 	.section ".note.GNU-stack", "", @progbits
+-	.text
+ 	.arch i386
+ 	.code16
+ 	.section ".prefix", "ax", @progbits
+diff --git a/src/arch/x86/prefix/nullprefix.S b/src/arch/x86/prefix/nullprefix.S
+index 1568188d..bbc697fd 100644
+--- a/src/arch/x86/prefix/nullprefix.S
++++ b/src/arch/x86/prefix/nullprefix.S
+@@ -2,7 +2,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ 
+ 	.section ".note.GNU-stack", "", @progbits
+ 	.org	0
+-	.text
+ 	.arch i386
+ 
+ 	.section ".prefix", "ax", @progbits
+diff --git a/src/arch/x86/prefix/pxeprefix.S b/src/arch/x86/prefix/pxeprefix.S
+index 494fbc13..c62a5011 100644
+--- a/src/arch/x86/prefix/pxeprefix.S
++++ b/src/arch/x86/prefix/pxeprefix.S
+@@ -12,7 +12,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ #define PXE_HACK_EB54			0x0001
+ 
+ 	.section ".note.GNU-stack", "", @progbits
+-	.text
+ 	.arch i386
+ 	.org 0
+ 	.code16
+diff --git a/src/arch/x86/prefix/rawprefix.S b/src/arch/x86/prefix/rawprefix.S
+index 4a3d3504..d97b3b51 100644
+--- a/src/arch/x86/prefix/rawprefix.S
++++ b/src/arch/x86/prefix/rawprefix.S
+@@ -9,7 +9,6 @@
+ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ 
+ 	.section ".note.GNU-stack", "", @progbits
+-	.text
+ 	.arch i386
+ 	.org 0
+ 	.code16
+diff --git a/src/arch/x86/prefix/romprefix.S b/src/arch/x86/prefix/romprefix.S
+index 79fed2a3..09837cee 100644
+--- a/src/arch/x86/prefix/romprefix.S
++++ b/src/arch/x86/prefix/romprefix.S
+@@ -55,7 +55,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ #endif
+ 
+ 	.section ".note.GNU-stack", "", @progbits
+-	.text
+ 	.code16
+ 	.arch i386
+ 	.section ".prefix", "ax", @progbits
+diff --git a/src/arch/x86/prefix/undiloader.S b/src/arch/x86/prefix/undiloader.S
+index e544d504..33573230 100644
+--- a/src/arch/x86/prefix/undiloader.S
++++ b/src/arch/x86/prefix/undiloader.S
+@@ -3,7 +3,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ #include <librm.h>
+ 
+ 	.section ".note.GNU-stack", "", @progbits
+-	.text
+ 	.code16
+ 	.arch i386
+ 	.section ".prefix", "ax", @progbits
+diff --git a/src/arch/x86/prefix/unlzma.S b/src/arch/x86/prefix/unlzma.S
+index f4bd81bd..4059090b 100644
+--- a/src/arch/x86/prefix/unlzma.S
++++ b/src/arch/x86/prefix/unlzma.S
+@@ -44,7 +44,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+  */
+ 
+ 	.section ".note.GNU-stack", "", @progbits
+-	.text
+ 	.arch i486
+ 	.section ".prefix.lib", "ax", @progbits
+ 
+diff --git a/src/arch/x86/prefix/usbdisk.S b/src/arch/x86/prefix/usbdisk.S
+index 461a0837..b8fc5e95 100644
+--- a/src/arch/x86/prefix/usbdisk.S
++++ b/src/arch/x86/prefix/usbdisk.S
+@@ -3,7 +3,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ #include <config/console.h>
+ 
+ 	.section ".note.GNU-stack", "", @progbits
+-	.text
+ 	.arch i386
+ 	.section ".prefix", "awx", @progbits
+ 	.code16
+diff --git a/src/arch/x86/transitions/libkir.S b/src/arch/x86/transitions/libkir.S
+index af090b26..5909654c 100644
+--- a/src/arch/x86/transitions/libkir.S
++++ b/src/arch/x86/transitions/libkir.S
+@@ -32,7 +32,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ #define BOCHSBP xchgw %bx, %bx
+ 
+ 	.section ".note.GNU-stack", "", @progbits
+-	.text
+ 	.arch i386
+ 	.section ".text16", "awx", @progbits
+ 	.code16
+-- 
+2.39.5
+

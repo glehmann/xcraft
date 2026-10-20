@@ -1,0 +1,184 @@
+Revert "hw/i386: Remove deprecated machines pc-0.10 and pc-0.11"
+
+From: Anthony PERARD <anthony.perard@citrix.com>
+Date: Fri 26 Jun 2020 14:30:46 BST +0100
+
+This reverts commit cc425b5ddfe8f8474814f369409e637c36898542.
+And apply changes that happend to the other compat handling since that
+commit.
+
+---
+Revert removal of machines required to build pc-0.10 and pc-0.11
+Introduce a DEFINE_LEGACY_I440FX_MACHINE to account for upstream changes since removal.
+
+diff --git a/hw/i386/pc_piix.c b/hw/i386/pc_piix.c
+index e71686e5e304..05111e890764 100644
+--- a/hw/i386/pc_piix.c
++++ b/hw/i386/pc_piix.c
+@@ -69,6 +69,7 @@
+ #include "hw/uefi/var-service-api.h"
+ #include "hw/i386/acpi-build.h"
+ #include "target/i386/cpu.h"
++#include "target/i386/kvm/kvm-cpu.h"
+ 
+ #define XEN_IOAPIC_NUM_PIRQS 128ULL
+ 
+@@ -806,6 +807,158 @@ static void pc_i440fx_machine_2_6_options(MachineClass *m)
+ 
+ DEFINE_I440FX_MACHINE(2, 6);
+ 
++
++/* Looking for a pc_compat_2_4() function? It doesn't exist.
++ *  * pc_compat_*() functions that run on machine-init time and
++ *   * change global QEMU state are deprecated. Please don't create
++ *    * one, and implement any pc-*-2.4 (and newer) compat code in
++ *     * HW_COMPAT_*, PC_COMPAT_*, or * pc_*_machine_options().
++ *      */
++
++static void pc_compat_2_3_fn(MachineState *machine)
++{
++    X86MachineState *x86ms = X86_MACHINE(machine);
++    if (kvm_enabled()) {
++        x86ms->smm = ON_OFF_AUTO_OFF;
++    }
++}
++
++static void pc_compat_2_2_fn(MachineState *machine)
++{
++    pc_compat_2_3_fn(machine);
++}
++
++static void pc_compat_2_1_fn(MachineState *machine)
++{
++    pc_compat_2_2_fn(machine);
++    x86_cpu_change_kvm_default("svm", NULL);
++}
++
++static void pc_compat_2_0_fn(MachineState *machine)
++{
++    pc_compat_2_1_fn(machine);
++}
++
++static void pc_compat_1_7_fn(MachineState *machine)
++{
++    pc_compat_2_0_fn(machine);
++    x86_cpu_change_kvm_default("x2apic", NULL);
++}
++
++static void pc_compat_1_6_fn(MachineState *machine)
++{
++    pc_compat_1_7_fn(machine);
++}
++
++static void pc_compat_1_5_fn(MachineState *machine)
++{
++    pc_compat_1_6_fn(machine);
++}
++
++static void pc_compat_1_4_fn(MachineState *machine)
++{
++    pc_compat_1_5_fn(machine);
++}
++
++static void pc_compat_1_3(MachineState *machine)
++{
++    pc_compat_1_4_fn(machine);
++}
++
++/* PC compat function for pc-0.14 to pc-1.2 */
++static void pc_compat_1_2(MachineState *machine)
++{
++    pc_compat_1_3(machine);
++    x86_cpu_change_kvm_default("kvm-pv-eoi", NULL);
++}
++
++/* PC compat function for pc-0.12 and pc-0.13 */
++static void pc_compat_0_13(MachineState *machine)
++{
++    pc_compat_1_2(machine);
++}
++
++#define DEFINE_LEGACY_I440FX_MACHINE(suffix, name, compatfn, optionfn) \
++    static void pc_init_##suffix(MachineState *machine) \
++    { \
++        void (*compat)(MachineState *m) = (compatfn); \
++        if (compat) { \
++            compat(machine); \
++        } \
++        pc_init1(machine, TYPE_I440FX_PCI_DEVICE); \
++    } \
++    DEFINE_PC_MACHINE(suffix, name, pc_init_##suffix, optionfn)
++
++static void pc_i440fx_0_11_machine_options(MachineClass *m)
++{
++    static GlobalProperty compat[] = {
++        PC_CPU_MODEL_IDS("0.11")
++        {
++            .driver   = "virtio-blk-pci",
++            .property = "vectors",
++            .value    = stringify(0),
++        },{
++            .driver   = TYPE_PCI_DEVICE,
++            .property = "rombar",
++            .value    = stringify(0),
++        },{
++            .driver   = "ide_drive",
++            .property = "ver",
++            .value    = "0.11",
++        },{
++            .driver   = "scsi-disk",
++            .property = "ver",
++            .value    = "0.11",
++        },
++    };
++
++    pc_i440fx_machine_2_6_options(m);
++    m->hw_version = "0.11";
++    m->deprecation_reason = "use a new machine type instead";
++    compat_props_add(m->compat_props, compat, G_N_ELEMENTS(compat));
++}
++
++DEFINE_LEGACY_I440FX_MACHINE(v0_11, "pc-0.11", pc_compat_0_13,
++                             pc_i440fx_0_11_machine_options);
++
++
++static void pc_i440fx_0_10_machine_options(MachineClass *m)
++{
++    static GlobalProperty compat[] = {
++        PC_CPU_MODEL_IDS("0.10")
++        {
++            .driver   = "virtio-blk-pci",
++            .property = "class",
++            .value    = stringify(PCI_CLASS_STORAGE_OTHER),
++        },{
++            .driver   = "virtio-serial-pci",
++            .property = "class",
++            .value    = stringify(PCI_CLASS_DISPLAY_OTHER),
++        },{
++            .driver   = "virtio-net-pci",
++            .property = "vectors",
++            .value    = "0.10",
++        },{
++            .driver   = "ide_drive",
++            .property = "ver",
++            .value    = "0.10",
++        },{
++            .driver   = "scsi-disk",
++            .property = "ver",
++            .value    = "0.10",
++        },
++    };
++
++    pc_i440fx_0_11_machine_options(m);
++    m->hw_version = "0.10";
++    compat_props_add(m->compat_props, compat, G_N_ELEMENTS(compat));
++}
++
++
++DEFINE_LEGACY_I440FX_MACHINE(v0_10, "pc-0.10", pc_compat_0_13,
++                             pc_i440fx_0_10_machine_options);
++
++
+ #ifdef CONFIG_ISAPC
+ static void isapc_machine_options(MachineClass *m)
+ {

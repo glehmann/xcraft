@@ -1,0 +1,49 @@
+diff -ur biosdevname-0.3.11-orig/biosdevname.1 biosdevname-0.3.11/biosdevname.1
+--- biosdevname-0.3.11-orig/biosdevname.1	2012-03-22 16:05:53.000000000 +0000
++++ biosdevname-0.3.11/biosdevname.1	2012-03-22 18:41:49.000000000 +0000
+@@ -45,11 +45,11 @@
+ .SH POLICIES
+ .br
+ The
+-.B physical
++.B all_ethN
+ policy is the current default.  However, when invoking biosdevname in
+ udev rules, one should always specify the policy you want, as the
+ default has changed over time.
+-.br
++.sp
+ The
+ .B physical
+ policy uses the following scheme:
+Only in biosdevname-0.3.11: biosdevname.1.orig
+diff -ur biosdevname-0.3.11-orig/src/bios_dev_name.c biosdevname-0.3.11/src/bios_dev_name.c
+--- biosdevname-0.3.11-orig/src/bios_dev_name.c	2012-03-22 16:05:53.000000000 +0000
++++ biosdevname-0.3.11/src/bios_dev_name.c	2012-03-22 18:42:46.000000000 +0000
+@@ -28,16 +28,13 @@
+ 	fprintf(stderr, "   --prefix [string]                  string use for embedded NICs (default='em')\n");
+ 	fprintf(stderr, "   --smbios [x.y]		       Require SMBIOS x.y or greater\n");
+ 	fprintf(stderr, "   --nopirq			       Don't use $PIR table for slot numbers\n");
+-	fprintf(stderr, " Example:  biosdevname -i eth0\n");
+-	fprintf(stderr, "  returns: em1\n");
+-	fprintf(stderr, "  when eth0 is an embedded NIC with label '1' on the chassis.\n");
+ 	fprintf(stderr, " You must be root to run this, as it must read from /dev/mem.\n");
+ }
+ 
+ static int
+ set_policy(const char *arg)
+ {
+-	int rc = physical;
++	int rc = all_ethN;
+ 
+ 	if (!strncmp("physical", arg, sizeof("physical")))
+ 		rc = physical;
+@@ -52,6 +49,9 @@
+ 	int c;
+ 	int option_index = 0;
+ 
++	/* set default naming policy to all_ethN */
++	opts.namingpolicy = all_ethN;
++
+ 	while (1) {
+ 		static struct option long_options[] =
+ 			/* name, has_arg, flag, val */

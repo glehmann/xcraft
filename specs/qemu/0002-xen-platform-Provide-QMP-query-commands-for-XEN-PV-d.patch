@@ -1,0 +1,105 @@
+From 5c0b41eb81bbfd674447e783c560d1db262a8ca2 Mon Sep 17 00:00:00 2001
+From: Anoob Soman <anoob.soman@citrix.com>
+Date: Wed, 19 Jul 2017 11:52:38 +0100
+Subject: [PATCH 2/3] xen-platform: Provide QMP query commands for XEN PV
+ driver info
+
+query-xen-platform-pv-driver-info QMP command, exposes XEN PV driver
+platform number and build number.
+
+Signed-off-by: Anoob Soman <anoob.soman@citrix.com>
+diff --git a/hw/i386/xen/xen_platform.c b/hw/i386/xen/xen_platform.c
+index 432b4cddedf0..835c570bb8e7 100644
+--- a/hw/i386/xen/xen_platform.c
++++ b/hw/i386/xen/xen_platform.c
+@@ -25,6 +25,7 @@
+ 
+ #include "qemu/osdep.h"
+ #include "qapi/error.h"
++#include "qapi/qapi-commands-misc.h"
+ #include "hw/ide/pci.h"
+ #include "hw/pci/pci.h"
+ #include "hw/qdev-properties.h"
+@@ -56,6 +57,8 @@
+ 
+ #define PFFLAG_ROM_LOCK 1 /* Sets whether ROM memory area is RW or RO */
+ 
++static const Object *xen_platform_state = NULL;
++
+ struct PCIXenPlatformState {
+     /*< private >*/
+     PCIDevice parent_obj;
+@@ -268,6 +271,24 @@ static void pci_unplug_disks(PCIBus *bus, uint32_t flags)
+     pci_for_each_device(bus, 0, unplug_disks, &flags);
+ }
+ 
++XenPvDriverInfo* qmp_query_xen_platform_pv_driver_info(Error **errp)
++{
++    const PCIXenPlatformState *s;
++
++    if (xen_platform_state) {
++        XenPvDriverInfo *info = g_malloc0(sizeof(*info));
++
++        s = XEN_PLATFORM(xen_platform_state);
++        info->product_num = s->driver_product_version;
++        info->build_num   = s->driver_build_number;
++
++        return info;
++    }
++
++    error_setg(errp, "Could not find %s pci device", TYPE_XEN_PLATFORM);
++    return NULL;
++}
++
+ static void platform_fixed_ioport_writew(void *opaque, uint32_t addr, uint32_t val)
+ {
+     PCIXenPlatformState *s = opaque;
+@@ -585,6 +606,8 @@ static void xen_platform_realize(PCIDevice *dev, Error **errp)
+                      &d->mmio_bar);
+ 
+     platform_fixed_ioport_init(d);
++
++    xen_platform_state = OBJECT(d);
+ }
+ 
+ static void platform_reset(DeviceState *dev)
+diff --git a/qapi/misc.json b/qapi/misc.json
+index 28c641fe2fef..bd2c10e96278 100644
+--- a/qapi/misc.json
++++ b/qapi/misc.json
+@@ -309,6 +309,35 @@
+ ##
+ { 'command': 'closefd', 'data': {'fdname': 'str'} }
+ 
++##
++# @XenPvDriverInfo:
++#
++# @product-num: XEN PV driver product number
++# @build-num: XEN PV driver build number
++#
++# Since: X.Y
++##
++{ 'struct': 'XenPvDriverInfo',
++  'data': {'product-num':'int',
++           'build-num':'int'
++          }
++}
++
++##
++# @query-xen-platform-pv-driver-info:
++#
++# Returns: XenPvDriverInfo
++#
++# Since: X.Y
++#
++# .. qmp-example::
++#
++# -> { "execute": "query-xen-platform-pv-driver-info" }
++# <- { "return": {"product-num": 3, "build-num": 1} }
++#
++##
++{ 'command': 'query-xen-platform-pv-driver-info', 'returns': 'XenPvDriverInfo' }
++
+ ##
+ # @AddfdInfo:
+ #

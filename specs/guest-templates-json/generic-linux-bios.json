@@ -1,0 +1,8 @@
+{
+    "uuid": "dfbd1201-329f-4c87-9f0c-78a6f5270ba0",
+    "reference_label": "generic-linux-bios",
+    "name_label": "Generic Linux BIOS",
+    "derived_from": "base-hvmlinux.json",
+    "min_memory": "1G",
+    "disks": [ { "size": "10G" } ]
+}

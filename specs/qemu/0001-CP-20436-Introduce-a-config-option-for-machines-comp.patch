@@ -1,0 +1,75 @@
+From 6730ee633e14290bbccda33c4861e10d941fd1d9 Mon Sep 17 00:00:00 2001
+From: Igor Druzhinin <igor.druzhinin@citrix.com>
+Date: Tue, 16 May 2017 23:03:47 +0100
+Subject: [PATCH] CP-20436 Introduce a config option for machines compatible
+ with QEMU-trad
+
+A new trad-compat={true,false} option is introduced for all PC machines
+that are expected to be binary compatible with QEMU-trad. For now,
+just pass it always as true - it's expected to be passed as a qemu-wrapper
+parameter from XAPI later.
+
+Signed-off-by: Igor Druzhinin <igor.druzhinin@citrix.com>
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index f42169288b86..d971ee2314f5 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -1658,6 +1658,19 @@ static void pc_machine_set_max_fw_size(Object *obj, Visitor *v,
+     pcms->max_fw_size = value;
+ }
+ 
++static bool pc_machine_get_trad_compat(Object *obj, Error **errp)
++{
++    PCMachineState *pcms = PC_MACHINE(obj);
++
++    return pcms->is_trad_compat;
++}
++
++static void pc_machine_set_trad_compat(Object *obj, bool value, Error **errp)
++{
++    PCMachineState *pcms = PC_MACHINE(obj);
++
++    pcms->is_trad_compat = value;
++}
+ 
+ static void pc_machine_initfn(Object *obj)
+ {
+@@ -1684,6 +1697,7 @@ static void pc_machine_initfn(Object *obj)
+ #endif
+     pcms->fd_bootchk = true;
+     pcms->default_bus_bypass_iommu = false;
++    pcms->is_trad_compat = false;
+ 
+     pc_system_flash_create(pcms);
+ #ifdef CONFIG_PCSPK
+@@ -1844,7 +1858,8 @@ static void pc_machine_class_init(ObjectClass *oc, const void *data)
+                                           "Set IGVM configuration");
+ #endif
+ 
+-
++    object_class_property_add_bool(oc, PC_MACHINE_TRAD_COMPAT,
++        pc_machine_get_trad_compat, pc_machine_set_trad_compat);
+ }
+ 
+ static const TypeInfo pc_machine_info = {
+diff --git a/include/hw/i386/pc.h b/include/hw/i386/pc.h
+index 79b72c54dd3f..7e0936122b8b 100644
+--- a/include/hw/i386/pc.h
++++ b/include/hw/i386/pc.h
+@@ -58,6 +58,8 @@ typedef struct PCMachineState {
+ 
+     SGXEPCState sgx_epc;
+     CXLState cxl_devices_state;
++
++    bool is_trad_compat;
+ } PCMachineState;
+ 
+ #define PC_MACHINE_ACPI_DEVICE_PROP "acpi-device"
+@@ -68,6 +70,7 @@ typedef struct PCMachineState {
+ #define PC_MACHINE_I8042            "i8042"
+ #define PC_MACHINE_MAX_FW_SIZE      "max-fw-size"
+ #define PC_MACHINE_SMBIOS_EP        "smbios-entry-point-type"
++#define PC_MACHINE_TRAD_COMPAT      "trad-compat"
+ 
+ /**
+  * PCMachineClass:

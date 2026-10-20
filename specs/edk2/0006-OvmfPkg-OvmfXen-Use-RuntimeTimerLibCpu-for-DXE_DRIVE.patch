@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Anthony PERARD <anthony.perard@citrix.com>
+Date: Mon, 18 May 2026 14:49:55 +0200
+Subject: [PATCH] OvmfPkg/OvmfXen: Use RuntimeTimerLibCpu for DXE_DRIVER
+
+When booting Windows, it's still possible that something in Windows bootloader
+tries to use TimerLib with TPL already at TPL_HIGH_LEVEL, which ultimately
+tries to load the dynamic PcdFSBClock. And this fails because PcdGet() tries
+to raise TPL to a lower value.
+
+This allow to load the PCD early, at library construction time, and thus avoid
+the need to get the PCD when the TPL is too high.
+
+Signed-off-by: Anthony PERARD <anthony.perard@citrix.com>
+
+diff --git a/OvmfPkg/OvmfXen.dsc b/OvmfPkg/OvmfXen.dsc
+index 9a1cd6bbd4f1..f905e862641d 100644
+--- a/OvmfPkg/OvmfXen.dsc
++++ b/OvmfPkg/OvmfXen.dsc
+@@ -346,6 +346,7 @@
+   MpInitLib|UefiCpuPkg/Library/MpInitLib/DxeMpInitLib.inf
+   NestedInterruptTplLib|OvmfPkg/Library/NestedInterruptTplLib/NestedInterruptTplLib.inf
+   QemuFwCfgS3Lib|OvmfPkg/Library/QemuFwCfgS3Lib/DxeQemuFwCfgS3LibFwCfg.inf
++  TimerLib|MdePkg/Library/SecPeiDxeTimerLibCpu/RuntimeTimerLibCpu.inf
+ 
+ [LibraryClasses.common.UEFI_APPLICATION]
+   PcdLib|MdePkg/Library/DxePcdLib/DxePcdLib.inf

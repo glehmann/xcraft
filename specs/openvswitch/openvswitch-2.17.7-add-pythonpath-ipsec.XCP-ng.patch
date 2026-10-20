@@ -1,0 +1,14 @@
+Add env PYTHONPATH to ovs-ipsec service
+
+diff --git i/rhel/usr_lib_systemd_system_openvswitch-ipsec.service w/rhel/usr_lib_systemd_system_openvswitch-ipsec.service
+index 92dad44f9..d5f6088a5 100644
+--- i/rhel/usr_lib_systemd_system_openvswitch-ipsec.service
++++ w/rhel/usr_lib_systemd_system_openvswitch-ipsec.service
+@@ -4,6 +4,7 @@ Requires=openvswitch.service
+ After=openvswitch.service
+
+ [Service]
++Environment=PYTHONPATH=/usr/share/openvswitch/python
+ Type=forking
+ PIDFile=/run/openvswitch/ovs-monitor-ipsec.pid
+ ExecStart=/usr/share/openvswitch/scripts/ovs-ctl \

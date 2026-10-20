@@ -1,0 +1,64 @@
+efi-snp: Limit rx queue to 64 packets
+
+EFI applications may repeatedly poll all interfaces but only consume
+packets from a single active interface.  If one of the inactive
+interfaces is receiving packets, there is no limit to how many are
+queued up which exhausts iPXE's heap space, preventing allocations and
+causing the active interface to stall. Limit the queue to 64 packets.
+diff --git a/src/include/ipxe/efi/efi_snp.h b/src/include/ipxe/efi/efi_snp.h
+index 9076f1d5..6403d1c2 100644
+--- a/src/include/ipxe/efi/efi_snp.h
++++ b/src/include/ipxe/efi/efi_snp.h
+@@ -23,6 +23,9 @@ FILE_LICENCE ( GPL2_OR_LATER );
+ /** SNP transmit completion ring size */
+ #define EFI_SNP_NUM_TX 32
+ 
++/** Max packets in the receive queue */
++#define EFI_SNP_NUM_RX 64
++
+ /** An SNP device */
+ struct efi_snp_device {
+ 	/** List of SNP devices */
+@@ -47,6 +50,8 @@ struct efi_snp_device {
+ 	unsigned int tx_prod;
+ 	/** Transmit completion ring consumer counter */
+ 	unsigned int tx_cons;
++	/** Length of receive queue */
++	unsigned int rx_count;
+ 	/** Receive queue */
+ 	struct list_head rx;
+ 	/** The network interface identifier */
+diff --git a/src/interface/efi/efi_snp.c b/src/interface/efi/efi_snp.c
+index 9c1b14d8..9612e122 100644
+--- a/src/interface/efi/efi_snp.c
++++ b/src/interface/efi/efi_snp.c
+@@ -153,6 +153,7 @@ static void efi_snp_flush ( struct efi_snp_device *snpdev ) {
+ 	/* Discard any queued receive buffers */
+ 	list_for_each_entry_safe ( iobuf, tmp, &snpdev->rx, list ) {
+ 		list_del ( &iobuf->list );
++		snpdev->rx_count--;
+ 		free_iob ( iobuf );
+ 	}
+ }
+@@ -171,7 +172,13 @@ static void efi_snp_poll ( struct efi_snp_device *snpdev ) {
+ 
+ 	/* Retrieve any received packets */
+ 	while ( ( iobuf = netdev_rx_dequeue ( snpdev->netdev ) ) ) {
++		if ( snpdev->rx_count >= EFI_SNP_NUM_RX ) {
++			free_iob ( iobuf );
++			continue;
++		}
++
+ 		list_add_tail ( &iobuf->list, &snpdev->rx );
++		snpdev->rx_count++;
+ 		snpdev->interrupts |= EFI_SIMPLE_NETWORK_RECEIVE_INTERRUPT;
+ 		bs->SignalEvent ( &snpdev->snp.WaitForPacket );
+ 	}
+@@ -796,6 +803,7 @@ efi_snp_receive ( EFI_SIMPLE_NETWORK_PROTOCOL *snp,
+ 
+ 	/* Dequeue packet */
+ 	list_del ( &iobuf->list );
++	snpdev->rx_count--;
+ 
+ 	/* Return packet to caller, truncating to buffer length */
+ 	copy_len = iob_len ( iobuf );

@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tu Dinh <ngoc-tu.dinh@vates.tech>
+Date: Mon, 18 May 2026 14:49:55 +0200
+Subject: [PATCH] embed-nic-drivers
+
+
+diff --git a/OvmfPkg/OvmfXen.dsc b/OvmfPkg/OvmfXen.dsc
+index aa2952ea45d6..2bc577f145e7 100644
+--- a/OvmfPkg/OvmfXen.dsc
++++ b/OvmfPkg/OvmfXen.dsc
+@@ -32,6 +32,7 @@
+   #
+   DEFINE SOURCE_DEBUG_ENABLE     = FALSE
+   DEFINE BGRT_ENABLE             = TRUE
++  DEFINE IPXE_ENABLE             = FALSE
+ 
+ !include OvmfPkg/Include/Dsc/OvmfTpmDefines.dsc.inc
+ 
+diff --git a/OvmfPkg/OvmfXen.fdf b/OvmfPkg/OvmfXen.fdf
+index b155b3ad27b5..81d9681d537e 100644
+--- a/OvmfPkg/OvmfXen.fdf
++++ b/OvmfPkg/OvmfXen.fdf
+@@ -331,6 +331,14 @@ INF  SecurityPkg/RandomNumberGenerator/RngDxe/RngDxe.inf
+     SECTION PE32 = Intel3.5/EFIX64/E3522X2.EFI
+   }
+ !endif
++!if $(IPXE_ENABLE) == TRUE
++  FILE DRIVER = 9C1011A2-FC75-4C61-BFF1-AFAACA86DCD0 {
++    SECTION PE32 = 10ec8139.efi
++  }
++  FILE DRIVER = C4F14A61-D11E-499E-AE53-3CC64428E55A {
++    SECTION PE32 = 8086100e.efi
++  }
++!endif
+ !include NetworkPkg/Network.fdf.inc
+ 
+ #

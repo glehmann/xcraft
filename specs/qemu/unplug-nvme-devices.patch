@@ -1,0 +1,32 @@
+nvme: Unplug NVME devices at the same time as IDE devices
+
+Although the unplug protocol specifies a separate flag for unplugging NVME
+devices, it isn't used by any existing guests after more than a year. Since it
+is not clear why a separate flag is needed and to make NVME unplug work with
+existing guests, unplug NVME disks with IDE & SCSI disks.
+
+This patch can be removed when all the guests we care about pass the NVME
+unplug flag.
+
+diff --git a/hw/i386/xen/xen_platform.c b/hw/i386/xen/xen_platform.c
+index 8daf46aaa3..1ade7f7cf4 100644
+--- a/hw/i386/xen/xen_platform.c
++++ b/hw/i386/xen/xen_platform.c
+@@ -165,16 +165,12 @@ static void unplug_disks(PCIBus *b, PCIDevice *d, void *opaque)
+         break;
+ 
+     case PCI_CLASS_STORAGE_SCSI:
++    case PCI_CLASS_STORAGE_EXPRESS:
+         if (!aux) {
+             object_unparent(OBJECT(d));
+         }
+         break;
+ 
+-    case PCI_CLASS_STORAGE_EXPRESS:
+-        if (flags & UNPLUG_NVME_DISKS) {
+-            object_unparent(OBJECT(d));
+-        }
+-
+     default:
+         break;
+     }

@@ -1,0 +1,33 @@
+From 39fa9d4372563f499f7ada120c4ad98fe6509a8c Mon Sep 17 00:00:00 2001
+From: Yann Dirson <yann.dirson@vates.tech>
+Date: Wed, 2 Jul 2025 17:39:23 +0200
+Subject: [PATCH 1/3] pyproject: use a more correct requires-python
+
+Nowadays it is not very clear if "2.7" is really valid, and at least
+uv flags it as an error.
+
+Now ">=2.7" is not strictly correct as it includes the 3.0-3.5 range,
+but finding a way to express that (if there is one) is likely not worth
+it.
+
+Signed-off-by: Yann Dirson <yann.dirson@vates.tech>
+---
+ pyproject.toml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/pyproject.toml b/pyproject.toml
+index aab8c76..3e7db8e 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -3,7 +3,7 @@
+ name = "XSConsole"
+ dynamic = ["version"]
+ description = "Xenserver Status Report"
+-requires-python = "2.7"
++requires-python = ">=2.7, <3.12"
+ license = "GPL-2.0-or-later"
+ keywords = ["xenserver", "xen-project"]
+ authors = [
+-- 
+2.47.3
+

@@ -1,0 +1,48 @@
+diff --git a/xen/drivers/passthrough/amd/iommu_init.c b/xen/drivers/passthrough/amd/iommu_init.c
+index 6c0dc2d5cb69..abdaf6e3bb23 100644
+--- a/xen/drivers/passthrough/amd/iommu_init.c
++++ b/xen/drivers/passthrough/amd/iommu_init.c
+@@ -1353,7 +1353,7 @@ static bool __init amd_sp5100_erratum28(void)
+         byte = pci_conf_read8(PCI_SBDF(0, bus, 0x14, 0), 0xad);
+         if ( (byte >> 3) & 1 )
+         {
+-            printk(XENLOG_WARNING "AMD-Vi: SP5100 erratum 28 detected, disabling IOMMU.\n"
++            printk(XENLOG_WARNING "AMD-Vi: SP5100 erratum 28 detected, disabling Interrupt Remapping.\n"
+                    "If possible, disable SATA Combined mode in BIOS or contact your vendor for BIOS update.\n");
+             return 1;
+         }
+@@ -1393,7 +1393,9 @@ int __init amd_iommu_prepare(bool xt)
+ 
+     if ( iommu_intremap && amd_iommu_perdev_intremap &&
+          amd_sp5100_erratum28() )
+-        goto error_out;
++    {
++        iommu_intremap = 0;
++    }
+ 
+     /* We implies no IOMMU if ACPI indicates no MSI. */
+     if ( unlikely(acpi_gbl_FADT.boot_flags & ACPI_FADT_NO_MSI) )
+diff --git a/xen/drivers/passthrough/vtd/quirks.c b/xen/drivers/passthrough/vtd/quirks.c
+index 8b238ae7dc34..7f17c5cad79d 100644
+--- a/xen/drivers/passthrough/vtd/quirks.c
++++ b/xen/drivers/passthrough/vtd/quirks.c
+@@ -355,15 +355,15 @@ static void __init tylersburg_intremap_quirk(void)
+             if ( rev >= 0x22 )
+                 continue;
+             printk(XENLOG_WARNING VTDPREFIX
+-                   "Disabling IOMMU due to Intel 5500/5520 chipset errata #47 and #53\n");
+-            iommu_enable = false;
++                   "Disabling Interrupt remapping due to Intel 5500/5520 chipset errata #47 and #53\n");
++            iommu_intremap = false;
+             break;
+ 
+         case 0x34058086:
+             printk(XENLOG_WARNING VTDPREFIX
+-                   "Disabling IOMMU due to Intel X58 chipset %s\n",
++                   "Disabling Interrupt remapping due to Intel X58 chipset %s\n",
+                    rev < 0x22 ? "errata #62 and #69" : "erratum #69");
+-            iommu_enable = false;
++            iommu_intremap = false;
+             break;
+         }
+ 

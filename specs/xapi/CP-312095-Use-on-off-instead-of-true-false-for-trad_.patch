@@ -1,0 +1,27 @@
+From d4fa8a447167b5661572be9bf0934dabd7f486e6 Mon Sep 17 00:00:00 2001
+From: Gerald Elder-Vass <gerald.elder-vass@citrix.com>
+Date: Thu, 13 Nov 2025 15:57:08 +0000
+Subject: [PATCH 2/3] CP-312095: Use 'on'/'off' instead of 'true'/'false' for
+ trad_compat
+
+Signed-off-by: Gerald Elder-Vass <gerald.elder-vass@citrix.com>
+---
+ ocaml/xenopsd/scripts/qemu-wrapper | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ocaml/xenopsd/scripts/qemu-wrapper b/ocaml/xenopsd/scripts/qemu-wrapper
+index c0b52a0a5..6c7609f69 100644
+--- a/ocaml/xenopsd/scripts/qemu-wrapper
++++ b/ocaml/xenopsd/scripts/qemu-wrapper
+@@ -174,7 +174,7 @@ def main(argv):
+                       '%s,accel=xen,max-ram-below-4g=%lu,'
+                       'suppress-vmdesc=on,'
+                       'allow-unassigned=true,trad_compat=%s%s'
+-                      % (machine, mmio_start, trad_compat, igdpt)])
++                      % (machine, mmio_start, trad_compat and "on" or "off", igdpt)])
+ 
+     qemu_args.extend(argv[2:])
+ 
+-- 
+2.53.0
+

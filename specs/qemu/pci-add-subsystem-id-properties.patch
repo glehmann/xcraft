@@ -1,0 +1,41 @@
+diff --git a/hw/pci/pci.c b/hw/pci/pci.c
+index c70b5ceebaf1..bfdb624699de 100644
+--- a/hw/pci/pci.c
++++ b/hw/pci/pci.c
+@@ -82,6 +82,8 @@ static const Property pci_props[] = {
+     DEFINE_PROP_INT32("rombar",  PCIDevice, rom_bar, -1),
+     DEFINE_PROP_BIT("multifunction", PCIDevice, cap_present,
+                     QEMU_PCI_CAP_MULTIFUNCTION_BITNR, false),
++    DEFINE_PROP_UINT32("subvendor_id", PCIDevice, subvendor_id, 0),
++    DEFINE_PROP_UINT32("subsystem_id", PCIDevice, subsystem_id, 0),
+     DEFINE_PROP_BIT("x-pcie-lnksta-dllla", PCIDevice, cap_present,
+                     QEMU_PCIE_LNKSTA_DLLLA_BITNR, true),
+     DEFINE_PROP_BIT("x-pcie-extcap-init", PCIDevice, cap_present,
+@@ -1380,7 +1382,12 @@ static PCIDevice *do_pci_register_device(PCIDevice *pci_dev,
+     pci_config_set_class(pci_dev->config, pc->class_id);
+ 
+     if (!is_bridge) {
+-        if (pc->subsystem_vendor_id || pc->subsystem_id) {
++        if (pci_dev->subvendor_id || pci_dev->subsystem_id) {
++            pci_set_word(pci_dev->config + PCI_SUBSYSTEM_VENDOR_ID,
++                         pci_dev->subvendor_id);
++            pci_set_word(pci_dev->config + PCI_SUBSYSTEM_ID,
++                         pci_dev->subsystem_id);
++        } else if (pc->subsystem_vendor_id || pc->subsystem_id) {
+             pci_set_word(pci_dev->config + PCI_SUBSYSTEM_VENDOR_ID,
+                          pc->subsystem_vendor_id);
+             pci_set_word(pci_dev->config + PCI_SUBSYSTEM_ID,
+diff --git a/include/hw/pci/pci_device.h b/include/hw/pci/pci_device.h
+index eee03385686c..0c889716dbcf 100644
+--- a/include/hw/pci/pci_device.h
++++ b/include/hw/pci/pci_device.h
+@@ -182,6 +182,9 @@ struct PCIDevice {
+     uint32_t max_bounce_buffer_size;
+ 
+     char *sriov_pf;
++
++    uint32_t subvendor_id;
++    uint32_t subsystem_id;
+ };
+ 
+ static inline int pci_intx(PCIDevice *pci_dev)

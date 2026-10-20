@@ -1,0 +1,3 @@
+# Additional options for the Xapi storage script plugin server.
+# XAPI_STORAGE_SCRIPT_OPTIONS= : extra commandline startup arguments for xapi-storage-script
+XAPI_STORAGE_SCRIPT_OPTIONS=

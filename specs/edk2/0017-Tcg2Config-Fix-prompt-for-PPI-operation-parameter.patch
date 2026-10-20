@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Anthony PERARD <anthony.perard@citrix.com>
+Date: Mon, 18 May 2026 14:49:55 +0200
+Subject: [PATCH] Tcg2Config: Fix prompt for PPI operation parameter
+
+The code 'NOT questionref() == X' doesn't seems to work and the prompt for PPI
+operation parameter is always display. Change it to avoid "NOT" and use "!="
+instead.
+
+Signed-off-by: Anthony PERARD <anthony.perard@citrix.com>
+
+diff --git a/SecurityPkg/Tcg/Tcg2Config/Tcg2Config.vfr b/SecurityPkg/Tcg/Tcg2Config/Tcg2Config.vfr
+index 6b8ac2f5ee14..6cf20bf70927 100644
+--- a/SecurityPkg/Tcg/Tcg2Config/Tcg2Config.vfr
++++ b/SecurityPkg/Tcg/Tcg2Config/Tcg2Config.vfr
+@@ -151,7 +151,7 @@ formset
+             option text = STRING_TOKEN(STR_TCG2_DISABLE_ENDORSEMENT_ENABLE_STORAGE_HIERARCHY), value = TCG2_PHYSICAL_PRESENCE_DISABLE_ENDORSEMENT_ENABLE_STORAGE_HIERARCHY, flags = RESET_REQUIRED;
+     endoneof;
+ 
+-    suppressif NOT questionref(Tpm2Operation) == TCG2_PHYSICAL_PRESENCE_SET_PCR_BANKS;
++    suppressif questionref(Tpm2Operation) != TCG2_PHYSICAL_PRESENCE_SET_PCR_BANKS;
+     numeric name = Tpm2OperationParameter,
+             questionid = KEY_TPM2_OPERATION_PARAMETER,
+             prompt  = STRING_TOKEN(STR_TCG2_OPERATION_PARAMETER),

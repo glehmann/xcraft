@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tu Dinh <ngoc-tu.dinh@vates.tech>
+Date: Wed, 15 Jul 2026 14:48:47 +0000
+Subject: [PATCH] MdeModulePkg: Add EdkiiPlatformLogoDisplayAttributeMicrosoft
+
+Following Microsoft guidelines, this logo display attribute places the
+logo's center at 38.2% from the screen's top edge.
+
+To follow the specification, the embedded logo should be at most 40% of
+the screen's height and width.
+
+Bug: https://github.com/tianocore/edk2/pull/12813
+Bug-Vates: XCPNG-3554
+Signed-off-by: Tu Dinh <ngoc-tu.dinh@vates.tech>
+
+diff --git a/MdeModulePkg/Include/Protocol/PlatformLogo.h b/MdeModulePkg/Include/Protocol/PlatformLogo.h
+index 08e1dc35a419..263c058338e1 100644
+--- a/MdeModulePkg/Include/Protocol/PlatformLogo.h
++++ b/MdeModulePkg/Include/Protocol/PlatformLogo.h
+@@ -29,7 +29,12 @@ typedef enum {
+   EdkiiPlatformLogoDisplayAttributeCenterBottom,
+   EdkiiPlatformLogoDisplayAttributeLeftBottom,
+   EdkiiPlatformLogoDisplayAttributeCenterLeft,
+-  EdkiiPlatformLogoDisplayAttributeCenter
++  EdkiiPlatformLogoDisplayAttributeCenter,
++  //
++  // Use Microsoft's guidance at:
++  // https://learn.microsoft.com/en-us/windows-hardware/drivers/bringup/boot-screen-components
++  //
++  EdkiiPlatformLogoDisplayAttributeMicrosoft
+ } EDKII_PLATFORM_LOGO_DISPLAY_ATTRIBUTE;
+ 
+ /**
+diff --git a/MdeModulePkg/Library/BootLogoLib/BootLogoLib.c b/MdeModulePkg/Library/BootLogoLib/BootLogoLib.c
+index 5beb0e0aa547..2aec5e2bb2bd 100644
+--- a/MdeModulePkg/Library/BootLogoLib/BootLogoLib.c
++++ b/MdeModulePkg/Library/BootLogoLib/BootLogoLib.c
+@@ -171,6 +171,14 @@ BootLogoEnableLogo (
+         DestX = SizeOfX - Image.Width;
+         DestY = SizeOfY - Image.Height;
+         break;
++      case EdkiiPlatformLogoDisplayAttributeMicrosoft:
++        //
++        // Microsoft's guidance places the center of the logo at 38.2% of the
++        // display height.
++        //
++        DestX = MAX (0, ((INTN)SizeOfX - (INTN)Image.Width) / 2);
++        DestY = MAX (0, (INTN)SizeOfY * 382 / 1000 - (INTN)Image.Height / 2);
++        break;
+ 
+       default:
+         ASSERT (FALSE);

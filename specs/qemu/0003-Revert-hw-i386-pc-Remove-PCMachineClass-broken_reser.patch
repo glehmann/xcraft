@@ -1,0 +1,64 @@
+From 434985d85f50dd022b6e30d0976a2683eb7be75b Mon Sep 17 00:00:00 2001
+Message-ID: <434985d85f50dd022b6e30d0976a2683eb7be75b.1764154288.git.gerald.elder-vass@citrix.com>
+In-Reply-To: <61995ad32249580db2c1e899b495a41abfe44d3e.1764154288.git.gerald.elder-vass@citrix.com>
+References: <61995ad32249580db2c1e899b495a41abfe44d3e.1764154288.git.gerald.elder-vass@citrix.com>
+From: Gerald Elder-Vass <gerald.elder-vass@citrix.com>
+Date: Wed, 26 Nov 2025 10:49:03 +0000
+Subject: [PATCH 03/12] Revert "hw/i386/pc: Remove
+ PCMachineClass::broken_reserved_end field"
+
+This reverts commit 8b1c560937467d0d96c1d0948e99f86ce188c0bc.
+---
+ hw/i386/pc.c         | 13 ++++++++-----
+ include/hw/i386/pc.h |  1 +
+ 2 files changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index d502cb7d758a..766360fe96fc 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -969,13 +969,14 @@ void pc_memory_init(PCMachineState *pcms,
+ 
+     if (machine->device_memory) {
+         uint64_t *val = g_malloc(sizeof(*val));
+-        uint64_t res_mem_end;
++        uint64_t res_mem_end = machine->device_memory->base;
++
++        if (!pcmc->broken_reserved_end) {
++            res_mem_end += memory_region_size(&machine->device_memory->mr);
++        }
+ 
+         if (pcms->cxl_devices_state.is_enabled) {
+             res_mem_end = cxl_resv_end;
+-        } else {
+-            res_mem_end = machine->device_memory->base
+-                          + memory_region_size(&machine->device_memory->mr);
+         }
+         *val = cpu_to_le64(ROUND_UP(res_mem_end, 1 * GiB));
+         fw_cfg_add_file(fw_cfg, "etc/reserved-memory-end", val, sizeof(*val));
+@@ -1013,7 +1014,9 @@ uint64_t pc_pci_hole64_start(void)
+         hole64_start = pc_get_cxl_range_end(pcms);
+     } else if (pcmc->has_reserved_memory && (ms->ram_size < ms->maxram_size)) {
+         pc_get_device_memory_range(pcms, &hole64_start, &size);
+-        hole64_start += size;
++        if (!pcmc->broken_reserved_end) {
++            hole64_start += size;
++        }
+     } else {
+         hole64_start = pc_above_4g_end(pcms);
+     }
+diff --git a/include/hw/i386/pc.h b/include/hw/i386/pc.h
+index 7ab25e8426f3..a84d5b502a76 100644
+--- a/include/hw/i386/pc.h
++++ b/include/hw/i386/pc.h
+@@ -112,6 +112,7 @@ struct PCMachineClass {
+     /* RAM / address space compat: */
+     bool gigabyte_align;
+     bool has_reserved_memory;
++    bool broken_reserved_end;
+     bool enforce_amd_1tb_hole;
+     bool isa_bios_alias;
+ 
+-- 
+2.47.3
+

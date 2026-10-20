@@ -1,0 +1,31 @@
+From 363846c39c1e7a2467f65694e176708a5b43b678 Mon Sep 17 00:00:00 2001
+From: Ming Lu <ming.lu@cloud.com>
+Date: Mon, 12 May 2025 14:23:35 +0800
+Subject: [PATCH 07/10] CP-54444: Remove interface-rename logic for legacy
+ upgrade paths
+
+Signed-off-by: Ming Lu <ming.lu@cloud.com>
+---
+ upgrade.py | 6 ------
+ 1 file changed, 6 deletions(-)
+
+diff --git a/upgrade.py b/upgrade.py
+index aad6ed5..cb3876f 100644
+--- a/upgrade.py
++++ b/upgrade.py
+@@ -503,12 +503,6 @@ class ThirdGenUpgrader(Upgrader):
+         print("UPGRADE=true", file=state)
+         state.close()
+ 
+-        # The existence of the static-rules.conf is used to detect upgrade from Boston or newer
+-        if os.path.exists(os.path.join(mounts['root'], 'etc/sysconfig/network-scripts/interface-rename-data/static-rules.conf')):
+-            # CA-82901 - convert any old style ppn referenced to new style ppn references
+-            util.runCmd2(['sed', r's/pci\([0-9]\+p[0-9]\+\)/p\1/g', '-i',
+-                          os.path.join(mounts['root'], 'etc/sysconfig/network-scripts/interface-rename-data/static-rules.conf')])
+-
+         net_dict = util.readKeyValueFile(os.path.join(mounts['root'], 'etc/sysconfig/network'))
+         if net_dict.get('NETWORKING_IPV6', 'no') == 'no':
+             nfd = open(os.path.join(mounts['root'], 'etc/sysconfig/network'), 'a')
+-- 
+2.39.5
+

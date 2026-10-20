@@ -1,0 +1,22 @@
+CA-420826: hw/cxl: Add cxl_fmws_get_all_sorted stub
+
+Upstream commit 584f722 refactored acpi/cxl.c to identify all fixed
+windows by using the QOM instead of the CXLState, but failed to
+introduce a stub method to protect against the case where CXL is not
+used.
+
+Fixes: 584f722
+Signed-off-by: Gerald Elder-Vass <gerald.elder-vass@citrix.com>
+diff --git a/hw/cxl/cxl-host-stubs.c b/hw/cxl/cxl-host-stubs.c
+index c015baac8138..637ea321511b 100644
+--- a/hw/cxl/cxl-host-stubs.c
++++ b/hw/cxl/cxl-host-stubs.c
+@@ -18,3 +18,8 @@ hwaddr cxl_fmws_set_memmap(hwaddr base, hwaddr max_addr)
+ void cxl_fmws_update_mmio(void) {};
+ 
+ const MemoryRegionOps cfmws_ops;
++
++GSList *cxl_fmws_get_all_sorted(void)
++{
++    return NULL;
++}

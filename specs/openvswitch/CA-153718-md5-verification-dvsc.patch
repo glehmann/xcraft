@@ -1,0 +1,13 @@
+diff --git a/xenserver/usr_share_openvswitch_scripts_ovs-start b/xenserver/usr_share_openvswitch_scripts_ovs-start
+index 93a71dd..8e61fcd 100755
+--- a/xenserver/usr_share_openvswitch_scripts_ovs-start
++++ b/xenserver/usr_share_openvswitch_scripts_ovs-start
+@@ -1,5 +1,8 @@
+ #!/bin/sh
+ 
++OPENSSL_ENABLE_MD5_VERIFY=1
++export OPENSSL_ENABLE_MD5_VERIFY
++
+ . /usr/share/openvswitch/scripts/ovs-lib || exit 1
+ . /etc/xensource-inventory
+ test -e /etc/sysconfig/openvswitch && . /etc/sysconfig/openvswitch

@@ -1,0 +1,1144 @@
+Various configuration files.
+
+Most notibly, the cached results of the xs-reconfigure.sh script.
+
+xen/crypto/signing_key.pem is XEN_LP_SIGN_KEY_XS9_DEV
+
+diff --git a/.config b/.config
+new file mode 100644
+index 000000000000..55447cd7033f
+--- /dev/null
++++ b/.config
+@@ -0,0 +1,11 @@
++# -*- mode: Makefile; -*-
++
++# Always produce debug symbols for debuginfo RPMs
++debug_symbols := y
++
++# Enable all config options
++XEN_CONFIG_EXPERT := y
++export XEN_CONFIG_EXPERT
++
++# No remus netbuffering
++override CONFIG_REMUS_NETBUF := n
+diff --git a/buildconfigs/config-debug b/buildconfigs/config-debug
+new file mode 100644
+index 000000000000..36b8b77ae46a
+--- /dev/null
++++ b/buildconfigs/config-debug
+@@ -0,0 +1,211 @@
++#
++# Automatically generated file; DO NOT EDIT.
++# Xen/x86 4.21.1 Configuration
++#
++CONFIG_CC_IS_GCC=y
++CONFIG_GCC_VERSION=120400
++CONFIG_CLANG_VERSION=0
++CONFIG_LD_IS_GNU=y
++CONFIG_CC_HAS_ASM_INLINE=y
++CONFIG_CC_SPLIT_SECTIONS=y
++CONFIG_CC_HAS_ASM_GOTO_OUTPUT=y
++CONFIG_FUNCTION_ALIGNMENT_16B=y
++CONFIG_FUNCTION_ALIGNMENT=16
++CONFIG_X86_64=y
++CONFIG_X86=y
++CONFIG_ARCH_DEFCONFIG="arch/x86/configs/x86_64_defconfig"
++CONFIG_CC_HAS_INDIRECT_THUNK=y
++CONFIG_CC_HAS_RETURN_THUNK=y
++CONFIG_HAS_AS_CET_SS=y
++CONFIG_HAS_CC_CET_IBT=y
++
++#
++# Architecture Features
++#
++
++#
++# Supported CPU vendors
++#
++CONFIG_AMD=y
++CONFIG_INTEL=y
++# end of Supported CPU vendors
++
++CONFIG_64BIT=y
++CONFIG_NR_CPUS=2048
++CONFIG_NR_NUMA_NODES=64
++CONFIG_PV=y
++# CONFIG_PV32 is not set
++# CONFIG_PV_LINEAR_PT is not set
++CONFIG_HVM=y
++CONFIG_AMD_SVM=y
++CONFIG_INTEL_VMX=y
++CONFIG_HVM_FEP=y
++CONFIG_ALTP2M=y
++# CONFIG_MEM_PAGING is not set
++# CONFIG_MEM_SHARING is not set
++CONFIG_XEN_SHSTK=y
++CONFIG_XEN_IBT=y
++# CONFIG_SHADOW_PAGING is not set
++CONFIG_PAGING=y
++# CONFIG_BIGMEM is not set
++# CONFIG_TBOOT is not set
++CONFIG_X86_PSR=y
++# CONFIG_XEN_ALIGN_DEFAULT is not set
++CONFIG_XEN_ALIGN_2M=y
++# CONFIG_X2APIC_PHYSICAL is not set
++CONFIG_X2APIC_MIXED=y
++CONFIG_MCE_NONFATAL=y
++# CONFIG_XEN_GUEST is not set
++# CONFIG_HYPERV_GUEST is not set
++CONFIG_REQUIRE_NX=y
++CONFIG_UCODE_SCAN_DEFAULT=y
++# end of Architecture Features
++
++#
++# Common Features
++#
++CONFIG_COMPAT=y
++CONFIG_CORE_PARKING=y
++CONFIG_GRANT_TABLE=y
++CONFIG_EVTCHN_FIFO=y
++# CONFIG_PDX_MASK_COMPRESSION is not set
++CONFIG_PDX_OFFSET_COMPRESSION=y
++# CONFIG_PDX_NONE is not set
++CONFIG_PDX_OFFSET_TBL_ORDER=6
++CONFIG_ALTERNATIVE_CALL=y
++CONFIG_ARCH_MAP_DOMAIN_PAGE=y
++CONFIG_ARCH_PAGING_MEMPOOL=y
++CONFIG_GENERIC_BUG_FRAME=y
++CONFIG_HAS_ALTERNATIVE=y
++CONFIG_HAS_COMPAT=y
++CONFIG_HAS_DIT=y
++CONFIG_HAS_EX_TABLE=y
++CONFIG_HAS_FAST_MULTIPLY=y
++CONFIG_HAS_IOPORTS=y
++CONFIG_HAS_KEXEC=y
++CONFIG_HAS_PIRQ=y
++CONFIG_HAS_SCHED_GRANULARITY=y
++CONFIG_HAS_SYSTEM_SUSPEND=y
++CONFIG_HAS_UBSAN=y
++CONFIG_HAS_VMAP=y
++CONFIG_MEM_ACCESS_ALWAYS_ON=y
++CONFIG_VM_EVENT=y
++CONFIG_NEEDS_LIBELF=y
++CONFIG_NUMA=y
++
++#
++# Speculative hardening
++#
++CONFIG_INDIRECT_THUNK=y
++CONFIG_RETURN_THUNK=y
++CONFIG_SPECULATIVE_HARDEN_ARRAY=y
++CONFIG_SPECULATIVE_HARDEN_BRANCH=y
++CONFIG_SPECULATIVE_HARDEN_GUEST_ACCESS=y
++CONFIG_SPECULATIVE_HARDEN_LOCK=y
++# end of Speculative hardening
++
++#
++# Other hardening
++#
++# end of Other hardening
++
++CONFIG_DIT_DEFAULT=y
++CONFIG_HYPFS=y
++CONFIG_HYPFS_CONFIG=y
++CONFIG_IOREQ_SERVER=y
++CONFIG_KEXEC=y
++CONFIG_EFI_SET_VIRTUAL_ADDRESS_MAP=y
++# CONFIG_XENOPROF is not set
++CONFIG_XSM=y
++# CONFIG_XSM_FLASK is not set
++CONFIG_XSM_SILO=y
++# CONFIG_XSM_DUMMY_DEFAULT is not set
++CONFIG_XSM_SILO_DEFAULT=y
++# CONFIG_LATE_HWDOM is not set
++# CONFIG_ARGO is not set
++
++#
++# Schedulers
++#
++CONFIG_SCHED_CREDIT=y
++CONFIG_SCHED_CREDIT2=y
++CONFIG_SCHED_RTDS=y
++CONFIG_SCHED_ARINC653=y
++CONFIG_SCHED_NULL=y
++CONFIG_SCHED_CREDIT_DEFAULT=y
++# CONFIG_SCHED_CREDIT2_DEFAULT is not set
++# CONFIG_SCHED_RTDS_DEFAULT is not set
++# CONFIG_SCHED_ARINC653_DEFAULT is not set
++# CONFIG_SCHED_NULL_DEFAULT is not set
++CONFIG_SCHED_DEFAULT="credit"
++# end of Schedulers
++
++CONFIG_CRYPTO=y
++CONFIG_LIVEPATCH=y
++CONFIG_FAST_SYMBOL_LOOKUP=y
++CONFIG_ENFORCE_UNIQUE_SYMBOLS=y
++CONFIG_PAYLOAD_SIGNING=y
++CONFIG_PAYLOAD_SIG_KEY="signing_key.pem"
++CONFIG_CMDLINE=""
++CONFIG_DOM0_MEM=""
++CONFIG_TRACEBUFFER=y
++CONFIG_SYSTEM_SUSPEND_ALWAYS_ON=y
++CONFIG_SYSTEM_SUSPEND=y
++
++#
++# Supported hypercall interfaces
++#
++CONFIG_SYSCTL=y
++# end of Supported hypercall interfaces
++
++CONFIG_PM_OP=y
++CONFIG_PM_STATS=y
++CONFIG_LOCKDOWN_DEFAULT=y
++# end of Common Features
++
++#
++# Device Drivers
++#
++CONFIG_ACPI=y
++CONFIG_ACPI_LEGACY_TABLES_LOOKUP=y
++CONFIG_ACPI_NUMA=y
++CONFIG_HAS_NS16550=y
++CONFIG_HAS_EHCI=y
++CONFIG_SERIAL_TX_BUFSIZE=131072
++CONFIG_XHCI=y
++CONFIG_HAS_CPUFREQ=y
++CONFIG_HAS_PASSTHROUGH=y
++CONFIG_AMD_IOMMU=y
++CONFIG_INTEL_IOMMU=y
++# CONFIG_IOMMU_QUARANTINE_NONE is not set
++# CONFIG_IOMMU_QUARANTINE_BASIC is not set
++CONFIG_IOMMU_QUARANTINE_SCRATCH_PAGE=y
++CONFIG_HAS_PCI=y
++CONFIG_HAS_PCI_MSI=y
++CONFIG_VIDEO=y
++CONFIG_VGA=y
++CONFIG_HAS_VPCI=y
++# end of Device Drivers
++
++CONFIG_EXPERT=y
++CONFIG_UNSUPPORTED=y
++CONFIG_ARCH_SUPPORTS_INT128=y
++CONFIG_ARCH_VCPU_IOREQ_COMPLETION=y
++
++#
++# Debugging Options
++#
++CONFIG_DEBUG=y
++CONFIG_GDBSX=y
++CONFIG_FRAME_POINTER=y
++CONFIG_SELF_TESTS=y
++# CONFIG_DEBUG_LOCK_PROFILE is not set
++CONFIG_DEBUG_LOCKS=y
++# CONFIG_PERF_COUNTERS is not set
++CONFIG_VERBOSE_DEBUG=y
++CONFIG_SCRUB_DEBUG=y
++# CONFIG_UBSAN is not set
++# CONFIG_DEBUG_TRACE is not set
++CONFIG_XMEM_POOL_POISON=y
++CONFIG_DEBUG_INFO=y
++# end of Debugging Options
+diff --git a/buildconfigs/config-pvshim b/buildconfigs/config-pvshim
+new file mode 100644
+index 000000000000..ef80fdf0197f
+--- /dev/null
++++ b/buildconfigs/config-pvshim
+@@ -0,0 +1,182 @@
++#
++# Automatically generated file; DO NOT EDIT.
++# Xen/x86 4.21.1 Configuration
++#
++CONFIG_CC_IS_GCC=y
++CONFIG_GCC_VERSION=120400
++CONFIG_CLANG_VERSION=0
++CONFIG_LD_IS_GNU=y
++CONFIG_CC_HAS_ASM_INLINE=y
++CONFIG_CC_HAS_ASM_GOTO_OUTPUT=y
++CONFIG_FUNCTION_ALIGNMENT_16B=y
++CONFIG_FUNCTION_ALIGNMENT=16
++CONFIG_X86_64=y
++CONFIG_X86=y
++CONFIG_ARCH_DEFCONFIG="arch/x86/configs/x86_64_defconfig"
++CONFIG_CC_HAS_INDIRECT_THUNK=y
++CONFIG_CC_HAS_RETURN_THUNK=y
++CONFIG_HAS_AS_CET_SS=y
++CONFIG_HAS_CC_CET_IBT=y
++
++#
++# Architecture Features
++#
++
++#
++# Supported CPU vendors
++#
++CONFIG_AMD=y
++CONFIG_INTEL=y
++# end of Supported CPU vendors
++
++CONFIG_64BIT=y
++CONFIG_NR_CPUS=32
++CONFIG_NR_NUMA_NODES=64
++CONFIG_PV=y
++CONFIG_PV32=y
++CONFIG_PV_LINEAR_PT=y
++# CONFIG_XEN_SHSTK is not set
++# CONFIG_XEN_IBT is not set
++# CONFIG_SHADOW_PAGING is not set
++# CONFIG_BIGMEM is not set
++# CONFIG_TBOOT is not set
++CONFIG_X86_PSR=y
++# CONFIG_XEN_ALIGN_DEFAULT is not set
++CONFIG_XEN_ALIGN_2M=y
++# CONFIG_X2APIC_PHYSICAL is not set
++CONFIG_X2APIC_MIXED=y
++CONFIG_MCE_NONFATAL=y
++CONFIG_GUEST=y
++CONFIG_XEN_GUEST=y
++CONFIG_PVH_GUEST=y
++CONFIG_PV_SHIM=y
++CONFIG_PV_SHIM_EXCLUSIVE=y
++# CONFIG_HYPERV_GUEST is not set
++CONFIG_REQUIRE_NX=y
++# CONFIG_UCODE_SCAN_DEFAULT is not set
++# end of Architecture Features
++
++#
++# Common Features
++#
++CONFIG_COMPAT=y
++CONFIG_CORE_PARKING=y
++# CONFIG_GRANT_TABLE is not set
++CONFIG_EVTCHN_FIFO=y
++# CONFIG_PDX_MASK_COMPRESSION is not set
++# CONFIG_PDX_OFFSET_COMPRESSION is not set
++CONFIG_PDX_NONE=y
++CONFIG_ALTERNATIVE_CALL=y
++CONFIG_ARCH_MAP_DOMAIN_PAGE=y
++CONFIG_ARCH_PAGING_MEMPOOL=y
++CONFIG_GENERIC_BUG_FRAME=y
++CONFIG_HAS_ALTERNATIVE=y
++CONFIG_HAS_COMPAT=y
++CONFIG_HAS_DIT=y
++CONFIG_HAS_EX_TABLE=y
++CONFIG_HAS_FAST_MULTIPLY=y
++CONFIG_HAS_IOPORTS=y
++CONFIG_HAS_KEXEC=y
++CONFIG_HAS_PIRQ=y
++CONFIG_HAS_SCHED_GRANULARITY=y
++CONFIG_HAS_SYSTEM_SUSPEND=y
++CONFIG_HAS_UBSAN=y
++CONFIG_HAS_VMAP=y
++CONFIG_NEEDS_LIBELF=y
++CONFIG_NUMA=y
++
++#
++# Speculative hardening
++#
++CONFIG_INDIRECT_THUNK=y
++CONFIG_RETURN_THUNK=y
++CONFIG_SPECULATIVE_HARDEN_ARRAY=y
++CONFIG_SPECULATIVE_HARDEN_BRANCH=y
++CONFIG_SPECULATIVE_HARDEN_GUEST_ACCESS=y
++CONFIG_SPECULATIVE_HARDEN_LOCK=y
++# end of Speculative hardening
++
++#
++# Other hardening
++#
++# end of Other hardening
++
++# CONFIG_DIT_DEFAULT is not set
++# CONFIG_HYPFS is not set
++# CONFIG_KEXEC is not set
++# CONFIG_EFI_SET_VIRTUAL_ADDRESS_MAP is not set
++# CONFIG_XENOPROF is not set
++# CONFIG_XSM is not set
++# CONFIG_ARGO is not set
++
++#
++# Schedulers
++#
++CONFIG_SCHED_CREDIT=y
++# CONFIG_SCHED_CREDIT2 is not set
++# CONFIG_SCHED_RTDS is not set
++# CONFIG_SCHED_ARINC653 is not set
++CONFIG_SCHED_NULL=y
++# CONFIG_SCHED_CREDIT_DEFAULT is not set
++CONFIG_SCHED_NULL_DEFAULT=y
++CONFIG_SCHED_DEFAULT="null"
++# end of Schedulers
++
++# CONFIG_ENFORCE_UNIQUE_SYMBOLS is not set
++# CONFIG_SUPPRESS_DUPLICATE_SYMBOL_WARNINGS is not set
++CONFIG_CMDLINE=""
++CONFIG_DOM0_MEM=""
++CONFIG_SYSTEM_SUSPEND_ALWAYS_ON=y
++CONFIG_SYSTEM_SUSPEND=y
++
++#
++# Supported hypercall interfaces
++#
++# end of Supported hypercall interfaces
++
++# CONFIG_LOCKDOWN_DEFAULT is not set
++# end of Common Features
++
++#
++# Device Drivers
++#
++CONFIG_ACPI=y
++CONFIG_ACPI_LEGACY_TABLES_LOOKUP=y
++CONFIG_ACPI_NUMA=y
++CONFIG_HAS_NS16550=y
++CONFIG_HAS_EHCI=y
++CONFIG_SERIAL_TX_BUFSIZE=16384
++# CONFIG_XHCI is not set
++CONFIG_HAS_CPUFREQ=y
++CONFIG_HAS_PASSTHROUGH=y
++CONFIG_AMD_IOMMU=y
++CONFIG_INTEL_IOMMU=y
++CONFIG_IOMMU_QUARANTINE_NONE=y
++# CONFIG_IOMMU_QUARANTINE_BASIC is not set
++# CONFIG_IOMMU_QUARANTINE_SCRATCH_PAGE is not set
++CONFIG_HAS_PCI=y
++CONFIG_HAS_PCI_MSI=y
++# CONFIG_VGA is not set
++# end of Device Drivers
++
++CONFIG_EXPERT=y
++CONFIG_UNSUPPORTED=y
++CONFIG_ARCH_SUPPORTS_INT128=y
++
++#
++# Debugging Options
++#
++# CONFIG_DEBUG is not set
++# CONFIG_GDBSX is not set
++# CONFIG_FRAME_POINTER is not set
++# CONFIG_SELF_TESTS is not set
++# CONFIG_DEBUG_LOCK_PROFILE is not set
++# CONFIG_DEBUG_LOCKS is not set
++# CONFIG_PERF_COUNTERS is not set
++# CONFIG_VERBOSE_DEBUG is not set
++# CONFIG_SCRUB_DEBUG is not set
++# CONFIG_UBSAN is not set
++# CONFIG_DEBUG_TRACE is not set
++# CONFIG_XMEM_POOL_POISON is not set
++CONFIG_DEBUG_INFO=y
++# end of Debugging Options
+diff --git a/buildconfigs/config-release b/buildconfigs/config-release
+new file mode 100644
+index 000000000000..644bd4e493ad
+--- /dev/null
++++ b/buildconfigs/config-release
+@@ -0,0 +1,211 @@
++#
++# Automatically generated file; DO NOT EDIT.
++# Xen/x86 4.21.1 Configuration
++#
++CONFIG_CC_IS_GCC=y
++CONFIG_GCC_VERSION=120400
++CONFIG_CLANG_VERSION=0
++CONFIG_LD_IS_GNU=y
++CONFIG_CC_HAS_ASM_INLINE=y
++CONFIG_CC_SPLIT_SECTIONS=y
++CONFIG_CC_HAS_ASM_GOTO_OUTPUT=y
++CONFIG_FUNCTION_ALIGNMENT_16B=y
++CONFIG_FUNCTION_ALIGNMENT=16
++CONFIG_X86_64=y
++CONFIG_X86=y
++CONFIG_ARCH_DEFCONFIG="arch/x86/configs/x86_64_defconfig"
++CONFIG_CC_HAS_INDIRECT_THUNK=y
++CONFIG_CC_HAS_RETURN_THUNK=y
++CONFIG_HAS_AS_CET_SS=y
++CONFIG_HAS_CC_CET_IBT=y
++
++#
++# Architecture Features
++#
++
++#
++# Supported CPU vendors
++#
++CONFIG_AMD=y
++CONFIG_INTEL=y
++# end of Supported CPU vendors
++
++CONFIG_64BIT=y
++CONFIG_NR_CPUS=2048
++CONFIG_NR_NUMA_NODES=64
++CONFIG_PV=y
++# CONFIG_PV32 is not set
++# CONFIG_PV_LINEAR_PT is not set
++CONFIG_HVM=y
++CONFIG_AMD_SVM=y
++CONFIG_INTEL_VMX=y
++CONFIG_HVM_FEP=y
++CONFIG_ALTP2M=y
++# CONFIG_MEM_PAGING is not set
++# CONFIG_MEM_SHARING is not set
++CONFIG_XEN_SHSTK=y
++CONFIG_XEN_IBT=y
++# CONFIG_SHADOW_PAGING is not set
++CONFIG_PAGING=y
++# CONFIG_BIGMEM is not set
++# CONFIG_TBOOT is not set
++CONFIG_X86_PSR=y
++# CONFIG_XEN_ALIGN_DEFAULT is not set
++CONFIG_XEN_ALIGN_2M=y
++# CONFIG_X2APIC_PHYSICAL is not set
++CONFIG_X2APIC_MIXED=y
++CONFIG_MCE_NONFATAL=y
++# CONFIG_XEN_GUEST is not set
++# CONFIG_HYPERV_GUEST is not set
++CONFIG_REQUIRE_NX=y
++CONFIG_UCODE_SCAN_DEFAULT=y
++# end of Architecture Features
++
++#
++# Common Features
++#
++CONFIG_COMPAT=y
++CONFIG_CORE_PARKING=y
++CONFIG_GRANT_TABLE=y
++CONFIG_EVTCHN_FIFO=y
++# CONFIG_PDX_MASK_COMPRESSION is not set
++CONFIG_PDX_OFFSET_COMPRESSION=y
++# CONFIG_PDX_NONE is not set
++CONFIG_PDX_OFFSET_TBL_ORDER=6
++CONFIG_ALTERNATIVE_CALL=y
++CONFIG_ARCH_MAP_DOMAIN_PAGE=y
++CONFIG_ARCH_PAGING_MEMPOOL=y
++CONFIG_GENERIC_BUG_FRAME=y
++CONFIG_HAS_ALTERNATIVE=y
++CONFIG_HAS_COMPAT=y
++CONFIG_HAS_DIT=y
++CONFIG_HAS_EX_TABLE=y
++CONFIG_HAS_FAST_MULTIPLY=y
++CONFIG_HAS_IOPORTS=y
++CONFIG_HAS_KEXEC=y
++CONFIG_HAS_PIRQ=y
++CONFIG_HAS_SCHED_GRANULARITY=y
++CONFIG_HAS_SYSTEM_SUSPEND=y
++CONFIG_HAS_UBSAN=y
++CONFIG_HAS_VMAP=y
++CONFIG_MEM_ACCESS_ALWAYS_ON=y
++CONFIG_VM_EVENT=y
++CONFIG_NEEDS_LIBELF=y
++CONFIG_NUMA=y
++
++#
++# Speculative hardening
++#
++CONFIG_INDIRECT_THUNK=y
++CONFIG_RETURN_THUNK=y
++CONFIG_SPECULATIVE_HARDEN_ARRAY=y
++CONFIG_SPECULATIVE_HARDEN_BRANCH=y
++CONFIG_SPECULATIVE_HARDEN_GUEST_ACCESS=y
++CONFIG_SPECULATIVE_HARDEN_LOCK=y
++# end of Speculative hardening
++
++#
++# Other hardening
++#
++# end of Other hardening
++
++CONFIG_DIT_DEFAULT=y
++CONFIG_HYPFS=y
++CONFIG_HYPFS_CONFIG=y
++CONFIG_IOREQ_SERVER=y
++CONFIG_KEXEC=y
++CONFIG_EFI_SET_VIRTUAL_ADDRESS_MAP=y
++# CONFIG_XENOPROF is not set
++CONFIG_XSM=y
++# CONFIG_XSM_FLASK is not set
++CONFIG_XSM_SILO=y
++# CONFIG_XSM_DUMMY_DEFAULT is not set
++CONFIG_XSM_SILO_DEFAULT=y
++# CONFIG_LATE_HWDOM is not set
++# CONFIG_ARGO is not set
++
++#
++# Schedulers
++#
++CONFIG_SCHED_CREDIT=y
++CONFIG_SCHED_CREDIT2=y
++CONFIG_SCHED_RTDS=y
++CONFIG_SCHED_ARINC653=y
++CONFIG_SCHED_NULL=y
++CONFIG_SCHED_CREDIT_DEFAULT=y
++# CONFIG_SCHED_CREDIT2_DEFAULT is not set
++# CONFIG_SCHED_RTDS_DEFAULT is not set
++# CONFIG_SCHED_ARINC653_DEFAULT is not set
++# CONFIG_SCHED_NULL_DEFAULT is not set
++CONFIG_SCHED_DEFAULT="credit"
++# end of Schedulers
++
++CONFIG_CRYPTO=y
++CONFIG_LIVEPATCH=y
++CONFIG_FAST_SYMBOL_LOOKUP=y
++CONFIG_ENFORCE_UNIQUE_SYMBOLS=y
++CONFIG_PAYLOAD_SIGNING=y
++CONFIG_PAYLOAD_SIG_KEY="signing_key.pem"
++CONFIG_CMDLINE=""
++CONFIG_DOM0_MEM=""
++CONFIG_TRACEBUFFER=y
++CONFIG_SYSTEM_SUSPEND_ALWAYS_ON=y
++CONFIG_SYSTEM_SUSPEND=y
++
++#
++# Supported hypercall interfaces
++#
++CONFIG_SYSCTL=y
++# end of Supported hypercall interfaces
++
++CONFIG_PM_OP=y
++CONFIG_PM_STATS=y
++CONFIG_LOCKDOWN_DEFAULT=y
++# end of Common Features
++
++#
++# Device Drivers
++#
++CONFIG_ACPI=y
++CONFIG_ACPI_LEGACY_TABLES_LOOKUP=y
++CONFIG_ACPI_NUMA=y
++CONFIG_HAS_NS16550=y
++CONFIG_HAS_EHCI=y
++CONFIG_SERIAL_TX_BUFSIZE=131072
++CONFIG_XHCI=y
++CONFIG_HAS_CPUFREQ=y
++CONFIG_HAS_PASSTHROUGH=y
++CONFIG_AMD_IOMMU=y
++CONFIG_INTEL_IOMMU=y
++# CONFIG_IOMMU_QUARANTINE_NONE is not set
++# CONFIG_IOMMU_QUARANTINE_BASIC is not set
++CONFIG_IOMMU_QUARANTINE_SCRATCH_PAGE=y
++CONFIG_HAS_PCI=y
++CONFIG_HAS_PCI_MSI=y
++CONFIG_VIDEO=y
++CONFIG_VGA=y
++CONFIG_HAS_VPCI=y
++# end of Device Drivers
++
++CONFIG_EXPERT=y
++CONFIG_UNSUPPORTED=y
++CONFIG_ARCH_SUPPORTS_INT128=y
++CONFIG_ARCH_VCPU_IOREQ_COMPLETION=y
++
++#
++# Debugging Options
++#
++# CONFIG_DEBUG is not set
++CONFIG_GDBSX=y
++# CONFIG_FRAME_POINTER is not set
++# CONFIG_SELF_TESTS is not set
++# CONFIG_DEBUG_LOCK_PROFILE is not set
++# CONFIG_DEBUG_LOCKS is not set
++# CONFIG_PERF_COUNTERS is not set
++# CONFIG_VERBOSE_DEBUG is not set
++# CONFIG_SCRUB_DEBUG is not set
++# CONFIG_UBSAN is not set
++# CONFIG_DEBUG_TRACE is not set
++# CONFIG_XMEM_POOL_POISON is not set
++CONFIG_DEBUG_INFO=y
++# end of Debugging Options
+diff --git a/config/Docs.mk b/config/Docs.mk
+new file mode 100644
+index 000000000000..49616fab6910
+--- /dev/null
++++ b/config/Docs.mk
+@@ -0,0 +1,9 @@
++-include $(XEN_ROOT)/config/Paths.mk
++
++# Tools
++FIG2DEV             := 
++POD2MAN             := /usr/bin/pod2man
++POD2HTML            := 
++POD2TEXT            := /usr/bin/pod2text
++PANDOC              := 
++PERL                := /usr/bin/perl
+diff --git a/config/Paths.mk b/config/Paths.mk
+new file mode 100644
+index 000000000000..984a5ff5db0e
+--- /dev/null
++++ b/config/Paths.mk
+@@ -0,0 +1,58 @@
++# Xen system configuration
++# ========================
++#
++# Xen uses a set of variables for system configuration and at build time,
++# because of this these variables are defined on one master input source file
++# and is generated after running ./configure. The master source is located
++# on the xen source tree at under config/Paths.mk.in and it is used to
++# generate shell or header files by the build system upon demand.
++#
++# For more documentation you can refer to the wiki:
++#
++# https://wiki.xen.org/wiki/Category:Host_Configuration#System_wide_xen_configuration
++
++PACKAGE_TARNAME          := xen
++prefix                   := /usr
++bindir                   := /usr/bin
++sbindir                  := /usr/sbin
++libdir                   := /usr/lib64
++libexecdir               := /usr/libexec
++datarootdir              := ${prefix}/share
++mandir                   := ${datarootdir}/man
++docdir                   := ${datarootdir}/doc/${PACKAGE_TARNAME}
++dvidir                   := ${docdir}
++htmldir                  := ${docdir}
++pdfdir                   := ${docdir}
++psdir                    := ${docdir}
++includedir               := ${prefix}/include
++localstatedir            := /var
++sysconfdir               := /etc
++
++LIBEXEC                  := /usr/libexec/xen
++LIBEXEC_BIN              := /usr/libexec/xen/bin
++LIBEXEC_LIB              := /usr/libexec/xen/lib
++LIBEXEC_INC              := /usr/libexec/xen/include
++
++SHAREDIR                 := /usr/share
++MAN1DIR                  := $(mandir)/man1
++MAN8DIR                  := $(mandir)/man8
++
++XEN_RUN_DIR              := /var/run/xen
++XEN_LOG_DIR              := /var/log/xen
++XEN_LIB_DIR              := /var/lib/xen
++
++CONFIG_DIR               := /etc
++INITD_DIR                := /etc/rc.d/init.d
++CONFIG_LEAF_DIR          := sysconfig
++BASH_COMPLETION_DIR      := $(CONFIG_DIR)/bash_completion.d
++XEN_LOCK_DIR             := /var/lock
++XEN_PAGING_DIR           := /var/lib/xen/xenpaging
++XEN_DUMP_DIR             := /var/lib/xen/dump
++DEBUG_DIR                := /usr/lib/debug
++
++XENFIRMWAREDIR           := /usr/libexec/xen/boot
++
++XEN_CONFIG_DIR           := /etc/xen
++XEN_SCRIPT_DIR           := /etc/xen/scripts
++
++PKG_INSTALLDIR           := ${libdir}/pkgconfig
+diff --git a/config/Stubdom.mk b/config/Stubdom.mk
+new file mode 100644
+index 000000000000..a8bb1d3147d3
+--- /dev/null
++++ b/config/Stubdom.mk
+@@ -0,0 +1,45 @@
++# Prefix and install folder
++prefix              := /usr/local
++PREFIX              := $(prefix)
++exec_prefix         := ${prefix}
++libdir              := ${exec_prefix}/lib
++LIBDIR              := $(libdir)
++
++# Path Programs
++CMAKE               := /usr/bin/cmake
++FETCHER             := /usr/bin/wget -c -O
++
++# A debug build of stubdom? //FIXME: Someone make this do something
++debug               := y
++vtpm = y
++
++STUBDOM_TARGETS     :=  ioemu grub xenstore vtpm vtpmmgr
++STUBDOM_BUILD       :=  ioemu-stubdom pv-grub xenstore-stubdom vtpm-stubdom vtpmmgr-stubdom
++STUBDOM_INSTALL     :=  install-ioemu install-grub install-xenstore install-vtpm install-vtpmmgr
++
++ZLIB_VERSION        := 1.2.3
++ZLIB_URL            := $(XEN_EXTFILES_URL)
++
++LIBPCI_VERSION      := 2.2.9
++LIBPCI_URL          := $(XEN_EXTFILES_URL)
++
++NEWLIB_VERSION      := 1.16.0
++NEWLIB_URL          := $(XEN_EXTFILES_URL)
++
++LWIP_VERSION        := 1.3.0
++LWIP_URL            := $(XEN_EXTFILES_URL)
++
++GRUB_VERSION        := 0.97
++GRUB_URL            := $(XEN_EXTFILES_URL)
++
++OCAML_VERSION       := 3.11.0
++OCAML_URL           := http://caml.inria.fr/pub/distrib/ocaml-3.11
++
++GMP_VERSION         := 4.3.2
++GMP_URL             := $(XEN_EXTFILES_URL)
++
++POLARSSL_VERSION    := 1.1.4
++POLARSSL_URL        := $(XEN_EXTFILES_URL)
++
++TPMEMU_VERSION      := 0.7.4
++TPMEMU_URL          := $(XEN_EXTFILES_URL)
+diff --git a/config/Tools.mk b/config/Tools.mk
+new file mode 100644
+index 000000000000..cd8afca37abc
+--- /dev/null
++++ b/config/Tools.mk
+@@ -0,0 +1,72 @@
++-include $(XEN_ROOT)/config/Paths.mk
++
++CONFIG_WERROR       := y
++CONFIG_RUMP         := n
++ifeq ($(CONFIG_RUMP),y)
++XEN_OS              := NetBSDRump
++endif
++
++# Tools path
++BISON               := /usr/bin/bison
++FLEX                := /usr/bin/flex
++PYTHON              := python3
++PYTHON_PATH         := /usr/bin/python3
++PY_NOOPT_CFLAGS     := -O1
++PERL                := /usr/bin/perl
++AS86                := /usr/bin/as86
++LD86                := /usr/bin/ld86
++BCC                 := /usr/bin/bcc
++IASL                := /usr/bin/iasl
++AWK                 := /usr/bin/awk
++FETCHER             := /usr/bin/false
++ABI_DUMPER          := 
++
++# Extra folder for libs/includes
++PREPEND_INCLUDES    := 
++PREPEND_LIB         := 
++APPEND_INCLUDES     := 
++APPEND_LIB          := 
++
++PTHREAD_CFLAGS      := -pthread
++PTHREAD_LDFLAGS     := -pthread
++PTHREAD_LIBS        := 
++
++LIBNL3_LIBS         := 
++LIBNL3_CFLAGS       := 
++XEN_TOOLS_RPATH     := n
++
++# Optional components
++XENSTAT_XENTOP      := y
++OCAML_TOOLS         := y
++FLASK_POLICY        := n
++CONFIG_OVMF         := n
++CONFIG_ROMBIOS      := y
++CONFIG_SEABIOS      := n
++CONFIG_IPXE         := n
++CONFIG_QEMU_XEN     := n
++CONFIG_QEMUU_EXTRA_ARGS:= 
++CONFIG_LIBNL        := n
++CONFIG_GOLANG       := n
++CONFIG_PYGRUB       := y
++CONFIG_LIBFSIMAGE   := y
++
++CONFIG_SYSTEMD      := y
++XEN_SYSTEMD_DIR     := $(prefix)/lib/systemd/system/
++XEN_SYSTEMD_MODULES_LOAD := $(prefix)/lib/modules-load.d/
++XEN_SYSTEMD_SLEEP_DIR := /usr/lib/systemd/system-sleep
++CONFIG_9PFS         := 
++
++LINUX_BACKEND_MODULES := xen-evtchn xen-gntdev xen-gntalloc xen-blkback xen-netback xen-pciback evtchn gntdev netbk blkbk xen-scsibk usbbk pciback xen-acpi-processor
++
++#System options
++ZLIB_CFLAGS         :=  -DHAVE_BZLIB -DHAVE_LZMA -DHAVE_LZO1X -DHAVE_ZSTD  -DHAVE_LZ4 
++ZLIB_LIBS           :=  -lbz2 -llzma -llzo2 -lzstd  -llz4 
++EXTFS_LIBS          := -lext2fs
++CURSES_LIBS         := -lncurses
++TINFO_LIBS          := -ltinfo
++ARGP_LDFLAGS        := 
++XEN_JSON_LIBS       :=  -ljson-c 
++
++FILE_OFFSET_BITS    := 
++
++CONFIG_PV_SHIM      := n
+diff --git a/config/Toplevel.mk b/config/Toplevel.mk
+new file mode 100644
+index 000000000000..ced7d97a4c27
+--- /dev/null
++++ b/config/Toplevel.mk
+@@ -0,0 +1 @@
++SUBSYSTEMS               :=  xen tools docs
+diff --git a/tools/config.h b/tools/config.h
+new file mode 100644
+index 000000000000..0adc447f51fa
+--- /dev/null
++++ b/tools/config.h
+@@ -0,0 +1,172 @@
++/* config.h.  Generated from config.h.in by configure.  */
++/* config.h.in.  Generated from configure.ac by autoheader.  */
++
++/* Enabling support partial device tree in libxl */
++/* #undef ENABLE_PARTIAL_DEVICE_TREE */
++
++/* Define to 1 if you have the declaration of `fdt_first_subnode', and to 0 if
++   you don't. */
++/* #undef HAVE_DECL_FDT_FIRST_SUBNODE */
++
++/* Define to 1 if you have the declaration of `fdt_next_subnode', and to 0 if
++   you don't. */
++/* #undef HAVE_DECL_FDT_NEXT_SUBNODE */
++
++/* Define to 1 if you have the declaration of `fdt_property_u32', and to 0 if
++   you don't. */
++/* #undef HAVE_DECL_FDT_PROPERTY_U32 */
++
++/* Define to 1 if you have the `fdt_first_subnode' function. */
++/* #undef HAVE_FDT_FIRST_SUBNODE */
++
++/* Define to 1 if you have the `fdt_next_subnode' function. */
++/* #undef HAVE_FDT_NEXT_SUBNODE */
++
++/* Define to 1 if you have the <inttypes.h> header file. */
++#define HAVE_INTTYPES_H 1
++
++/* Define to 1 if you have the `fdt' library (-lfdt). */
++/* #undef HAVE_LIBFDT */
++
++/* Use library json-c */
++#define HAVE_LIBJSONC 1
++
++/* Define to 1 if you have the `lzma' library (-llzma). */
++#define HAVE_LIBLZMA 1
++
++/* Define to 1 if you have the `yajl' library (-lyajl). */
++/* #undef HAVE_LIBYAJL */
++
++/* Define to 1 if you have the `z' library (-lz). */
++#define HAVE_LIBZ 1
++
++/* Define to 1 if you have the `pipe2' function. */
++#define HAVE_PIPE2 1
++
++/* pygrub enabled */
++#define HAVE_PYGRUB 1
++
++/* ROMBIOS enabled */
++#define HAVE_ROMBIOS 1
++
++/* Define to 1 if you have the <stdint.h> header file. */
++#define HAVE_STDINT_H 1
++
++/* Define to 1 if you have the <stdio.h> header file. */
++#define HAVE_STDIO_H 1
++
++/* Define to 1 if you have the <stdlib.h> header file. */
++#define HAVE_STDLIB_H 1
++
++/* Define to 1 if you have the <strings.h> header file. */
++#define HAVE_STRINGS_H 1
++
++/* Define to 1 if you have the <string.h> header file. */
++#define HAVE_STRING_H 1
++
++/* Systemd available and enabled */
++#define HAVE_SYSTEMD 1
++
++/* Define to 1 if you have the <sys/eventfd.h> header file. */
++#define HAVE_SYS_EVENTFD_H 1
++
++/* Define to 1 if you have the <sys/stat.h> header file. */
++#define HAVE_SYS_STAT_H 1
++
++/* Define to 1 if you have the <sys/types.h> header file. */
++#define HAVE_SYS_TYPES_H 1
++
++/* Define to 1 if you have the <unistd.h> header file. */
++#define HAVE_UNISTD_H 1
++
++/* Define to 1 if you have the <utmp.h> header file. */
++#define HAVE_UTMP_H 1
++
++/* Define to 1 if you have the <valgrind/memcheck.h> header file. */
++/* #undef HAVE_VALGRIND_MEMCHECK_H */
++
++/* Define to 1 if you have the <yajl/yajl_version.h> header file. */
++/* #undef HAVE_YAJL_YAJL_VERSION_H */
++
++/* Define curses header to use */
++#define INCLUDE_CURSES_H <ncurses.h>
++
++/* Header path for INCLUDE_ENDIAN_H */
++#define INCLUDE_ENDIAN_H <endian.h>
++
++/* Define extfs header to use */
++#define INCLUDE_EXTFS_H <ext2fs/ext2fs.h>
++
++/* IPXE path */
++#define IPXE_PATH "/usr/share/ipxe/ipxe.bin"
++
++/* Xen's libexec path */
++#define LIBEXEC_BIN "/usr/libexec/xen/bin"
++
++/* OVMF path */
++#define OVMF_PATH "/usr/share/edk2/OVMF.fd"
++
++/* Define to the address where bug reports for this package should be sent. */
++#define PACKAGE_BUGREPORT "xen-devel@lists.xen.org"
++
++/* Define to the full name of this package. */
++#define PACKAGE_NAME "Xen Hypervisor Tools"
++
++/* Define to the full name and version of this package. */
++#define PACKAGE_STRING "Xen Hypervisor Tools 4.21"
++
++/* Define to the one symbol short name of this package. */
++#define PACKAGE_TARNAME "xen"
++
++/* Define to the home page for this package. */
++#define PACKAGE_URL "https://www.xen.org/"
++
++/* Define to the version of this package. */
++#define PACKAGE_VERSION "4.21"
++
++/* Qemu Xen path */
++#define QEMU_XEN_PATH "/usr/lib64/xen/bin/qemu-system-i386"
++
++/* SeaBIOS path */
++/* #undef SEABIOS_PATH */
++
++/* Define to 1 if all of the C90 standard headers exist (not just the ones
++   required in a freestanding environment). This macro is provided for
++   backward compatibility; new code need not use it. */
++#define STDC_HEADERS 1
++
++/* QMP proxy path */
++#define STUBDOM_QMP_PROXY_PATH "/usr/bin/vchan-socket-proxy"
++
++/* Xen's firmware dir */
++#define XENFIRMWAREDIR "/usr/libexec/xen/boot"
++
++/* Xen's config dir */
++#define XEN_CONFIG_DIR "/etc/xen"
++
++/* Xen's dump directory */
++#define XEN_DUMP_DIR "/var/lib/xen/dump"
++
++/* Xen's lib dir */
++#define XEN_LIB_DIR "/var/lib/xen"
++
++/* Xen's lock dir */
++#define XEN_LOCK_DIR "/var/lock"
++
++/* Xen's log dir */
++#define XEN_LOG_DIR "/var/log/xen"
++
++/* Xen's runstate path */
++#define XEN_RUN_DIR "/var/run/xen"
++
++/* Xenstore's runstate path */
++#define XEN_RUN_STORED "/var/run/xenstored"
++
++/* Xen's script dir */
++#define XEN_SCRIPT_DIR "/etc/xen/scripts"
++
++/* Number of bits in a file offset, on hosts where this is settable. */
++/* #undef _FILE_OFFSET_BITS */
++
++/* Define for large files, on AIX-style hosts. */
++/* #undef _LARGE_FILES */
+diff --git a/tools/ocaml/xenstored/oxenstored.conf.in b/tools/ocaml/xenstored/oxenstored.conf.in
+index 9d034e744b4b..824681655585 100644
+--- a/tools/ocaml/xenstored/oxenstored.conf.in
++++ b/tools/ocaml/xenstored/oxenstored.conf.in
+@@ -56,9 +56,9 @@ perms-watch-activate = true
+ 
+ # Activate quota
+ quota-activate = true
+-quota-maxentity = 1000
++quota-maxentity = 8192
+ quota-maxsize = 2048
+-quota-maxwatch = 100
++quota-maxwatch = 512
+ quota-transaction = 10
+ quota-maxrequests = 1024
+ quota-path-max = 1024
+@@ -72,12 +72,14 @@ persistent = false
+ # xenstored-log-file = @XEN_LOG_DIR@/xenstored.log
+ # xenstored-log-level = null
+ # xenstored-log-nb-files = 10
++xenstored-log-file = syslog:daemon
+ 
+ # Xenstored access logs
+ # access-log-file = @XEN_LOG_DIR@/xenstored-access.log
+ # access-log-nb-lines = 13215
+ # acesss-log-nb-chars = 180
+ # access-log-special-ops = false
++access-log-file = syslog:local3
+ 
+ # Perodically scanning all the rings as a safenet for lazy clients.
+ # Define the interval in seconds, set to negative to disable.
+diff --git a/tools/ocaml/xenstored/paths.ml b/tools/ocaml/xenstored/paths.ml
+new file mode 100644
+index 000000000000..7741031ee0e2
+--- /dev/null
++++ b/tools/ocaml/xenstored/paths.ml
+@@ -0,0 +1,5 @@
++let xen_log_dir = "/var/log/xen"
++let xen_config_dir = "/etc/xen"
++let xen_run_dir = "/var/run/xen"
++let xen_run_stored = "/var/run/xenstored"
++let libexec = "/usr/libexec/xen"
+diff --git a/xen/crypto/signing_key.pem b/xen/crypto/signing_key.pem
+new file mode 100644
+index 000000000000..d517c5da1d9e
+--- /dev/null
++++ b/xen/crypto/signing_key.pem
+@@ -0,0 +1,29 @@
++-----BEGIN PUBLIC KEY-----
++MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuVk8pwNLlZGWqmuE9N8N
++iBIm8QS5kuNyBIZVcoYBRwL/E7a+maRNXkuXEQghX171/aocgQnuKygpjpIofTd/
++mTlQOaF3OAijU9ZbAysVCloYBhhow4yhqxYQvArInai+GpvXkEp036eHdEz8EWWO
++95wcw+jPWv4MjcFvLEvf/LVJaAxTr6Yc5L02wQnGCeQEbah4l8cRGLlQbV8QhEMh
++HIUCNAyaUJVacCNhRYhhfIaWoamhJpIhttUvxyZjBtG/kTh2ckfEtIhoYomAK9jk
++GGht5uri6DshwqmIodSs9GjI5p/khmeWjvGGS8yXMQUf+/6Q72rHv5sklLhSIyX9
++jwIDAQAB
++-----END PUBLIC KEY-----
++-----BEGIN CERTIFICATE-----
++MIIDRzCCAi+gAwIBAgIQfgibISOXQ+29uKmOpKepSTANBgkqhkiG9w0BAQsFADAm
++MSQwIgYDVQQDExtYZW5TZXJ2ZXIgWGVuIGxpdmVwYXRjaCBkZXYwHhcNMjUwMzIw
++MTY1NTA3WhcNMzcwMTE5MDMxNDA3WjAmMSQwIgYDVQQDExtYZW5TZXJ2ZXIgWGVu
++IGxpdmVwYXRjaCBkZXYwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC5
++WTynA0uVkZaqa4T03w2IEibxBLmS43IEhlVyhgFHAv8Ttr6ZpE1eS5cRCCFfXvX9
++qhyBCe4rKCmOkih9N3+ZOVA5oXc4CKNT1lsDKxUKWhgGGGjDjKGrFhC8CsidqL4a
++m9eQSnTfp4d0TPwRZY73nBzD6M9a/gyNwW8sS9/8tUloDFOvphzkvTbBCcYJ5ARt
++qHiXxxEYuVBtXxCEQyEchQI0DJpQlVpwI2FFiGF8hpahqaEmkiG21S/HJmMG0b+R
++OHZyR8S0iGhiiYAr2OQYaG3m6uLoOyHCqYih1Kz0aMjmn+SGZ5aO8YZLzJcxBR/7
++/pDvase/mySUuFIjJf2PAgMBAAGjcTBvMB8GA1UdIwQYMBaAFMHElh7lOeTQkhTJ
++nnAD3i0AOhW3MB8GA1UdJQQYMBYGCCsGAQUFBwMDBgorBgEEAZIIEAECMAwGA1Ud
++EwEB/wQCMAAwHQYDVR0OBBYEFMHElh7lOeTQkhTJnnAD3i0AOhW3MA0GCSqGSIb3
++DQEBCwUAA4IBAQBhsK8nJnEuIIaAjm7++45IYq5pzGBqSR3f8144lL+5LZ+mAlND
++FMPtfRJ7Ebbo7Tgey1V6Iika7jgP0yHVQv7VMQ8DkJNNKTNVJ4mKYNGbqeqDtczx
++1bam6lPIqTFUBPmafS8bzK3pLcnS/zxowo4Luf061GyZE5MOr/Xk/OoGCezb5l+u
++4UZkpre15xBixUAay06iYJFSUCuQ9wQ9HGHEqDdhoxrFyOrbE0X7uCAbUC5KaUIF
++6XQvo4X/V3aDdeA2zE/AXh25kxc3AFiOENYxFerIQ87srkvQfHNx07+lCf8WjEuK
++iTDUfn6e7oyyoddt6N8j+0IEqTBbnBP/vOAK
++-----END CERTIFICATE-----
+diff --git a/xs-reconfigure.sh b/xs-reconfigure.sh
+new file mode 100755
+index 000000000000..05d5b4592f1b
+--- /dev/null
++++ b/xs-reconfigure.sh
+@@ -0,0 +1,23 @@
++#!/bin/bash
++
++./configure --prefix=/usr \
++            --libdir=/usr/lib64 \
++            --libexecdir=/usr/libexec \
++            --disable-seabios \
++            --disable-stubdom \
++            --disable-xsmpolicy \
++            --disable-pvshim \
++            --enable-rombios \
++            --enable-systemd \
++            --with-xenstored=oxenstored \
++            --with-system-qemu=/usr/lib64/xen/bin/qemu-system-i386 \
++            --with-system-ipxe=/usr/share/ipxe/ipxe.bin \
++            --with-system-ovmf=/usr/share/edk2/OVMF.fd
++
++shopt -s extglob
++
++# Pick all config-$foo but skip *.old
++for CFG in buildconfigs/config-*!(.old)
++do
++    make -C xen/ KCONFIG_CONFIG=../$CFG olddefconfig
++done

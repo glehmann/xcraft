@@ -1,0 +1,55 @@
+From 4a593cc47449db8b9d42146e9e9f9ced85cb60ba Mon Sep 17 00:00:00 2001
+Message-ID: <4a593cc47449db8b9d42146e9e9f9ced85cb60ba.1764164612.git.gerald.elder-vass@citrix.com>
+In-Reply-To: <74f6f75964965c1cb59e2c230cf613e5e72e189d.1764164612.git.gerald.elder-vass@citrix.com>
+References: <74f6f75964965c1cb59e2c230cf613e5e72e189d.1764164612.git.gerald.elder-vass@citrix.com>
+From: Gerald Elder-Vass <gerald.elder-vass@citrix.com>
+Date: Wed, 26 Nov 2025 13:43:01 +0000
+Subject: [PATCH 3/5] Revert "hw/usb/bus: Remove the "full-path" property"
+
+This reverts commit 7707beaea780d1ed918fd25a9ce84f055fe17921.
+---
+ hw/usb/bus.c     | 7 ++++++-
+ include/hw/usb.h | 1 +
+ 2 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/hw/usb/bus.c b/hw/usb/bus.c
+index 8dd2ce415eb0..a84c02520f4f 100644
+--- a/hw/usb/bus.c
++++ b/hw/usb/bus.c
+@@ -21,6 +21,8 @@ static void usb_qdev_unrealize(DeviceState *qdev);
+ static const Property usb_props[] = {
+     DEFINE_PROP_STRING("port", USBDevice, port_path),
+     DEFINE_PROP_STRING("serial", USBDevice, serial),
++    DEFINE_PROP_BIT("full-path", USBDevice, flags,
++                    USB_DEV_FLAG_FULL_PATH, true),
+     DEFINE_PROP_BIT("msos-desc", USBDevice, flags,
+                     USB_DEV_FLAG_MSOS_DESC_ENABLE, true),
+     DEFINE_PROP_STRING("pcap", USBDevice, pcap_filename),
+@@ -560,8 +562,11 @@ static char *usb_get_dev_path(DeviceState *qdev)
+ {
+     USBDevice *dev = USB_DEVICE(qdev);
+     DeviceState *hcd = qdev->parent_bus->parent;
+-    char *id = qdev_get_dev_path(hcd);
++    char *id = NULL;
+ 
++    if (dev->flags & (1 << USB_DEV_FLAG_FULL_PATH)) {
++        id = qdev_get_dev_path(hcd);
++    }
+     if (id) {
+         char *ret = g_strdup_printf("%s/%s", id, dev->port->path);
+         g_free(id);
+diff --git a/include/hw/usb.h b/include/hw/usb.h
+index 26a9f3ecdee8..38b0afa013c5 100644
+--- a/include/hw/usb.h
++++ b/include/hw/usb.h
+@@ -217,6 +217,7 @@ struct USBEndpoint {
+ };
+ 
+ enum USBDeviceFlags {
++    USB_DEV_FLAG_FULL_PATH,
+     USB_DEV_FLAG_IS_HOST,
+     USB_DEV_FLAG_MSOS_DESC_ENABLE,
+     USB_DEV_FLAG_MSOS_DESC_IN_USE,
+-- 
+2.47.3
+

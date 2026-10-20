@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Julian Vetter <julian.vetter@vates.tech>
+Date: Fri, 24 Jul 2026 16:30:57 +0200
+Subject: [PATCH] xenopsd/xc: mirror CDF_TRAP_UNMAPPED_ACCESSES from Xenctrl
+Content-Type: text/plain; charset = "utf-8"
+Content-Transfert-Encoding: 8bit
+
+domain_create_flag here is a mirror of Xenctrl.domain_create_flag, which
+requires listing every constructor of the original. Xen added
+CDF_TRAP_UNMAPPED_ACCESSES (currently Arm-only) in:
+
+980aff4e8fcd xen/arm: Add way to disable traps on accesses to
+                      unmapped addresses (Edgar E. Iglesias, 2025-06-16)
+ab02a120c0a5 tools/ocaml: Update bindings for
+                      CDF_TRAP_UNMAPPED_ACCESSES (same day)
+
+Signed-off-by: Julian Vetter <julian.vetter@vates.tech>
+
+diff --git a/ocaml/xenopsd/xc/domain.ml b/ocaml/xenopsd/xc/domain.ml
+index b4972cacc389..1ae8c486b1cf 100644
+--- a/ocaml/xenopsd/xc/domain.ml
++++ b/ocaml/xenopsd/xc/domain.ml
+@@ -74,6 +74,7 @@ type domain_create_flag = Xenctrl.domain_create_flag =
+   | CDF_IOMMU
+   | CDF_NESTED_VIRT
+   | CDF_VPMU
++  | CDF_TRAP_UNMAPPED_ACCESSES
+ [@@deriving rpcty]
+ 
+ type domain_create_iommu_opts = Xenctrl.domain_create_iommu_opts =

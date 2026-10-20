@@ -1,0 +1,20 @@
+CP-310681: Conditionally cancel dma sync if the blk device is present
+
+Upstream 55adb3c introduced ide_perform_srst which cancels dma sync without
+checking if the block device even exists yet.
+
+diff --git a/hw/ide/core.c b/hw/ide/core.c
+index 59bdd34ea83e..33cb97740411 100644
+--- a/hw/ide/core.c
++++ b/hw/ide/core.c
+@@ -2330,7 +2330,9 @@ static void ide_perform_srst(IDEState *s)
+     ide_transfer_halt(s);
+ 
+     /* Cancel DMA -- may drain block device and invoke callbacks */
+-    ide_cancel_dma_sync(s);
++    if (s->blk) {
++        ide_cancel_dma_sync(s);
++    }
+ 
+     /* Cancel PIO callback, reset registers/signature, etc */
+     ide_reset(s);

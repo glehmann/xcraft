@@ -1,0 +1,61 @@
+Add a command to allow querying whether the VM is migratable
+
+Add a command to allow querying whether the VM is migratable which
+allows the toolstack to prevent migrations when it won't work.
+Like many QMP commands, it returns nothing on success (if the VM is
+migratable). If the VM is not migratable, it returns an error message
+indicating which device is preventing migration.
+
+--
+Update doc strings to fix build checks
+
+diff --git a/migration/savevm.c b/migration/savevm.c
+index 6ae894cbc584..c4f92a71e2b0 100644
+--- a/migration/savevm.c
++++ b/migration/savevm.c
+@@ -46,6 +46,7 @@
+ #include "qapi/qapi-commands-migration.h"
+ #include "qapi/clone-visitor.h"
+ #include "qapi/qapi-builtin-visit.h"
++#include "qapi/qapi-commands-misc.h"
+ #include "qemu/error-report.h"
+ #include "system/cpus.h"
+ #include "system/memory.h"
+@@ -3363,6 +3364,11 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
+     return ret == 0;
+ }
+ 
++void qmp_query_migratable(Error **errp)
++{
++    qemu_savevm_state_blocked(errp);
++}
++
+ void qmp_xen_save_devices_state(const char *filename, bool has_live, bool live,
+                                 Error **errp)
+ {
+diff --git a/qapi/misc.json b/qapi/misc.json
+index cc749a524a34..2bfe0d621d6b 100644
+--- a/qapi/misc.json
++++ b/qapi/misc.json
+@@ -359,6 +359,21 @@
+ { 'event': 'XEN_PLATFORM_PV_DRIVER_INFO' ,
+   'data': { 'product-num': 'int', 'build-num': 'int' } }
+ 
++##
++# @query-migratable:
++#
++# Query whether a VM is migratable or not.
++#
++# Since: X.Y
++#
++# .. qmp-example::
++#
++# -> { "execute": "query-migratable" }
++# <- { "return": { } }
++#
++##
++{ 'command': 'query-migratable' }
++
+ ##
+ # @AddfdInfo:
+ #

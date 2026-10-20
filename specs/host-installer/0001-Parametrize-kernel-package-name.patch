@@ -1,0 +1,40 @@
+From 7f746fd7813fb37f8a17e05c80b8ff2b3eaa9ee8 Mon Sep 17 00:00:00 2001
+From: Yann Dirson <yann.dirson@vates.tech>
+Date: Wed, 23 Jul 2025 09:34:29 +0200
+Subject: [PATCH 1/2] Parametrize kernel-package name
+
+---
+ backend.py   | 2 +-
+ constants.py | 3 +++
+ 2 files changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/backend.py b/backend.py
+index f4c6856..431097c 100644
+--- a/backend.py
++++ b/backend.py
+@@ -879,7 +879,7 @@ def getXenVersion(rootfs_mount):
+ 
+ def getKernelVersion(rootfs_mount):
+     """ Returns the kernel release (uname -r) of the installed kernel """
+-    kernel_version = ['rpm', '--root', rootfs_mount, '-q', '--provides', 'kernel']
++    kernel_version = ['rpm', '--root', rootfs_mount, '-q', '--provides', constants.KERNEL_PKG]
+     rc, out = util.runCmd2(kernel_version, with_stdout=True)
+     if rc != 0:
+         return None
+diff --git a/constants.py b/constants.py
+index 87ad3c8..c032791 100644
+--- a/constants.py
++++ b/constants.py
+@@ -177,6 +177,9 @@ INIT_SERVICE_FILES = [
+     'var/lib/misc/ran-storage-init',
+ ]
+ 
++# package names
++KERNEL_PKG = 'kernel'
++
+ # optional features
+ FEATURES_DIR = "/etc/xensource/features"
+ HAS_SUPPLEMENTAL_PACKS = os.path.exists(os.path.join(FEATURES_DIR, "supplemental-packs"))
+-- 
+2.39.5
+

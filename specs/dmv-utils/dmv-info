@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""
+Tool to help with driver multi-version module info.
+When DMV module is being built, dmv-info will generate info.json file, which
+contains information provided by the developer and info obtained from the module
+itself like pci IDs.
+"""
+
+import argparse
+import os
+import sys
+import json
+import subprocess
+import re
+import glob
+
+
+def write_info(info, module_files):
+    """To obtain PCI info for a list of module files and create info.json."""
+    info["pci_ids"] = {}
+    pci_pattern = re.compile(
+        r"pci:"
+        r"v(?P<vendor_id>[0-9A-Fa-f]{8})"
+        r"d(?P<device_id>[0-9A-Fa-f]{8})"
+        r"sv(?P<subvendor_id>[0-9A-Fa-f]{8}|\*)"
+        r"sd(?P<subdevice_id>[0-9A-Fa-f]{8}|\*)"
+    )    
+    for module_file in module_files:
+        try:
+            modinfo_out = subprocess.run(["modinfo", module_file], stdout=subprocess.PIPE,
+                                         text=True, check=True).stdout
+            pci_list = []
+            for match in pci_pattern.finditer(modinfo_out):
+                # Take last 4 digits of each pci id and lowercase to match the lspci output
+                pci_formatted = {k: (v if v == '*' else v[-4:].lower()) for k, v in match.groupdict().items()}
+                pci_list.append(pci_formatted)
+            
+            # Save only the module name if pci_list is empty
+            module_name = os.path.basename(module_file)
+            info["pci_ids"][module_name] = pci_list
+        except subprocess.CalledProcessError as e:
+            print(f"Error running modinfo on {module_file}: {e}")
+            raise
+
+    # Write info to info.json
+    json_object = json.dumps(info, indent=4)
+    with open("info.json", "w", encoding="ascii") as info_file:
+        info_file.write(json_object)
+
+def main():
+    """Main function to parse arguments and function calls"""
+    parser = argparse.ArgumentParser(description='Handling DMV info\
+                                     operations.')
+    parser.add_argument(
+        'n',
+        type=str,
+        help='Driver name to be stored in info')
+    parser.add_argument(
+        '-v',
+        type=str,
+        help='Driver version to be stored in info')
+    parser.add_argument(
+        '-m',
+        type=str,
+        help='Driver minor version to be stored in info')
+    parser.add_argument(
+        '-d',
+        type=str,
+        help='Driver description to provide description as part of info')
+    parser.add_argument(
+        '-t',
+        type=str,
+        help='Driver category to categorize the driver as part of info')
+    parser.add_argument(
+        '-s',
+        type=str,
+        help='Driver status to provide status such as production as part of info')
+    parser.add_argument(
+        '-p',
+        type=str,
+        help='Driver priority as driver priority for user to select')
+    parser.add_argument(
+        '-k',
+        type=str,
+        help='kABI version to include it in info')
+    parser.add_argument(
+        '-a',
+        type=str,
+        help='Driver variant to provide variant name such as: generic or dell')
+
+    args = parser.parse_args()
+
+    info = {
+        "category": args.t,
+        "name": args.n,
+        "version": args.v,
+        "minor_version": args.m,
+        "variant": args.a,
+        "kABI": args.k,
+        "description": args.d,
+        "status": args.s,
+        "priority": int(args.p),
+        "pci_ids": None
+    }
+
+    build_dir = os.environ.get("RPM_BUILD_DIR")
+    # There may be multiple .ko files in a driver build.
+    module_files = glob.glob(os.path.join(build_dir, "**", "*.ko"), recursive=True)
+    
+    if not module_files:
+        sys.exit("Built module file not found in: " + build_dir)
+
+    write_info(info, module_files)
+
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ross Lagerwall <ross.lagerwall@citrix.com>
+Date: Mon, 18 May 2026 14:49:55 +0200
+Subject: [PATCH] Add an option to disable BGRT
+
+With the BGRT feature disabled, when Windows starts it will clear the screen
+and then show the Windows logo. This aids debugging since it makes it more
+obvious from a screenshot where in the boot process the VM is.
+
+Signed-off-by: Ross Lagerwall <ross.lagerwall@citrix.com>
+
+diff --git a/OvmfPkg/OvmfXen.dsc b/OvmfPkg/OvmfXen.dsc
+index f905e862641d..b0f897760204 100644
+--- a/OvmfPkg/OvmfXen.dsc
++++ b/OvmfPkg/OvmfXen.dsc
+@@ -31,6 +31,7 @@
+   # -D FLAG=VALUE
+   #
+   DEFINE SOURCE_DEBUG_ENABLE     = FALSE
++  DEFINE BGRT_ENABLE             = TRUE
+ 
+ !include OvmfPkg/Include/Dsc/OvmfTpmDefines.dsc.inc
+ 
+@@ -681,7 +682,9 @@
+   OvmfPkg/XenAcpiPlatformDxe/XenAcpiPlatformDxe.inf
+   MdeModulePkg/Universal/Acpi/S3SaveStateDxe/S3SaveStateDxe.inf
+   MdeModulePkg/Universal/Acpi/BootScriptExecutorDxe/BootScriptExecutorDxe.inf
++!if $(BGRT_ENABLE) == TRUE
+   MdeModulePkg/Universal/Acpi/BootGraphicsResourceTableDxe/BootGraphicsResourceTableDxe.inf
++!endif
+ 
+   #
+   # Hash2 Protocol producer
+diff --git a/OvmfPkg/OvmfXen.fdf b/OvmfPkg/OvmfXen.fdf
+index ae6a757051fb..71dd98b553d4 100644
+--- a/OvmfPkg/OvmfXen.fdf
++++ b/OvmfPkg/OvmfXen.fdf
+@@ -303,7 +303,9 @@ INF  MdeModulePkg/Universal/Acpi/AcpiTableDxe/AcpiTableDxe.inf
+ INF  OvmfPkg/XenAcpiPlatformDxe/XenAcpiPlatformDxe.inf
+ INF  MdeModulePkg/Universal/Acpi/S3SaveStateDxe/S3SaveStateDxe.inf
+ INF  MdeModulePkg/Universal/Acpi/BootScriptExecutorDxe/BootScriptExecutorDxe.inf
++!if $(BGRT_ENABLE) == TRUE
+ INF  MdeModulePkg/Universal/Acpi/BootGraphicsResourceTableDxe/BootGraphicsResourceTableDxe.inf
++!endif
+ 
+ INF  FatPkg/EnhancedFatDxe/Fat.inf
+ INF  MdeModulePkg/Universal/Disk/UdfDxe/UdfDxe.inf

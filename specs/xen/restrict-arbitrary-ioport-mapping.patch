@@ -1,0 +1,110 @@
+From: Ross Lagerwall <ross.lagerwall@citrix.com>
+Subject: Prevent arbitrary ioport mapping
+
+When Xen is locked down, check whether the ioports being mapped belongs to a
+device assigned to the target domain. This prevents a malicious dom0 userspace
+mapping ioports into a domain and then using it to control a device to attack
+dom0 kernel space.
+
+Signed-off-by: Ross Lagerwall <ross.lagerwall@citrix.com>
+diff --git a/xen/arch/x86/domctl.c b/xen/arch/x86/domctl.c
+index 24245bc57029..5c5b0f73866b 100644
+--- a/xen/arch/x86/domctl.c
++++ b/xen/arch/x86/domctl.c
+@@ -362,7 +362,8 @@ long arch_do_domctl(
+ 
+         iocaps_double_lock(d, true);
+ 
+-        if ( !ioports_access_permitted(currd, fp, fp + np - 1) )
++        if ( !ioports_access_permitted(currd, fp, fp + np - 1) ||
++             check_ioports_vs_pci_bars(d, fp, fp + np - 1) )
+             ret = -EPERM;
+         else if ( allow )
+             ret = ioports_permit_access(d, fp, fp + np - 1);
+@@ -832,6 +833,8 @@ long arch_do_domctl(
+                 list_add_tail(&g2m_ioport->list, &hvm->g2m_ioport_list);
+             }
+             write_unlock(&hvm->g2m_ioport_lock);
++            if ( !ret )
++                ret = check_ioports_vs_pci_bars(d, fmp, fmp + np - 1);
+             if ( !ret )
+                 ret = ioports_permit_access(d, fmp, fmp + np - 1);
+             if ( ret && !found && g2m_ioport )
+diff --git a/xen/drivers/passthrough/pci.c b/xen/drivers/passthrough/pci.c
+index 498abce55b37..07ffc7567142 100644
+--- a/xen/drivers/passthrough/pci.c
++++ b/xen/drivers/passthrough/pci.c
+@@ -588,7 +588,7 @@ static bool need_cache(const struct pci_dev *pdev, unsigned int num_bars)
+     return false;
+ }
+ 
+-static bool __maybe_unused cache_pdev(struct pci_dev *pdev)
++static bool cache_pdev(struct pci_dev *pdev)
+ {
+     unsigned i;
+ 
+@@ -655,6 +655,50 @@ static bool __maybe_unused cache_pdev(struct pci_dev *pdev)
+     return true;
+ }
+ 
++/*
++ * When Lockdown mode is active, we further restrict IO Ports to being part of
++ * an IO BAR of an assigned device.
++ */
++int check_ioports_vs_pci_bars(
++    struct domain *d, unsigned int port_start, unsigned int port_end)
++{
++    struct pci_dev *pdev;
++    int rc = 0;
++
++    if ( !is_locked_down() )
++        return 0;
++
++    read_lock(&d->pci_lock);
++    list_for_each_entry ( pdev, &d->pdev_list, domain_list )
++    {
++        if ( pdev->info.is_virtfn )
++            continue;
++
++        if ( !cache_pdev(pdev) )
++            continue;
++
++        for ( unsigned i = 0; i < PCI_HEADER_NORMAL_NR_BARS; i++ )
++        {
++            uint32_t size, addr;
++
++            if ( pdev->bar[i].type != PCI_BAR_TYPE_IO )
++                continue;
++
++            addr = (uint32_t)pdev->bar[i].addr;
++            size = (uint32_t)pdev->bar[i].size;
++
++            if ( port_start >= addr && port_end <= (addr + size - 1) )
++                goto out;
++        }
++    }
++
++    rc = -ENOENT;
++
++out:
++    read_unlock(&d->pci_lock);
++    return rc;
++}
++
+ /**
+  * pci_enable_acs - enable ACS if hardware support it
+  * @dev: the PCI device
+diff --git a/xen/include/xen/pci.h b/xen/include/xen/pci.h
+index b978e0438c85..24ac1a314119 100644
+--- a/xen/include/xen/pci.h
++++ b/xen/include/xen/pci.h
+@@ -284,6 +284,9 @@ const char *parse_pci_seg(const char *s, unsigned int *seg_p,
+                           unsigned int *bus_p, unsigned int *dev_p,
+                           unsigned int *func_p, bool *def_seg);
+ 
++int check_ioports_vs_pci_bars(
++    struct domain *d, unsigned int port_start, unsigned int port_end);
++
+ #define PCI_BAR_VF      (1u << 0)
+ #define PCI_BAR_LAST    (1u << 1)
+ #define PCI_BAR_ROM     (1u << 2)

@@ -1,0 +1,42 @@
+qmp: Fix race causing events to be sent during negotiation
+
+As per the QMP spec, asynchronous messages should not be sent during
+negotiation.
+
+The event sending code checks if the monitor is in the negotiation phase
+by checking for mon->commands != qmp_cap_negotiation_commands. However,
+events may be incorrectly sent from the point the connection is opened
+to when monitor_qmp_event() sets the negotiation phase.
+
+Ensure it is always in the negotiation phase when a connection is opened
+by initializing it during monitor init and close.
+
+Signed-off-by: Ross Lagerwall <ross.lagerwall@citrix.com>
+diff --git a/monitor/qmp.c b/monitor/qmp.c
+index cb99a12d9417..fe5a8505a648 100644
+--- a/monitor/qmp.c
++++ b/monitor/qmp.c
+@@ -462,7 +462,6 @@ static void monitor_qmp_event(void *opaque, QEMUChrEvent event)
+ 
+     switch (event) {
+     case CHR_EVENT_OPENED:
+-        mon->commands = &qmp_cap_negotiation_commands;
+         monitor_qmp_caps_reset(mon);
+         data = qmp_greeting(mon);
+         qmp_send_response(mon, data);
+@@ -480,6 +479,7 @@ static void monitor_qmp_event(void *opaque, QEMUChrEvent event)
+         json_message_parser_init(&mon->parser, handle_qmp_command,
+                                  mon, NULL);
+         monitor_fdsets_cleanup();
++        mon->commands = &qmp_cap_negotiation_commands;
+         break;
+     case CHR_EVENT_BREAK:
+     case CHR_EVENT_MUX_IN:
+@@ -525,6 +525,7 @@ void monitor_init_qmp(Chardev *chr, bool pretty, Error **errp)
+     monitor_data_init(&mon->common, true, false,
+                       qemu_chr_has_feature(chr, QEMU_CHAR_FEATURE_GCONTEXT));
+ 
++    mon->commands = &qmp_cap_negotiation_commands;
+     mon->pretty = pretty;
+ 
+     qemu_mutex_init(&mon->qmp_queue_lock);

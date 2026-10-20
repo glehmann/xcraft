@@ -1,0 +1,20 @@
+CA-357261: Hide expected errors from logrotate script
+
+If a host is switched from openvswitch to bridge, it will have openvswitch log
+files that need rotating but the /var/run/openvswitch directory will not exist.
+This causes spam in dead.letter. Hide the error in that case.
+
+Signed-off-by: Ross Lagerwall <ross.lagerwall@citrix.com>
+diff --git a/xenserver/etc_logrotate.d_openvswitch b/xenserver/etc_logrotate.d_openvswitch
+index cd7b3a9d569d..d644c8a79efe 100644
+--- a/xenserver/etc_logrotate.d_openvswitch
++++ b/xenserver/etc_logrotate.d_openvswitch
+@@ -13,7 +13,7 @@
+     postrotate
+ 	# Tell Open vSwitch daemons to reopen their log files
+         if [ -d /var/run/openvswitch ]; then
+-	    for pidfile in `cd /var/run/openvswitch && echo *.pid`; do
++	    for pidfile in `cd /var/run/openvswitch 2> /dev/null && echo *.pid`; do
+ 		ovs-appctl -t "${pidfile%%.pid}" vlog/reopen 2>/dev/null || :
+ 	    done
+ 	fi

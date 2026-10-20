@@ -1,0 +1,406 @@
+diff --git a/backends/cryptodev-builtin.c b/backends/cryptodev-builtin.c
+index 0414c01e06d9..6c4497a340ba 100644
+--- a/backends/cryptodev-builtin.c
++++ b/backends/cryptodev-builtin.c
+@@ -62,15 +62,6 @@ struct CryptoDevBackendBuiltin {
+ 
+ static void cryptodev_builtin_init_akcipher(CryptoDevBackend *backend)
+ {
+-    QCryptoAkCipherOptions opts;
+-
+-    opts.alg = QCRYPTO_AK_CIPHER_ALGO_RSA;
+-    opts.u.rsa.padding_alg = QCRYPTO_RSA_PADDING_ALGO_RAW;
+-    if (qcrypto_akcipher_supports(&opts)) {
+-        backend->conf.crypto_services |=
+-                     (1u << QCRYPTODEV_BACKEND_SERVICE_TYPE_AKCIPHER);
+-        backend->conf.akcipher_algo = 1u << VIRTIO_CRYPTO_AKCIPHER_RSA;
+-    }
+ }
+ 
+ static void cryptodev_builtin_init(
+diff --git a/crypto/meson.build b/crypto/meson.build
+index 735635de1f32..2cd729684ad4 100644
+--- a/crypto/meson.build
++++ b/crypto/meson.build
+@@ -73,3 +73,9 @@ else
+   util_ss.add(files('random-platform.c'))
+ endif
+ 
++# Override the previous crypto-obj-y value to avoid building most crypto
++crypto_ss = ss.source_set()
++crypto_ss.add(files('hash.c'))
++if not nettle.found() and not gcrypt.found() and not gnutls_crypto.found()
++  crypto_ss.add(files('hash-glib.c'))
++endif
+diff --git a/stubs/crypto.c b/stubs/crypto.c
+new file mode 100644
+index 000000000000..1b809953d15c
+--- /dev/null
++++ b/stubs/crypto.c
+@@ -0,0 +1,295 @@
++#include "qemu/osdep.h"
++#include "qapi/error.h"
++#include "crypto/block.h"
++#include "crypto/cipher.h"
++#include "crypto/init.h"
++#include "crypto/random.h"
++#include "crypto/secret.h"
++#include "crypto/tlssession.h"
++#include "crypto/akcipher.h"
++
++QCryptoBlock *qcrypto_block_open(QCryptoBlockOpenOptions *options,
++                                 const char *optprefix,
++                                 QCryptoBlockReadFunc readfunc,
++                                 void *opaque,
++                                 unsigned int flags,
++                                 Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return NULL;
++}
++
++QCryptoBlock *qcrypto_block_create(QCryptoBlockCreateOptions *options,
++                                   const char *optprefix,
++                                   QCryptoBlockInitFunc initfunc,
++                                   QCryptoBlockWriteFunc writefunc,
++                                   void *opaque,
++                                   unsigned int flags,
++                                   Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return NULL;
++}
++
++int qcrypto_block_decrypt(QCryptoBlock *block,
++                          uint64_t startsector,
++                          uint8_t *buf,
++                          size_t len,
++                          Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return -1;
++}
++
++int qcrypto_block_encrypt(QCryptoBlock *block,
++                          uint64_t startsector,
++                          uint8_t *buf,
++                          size_t len,
++                          Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return -1;
++}
++
++void qcrypto_block_free(QCryptoBlock *block)
++{
++}
++
++uint64_t qcrypto_block_get_payload_offset(QCryptoBlock *block)
++{
++    return 0;
++}
++
++bool qcrypto_block_has_format(QCryptoBlockFormat format,
++                              const uint8_t *buf,
++                              size_t buflen)
++{
++    return false;
++}
++
++QCryptoBlockInfo *qcrypto_block_get_info(QCryptoBlock *block,
++                                         Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return NULL;
++}
++
++uint64_t qcrypto_block_get_sector_size(QCryptoBlock *block)
++{
++    return 0;
++}
++
++QCryptoTLSSession *qcrypto_tls_session_new(QCryptoTLSCreds *creds,
++                                           const char *hostname,
++                                           const char *aclname,
++                                           QCryptoTLSCredsEndpoint endpoint,
++                                           Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return NULL;
++}
++
++int qcrypto_tls_session_handshake(QCryptoTLSSession *sess,
++                                  Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return -1;
++}
++
++ssize_t qcrypto_tls_session_read(QCryptoTLSSession *sess,
++                                 char *buf,
++                                 size_t len,
++                                 bool gracefulTermination,
++                                 Error **errp)
++{
++    return -1;
++}
++
++ssize_t qcrypto_tls_session_write(QCryptoTLSSession *sess,
++                                  const char *buf,
++                                  size_t len,
++                                  Error **errp)
++{
++    return -1;
++}
++
++void qcrypto_tls_session_set_callbacks(QCryptoTLSSession *sess,
++                                       QCryptoTLSSessionWriteFunc writeFunc,
++                                       QCryptoTLSSessionReadFunc readFunc,
++                                       void *opaque)
++{
++}
++
++int qcrypto_tls_session_get_key_size(QCryptoTLSSession *session,
++                                     Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return -1;
++}
++
++char *qcrypto_tls_session_get_peer_name(QCryptoTLSSession *sess)
++{
++    return NULL;
++}
++
++void qcrypto_tls_session_free(QCryptoTLSSession *sess)
++{
++}
++
++int qcrypto_tls_session_check_credentials(QCryptoTLSSession *sess,
++                                          Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return -1;
++}
++
++QCryptoCipher *qcrypto_cipher_new(QCryptoCipherAlgo alg,
++                                  QCryptoCipherMode mode,
++                                  const uint8_t *key, size_t nkey,
++                                  Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return NULL;
++}
++
++void qcrypto_cipher_free(QCryptoCipher *cipher)
++{
++}
++
++int qcrypto_cipher_encrypt(QCryptoCipher *cipher,
++                           const void *in,
++                           void *out,
++                           size_t len,
++                           Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return -1;
++}
++
++bool qcrypto_cipher_supports(QCryptoCipherAlgo alg,
++                             QCryptoCipherMode mode)
++{
++    return false;
++}
++
++char *qcrypto_secret_lookup_as_utf8(const char *secretid,
++                                    Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return NULL;
++}
++
++char *qcrypto_secret_lookup_as_base64(const char *secretid,
++                                      Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return NULL;
++}
++
++bool
++qcrypto_block_calculate_payload_offset(QCryptoBlockCreateOptions *create_opts,
++                                       const char *optprefix,
++                                       size_t *len,
++                                       Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return false;
++}
++
++int qcrypto_block_amend_options(QCryptoBlock *block,
++                                QCryptoBlockReadFunc readfunc,
++                                QCryptoBlockWriteFunc writefunc,
++                                void *opaque,
++                                QCryptoBlockAmendOptions *options,
++                                bool force,
++                                Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return -1;
++}
++
++int qcrypto_cipher_decrypt(QCryptoCipher *cipher,
++                           const void *in,
++                           void *out,
++                           size_t len,
++                           Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return -1;
++}
++
++bool qcrypto_tls_creds_check_endpoint(QCryptoTLSCreds *creds,
++                                      QCryptoTLSCredsEndpoint endpoint,
++                                      Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return false;
++}
++
++size_t qcrypto_tls_session_check_pending(QCryptoTLSSession *sess)
++{
++    return 0;
++}
++
++void qcrypto_tls_session_require_thread_safety(QCryptoTLSSession *sess)
++{
++}
++
++int
++qcrypto_tls_session_bye(QCryptoTLSSession *session, Error **errp)
++{
++    return QCRYPTO_TLS_BYE_COMPLETE;
++}
++
++QCryptoAkCipher *qcrypto_akcipher_new(const QCryptoAkCipherOptions *opts,
++                                      QCryptoAkCipherKeyType type,
++                                      const uint8_t *key, size_t key_len,
++                                      Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return NULL;
++}
++
++int qcrypto_akcipher_sign(QCryptoAkCipher *akcipher,
++                          const void *in, size_t in_len,
++                          void *out, size_t out_len, Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return -1;
++}
++
++int qcrypto_akcipher_encrypt(QCryptoAkCipher *akcipher,
++                             const void *in, size_t in_len,
++                             void *out, size_t out_len, Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return -1;
++}
++
++int qcrypto_cipher_setiv(QCryptoCipher *cipher,
++                         const uint8_t *iv, size_t niv,
++                         Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return -1;
++}
++
++void qcrypto_akcipher_free(QCryptoAkCipher *akcipher)
++{
++}
++
++int qcrypto_akcipher_decrypt(QCryptoAkCipher *akcipher,
++                             const void *in, size_t in_len,
++                             void *out, size_t out_len, Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return -1;
++}
++
++int qcrypto_akcipher_verify(QCryptoAkCipher *akcipher,
++                            const void *in, size_t in_len,
++                            const void *in2, size_t in2_len, Error **errp)
++{
++    error_setg_errno(errp, ENOSYS, "No crypto");
++    return -1;
++}
+diff --git a/stubs/meson.build b/stubs/meson.build
+index cef046e6854d..63d1ea5cddeb 100644
+--- a/stubs/meson.build
++++ b/stubs/meson.build
+@@ -70,6 +70,7 @@ if have_system
+   # adding more of these.  If the symbol is used in specific_ss,
+   # in particular, consider defining a preprocessor macro via
+   # Kconfig or configs/targets/.
++  stub_ss.add(files('crypto.c'))
+   stub_ss.add(files('dump.c'))
+   stub_ss.add(files('cmos.c'))
+   stub_ss.add(files('fw_cfg.c'))
+diff --git a/tests/bench/meson.build b/tests/bench/meson.build
+index 4cd7a2f6b526..67c9fa75cb67 100644
+--- a/tests/bench/meson.build
++++ b/tests/bench/meson.build
+@@ -23,9 +23,9 @@ if have_block
+   benchs += {
+      'bufferiszero-bench': [],
+      'benchmark-crypto-hash': [crypto],
+-     'benchmark-crypto-hmac': [crypto],
+-     'benchmark-crypto-cipher': [crypto],
+-     'benchmark-crypto-akcipher': [crypto],
++#     'benchmark-crypto-hmac': [crypto],
++#     'benchmark-crypto-cipher': [crypto],
++#     'benchmark-crypto-akcipher': [crypto],
+   }
+ endif
+ 
+diff --git a/tests/unit/meson.build b/tests/unit/meson.build
+index d5248ae51deb..574524888d96 100644
+--- a/tests/unit/meson.build
++++ b/tests/unit/meson.build
+@@ -76,11 +76,11 @@ if have_block
+     'test-block-iothread': [testblock],
+     'test-write-threshold': [testblock],
+     'test-crypto-hash': [crypto],
+-    'test-crypto-hmac': [crypto],
+-    'test-crypto-cipher': [crypto],
+-    'test-crypto-akcipher': [crypto],
++#    'test-crypto-hmac': [crypto],
++#    'test-crypto-cipher': [crypto],
++#    'test-crypto-akcipher': [crypto],
+     'test-crypto-secret': [crypto, keyutils],
+-    'test-crypto-der': [crypto],
++#    'test-crypto-der': [crypto],
+     'test-authz-simple': [authz],
+     'test-authz-list': [authz],
+     'test-authz-listfile': [authz],
+@@ -90,9 +90,9 @@ if have_block
+     'test-io-channel-command': ['io-channel-helpers.c', io],
+     'test-io-channel-buffer': ['io-channel-helpers.c', io],
+     'test-io-channel-null': [io],
+-    'test-crypto-ivgen': [io],
+-    'test-crypto-afsplit': [io],
+-    'test-crypto-block': [io],
++#    'test-crypto-ivgen': [io],
++#    'test-crypto-afsplit': [io],
++#    'test-crypto-block': [io],
+     'test-timed-average': [],
+     'test-uuid': [],
+   }
+@@ -122,7 +122,7 @@ if have_block
+   if config_host_data.get('CONFIG_REPLICATION')
+     tests += {'test-replication': [testblock]}
+   endif
+-  tests += {'test-crypto-pbkdf': [io]}
++#  tests += {'test-crypto-pbkdf': [io]}
+ endif
+ 
+ if have_system

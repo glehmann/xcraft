@@ -1,0 +1,54 @@
+hw/ide: check null block before _cancel_dma_sync
+
+From: Prasad J Pandit <pjp@fedoraproject.org>
+Date: Thu 03 Sep 2020 19:31:38 BST +0530
+
+When cancelling an i/o operation via ide_cancel_dma_sync(),
+a block pointer may be null. Add check to avoid null pointer
+dereference.
+
+ -> https://ruhr-uni-bochum.sciebo.de/s/NNWP2GfwzYKeKwE?path=%2Fide_nullptr1
+ ==1803100==Hint: address points to the zero page.
+ #0 blk_bs ../block/block-backend.c:714
+ #1 blk_drain ../block/block-backend.c:1715
+ #2 ide_cancel_dma_sync ../hw/ide/core.c:723
+ #3 bmdma_cmd_writeb ../hw/ide/pci.c:298
+ #4 bmdma_write ../hw/ide/piix.c:75
+ #5 memory_region_write_accessor ../softmmu/memory.c:483
+ #6 access_with_adjusted_size ../softmmu/memory.c:544
+ #7 memory_region_dispatch_write ../softmmu/memory.c:1465
+ #8 flatview_write_continue ../exec.c:3176
+ ...
+
+Reported-by: Ruhr-University <bugs-syssec@rub.de>
+Signed-off-by: Prasad J Pandit <pjp@fedoraproject.org>
+Message-Id: <20200903183138.2161977-1-ppandit@redhat.com>
+
+diff --git a/hw/ide/core.c b/hw/ide/core.c
+index b14983ec54fa..59bdd34ea83e 100644
+--- a/hw/ide/core.c
++++ b/hw/ide/core.c
+@@ -752,6 +752,7 @@ void ide_cancel_dma_sync(IDEState *s)
+      * whole DMA operation will be submitted to disk with a single
+      * aio operation with preadv/pwritev.
+      */
++    assert(s->blk);
+     if (s->bus->dma->aiocb) {
+         trace_ide_cancel_dma_sync_remaining();
+         blk_drain(s->blk);
+diff --git a/hw/ide/pci.c b/hw/ide/pci.c
+index 1e50bb9e483a..aec55364f274 100644
+--- a/hw/ide/pci.c
++++ b/hw/ide/pci.c
+@@ -384,7 +384,10 @@ void bmdma_cmd_writeb(BMDMAState *bm, uint32_t val)
+     /* Ignore writes to SSBM if it keeps the old value */
+     if ((val & BM_CMD_START) != (bm->cmd & BM_CMD_START)) {
+         if (!(val & BM_CMD_START)) {
+-            ide_cancel_dma_sync(ide_bus_active_if(bm->bus));
++            IDEState *s = ide_bus_active_if(bm->bus);
++            if (s->blk) {
++                ide_cancel_dma_sync(s);
++            }
+             bm->status &= ~BM_STATUS_DMAING;
+         } else {
+             bm->cur_addr = bm->addr;

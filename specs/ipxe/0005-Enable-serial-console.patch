@@ -1,0 +1,20 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tu Dinh <ngoc-tu.dinh@vates.tech>
+Date: Tue, 30 Jun 2026 10:09:02 +0000
+Subject: [PATCH] Enable serial console
+
+Signed-off-by: Tu Dinh <ngoc-tu.dinh@vates.tech>
+
+diff --git a/src/config/console.h b/src/config/console.h
+index 8132e864462f..e0b7aa049b34 100644
+--- a/src/config/console.h
++++ b/src/config/console.h
+@@ -28,7 +28,7 @@ FILE_SECBOOT ( PERMITTED );
+ 
+ /* Console types supported only on systems with serial ports */
+ #if ! defined ( SERIAL_NULL )
+-  //#define CONSOLE_SERIAL	/* Serial port console */
++  #define CONSOLE_SERIAL	/* Serial port console */
+ #endif
+ 
+ /* Console types supported only on BIOS platforms */

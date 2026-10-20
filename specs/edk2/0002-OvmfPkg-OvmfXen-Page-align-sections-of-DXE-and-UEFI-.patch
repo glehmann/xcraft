@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tu Dinh <ngoc-tu.dinh@vates.tech>
+Date: Tue, 19 May 2026 13:53:55 +0200
+Subject: [PATCH] OvmfPkg/OvmfXen: Page align sections of DXE and UEFI images
+
+The current OvmfXen only page aligns sections of DXE runtime and SMM
+images for image protections. However, image protections are applied
+to other image types like DXE_DRIVER, DXE_CORE, UEFI_DRIVERS and
+UEFI_APPLICATION which makes those images unprotected.
+
+This change applies page alignment to sections of image DXE_DRIVER,
+DXE_CORE, UEFI_DRIVER and UEFI_APPLICATION so image protections take
+effect.
+
+!!!!!!!!  Image Section Alignment(0x40) does not match Required Alignment (0x1000)  !!!!!!!!
+ProtectUefiImage failed to create image properties record
+
+Ported from 4c8717de1696 to OvmfXen.
+
+Co-authored-by: Khalid Ali <khaliidcaliy@gmail.com>
+Signed-off-by: Tu Dinh <ngoc-tu.dinh@vates.tech>
+(cherry picked from commit f98a523295c8fe2b795492a09d2c561b8aa9ce4e)
+
+diff --git a/OvmfPkg/OvmfXen.dsc b/OvmfPkg/OvmfXen.dsc
+index 64f66168a4b6..ab2c3e7e6c2b 100644
+--- a/OvmfPkg/OvmfXen.dsc
++++ b/OvmfPkg/OvmfXen.dsc
+@@ -92,7 +92,7 @@
+ 
+ !include NetworkPkg/NetworkBuildOptions.dsc.inc
+ 
+-[BuildOptions.common.EDKII.DXE_RUNTIME_DRIVER]
++[BuildOptions.common.EDKII.DXE_RUNTIME_DRIVER, BuildOptions.common.EDKII.DXE_DRIVER, BuildOptions.common.EDKII.UEFI_DRIVER, BuildOptions.common.EDKII.DXE_CORE, BuildOptions.common.EDKII.UEFI_APPLICATION]
+   GCC:*_*_*_DLINK_FLAGS = -z common-page-size=0x1000
+   XCODE:*_*_*_DLINK_FLAGS = -seg1addr 0x1000 -segalign 0x1000
+   XCODE:*_*_*_MTOC_FLAGS = -align 0x1000

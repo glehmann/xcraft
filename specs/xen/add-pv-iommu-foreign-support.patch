@@ -1,0 +1,259 @@
+diff --git a/xen/arch/x86/domain.c b/xen/arch/x86/domain.c
+index 9af833b6da59..9b4023d7834f 100644
+--- a/xen/arch/x86/domain.c
++++ b/xen/arch/x86/domain.c
+@@ -2322,6 +2322,9 @@ static int relinquish_memory(
+             continue;
+         }
+ 
++        if ( test_and_clear_bit(_PGC_foreign_map, &page->count_info) )
++            put_page(page);
++
+         if ( test_and_clear_bit(_PGT_pinned, &page->u.inuse.type_info) )
+             ret = put_page_and_type_preemptible(page);
+         switch ( ret )
+diff --git a/xen/arch/x86/include/asm/mm.h b/xen/arch/x86/include/asm/mm.h
+index 08153e6d6fa2..a92201942ea3 100644
+--- a/xen/arch/x86/include/asm/mm.h
++++ b/xen/arch/x86/include/asm/mm.h
+@@ -83,19 +83,22 @@
+ #define PGC_state_offlined  PG_mask(2, 6)
+ #define PGC_state_free      PG_mask(3, 6)
+ #define page_state_is(pg, st) (((pg)->count_info&PGC_state) == PGC_state_##st)
++/* Page has foreign mappings? */
++#define _PGC_foreign_map  PG_shift(7)
++#define PGC_foreign_map   PG_mask(1, 7)
+ #ifdef CONFIG_SHADOW_PAGING
+  /* Set when a page table page has been shadowed. */
+-#define _PGC_shadowed_pt  PG_shift(7)
+-#define PGC_shadowed_pt   PG_mask(1, 7)
++#define _PGC_shadowed_pt  PG_shift(8)
++#define PGC_shadowed_pt   PG_mask(1, 8)
+ #else
+ #define PGC_shadowed_pt   0
+ #endif
+ 
+ /* Count of references to this frame. */
+ #if PGC_shadowed_pt
+-#define PGC_count_width   PG_shift(7)
++#define PGC_count_width   PG_shift(8)
+ #else
+-#define PGC_count_width   PG_shift(6)
++#define PGC_count_width   PG_shift(7)
+ #endif
+ #define PGC_count_mask    ((1UL<<PGC_count_width)-1)
+ 
+diff --git a/xen/common/pv_iommu.c b/xen/common/pv_iommu.c
+index b35d44c4a54e..f951f83d992e 100644
+--- a/xen/common/pv_iommu.c
++++ b/xen/common/pv_iommu.c
+@@ -22,7 +22,11 @@
+ #include <xen/guest_access.h>
+ #include <xen/param.h>
+ #include <public/pv-iommu.h>
++#include <xsm/xsm.h>
+ 
++#ifdef CONFIG_X86
++#include <asm/setup.h>
++#endif
+ #define ret_t long
+ 
+ /*
+@@ -189,6 +193,110 @@ void do_iommu_sub_op(struct pv_iommu_op *op)
+             op->status = 0;
+             break;
+         }
++#ifdef CONFIG_X86
++        case IOMMUOP_lookup_foreign_page:
++        {
++            mfn_t mfn;
++            struct page_info *page = NULL;
++            int rc;
++
++            if ( d->domain_id == op->u.lookup_foreign_page.domid ||
++                 op->u.lookup_foreign_page.domid == DOMID_SELF )
++            {
++                op->status = -EPERM;
++                goto finish;
++            }
++
++            rd = rcu_lock_domain_by_any_id(op->u.lookup_foreign_page.domid);
++            if ( !rd )
++            {
++                op->status = -ENXIO;
++                goto finish;
++            }
++
++            /* Only HVM domains can have their pages foreign mapped */
++            if ( is_pv_domain(rd) )
++            {
++                op->status = -EPERM;
++                goto finish;
++            }
++
++            /* Check for privilege */
++            if ( xsm_iommu_control(XSM_DM_PRIV, rd, op->subop_id) )
++            {
++                op->status = -EPERM;
++                goto finish;
++            }
++
++            /* Lookup page struct backing gfn */
++            if ( (rc = get_paged_frame(op->u.lookup_foreign_page.gfn, &mfn, &page, 0,
++                                 rd)) )
++            {
++                op->status = -ENXIO; // Should this be something else?
++                goto finish;
++            }
++
++            /* Only create BFN mappings for guest mapped memory */
++            if ( !(page->count_info & PGC_allocated) ||
++                 ( (page->count_info & PGC_count_mask) < 2 ))
++            {
++                    put_page(page);
++                    op->status = -EPERM;
++                    goto finish;
++            }
++
++            if ( test_and_set_bit(_PGC_foreign_map, &page->count_info) )
++                put_page(page);
++
++            /* Check if IOMMU is disabled/bypassed */
++            if ( !can_use_iommu_check(d) )
++                op->u.lookup_foreign_page.bfn = mfn_x(mfn);
++            else
++                op->u.lookup_foreign_page.bfn = mfn_x(mfn) + bfn_foreign_offset;
++
++            op->status = 0;
++            break;
++        }
++        case IOMMUOP_unmap_foreign_page:
++        {
++            struct page_info *page;
++            mfn_t mfn;
++            unsigned int flags;
++
++            if ( !can_use_iommu_check(d) )
++            {
++                page = mfn_to_page(_mfn(op->u.unmap_foreign_page.bfn));
++            }
++            else
++            {
++                /* Check if there is a valid BFN mapping for this domain */
++                if ( iommu_lookup_page(d, _dfn(op->u.unmap_foreign_page.bfn), &mfn, &flags) )
++                {
++                   op->status = -ENOENT;
++                   goto finish;
++                }
++                /* Use MFN from B2M mapping to lookup page */
++                page = mfn_to_page(mfn);
++            }
++
++            if ( !page )
++            {
++               op->status = -ENOENT;
++               goto finish;
++            }
++
++            if ( !test_and_clear_bit(_PGC_foreign_map, &page->count_info) )
++            {
++               op->status = -ENOENT;
++               goto finish;
++            }
++
++            /* Remove the reference to the page */
++            put_page(page);
++            op->status = 0;
++        break;
++        }
++#endif
+         default:
+             op->status = -ENODEV;
+             break;
+diff --git a/xen/include/public/pv-iommu.h b/xen/include/public/pv-iommu.h
+index f598a8feba76..ec71f4d42a24 100644
+--- a/xen/include/public/pv-iommu.h
++++ b/xen/include/public/pv-iommu.h
+@@ -26,6 +26,9 @@
+ #define IOMMUOP_query_caps            1
+ #define IOMMUOP_map_page              2
+ #define IOMMUOP_unmap_page            3
++/* 4 was IOMMUOP_map_foreign_page, removed */
++#define IOMMUOP_lookup_foreign_page   5
++#define IOMMUOP_unmap_foreign_page    6
+ 
+ struct pv_iommu_op {
+     uint16_t subop_id;
+@@ -53,6 +56,18 @@ struct pv_iommu_op {
+         struct {
+             uint64_t bfn;
+         } unmap_page;
++
++        struct {
++            uint64_t bfn;
++            uint64_t gfn;
++            uint16_t domid;
++            uint16_t ioserver;
++        } lookup_foreign_page;
++
++        struct {
++            uint64_t bfn;
++            uint16_t ioserver;
++        } unmap_foreign_page;
+     } u;
+ };
+ 
+diff --git a/xen/include/xsm/dummy.h b/xen/include/xsm/dummy.h
+index fdb4ec85a665..f8d32388b648 100644
+--- a/xen/include/xsm/dummy.h
++++ b/xen/include/xsm/dummy.h
+@@ -615,6 +615,13 @@ static XSM_INLINE int cf_check xsm_hvm_altp2mhvm_op(
+     }
+ }
+ 
++static XSM_INLINE int cf_check xsm_iommu_control(
++    XSM_DEFAULT_ARG struct domain *d, unsigned long op)
++{
++    XSM_ASSERT_ACTION(XSM_DM_PRIV);
++    return xsm_default_action(action, current->domain, d);
++}
++
+ #ifdef CONFIG_VM_EVENT
+ static XSM_INLINE int cf_check xsm_mem_access(XSM_DEFAULT_ARG struct domain *d)
+ {
+diff --git a/xen/include/xsm/xsm.h b/xen/include/xsm/xsm.h
+index 4443763295da..dd65672abf30 100644
+--- a/xen/include/xsm/xsm.h
++++ b/xen/include/xsm/xsm.h
+@@ -121,6 +121,7 @@ struct xsm_ops {
+                               uint8_t allow);
+     int (*pci_config_permission)(struct domain *d, uint32_t machine_bdf,
+                                  uint16_t start, uint16_t end, uint8_t access);
++    int (*iommu_control)(struct domain *d, unsigned long op);
+ 
+ #if defined(CONFIG_HAS_PASSTHROUGH) && defined(CONFIG_HAS_PCI)
+     int (*get_device_group)(uint32_t machine_bdf);
+@@ -613,6 +614,11 @@ static inline int xsm_get_vnumainfo(xsm_default_t def, struct domain *d)
+     return alternative_call(xsm_ops.get_vnumainfo, d);
+ }
+ 
++static inline int xsm_iommu_control(xsm_default_t def, struct domain *d, unsigned long op)
++{
++    return alternative_call(xsm_ops.iommu_control, d, op);
++}
++
+ #ifdef CONFIG_VM_EVENT
+ static inline int xsm_mem_access(xsm_default_t def, struct domain *d)
+ {
+diff --git a/xen/xsm/dummy.c b/xen/xsm/dummy.c
+index 860233e4beed..52de5d9a2b38 100644
+--- a/xen/xsm/dummy.c
++++ b/xen/xsm/dummy.c
+@@ -100,6 +100,7 @@ static const struct xsm_ops __initconst_cf_clobber dummy_ops = {
+     .hvm_altp2mhvm_op              = xsm_hvm_altp2mhvm_op,
+ 
+     .do_xsm_op                     = xsm_do_xsm_op,
++    .iommu_control                 = xsm_iommu_control,
+ #ifdef CONFIG_COMPAT
+     .do_compat_op                  = xsm_do_compat_op,
+ #endif

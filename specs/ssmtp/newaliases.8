@@ -1,0 +1,18 @@
+.TH NEWALIASES 8 "July 2012" "Fedora"
+.SH NAME
+newaliases \- update /etc/aliases database
+.SH SYNOPSIS
+.B newaliases
+.SH DESCRIPTION
+This is a link to the ssmtp binary. It invokes
+.B /usr/sbin/sendmail
+with the
+.B -bi
+option. It is provided for compatibility with the sendmail program.
+.P
+In Fedora sSMTP supports /etc/aliases as a text file so there is no need
+to regenerate a database.
+.SH AUTHOR
+This manual page was written by Christoph Lameter <clameter@debian.org>,
+for the Debian GNU/Linux system. Minor fixes by Matt Ryan <mryan@debian.org>
+and Manuel Wolfshant <wolfy@fedoraproject.org>.

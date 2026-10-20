@@ -1,0 +1,150 @@
+diff --git a/hw/xen/xen-host-pci-device.c b/hw/xen/xen-host-pci-device.c
+index eaf32f27107b..31c54558dd65 100644
+--- a/hw/xen/xen-host-pci-device.c
++++ b/hw/xen/xen-host-pci-device.c
+@@ -9,6 +9,7 @@
+ #include "qemu/osdep.h"
+ #include "qapi/error.h"
+ #include "qemu/cutils.h"
++#include "hw/xen/xen_native.h"
+ #include "hw/xen/xen-legacy-backend.h"
+ #include "hw/xen/xen-bus-helper.h"
+ #include "xen-host-pci-device.h"
+@@ -260,10 +261,33 @@ static bool xen_host_pci_dev_is_virtfn(XenHostPCIDevice *d)
+     return !stat(path, &buf);
+ }
+ 
++static bool lockdown_mode_enabled(void)
++{
++    bool res = false;
++    char line[256];
++    FILE *f;
++
++    f = fopen("/sys/kernel/security/lockdown", "r");
++    if (!f)
++        /* assume not lockdown if file is not present */
++        return res;
++
++    if (fgets(line, sizeof(line), f))
++        res = (strstr(line, "[none]") == NULL);
++
++    fclose(f);
++    return res;
++}
++
+ static void xen_host_pci_config_open(XenHostPCIDevice *d, Error **errp)
+ {
+     char path[PATH_MAX];
+ 
++    if (lockdown_mode_enabled()) {
++        d->config_fd = -2;
++        return;
++    }
++
+     xen_host_pci_sysfs_path(d, "config", path, sizeof(path));
+ 
+     d->config_fd = open(path, O_RDWR);
+@@ -276,14 +300,31 @@ static int xen_host_pci_config_read(XenHostPCIDevice *d,
+                                     int pos, void *buf, int len)
+ {
+     int rc;
++#ifdef XEN_DOMCTL_pci_read
++    uint64_t data;
++#endif
+ 
+-    do {
+-        rc = pread(d->config_fd, buf, len, pos);
+-    } while (rc < 0 && (errno == EINTR || errno == EAGAIN));
+-    if (rc != len) {
+-        return -errno;
++    if (d->config_fd != -2) {
++        do {
++            rc = pread(d->config_fd, buf, len, pos);
++        } while (rc < 0 && (errno == EINTR || errno == EAGAIN));
++        if (rc != len) {
++            return -errno;
++        }
++        return 0;
++    }
++
++#ifdef XEN_DOMCTL_pci_read
++    rc = xc_domain_pci_access(xen_xc, xen_domid, d->domain, d->bus, d->dev,
++                              d->func, len, XEN_DOMCTL_pci_read, pos, &data);
++    if ( rc >= 0 ) {
++        /* Note: this works because we use little endian */
++        memcpy(buf, &data, len);
+     }
+     return 0;
++#else
++    return -EPERM;
++#endif
+ }
+ 
+ static int xen_host_pci_config_write(XenHostPCIDevice *d,
+@@ -291,13 +332,26 @@ static int xen_host_pci_config_write(XenHostPCIDevice *d,
+ {
+     int rc;
+ 
+-    do {
+-        rc = pwrite(d->config_fd, buf, len, pos);
+-    } while (rc < 0 && (errno == EINTR || errno == EAGAIN));
+-    if (rc != len) {
+-        return -errno;
++    if (d->config_fd != -2) {
++        do {
++            rc = pwrite(d->config_fd, buf, len, pos);
++        } while (rc < 0 && (errno == EINTR || errno == EAGAIN));
++        if (rc != len) {
++            return -errno;
++        }
++        return 0;
+     }
+-    return 0;
++
++#ifdef XEN_DOMCTL_pci_write
++    /* Note: this works because we use little endian and we assume a small
++     * read overflow on buf is fine */
++    rc = xc_domain_pci_access(xen_xc, xen_domid, d->domain, d->bus, d->dev,
++                              d->func, len, XEN_DOMCTL_pci_write, pos,
++                              (void *) buf);
++    return rc;
++#else
++    return -EPERM;
++#endif
+ }
+ 
+ 
+@@ -458,8 +512,8 @@ error:
+ 
+     if (d->config_fd >= 0) {
+         close(d->config_fd);
+-        d->config_fd = -1;
+     }
++    d->config_fd = -1;
+ }
+ 
+ bool xen_host_pci_device_closed(XenHostPCIDevice *d)
+@@ -471,6 +525,6 @@ void xen_host_pci_device_put(XenHostPCIDevice *d)
+ {
+     if (d->config_fd >= 0) {
+         close(d->config_fd);
+-        d->config_fd = -1;
+     }
++    d->config_fd = -1;
+ }
+diff --git a/hw/xen/xen-host-pci-device.h b/hw/xen/xen-host-pci-device.h
+index 270dcb27f7b3..00bbbc8aa406 100644
+--- a/hw/xen/xen-host-pci-device.h
++++ b/hw/xen/xen-host-pci-device.h
+@@ -39,6 +39,11 @@ typedef struct XenHostPCIDevice {
+ 
+     bool is_virtfn;
+ 
++    /*
++     * File descriptor if opened and using sysfs.
++     * -1 if closed.
++     * -2 if opened and using Xen interface.
++     */
+     int config_fd;
+ } XenHostPCIDevice;
+ 

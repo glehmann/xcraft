@@ -1,0 +1,73 @@
+From 2d11f4a60391d08b58d7c97af05a6ba4ff2c67dc Mon Sep 17 00:00:00 2001
+From: Yann Dirson <yann.dirson@vates.tech>
+Date: Wed, 2 Jul 2025 18:30:59 +0200
+Subject: [PATCH 3/3] XSConsoleImported: switch from imp to importlib for
+ python 3.12 support
+
+This switches away from deprecated `imp`, and breaks support for python
+2.7, but I expect this branch to really support only python3 now, so we
+likely don't care about adding backward compatibility here.
+
+Signed-off-by: Yann Dirson <yann.dirson@vates.tech>
+---
+ XSConsoleImporter.py | 8 +++++---
+ pyproject.toml       | 4 ++--
+ 2 files changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/XSConsoleImporter.py b/XSConsoleImporter.py
+index 2475435..0674104 100644
+--- a/XSConsoleImporter.py
++++ b/XSConsoleImporter.py
+@@ -15,7 +15,7 @@
+ # with this program; if not, write to the Free Software Foundation, Inc.,
+ # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ 
+-import imp, os, re, sys, traceback
++import importlib.util, os, re, sys, traceback
+ 
+ from XSConsoleLog import *
+ from XSConsoleMenus import *
+@@ -46,8 +46,10 @@ class Importer:
+                         try:
+                             try:
+                                 # Import using variable as module name
+-                                (fileObj, pathName, description) = imp.find_module(importName, [root])
+-                                imp.load_module(importName, fileObj, pathName, description)
++                                spec = importlib.util.spec_from_file_location(
++                                    importName, os.path.join(root, filename))
++                                module = importlib.util.module_from_spec(spec)
++                                spec.loader.exec_module(module)
+                             except Exception as e:
+                                 try: XSLogError(*traceback.format_tb(sys.exc_info()[2]))
+                                 except: pass
+diff --git a/pyproject.toml b/pyproject.toml
+index 064d47f..dbad651 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -3,7 +3,7 @@
+ name = "XSConsole"
+ dynamic = ["version"]
+ description = "Xenserver Status Report"
+-requires-python = ">=2.7, <3.12"
++requires-python = ">=3.6"
+ license = "GPL-2.0-or-later"
+ keywords = ["xenserver", "xen-project"]
+ authors = [
+@@ -20,13 +20,13 @@ classifiers = [
+     "Environment :: Console",
+     "Development Status :: 5 - Production/Stable",
+     "Operating System :: POSIX :: Linux :: XenServer/XCP-ng Dom0",
+-    "Programming Language :: Python :: 2.7",
+     "Programming Language :: Python :: 3.6",
+     "Programming Language :: Python :: 3.7",
+     "Programming Language :: Python :: 3.8",
+     "Programming Language :: Python :: 3.9",
+     "Programming Language :: Python :: 3.10",
+     "Programming Language :: Python :: 3.11",
++    "Programming Language :: Python :: 3.12",
+     "Programming Language :: Python :: Implementation :: CPython",
+     "Topic :: System :: Logging",
+     "Topic :: System :: Monitoring",
+-- 
+2.47.3
+

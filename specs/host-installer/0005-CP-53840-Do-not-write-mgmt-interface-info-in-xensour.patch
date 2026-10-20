@@ -1,0 +1,36 @@
+From fd23758b00cd543854a37d650005bb330849f163 Mon Sep 17 00:00:00 2001
+From: Lin Liu <Lin.Liu01@cloud.com>
+Date: Mon, 7 Apr 2025 17:09:12 +0800
+Subject: [PATCH 05/10] CP-53840: Do not write mgmt interface info in
+ xensource-inventory
+
+The management interface information is maintained by xcp-networkd
+
+host-installer just give up writing this information and xcp-networkd
+will take care of that
+
+Signed-off-by: Lin Liu <Lin.Liu01@cloud.com>
+---
+ backend.py | 6 ------
+ 1 file changed, 6 deletions(-)
+
+diff --git a/backend.py b/backend.py
+index 33322e3..6b383eb 100644
+--- a/backend.py
++++ b/backend.py
+@@ -1516,12 +1516,6 @@ def writeInventory(installID, controlID, mounts, primary_disk, backup_partnum, l
+     inv.write("CONTROL_DOMAIN_UUID='%s'\n" % controlID)
+     inv.write("DOM0_MEM='%d'\n" % host_config['dom0-mem'])
+     inv.write("DOM0_VCPUS='%d'\n" % host_config['dom0-vcpus'])
+-    inv.write("MANAGEMENT_INTERFACE='%s'\n" % admin_bridge)
+-    # Default to IPv4 unless we have only got an IPv6 admin interface
+-    if ((not admin_config.mode) and admin_config.modev6):
+-        inv.write("MANAGEMENT_ADDRESS_TYPE='IPv6'\n")
+-    else:
+-        inv.write("MANAGEMENT_ADDRESS_TYPE='IPv4'\n")
+     if constants.CC_PREPARATIONS and install_type == constants.INSTALL_TYPE_FRESH:
+         inv.write("CC_PREPARATIONS='true'\n")
+     inv.close()
+-- 
+2.39.5
+

@@ -1,0 +1,14 @@
+diff -ur biosdevname-0.3.11-orig/src/bios_device.c biosdevname-0.3.11/src/bios_device.c
+--- biosdevname-0.3.11-orig/src/bios_device.c	2012-03-22 16:05:53.000000000 +0000
++++ biosdevname-0.3.11/src/bios_device.c	2012-03-22 18:59:55.000000000 +0000
+@@ -42,9 +42,9 @@
+ 		unparse_pci_device(buf, sizeof(buf), dev->pcidev);
+ 		printf("%s", buf);
+ 	}
+-	printf("\n");
+ 	if (dev->duplicate)
+ 		printf("Duplicate: True\n");
++	printf("\n");
+ }
+ 
+ void unparse_bios_devices(void *cookie)

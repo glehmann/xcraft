@@ -1,0 +1,42 @@
+From 3fb3ffccea717ce10bb29dfd8a9e761c7387626e Mon Sep 17 00:00:00 2001
+From: Michael Brown <mcb30@ipxe.org>
+Date: Sun, 14 Jul 2019 14:05:48 +0100
+Subject: [PATCH] [build] Fix use of inline assembly on GCC 8 ARM64 builds
+
+Commit 1a7746603 ("[build] Fix use of inline assembly on GCC 4.8 ARM64
+builds") switched from using "%c0" to "%a0" in order to avoid an
+"invalid operand prefix" error on the ARM64 version of GCC 4.8.
+
+It appears that the ARM64 version of GCC 8 now produces an "invalid
+address mode" error for the "%a0" form, but is happy with the original
+"%c0" form.
+
+Switch back to using the "%c0" form, on the assumption that the
+requirement for "%a0" was a temporary aberration.
+
+Originally-fixed-by: John L. Jolly <jjolly@suse.com>
+Signed-off-by: Michael Brown <mcb30@ipxe.org>
+---
+ src/include/errno.h | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/include/errno.h b/src/include/errno.h
+index e80bf9ca..342384fa 100644
+--- a/src/include/errno.h
++++ b/src/include/errno.h
+@@ -262,10 +262,10 @@ static inline void eplatform_discard ( int dummy __unused, ... ) {}
+ 		  ".align 8\n\t"					\
+ 		  "\n1:\n\t"						\
+ 		  ".long ( 4f - 1b )\n\t"				\
+-		  ".long %a0\n\t"					\
++		  ".long %c0\n\t"					\
+ 		  ".long ( 2f - 1b )\n\t"				\
+ 		  ".long ( 3f - 1b )\n\t"				\
+-		  ".long %a1\n\t"					\
++		  ".long %c1\n\t"					\
+ 		  "\n2:\t.asciz \"" __einfo_desc ( einfo ) "\"\n\t"	\
+ 		  "\n3:\t.asciz \"" __FILE__ "\"\n\t"			\
+ 		  ".align 8\n\t"					\
+-- 
+2.39.5
+

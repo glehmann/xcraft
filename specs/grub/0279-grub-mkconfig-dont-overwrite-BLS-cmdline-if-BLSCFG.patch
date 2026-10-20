@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marta Lewandowska <mlewando@redhat.com>
+Date: Mon, 17 Jul 2023 16:03:39 -0400
+Subject: [PATCH] grub-mkconfig dont overwrite BLS cmdline if BLSCFG
+
+If GRUB_ENABLE_BLSCFG is true, running grub2-mkconfig will not
+overwrite kernel cmdline in BLS snippets with what is in
+GRUB_CMDLINE_LINUX in /etc/default/grub. Update can be forced by
+sending new arg --update-bls-cmdline, thus decoupling cmdline
+updates from updates of other parameters. GRUB_GRUBENV_UPDATE
+remains 'yes' by default.
+
+Signed-off-by: mkl <mlewando@redhat.com>
+---
+ util/grub-mkconfig.in   | 9 +++++++++
+ util/grub.d/10_linux.in | 2 +-
+ 2 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/util/grub-mkconfig.in b/util/grub-mkconfig.in
+index 1cfb5873ff2..b043a19c12e 100644
+--- a/util/grub-mkconfig.in
++++ b/util/grub-mkconfig.in
+@@ -51,6 +51,7 @@ export TEXTDOMAIN=@PACKAGE@
+ export TEXTDOMAINDIR="@localedir@"
+ 
+ export GRUB_GRUBENV_UPDATE="yes"
++export GRUB_UPDATE_BLS_CMDLINE="yes"
+ 
+ . "${pkgdatadir}/grub-mkconfig_lib"
+ 
+@@ -62,6 +63,7 @@ usage () {
+     echo
+     print_option_help "-o, --output=$(gettext FILE)" "$(gettext "output generated config to FILE [default=stdout]")"
+     print_option_help "--no-grubenv-update" "$(gettext "do not update variables in the grubenv file")"
++    print_option_help "--update-bls-cmdline" "$(gettext "overwrite BLS cmdline args with default args")"
+     print_option_help "-h, --help" "$(gettext "print this message and exit")"
+     print_option_help "-V, --version" "$(gettext "print the version information and exit")"
+     echo
+@@ -100,6 +102,9 @@ do
+     --no-grubenv-update)
+ 	GRUB_GRUBENV_UPDATE="no"
+ 	;;
++    --update-bls-cmdline)
++	bls_cmdline_update=true
++	;;
+     -*)
+ 	gettext_printf "Unrecognized option \`%s'\n" "$option" 1>&2
+ 	usage
+@@ -175,6 +180,10 @@ fi
+ 
+ eval "$("${grub_get_kernel_settings}")" || true
+ 
++if [ "x${GRUB_ENABLE_BLSCFG}" = "xtrue" ] && [ "x${bls_cmdline_update}" != "xtrue" ]; then
++  GRUB_UPDATE_BLS_CMDLINE="no"
++fi
++
+ if [ "x${GRUB_DISABLE_UUID}" = "xtrue" ]; then
+   if [ -z "${GRUB_DISABLE_LINUX_UUID}" ]; then
+     GRUB_DISABLE_LINUX_UUID="true"
+diff --git a/util/grub.d/10_linux.in b/util/grub.d/10_linux.in
+index 11c19304f8b..c258aa3cd81 100644
+--- a/util/grub.d/10_linux.in
++++ b/util/grub.d/10_linux.in
+@@ -267,7 +267,7 @@ if [ -z "\${kernelopts}" ]; then
+ fi
+ EOF
+ 
+-  if [ "x${GRUB_GRUBENV_UPDATE}" = "xyes" ]; then
++  if [ "x${GRUB_UPDATE_BLS_CMDLINE}" = "xyes" ]; then
+       update_bls_cmdline
+   fi
+ 

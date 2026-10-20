@@ -1,0 +1,87 @@
+From eead369fb59335ff422332e1e951fddcee419449 Mon Sep 17 00:00:00 2001
+Message-ID: <eead369fb59335ff422332e1e951fddcee419449.1764164612.git.gerald.elder-vass@citrix.com>
+In-Reply-To: <74f6f75964965c1cb59e2c230cf613e5e72e189d.1764164612.git.gerald.elder-vass@citrix.com>
+References: <74f6f75964965c1cb59e2c230cf613e5e72e189d.1764164612.git.gerald.elder-vass@citrix.com>
+From: Gerald Elder-Vass <gerald.elder-vass@citrix.com>
+Date: Wed, 26 Nov 2025 13:43:15 +0000
+Subject: [PATCH 5/5] Revert "pc: remove short_root_bus property"
+
+This reverts commit 946f7c0903c44ad2ace5bb6bf187d66c30548520.
+---
+ hw/pci-host/i440fx.c      | 8 ++++++++
+ hw/pci-host/q35.c         | 7 +++++++
+ include/hw/pci-host/q35.h | 1 +
+ 3 files changed, 16 insertions(+)
+
+diff --git a/hw/pci-host/i440fx.c b/hw/pci-host/i440fx.c
+index e13bb1b53e49..7caf4ee68d77 100644
+--- a/hw/pci-host/i440fx.c
++++ b/hw/pci-host/i440fx.c
+@@ -56,6 +56,7 @@ struct I440FXState {
+     uint64_t above_4g_mem_size;
+     uint64_t pci_hole64_size;
+     bool pci_hole64_fix;
++    uint32_t short_root_bus;
+ 
+     char *pci_type;
+ };
+@@ -350,12 +351,19 @@ static const TypeInfo i440fx_info = {
+ static const char *i440fx_pcihost_root_bus_path(PCIHostState *host_bridge,
+                                                 PCIBus *rootbus)
+ {
++    I440FXState *s = I440FX_PCI_HOST_BRIDGE(host_bridge);
++
++    /* For backwards compat with old device paths */
++    if (s->short_root_bus) {
++        return "0000";
++    }
+     return "0000:00";
+ }
+ 
+ static const Property i440fx_props[] = {
+     DEFINE_PROP_SIZE(PCI_HOST_PROP_PCI_HOLE64_SIZE, I440FXState,
+                      pci_hole64_size, I440FX_PCI_HOST_HOLE64_SIZE_DEFAULT),
++    DEFINE_PROP_UINT32("short_root_bus", I440FXState, short_root_bus, 0),
+     DEFINE_PROP_SIZE(PCI_HOST_BELOW_4G_MEM_SIZE, I440FXState,
+                      below_4g_mem_size, 0),
+     DEFINE_PROP_SIZE(PCI_HOST_ABOVE_4G_MEM_SIZE, I440FXState,
+diff --git a/hw/pci-host/q35.c b/hw/pci-host/q35.c
+index 1951ae440cce..9dc859a7fc6e 100644
+--- a/hw/pci-host/q35.c
++++ b/hw/pci-host/q35.c
+@@ -73,6 +73,12 @@ static void q35_host_realize(DeviceState *dev, Error **errp)
+ static const char *q35_host_root_bus_path(PCIHostState *host_bridge,
+                                           PCIBus *rootbus)
+ {
++    Q35PCIHost *s = Q35_HOST_DEVICE(host_bridge);
++
++     /* For backwards compat with old device paths */
++    if (s->mch.short_root_bus) {
++        return "0000";
++    }
+     return "0000:00";
+ }
+ 
+@@ -175,6 +181,7 @@ static const Property q35_host_props[] = {
+                         MCH_HOST_BRIDGE_PCIEXBAR_DEFAULT),
+     DEFINE_PROP_SIZE(PCI_HOST_PROP_PCI_HOLE64_SIZE, Q35PCIHost,
+                      mch.pci_hole64_size, Q35_PCI_HOST_HOLE64_SIZE_DEFAULT),
++    DEFINE_PROP_UINT32("short_root_bus", Q35PCIHost, mch.short_root_bus, 0),
+     DEFINE_PROP_SIZE(PCI_HOST_BELOW_4G_MEM_SIZE, Q35PCIHost,
+                      mch.below_4g_mem_size, 0),
+     DEFINE_PROP_SIZE(PCI_HOST_ABOVE_4G_MEM_SIZE, Q35PCIHost,
+diff --git a/include/hw/pci-host/q35.h b/include/hw/pci-host/q35.h
+index ddafc3f2e3d1..a384db860dff 100644
+--- a/include/hw/pci-host/q35.h
++++ b/include/hw/pci-host/q35.h
+@@ -55,6 +55,7 @@ struct MCHPCIState {
+     uint64_t below_4g_mem_size;
+     uint64_t above_4g_mem_size;
+     uint64_t pci_hole64_size;
++    uint32_t short_root_bus;
+     uint16_t ext_tseg_mbytes;
+ };
+ 
+-- 
+2.47.3
+

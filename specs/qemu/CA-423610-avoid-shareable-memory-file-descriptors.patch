@@ -1,0 +1,42 @@
+CA-423610: Never use shareable memory for display surfaces
+
+Commit 1ff788d started using shareable memory file descriptors for display
+surfaces when they had no data associated with them. This exceeds the
+limit on filesize set by the qemu-wrapper and would affect our config
+limits. However the pixman images can manage surfaces with no display
+data already (as we have been using).
+
+At this point we cannot check which accelerator is in use, hence
+removing the problematic path completely.
+
+Signed-off-by: Gerald Elder-Vass <gerald.elder-vass@citrix.com>
+
+diff --git a/ui/console.c b/ui/console.c
+index 2d00828c5382..f4e93cc2aec9 100644
+--- a/ui/console.c
++++ b/ui/console.c
+@@ -484,21 +484,9 @@ DisplaySurface *qemu_create_displaysurface_from(int width, int height,
+     trace_displaysurface_create_from(surface, width, height, format);
+     surface->share_handle = SHAREABLE_NONE;
+ 
+-    if (data) {
+-        surface->image = pixman_image_create_bits(format,
+-                                                  width, height,
+-                                                  (void *)data, linesize);
+-    } else {
+-        qemu_pixman_image_new_shareable(&surface->image,
+-                                        &surface->share_handle,
+-                                        "displaysurface",
+-                                        format,
+-                                        width,
+-                                        height,
+-                                        linesize,
+-                                        &error_abort);
+-        surface->flags = QEMU_ALLOCATED_FLAG;
+-    }
++    surface->image = pixman_image_create_bits(format,
++                                              width, height,
++                                              (void *)data, linesize);
+ 
+     assert(surface->image != NULL);
+     return surface;

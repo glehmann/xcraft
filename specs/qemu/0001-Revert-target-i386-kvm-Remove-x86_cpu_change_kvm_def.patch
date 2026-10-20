@@ -1,0 +1,85 @@
+From 29262b3c1ab78eb92d828123b3f838320229394f Mon Sep 17 00:00:00 2001
+Message-ID: <29262b3c1ab78eb92d828123b3f838320229394f.1762775851.git.gerald.elder-vass@citrix.com>
+From: Gerald Elder-Vass <gerald.elder-vass@citrix.com>
+Date: Mon, 10 Nov 2025 11:57:24 +0000
+Subject: [PATCH 1/1] Revert "target/i386/kvm: Remove
+ x86_cpu_change_kvm_default() and 'kvm-cpu.h'"
+
+This reverts commit 63f16d97c6a15532bf4fe17ac9874b94baf58ac2.
+---
+ target/i386/kvm/kvm-cpu.c |  3 ++-
+ target/i386/kvm/kvm-cpu.h | 41 +++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 43 insertions(+), 1 deletion(-)
+ create mode 100644 target/i386/kvm/kvm-cpu.h
+
+diff --git a/target/i386/kvm/kvm-cpu.c b/target/i386/kvm/kvm-cpu.c
+index 89a795365945..2c3c1f7e1125 100644
+--- a/target/i386/kvm/kvm-cpu.c
++++ b/target/i386/kvm/kvm-cpu.c
+@@ -10,6 +10,7 @@
+ #include "qemu/osdep.h"
+ #include "cpu.h"
+ #include "host-cpu.h"
++#include "kvm-cpu.h"
+ #include "qapi/error.h"
+ #include "system/system.h"
+ #include "hw/boards.h"
+@@ -181,7 +182,7 @@ static PropValue kvm_default_props[] = {
+ /*
+  * Only for builtin_x86_defs models initialized with x86_register_cpudef_types.
+  */
+-static void x86_cpu_change_kvm_default(const char *prop, const char *value)
++void x86_cpu_change_kvm_default(const char *prop, const char *value)
+ {
+     PropValue *pv;
+     for (pv = kvm_default_props; pv->prop; pv++) {
+diff --git a/target/i386/kvm/kvm-cpu.h b/target/i386/kvm/kvm-cpu.h
+new file mode 100644
+index 000000000000..e858ca21e5cf
+--- /dev/null
++++ b/target/i386/kvm/kvm-cpu.h
+@@ -0,0 +1,41 @@
++/*
++ * i386 KVM CPU type and functions
++ *
++ *  Copyright (c) 2003 Fabrice Bellard
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef KVM_CPU_H
++#define KVM_CPU_H
++
++#ifdef CONFIG_KVM
++/*
++ * Change the value of a KVM-specific default
++ *
++ * If value is NULL, no default will be set and the original
++ * value from the CPU model table will be kept.
++ *
++ * It is valid to call this function only for properties that
++ * are already present in the kvm_default_props table.
++ */
++void x86_cpu_change_kvm_default(const char *prop, const char *value);
++
++#else /* !CONFIG_KVM */
++
++#define x86_cpu_change_kvm_default(a, b)
++
++#endif /* CONFIG_KVM */
++
++#endif /* KVM_CPU_H */
+-- 
+2.47.3
+

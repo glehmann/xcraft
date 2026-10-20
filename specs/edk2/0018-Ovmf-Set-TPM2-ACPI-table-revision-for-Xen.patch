@@ -1,0 +1,23 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Anthony PERARD <anthony.perard@citrix.com>
+Date: Mon, 18 May 2026 14:49:55 +0200
+Subject: [PATCH] Ovmf: Set TPM2 ACPI table revision for Xen
+
+This is the value of ACPI_2_0_TMP2_REVISION as #defined in xen.git.
+
+Signed-off-by: Anthony PERARD <anthony.perard@citrix.com>
+
+diff --git a/OvmfPkg/OvmfXen.dsc b/OvmfPkg/OvmfXen.dsc
+index ac5a61834e84..9da42518e5a2 100644
+--- a/OvmfPkg/OvmfXen.dsc
++++ b/OvmfPkg/OvmfXen.dsc
+@@ -480,6 +480,9 @@
+   #
+   gUefiCpuPkgTokenSpaceGuid.PcdFirstTimeWakeUpAPsBySipi|FALSE
+ 
++  # Xen provides Rev 4 of the TPM2 ACPI table
++  gEfiSecurityPkgTokenSpaceGuid.PcdTpm2AcpiTableRev|4
++
+ ################################################################################
+ #
+ # Pcd Dynamic Section - list of all EDK II PCD Entries defined by this Platform

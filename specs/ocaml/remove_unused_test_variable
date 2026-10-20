@@ -1,0 +1,22 @@
+Remove unused test variable
+
+From: Tim Smith <tim.smith@citrix.com>
+
+
+---
+ testsuite/tests/c-api/alloc_async_stubs.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/testsuite/tests/c-api/alloc_async_stubs.c b/testsuite/tests/c-api/alloc_async_stubs.c
+index 7dec51e..6278819 100644
+--- a/testsuite/tests/c-api/alloc_async_stubs.c
++++ b/testsuite/tests/c-api/alloc_async_stubs.c
+@@ -8,7 +8,7 @@ value stub(value ref)
+ {
+   CAMLparam1(ref);
+   CAMLlocal2(x, y);
+-  int i; char* s; intnat coll_before;
++  char* s; intnat coll_before;
+ 
+   printf("C, before: %d\n", Int_val(Field(ref, 0)));
+ 

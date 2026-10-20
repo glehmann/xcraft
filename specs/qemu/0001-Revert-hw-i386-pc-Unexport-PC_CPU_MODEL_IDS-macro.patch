@@ -1,0 +1,54 @@
+From 160b9db359be3262440fbfc1c5bac980bf60c463 Mon Sep 17 00:00:00 2001
+Message-ID: <160b9db359be3262440fbfc1c5bac980bf60c463.1762776168.git.gerald.elder-vass@citrix.com>
+From: Gerald Elder-Vass <gerald.elder-vass@citrix.com>
+Date: Mon, 10 Nov 2025 12:01:48 +0000
+Subject: [PATCH 1/1] Revert "hw/i386/pc: Unexport PC_CPU_MODEL_IDS macro"
+
+This reverts commit fc5f89236874bc5af1fa0674da876236cf710774.
+---
+ hw/i386/pc.c         | 9 ---------
+ include/hw/i386/pc.h | 8 ++++++++
+ 2 files changed, 8 insertions(+), 9 deletions(-)
+
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index 18966eb9313d..464b0dee4632 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -72,15 +72,6 @@
+ #include "hw/xen/xen-bus.h"
+ #endif
+ 
+-/*
+- * Helper for setting model-id for CPU models that changed model-id
+- * depending on QEMU versions up to QEMU 2.4.
+- */
+-#define PC_CPU_MODEL_IDS(v) \
+-    { "qemu32-" TYPE_X86_CPU, "model-id", "QEMU Virtual CPU version " v, },\
+-    { "qemu64-" TYPE_X86_CPU, "model-id", "QEMU Virtual CPU version " v, },\
+-    { "athlon-" TYPE_X86_CPU, "model-id", "QEMU Virtual CPU version " v, },
+-
+ GlobalProperty pc_compat_10_0[] = {
+     { TYPE_X86_CPU, "x-consistent-cache", "false" },
+     { TYPE_X86_CPU, "x-vendor-cpuid-only-v2", "false" },
+diff --git a/include/hw/i386/pc.h b/include/hw/i386/pc.h
+index 7e0936122b8b..03968d9db597 100644
+--- a/include/hw/i386/pc.h
++++ b/include/hw/i386/pc.h
+@@ -301,6 +301,14 @@ extern const size_t pc_compat_2_7_len;
+ extern GlobalProperty pc_compat_2_6[];
+ extern const size_t pc_compat_2_6_len;
+ 
++/* Helper for setting model-id for CPU models that changed model-id
++ * depending on QEMU versions up to QEMU 2.4.
++ */
++#define PC_CPU_MODEL_IDS(v) \
++    { "qemu32-" TYPE_X86_CPU, "model-id", "QEMU Virtual CPU version " v, },\
++    { "qemu64-" TYPE_X86_CPU, "model-id", "QEMU Virtual CPU version " v, },\
++    { "athlon-" TYPE_X86_CPU, "model-id", "QEMU Virtual CPU version " v, },
++
+ #define DEFINE_PC_MACHINE(suffix, namestr, initfn, optsfn) \
+     static void pc_machine_##suffix##_class_init(ObjectClass *oc, \
+                                                  const void *data) \
+-- 
+2.47.3
+

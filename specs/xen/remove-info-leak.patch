@@ -1,0 +1,55 @@
+From 3e8594fc8437f84cd584956316199abd92cfc31a Mon Sep 17 00:00:00 2001
+From: Sergey Dyasli <sergey.dyasli@citrix.com>
+Date: Tue, 23 Jul 2019 16:49:29 +0100
+Subject: [PATCH] xsm: hide detailed Xen version from unprivileged guests
+
+These subops leak information into guests which they have no buisness
+knowning.  Return empty strings instead.
+
+Signed-off-by: Sergey Dyasli <sergey.dyasli@citrix.com>
+diff --git a/xen/common/version.c b/xen/common/version.c
+index b81ad6076db6..fb00a0ade067 100644
+--- a/xen/common/version.c
++++ b/xen/common/version.c
+@@ -67,7 +67,7 @@ const char *xen_banner(void)
+ 
+ const char *xen_deny(void)
+ {
+-    return "<denied>";
++    return "";
+ }
+ 
+ static const char build_info[] =
+diff --git a/xen/include/xsm/dummy.h b/xen/include/xsm/dummy.h
+index 6a2fc33c3bc2..e8c6545322f6 100644
+--- a/xen/include/xsm/dummy.h
++++ b/xen/include/xsm/dummy.h
+@@ -827,6 +827,12 @@ static XSM_INLINE int cf_check xsm_xen_version(XSM_DEFAULT_ARG uint32_t op)
+         /* These sub-ops ignore the permission checks and return data. */
+         block_speculation();
+         return 0;
++
++    case XENVER_pagesize:
++    case XENVER_guest_handle:
++        /* These MUST always be accessible to any guest by default. */
++        return xsm_default_action(XSM_HOOK, current->domain, NULL);
++
+     case XENVER_extraversion:
+     case XENVER_extraversion2:
+     case XENVER_compile_info:
+@@ -834,10 +840,11 @@ static XSM_INLINE int cf_check xsm_xen_version(XSM_DEFAULT_ARG uint32_t op)
+     case XENVER_capabilities2:
+     case XENVER_changeset:
+     case XENVER_changeset2:
+-    case XENVER_pagesize:
+-    case XENVER_guest_handle:
+-        /* These MUST always be accessible to any guest by default. */
+-        return xsm_default_action(XSM_HOOK, current->domain, NULL);
++        if ( IS_ENABLED(CONFIG_DEBUG) )
++            /* Expose information to guests only in debug builds. */
++            return xsm_default_action(XSM_HOOK, current->domain, NULL);
++
++        /* fallthrough */
+     default:
+         return xsm_default_action(XSM_PRIV, current->domain, NULL);
+     }

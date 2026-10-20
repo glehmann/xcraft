@@ -1,0 +1,49 @@
+From 229726538eee755fabf7fd3437f76567a03f982a Mon Sep 17 00:00:00 2001
+From: Doug Goldstein <doug.goldstein@rackspace.com>
+Date: Mon, 8 Oct 2018 12:26:17 -0500
+Subject: Update bridge fail-mode settings when a bridge comes up
+
+https://github.rackspace.com/O3Eng/xen-networking-scripts/commit/47584777e1a99fdb46c062e2ea734330b5cbb743 JIRA:HYP-519
+---
+ ...sr_share_openvswitch_scripts_ovs-xapi-sync | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/xenserver/usr_share_openvswitch_scripts_ovs-xapi-sync b/xenserver/usr_share_openvswitch_scripts_ovs-xapi-sync
+index e66afee91..ee54111cb 100644
+--- a/xenserver/usr_share_openvswitch_scripts_ovs-xapi-sync
++++ b/xenserver/usr_share_openvswitch_scripts_ovs-xapi-sync
+@@ -216,6 +216,24 @@ def set_external_id(row, key, value):
+         row.external_ids = external_ids
+ 
+ 
++# Note(sushil) - Update bridge fail-mode settings when a bridge comes up.
++# In XS 6.2 once the last isolatednet vif is unplugged, the ovs bridge is
++# destroyed. When a new vif is plugged in the ovs bridge is recreated and does
++# not seem to have the fail-mode setting of secure that is set in xapi
++# adding function to set appropriate fail-mode upon bridge creation
++def update_fail_mode(row):
++    rec = get_network_by_bridge(row.name)
++    if not rec:
++        return
++
++    fail_mode = rec['other_config'].get('vswitch-controller-fail-mode')
++
++    if fail_mode and fail_mode in ['standalone', 'secure']:
++        row.verify("fail_mode")
++        if row.fail_mode != fail_mode:
++            row.fail_mode = fail_mode
++
++
+ def update_in_band_mgmt(row):
+     rec = get_network_by_bridge(row.name)
+     if not rec:
+@@ -304,6 +322,7 @@ def main():
+                 bridge_id_cache = bridges[row.name]
+             else:
+                 # New bridge.
++                update_fail_mode(row)
+                 update_in_band_mgmt(row)
+                 bridge_id_cache = get_bridge_id(row.name)
+ 
+-- 
+2.17.2 (Apple Git-113)

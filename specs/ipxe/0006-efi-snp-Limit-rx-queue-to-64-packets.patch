@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tu Dinh <ngoc-tu.dinh@vates.tech>
+Date: Tue, 30 Jun 2026 10:33:15 +0000
+Subject: [PATCH] efi-snp: Limit rx queue to 64 packets
+
+EFI applications may repeatedly poll all interfaces but only consume
+packets from a single active interface.  If one of the inactive
+interfaces is receiving packets, there is no limit to how many are
+queued up which exhausts iPXE's heap space, preventing allocations and
+causing the active interface to stall. Limit the queue to 64 packets.
+
+Ported from XS9 ipxe-efi 20250228gitbe3a78e-1.0.6.
+
+Signed-off-by: Tu Dinh <ngoc-tu.dinh@vates.tech>
+
+diff --git a/src/include/ipxe/efi/efi_snp.h b/src/include/ipxe/efi/efi_snp.h
+index 0822466db91a..4f0979197098 100644
+--- a/src/include/ipxe/efi/efi_snp.h
++++ b/src/include/ipxe/efi/efi_snp.h
+@@ -25,6 +25,9 @@ FILE_SECBOOT ( PERMITTED );
+ /** SNP transmit completion ring size */
+ #define EFI_SNP_NUM_TX 32
+ 
++/** Max packets in the receive queue */
++#define EFI_SNP_NUM_RX 64
++
+ /** An SNP device */
+ struct efi_snp_device {
+ 	/** List of SNP devices */
+@@ -49,6 +52,8 @@ struct efi_snp_device {
+ 	unsigned int tx_prod;
+ 	/** Transmit completion ring consumer counter */
+ 	unsigned int tx_cons;
++	/** Length of receive queue */
++	unsigned int rx_count;
+ 	/** Receive queue */
+ 	struct list_head rx;
+ 	/** The network interface identifier */
+diff --git a/src/interface/efi/efi_snp.c b/src/interface/efi/efi_snp.c
+index dad8b33dfbc0..4fde80d30053 100644
+--- a/src/interface/efi/efi_snp.c
++++ b/src/interface/efi/efi_snp.c
+@@ -156,6 +156,7 @@ static void efi_snp_flush ( struct efi_snp_device *snpdev ) {
+ 	/* Discard any queued receive buffers */
+ 	list_for_each_entry_safe ( iobuf, tmp, &snpdev->rx, list ) {
+ 		list_del ( &iobuf->list );
++		snpdev->rx_count--;
+ 		free_iob ( iobuf );
+ 	}
+ }
+@@ -174,7 +175,13 @@ static void efi_snp_poll ( struct efi_snp_device *snpdev ) {
+ 
+ 	/* Retrieve any received packets */
+ 	while ( ( iobuf = netdev_rx_dequeue ( snpdev->netdev ) ) ) {
++		if ( snpdev->rx_count >= EFI_SNP_NUM_RX ) {
++			free_iob ( iobuf );
++			continue;
++		}
++
+ 		list_add_tail ( &iobuf->list, &snpdev->rx );
++		snpdev->rx_count++;
+ 		snpdev->interrupts |= EFI_SIMPLE_NETWORK_RECEIVE_INTERRUPT;
+ 		bs->SignalEvent ( snpdev->snp.WaitForPacket );
+ 	}
+@@ -800,6 +807,7 @@ efi_snp_receive ( EFI_SIMPLE_NETWORK_PROTOCOL *snp,
+ 
+ 	/* Dequeue packet */
+ 	list_del ( &iobuf->list );
++	snpdev->rx_count--;
+ 
+ 	/* Return packet to caller, truncating to buffer length */
+ 	copy_len = iob_len ( iobuf );

@@ -1,0 +1,41 @@
+From 06e9edab6cfe3addb5e7c498131f3f5dcf886d4f Mon Sep 17 00:00:00 2001
+From: Paul Durrant <paul.durrant@citrix.com>
+Date: Tue, 3 Sep 2019 14:42:42 +0100
+Subject: [PATCH] x86/mm: partially revert 37201c62 "make logdirty and iommu
+ mutually exclusive"
+
+There is no need to prevent logdirty from being enabled unless the IOMMU is
+sharing EPT mappings (in which case disabling write permissions may cause
+DMA faults).
+
+This patch therefore reverts the commit and replaces is with a check that
+EPT sharing is turned off.
+
+Signed-off-by: Paul Durrant <paul.durrant@citrix.com>
+diff --git a/xen/arch/x86/mm/paging.c b/xen/arch/x86/mm/paging.c
+index dd47bde5ce40..ad31e65000fa 100644
+--- a/xen/arch/x86/mm/paging.c
++++ b/xen/arch/x86/mm/paging.c
+@@ -205,7 +205,7 @@ static int paging_log_dirty_enable(struct domain *d)
+ {
+     int ret;
+ 
+-    if ( has_arch_pdevs(d) )
++    if ( iommu_use_hap_pt(d) )
+     {
+         /*
+          * Refuse to turn on global log-dirty mode
+diff --git a/xen/drivers/passthrough/x86/iommu.c b/xen/drivers/passthrough/x86/iommu.c
+index 8b1e0596b84a..47c90139b8c3 100644
+--- a/xen/drivers/passthrough/x86/iommu.c
++++ b/xen/drivers/passthrough/x86/iommu.c
+@@ -792,8 +792,7 @@ bool arch_iommu_use_permitted(const struct domain *d)
+     return d == dom_io ||
+            (likely(!mem_sharing_enabled(d)) &&
+             likely(!mem_paging_enabled(d)) &&
+-            likely(!p2m_pod_active(d)) &&
+-            likely(!p2m_is_global_logdirty(d)));
++            likely(!p2m_pod_active(d)));
+ }
+ 
+ static int __init cf_check adjust_irq_affinities(void)

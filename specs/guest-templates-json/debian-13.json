@@ -1,0 +1,8 @@
+{
+    "uuid": "0f690a2c-2bf3-4bde-b5b6-3fd236adbc88",
+    "reference_label": "debian-13",
+    "name_label": "Debian Trixie 13",
+    "derived_from": "base-linux-uefi.json",
+    "min_memory": "1G",
+    "disks": [ { "size": "10G" } ]
+}

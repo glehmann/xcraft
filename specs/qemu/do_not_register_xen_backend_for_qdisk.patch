@@ -1,0 +1,18 @@
+diff --git a/hw/block/xen-block.c b/hw/block/xen-block.c
+index ef635be4c2..4d33e36e3b 100644
+--- a/hw/block/xen-block.c
++++ b/hw/block/xen-block.c
+@@ -648,6 +648,8 @@ static void xen_block_register_types(void)
+ 
+ type_init(xen_block_register_types)
+ 
++/* disable the ability for QEMU to create qdisk backend from xenstore. */
++#if 0
+ static void xen_block_blockdev_del(const char *node_name, Error **errp)
+ {
+     trace_xen_block_blockdev_del(node_name);
+@@ -1015,3 +1017,4 @@ static void xen_block_register_backend(void)
+ }
+ 
+ xen_backend_init(xen_block_register_backend);
++#endif

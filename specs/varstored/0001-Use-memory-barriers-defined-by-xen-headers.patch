@@ -1,0 +1,72 @@
+From 8d60f4263244b7ff32004a83ee91e2111c1bed8f Mon Sep 17 00:00:00 2001
+From: Yann Dirson <yann.dirson@vates.tech>
+Date: Thu, 30 Oct 2025 19:19:10 +0100
+Subject: [PATCH] Use memory barriers defined by xen headers
+
+This gives us the necessary definitions for arm64.
+
+Those live in xen-barrier.h starting with 4.20, but we won't be able
+to use it for some time.  Before this they live in xenctrl.h, but it
+pulls too much stuff.  So this is a sync with the 4.20 headers
+contents.
+
+Since the code only uses mb, and no [rw]mb, the latter are not
+imported.  The original macro name from the Xen header is preserved
+for easier future synchro, so this adjusts the callsites accordingly.
+
+Signed-off-by: Yann Dirson <yann.dirson@vates.tech>
+---
+ varstored.c | 22 +++++++++++++++++-----
+ 1 file changed, 17 insertions(+), 5 deletions(-)
+
+diff --git a/varstored.c b/varstored.c
+index 08e6fc9..2e7a57b 100644
+--- a/varstored.c
++++ b/varstored.c
+@@ -73,10 +73,22 @@
+ #include "io_port.h"
+ #include "option.h"
+ 
++/* Get the correct defines for memory barriers - do not fall
++ * back to those provided by the kernel */
++/* from <xen-barrier.h> in 4.20.0 */
++
++#define xen_barrier() asm volatile ( "" : : : "memory")
++
+ #if defined(__i386__)
+-# define smp_mb()  asm volatile ( "lock addl $0, -4(%%esp)" ::: "memory" )
++#define xen_mb()  asm volatile ( "lock addl $0, -4(%%esp)" ::: "memory" )
+ #elif defined(__x86_64__)
+-# define smp_mb()  asm volatile ( "lock addl $0, -32(%%rsp)" ::: "memory" )
++#define xen_mb()  asm volatile ( "lock addl $0, -32(%%rsp)" ::: "memory" )
++#elif defined(__arm__)
++#define xen_mb()   asm volatile ("dmb" : : : "memory")
++#elif defined(__aarch64__)
++#define xen_mb()   asm volatile ("dmb sy" : : : "memory")
++#else
++#error "Define barriers"
+ #endif
+ 
+ #define IO_PORT_ADDRESS 0x0100
+@@ -551,15 +563,15 @@ varstored_poll_iopage(unsigned int i)
+         fprintf(stderr, "IO request not ready\n");
+         return;
+     }
+-    smp_mb();
++    xen_mb();
+ 
+     ioreq->state = STATE_IOREQ_INPROCESS;
+ 
+     handle_ioreq(ioreq);
+-    smp_mb();
++    xen_mb();
+ 
+     ioreq->state = STATE_IORESP_READY;
+-    smp_mb();
++    xen_mb();
+ 
+     xenevtchn_notify(varstored_state.evth, varstored_state.ioreq_local_port[i]);
+ }
+-- 
+2.47.3
+
