@@ -1,0 +1,28 @@
+From 1f6b7aae968d9b2d330e13757ee3fb99ed48a63c Mon Sep 17 00:00:00 2001
+From: Yann Dirson <yann.dirson@vates.tech>
+Date: Wed, 2 Jul 2025 17:47:23 +0200
+Subject: [PATCH 2/3] pyproject: drop superseded license classifiers
+
+There is an equivalent License tag already, and uv plainly errors out
+too on this one.
+
+Signed-off-by: Yann Dirson <yann.dirson@vates.tech>
+---
+ pyproject.toml | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/pyproject.toml b/pyproject.toml
+index 3e7db8e..064d47f 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -19,7 +19,6 @@ readme = "README.md"
+ classifiers = [
+     "Environment :: Console",
+     "Development Status :: 5 - Production/Stable",
+-    "License :: OSI Approved :: GNU General Public License v2 (GPLv2) or later",
+     "Operating System :: POSIX :: Linux :: XenServer/XCP-ng Dom0",
+     "Programming Language :: Python :: 2.7",
+     "Programming Language :: Python :: 3.6",
+-- 
+2.47.3
+

@@ -1,0 +1,20 @@
+malloc: Increase the heap size to 2 MiB
+
+iPXE may run out of heap (malloc) space if it has many NICs all queuing up
+received packets. Increase the heap size to 2 MiB to avoid this.
+diff --git a/src/core/malloc.c b/src/core/malloc.c
+index 91c8e4d3..ed942fdf 100644
+--- a/src/core/malloc.c
++++ b/src/core/malloc.c
+@@ -102,9 +102,9 @@ size_t maxusedmem;
+ /**
+  * Heap size
+  *
+- * Currently fixed at 512kB.
++ * Currently fixed at 2048kB.
+  */
+-#define HEAP_SIZE ( 512 * 1024 )
++#define HEAP_SIZE ( 2048 * 1024 )
+ 
+ /** The heap itself */
+ static char heap[HEAP_SIZE] __attribute__ (( aligned ( __alignof__(void *) )));

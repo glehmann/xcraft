@@ -1,0 +1,73 @@
+From 37abbbc1645d196955bec35ac1f18fce606c67f9 Mon Sep 17 00:00:00 2001
+From: Igor Druzhinin <igor.druzhinin@citrix.com>
+Date: Wed, 26 Apr 2017 11:55:55 +0100
+Subject: [PATCH] CP-21434 Implement VBE LFB physical address register
+
+QEMU-trad implements additional VBE registers for getting LFB
+physical address inside VGA BIOS code. QEMU-upstream doesn't
+have these registers implemented and return 0 when an HVM guest is
+trying to access them from ROMBIOS code. This eventually leads to
+a triple fault inside the guest.
+
+A normal way to fix it would be to update the VGA BIOS code inside
+ROMBIOS and use PCI BAR access to get the LFB address. Unfortunately,
+Xen migrates the ROMBIOS code region along with any other domain
+memory that means we cannot migrate an old guest to the new QEMU.
+
+Signed-off-by: Igor Druzhinin <igor.druzhinin@citrix.com>
+diff --git a/hw/display/vga.c b/hw/display/vga.c
+index 90b89cf40447..0f8247def96a 100644
+--- a/hw/display/vga.c
++++ b/hw/display/vga.c
+@@ -29,6 +29,7 @@
+ #include "qemu/target-info.h"
+ #include "hw/display/vga.h"
+ #include "hw/i386/x86.h"
++#include "hw/i386/pc.h"
+ #include "hw/pci/pci.h"
+ #include "vga_int.h"
+ #include "vga_regs.h"
+@@ -709,6 +710,9 @@ uint32_t vbe_ioport_read_data(void *opaque, uint32_t addr)
+         }
+     } else if (s->vbe_index == VBE_DISPI_INDEX_VIDEO_MEMORY_64K) {
+         val = s->vbe_size / (64 * KiB);
++    } else if (s->vbe_extended &&
++               s->vbe_index == VBE_DISPI_INDEX_LFB_ADDRESS_H) {
++        val = s->vram.addr >> 16;
+     } else {
+         val = 0;
+     }
+@@ -2349,4 +2353,8 @@ void vga_init(VGACommonState *s, Object *obj, MemoryRegion *address_space,
+         portio_list_init(&s->vbe_port_list, obj, vbe_ports, s, "vbe");
+         portio_list_add(&s->vbe_port_list, address_space_io, 0x1ce);
+     }
++
++    s->vbe_extended = object_property_get_bool(qdev_get_machine(),
++                                               PC_MACHINE_TRAD_COMPAT,
++                                               &error_abort);
+ }
+diff --git a/hw/display/vga_int.h b/hw/display/vga_int.h
+index 747b5cc6cf8d..554376b731ed 100644
+--- a/hw/display/vga_int.h
++++ b/hw/display/vga_int.h
+@@ -111,6 +111,8 @@ typedef struct VGACommonState {
+     uint32_t vbe_start_addr;
+     uint32_t vbe_line_offset;
+     uint32_t vbe_bank_mask;
++    /* non-bochs vbe extensions */
++    int vbe_extended;
+     /* display refresh support */
+     QemuConsole *con;
+     uint32_t font_offsets[2];
+diff --git a/include/hw/display/bochs-vbe.h b/include/hw/display/bochs-vbe.h
+index bc2f046eee7a..3cf2c822d7b8 100644
+--- a/include/hw/display/bochs-vbe.h
++++ b/include/hw/display/bochs-vbe.h
+@@ -21,6 +21,7 @@
+ #define VBE_DISPI_INDEX_Y_OFFSET        0x9
+ #define VBE_DISPI_INDEX_NB              0xa /* size of vbe_regs[] */
+ #define VBE_DISPI_INDEX_VIDEO_MEMORY_64K 0xa /* read-only, not in vbe_regs */
++#define VBE_DISPI_INDEX_LFB_ADDRESS_H    0xb /* read-only, trad compat */
+ 
+ /* VBE_DISPI_INDEX_ID */
+ #define VBE_DISPI_ID0                   0xB0C0

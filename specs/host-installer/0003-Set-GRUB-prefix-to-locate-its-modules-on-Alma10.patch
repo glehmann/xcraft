@@ -1,0 +1,63 @@
+From e1585767da7957ead174ce3ec75e03d1b594f861 Mon Sep 17 00:00:00 2001
+From: Yann Dirson <yann.dirson@vates.tech>
+Date: Fri, 25 Jul 2025 14:42:32 +0200
+Subject: [PATCH 3/3] Set GRUB prefix to locate its modules on Alma10
+
+---
+ backend.py  | 9 +++++++--
+ diskutil.py | 9 +++++++++
+ 2 files changed, 16 insertions(+), 2 deletions(-)
+
+diff --git a/backend.py b/backend.py
+index e942542..acf13fe 100644
+--- a/backend.py
++++ b/backend.py
+@@ -1086,13 +1086,19 @@ def installBootLoader(mounts, disk, boot_partnum, primary_partnum, branding,
+                       boot_serial=None, host_config=None, fcoe_interface=None):
+     assert(location in [constants.BOOT_LOCATION_MBR, constants.BOOT_LOCATION_PARTITION])
+ 
++    root_partition = partitionDevice(disk, primary_partnum)
+     if host_config:
+         s = serial and {'port': serial.id, 'baud': int(serial.baud)} or None
+ 
+         fn = os.path.join(mounts['boot'], "efi/EFI/almalinux/grub.cfg")
+         boot_config = bootloader.Bootloader('grub2', fn,
+                                             timeout=constants.BOOT_MENU_TIMEOUT,
+-                                            serial=s, location=location)
++                                            serial=s, location=location,
++                                            prefix={
++                                                'uuid': diskutil.fs_uuid_from_device(root_partition),
++                                                'path': '/usr/lib/grub',
++                                            }
++                                            )
+         xen_version = getXenVersion(mounts['root'])
+         if xen_version is None:
+             raise RuntimeError("Unable to determine Xen version.")
+@@ -1105,7 +1111,6 @@ def installBootLoader(mounts, disk, boot_partnum, primary_partnum, branding,
+         util.assertDir(os.path.dirname(fn))
+         boot_config.commit()
+ 
+-    root_partition = partitionDevice(disk, primary_partnum)
+     if write_boot_entry:
+         setEfiBootEntry(mounts, disk, boot_partnum, install_type, branding)
+ 
+diff --git a/diskutil.py b/diskutil.py
+index af8acbf..6f4a96d 100644
+--- a/diskutil.py
++++ b/diskutil.py
+@@ -874,3 +874,12 @@ def fs_type_from_device(device):
+     msg = "Failed to identify filesystem type on %s" % device
+     logger.log(msg)
+     raise Exception(msg)
++
++def fs_uuid_from_device(device):
++    (rc, stdout) = util.runCmd2(['/bin/lsblk', '-n', '-o', 'UUID', device], with_stdout=True)
++    if rc == 0:
++        return stdout.strip()
++
++    msg = "Failed to identify UUID of %s" % device
++    logger.log(msg)
++    raise Exception(msg)
+-- 
+2.39.5
+

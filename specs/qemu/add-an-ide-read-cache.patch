@@ -1,0 +1,138 @@
+Add an IDE read cache
+
+From: Tim Smith <tim.smith@citrix.com>
+
+Insert a read cache at the IDE layer to improve the performance of
+multiple sector reads. This also converts the read to a blocking read
+instead of an asynchronous one, which affects performance beyond the
+operation of the cache.
+
+--
+Rebase against QEMU 10.1.x added flags and clarified imports for bdrv_pread
+and added the GRAPH_RDLOCK protection.
+
+diff --git a/hw/ide/core.c b/hw/ide/core.c
+index 33cb97740411..b1542c8d9ee7 100644
+--- a/hw/ide/core.c
++++ b/hw/ide/core.c
+@@ -43,6 +43,8 @@
+ #include "system/runstate.h"
+ #include "ide-internal.h"
+ #include "trace.h"
++#include "block/block_int-common.h"
++
+ 
+ /* These values were based on a Seagate ST3500418AS but have been modified
+    to make more sense in QEMU */
+@@ -795,6 +797,7 @@ static void ide_sector_read(IDEState *s)
+ {
+     int64_t sector_num;
+     int n;
++    int ret = 0;
+ 
+     s->status = READY_STAT | SEEK_STAT;
+     s->error = 0; /* not needed by IDE spec, but needed by Windows */
+@@ -824,8 +827,52 @@ static void ide_sector_read(IDEState *s)
+ 
+     block_acct_start(blk_get_stats(s->blk), &s->acct,
+                      n * BDRV_SECTOR_SIZE, BLOCK_ACCT_READ);
+-    s->pio_aiocb = ide_buffered_readv(s, sector_num, &s->qiov, n,
+-                                      ide_sector_read_cb, s);
++
++    /* If the cache is valid and the read fits entirely within the cache,
++     * we can just copy the data we already have. It would be possible
++     * to modify the iov_base/iov_len to shorten a read which overlapped
++     * one end of the cache but we're not bothering here for simplicity and
++     * because it's not likely much of an improvement anyway */
++    if (s->cache_valid &&
++        sector_num >= s->cache_start &&
++        sector_num + n <= (s->cache_start + IDE_CACHE_SECTORS)) {
++        memcpy(s->io_buffer,
++            &s->cache_buffer[(sector_num - s->cache_start) * BDRV_SECTOR_SIZE],
++            n * BDRV_SECTOR_SIZE);
++        goto out;
++    }
++
++    /* If a cache miss is more than 1/2 of the cache size, do not bother with the
++     * cache - just do the read anyway. This is based on the guess that we are
++     * mostly helping with readahead, and the next read would not use the cache
++     * because it would overlap it */
++    if (n > IDE_CACHE_SECTORS / 2) {
++        ret = bdrv_pread((blk_bs(s->blk))->file, sector_num * BDRV_SECTOR_SIZE,
++                         n * BDRV_SECTOR_SIZE, s->io_buffer, 0);
++        goto out;
++    }
++
++    /* A cache miss worth bothering with. Populate & use */
++    s->cache_start = sector_num;
++    /* It is safe to just read IDE_CACHE_SIZE, since bdrv_pread() will
++     * eventually call bdrv_aligned_preadv(), which will fill any read
++     * past EOF with zeros */
++    ret = bdrv_pread((blk_bs(s->blk))->file, s->cache_start * BDRV_SECTOR_SIZE,
++                     IDE_CACHE_SIZE, s->cache_buffer, 0);
++    if (ret < 0) {
++        s->cache_valid = false;
++        goto out;
++    }
++    s->cache_valid = true;
++    memcpy(s->io_buffer,
++        &s->cache_buffer[(sector_num - s->cache_start) * BDRV_SECTOR_SIZE],
++        n * BDRV_SECTOR_SIZE);
++
++out:
++    if (ret >= 0) {
++        ret = 0;
++    }
++    ide_sector_read_cb(s, ret);
+ }
+ 
+ void dma_buf_commit(IDEState *s, uint32_t tx_bytes)
+@@ -1081,6 +1128,7 @@ static void ide_sector_write(IDEState *s)
+     s->status = READY_STAT | SEEK_STAT | BUSY_STAT;
+     sector_num = ide_get_sector(s);
+ 
++    s->cache_valid = false;
+     n = s->nsector;
+     if (n > s->req_nb_sectors) {
+         n = s->req_nb_sectors;
+@@ -1405,6 +1453,7 @@ static void ide_reset(IDEState *s)
+     s->end_transfer_func = ide_dummy_transfer_stop;
+     ide_dummy_transfer_stop(s);
+     s->media_changed = 0;
++    s->cache_valid = false;
+ }
+ 
+ static bool cmd_nop(IDEState *s, uint8_t cmd)
+@@ -2625,6 +2674,7 @@ int ide_init_drive(IDEState *s, IDEDevice *dev, IDEDriveKind kind, Error **errp)
+     s->smart_autosave = 1;
+     s->smart_errors = 0;
+     s->smart_selftest_count = 0;
++    s->cache_valid = false;
+     if (kind == IDE_CD) {
+         blk_set_dev_ops(s->blk, &ide_cd_block_ops, s);
+     } else {
+diff --git a/include/hw/ide/ide-dev.h b/include/hw/ide/ide-dev.h
+index 92e886878006..c7b6b2ae8fb8 100644
+--- a/include/hw/ide/ide-dev.h
++++ b/include/hw/ide/ide-dev.h
+@@ -35,6 +35,9 @@ typedef void EndTransferFunc(IDEState *);
+ #define TYPE_IDE_DEVICE "ide-device"
+ OBJECT_DECLARE_TYPE(IDEDevice, IDEDeviceClass, IDE_DEVICE)
+ 
++#define IDE_CACHE_SIZE (1024 * 64)
++#define IDE_CACHE_SECTORS (IDE_CACHE_SIZE / BDRV_SECTOR_SIZE)
++
+ typedef enum { IDE_HD, IDE_CD, IDE_CFATA } IDEDriveKind;
+ 
+ struct unreported_events {
+@@ -140,6 +143,10 @@ struct IDEState {
+     uint8_t *smart_selftest_data;
+     /* AHCI */
+     int ncq_queues;
++    /* Read cache buffer */
++    uint8_t cache_buffer[IDE_CACHE_SIZE];
++    uint64_t cache_start;
++    bool cache_valid;
+ };
+ 
+ struct IDEDeviceClass {

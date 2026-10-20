@@ -1,0 +1,15 @@
+diff --git a/ui/console.c b/ui/console.c
+index f4e93cc2aec9..a5d5dcdd0dc0 100644
+--- a/ui/console.c
++++ b/ui/console.c
+@@ -266,6 +266,10 @@ static void displaychangelistener_display_console(DisplayChangeListener *dcl,
+     static DisplaySurface *dummy;
+     QemuConsole *con = dcl->con;
+ 
++    if (!con) {
++        con = qemu_console_lookup_default();
++    }
++
+     if (!con || !console_compatible_with(con, dcl, errp)) {
+         if (!dummy) {
+             dummy = qemu_create_placeholder_surface(640, 480, nodev);

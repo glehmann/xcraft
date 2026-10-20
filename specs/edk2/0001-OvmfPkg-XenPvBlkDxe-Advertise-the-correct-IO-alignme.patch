@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ross Lagerwall <ross.lagerwall@citrix.com>
+Date: Fri, 6 Mar 2026 14:46:23 +0000
+Subject: [PATCH] OvmfPkg/XenPvBlkDxe: Advertise the correct IO alignment
+
+The function XenPvBlockAsyncIo expects a sector-aligned buffer but the
+advertised alignment is always 512. Consequently, booting from the Rocky
+Linux 9.6 disc (using a 2048 sector size) fails with an assertion in
+XenPvBlockAsyncIo.
+
+Adverstise the correct IO alignment to fix the assertion failure.
+
+Signed-off-by: Ross Lagerwall <ross.lagerwall@citrix.com>
+(cherry picked from commit 5607d934b18c49a9366f77aef20355df1bc15b12)
+
+diff --git a/OvmfPkg/XenPvBlkDxe/XenPvBlkDxe.c b/OvmfPkg/XenPvBlkDxe/XenPvBlkDxe.c
+index 218ada89c66b..91f6f2a6778b 100644
+--- a/OvmfPkg/XenPvBlkDxe/XenPvBlkDxe.c
++++ b/OvmfPkg/XenPvBlkDxe/XenPvBlkDxe.c
+@@ -299,6 +299,8 @@ XenPvBlkDxeDriverBindingStart (
+     Media->BlockSize = Dev->MediaInfo.SectorSize;
+   }
+ 
++  Media->IoAlign = Dev->MediaInfo.SectorSize;
++
+   //
+   // Sectors is express as 512B unit, size of disk is "Sectors * 512",
+   // independently from SectorSize.

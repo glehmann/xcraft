@@ -1,0 +1,171 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ross Lagerwall <ross.lagerwall@citrix.com>
+Date: Mon, 18 May 2026 14:49:55 +0200
+Subject: [PATCH] OVMF: Shadow PEI for consistent measurements
+
+Currently, the PEI FV is measured only after a lot of initialization code has
+been executed. This means that the PCR0 is not consistent when running the same
+VM on different hosts since it contains modified data that may be host specific
+(e.g. allocation addresses, the physical address width supported by the
+processor, etc.).
+
+To resolve this, stash a pristine copy of the PEI FV after decompressing it and
+then create a HOB to inform the measurement code to use that pristine copy.
+After this change, the measured hash can be calculated at build time (from
+PEIFV.Fv) just as it can be with the DXE FV.
+
+Signed-off-by: Ross Lagerwall <ross.lagerwall@citrix.com>
+
+PcdOvmfShadowPeiBase changed from 0x68 to 0x88 to avoid collision with
+gUefiOvmfPkgTokenSpaceGuid.PcdEntryPointOverrideFwCfgVarName
+
+Signed-off-by: Tu Dinh <ngoc-tu.dinh@vates.tech>
+
+diff --git a/OvmfPkg/OvmfPkg.dec b/OvmfPkg/OvmfPkg.dec
+index 12ddca1b7ed0..dfbbcc506de0 100644
+--- a/OvmfPkg/OvmfPkg.dec
++++ b/OvmfPkg/OvmfPkg.dec
+@@ -398,6 +398,8 @@
+   # messages will be overwritten by more recent messages.
+   gUefiOvmfPkgTokenSpaceGuid.PcdMemDebugLogPages|32|UINT32|0x7c
+ 
++  gUefiOvmfPkgTokenSpaceGuid.PcdOvmfShadowPeiBase|0x0|UINT32|0x88
++
+ [PcdsDynamic, PcdsDynamicEx]
+   gUefiOvmfPkgTokenSpaceGuid.PcdEmuVariableEvent|0|UINT64|2
+   gUefiOvmfPkgTokenSpaceGuid.PcdOvmfFlashVariablesEnable|FALSE|BOOLEAN|0x10
+diff --git a/OvmfPkg/OvmfXen.fdf b/OvmfPkg/OvmfXen.fdf
+index 9f2376b4d19a..12b24236f109 100644
+--- a/OvmfPkg/OvmfXen.fdf
++++ b/OvmfPkg/OvmfXen.fdf
+@@ -425,6 +425,10 @@ FILE FV_IMAGE = 9E21FD93-9C72-4c15-8C4B-E77F1DB2D792 {
+ 
+ !include OvmfPkg/Include/Fdf/FvmainCompactScratchEnd.fdf.inc
+ 
++!if $(TPM2_ENABLE) == TRUE
++SET gUefiOvmfPkgTokenSpaceGuid.PcdOvmfShadowPeiBase = gUefiOvmfPkgTokenSpaceGuid.PcdOvmfDecompressionScratchEnd
++!endif
++
+ ################################################################################
+ 
+ [Rule.Common.SEC]
+diff --git a/OvmfPkg/Sec/SecMain.c b/OvmfPkg/Sec/SecMain.c
+index 9e55a697d4a6..fcfe8f7a2fd5 100644
+--- a/OvmfPkg/Sec/SecMain.c
++++ b/OvmfPkg/Sec/SecMain.c
+@@ -356,6 +356,7 @@ DecompressMemFvs (
+   EFI_FIRMWARE_VOLUME_HEADER  *DxeMemFv;
+   UINT32                      FvHeaderSize;
+   UINT32                      FvSectionSize;
++  UINT32                      ShadowPeiBase;
+ 
+   FvSection = (EFI_COMMON_SECTION_HEADER *)NULL;
+ 
+@@ -432,6 +433,14 @@ DecompressMemFvs (
+   PeiMemFv = (EFI_FIRMWARE_VOLUME_HEADER *)(UINTN)PcdGet32 (PcdOvmfPeiMemFvBase);
+   CopyMem (PeiMemFv, (VOID *)(FvSection + 1), PcdGet32 (PcdOvmfPeiMemFvSize));
+ 
++  ShadowPeiBase = PcdGet32 (PcdOvmfShadowPeiBase);
++  if (ShadowPeiBase) {
++    //
++    // Stash pristine PEI FV for later for consistent PCR0 measurments
++    //
++    CopyMem ((VOID*) (UINTN) ShadowPeiBase, PeiMemFv, PcdGet32 (PcdOvmfPeiMemFvSize));
++  }
++
+   if (PeiMemFv->Signature != EFI_FVH_SIGNATURE) {
+     DEBUG ((DEBUG_ERROR, "Extracted FV at %p does not have FV header signature\n", PeiMemFv));
+     CpuDeadLoop ();
+diff --git a/OvmfPkg/Sec/SecMain.inf b/OvmfPkg/Sec/SecMain.inf
+index bf721e7bae87..26916e378986 100644
+--- a/OvmfPkg/Sec/SecMain.inf
++++ b/OvmfPkg/Sec/SecMain.inf
+@@ -78,6 +78,7 @@
+   gEfiMdePkgTokenSpaceGuid.PcdGuidedExtractHandlerTableAddress
+   gUefiOvmfPkgTokenSpaceGuid.PcdGuidedExtractHandlerTableSize
+   gUefiOvmfPkgTokenSpaceGuid.PcdOvmfDecompressionScratchEnd
++  gUefiOvmfPkgTokenSpaceGuid.PcdOvmfShadowPeiBase
+   gEfiMdeModulePkgTokenSpaceGuid.PcdInitValueInTempStack
+   gUefiOvmfPkgTokenSpaceGuid.PcdOvmfConfidentialComputingWorkAreaHeader
+   gUefiOvmfPkgTokenSpaceGuid.PcdOvmfWorkAreaBase
+diff --git a/OvmfPkg/XenPlatformPei/Fv.c b/OvmfPkg/XenPlatformPei/Fv.c
+index 871a2c1c5ba2..291801a2c3c0 100644
+--- a/OvmfPkg/XenPlatformPei/Fv.c
++++ b/OvmfPkg/XenPlatformPei/Fv.c
+@@ -14,6 +14,7 @@
+ #include <Library/HobLib.h>
+ #include <Library/PeiServicesLib.h>
+ #include <Library/PcdLib.h>
++#include <Guid/MigratedFvInfo.h>
+ 
+ /**
+   Publish PEI & DXE (Decompressed) Memory based FVs to let PEI
+@@ -27,6 +28,9 @@ PeiFvInitialization (
+   VOID
+   )
+ {
++  EDKII_MIGRATED_FV_INFO  MigratedFvInfo;
++  UINT32                  ShadowPeiBase;
++
+   DEBUG ((DEBUG_INFO, "Platform PEI Firmware Volume Initialization\n"));
+ 
+   //
+@@ -59,6 +63,38 @@ PeiFvInitialization (
+     EfiBootServicesData
+     );
+ 
++  ShadowPeiBase = PcdGet32 (PcdOvmfShadowPeiBase);
++  if (ShadowPeiBase) {
++    //
++    // Create a memory allocation HOB for the shadow PEI FV.
++    //
++    BuildMemoryAllocationHob (
++      ShadowPeiBase,
++      PcdGet32 (PcdOvmfPeiMemFvSize),
++      EfiBootServicesData
++      );
++
++    //
++    // CpuMpPei removes the present bit from the FvOrgBase pages so point
++    // it at a dummy region instead.
++    //
++    BuildMemoryAllocationHob (
++      ShadowPeiBase + PcdGet32 (PcdOvmfPeiMemFvSize),
++      PcdGet32 (PcdOvmfPeiMemFvSize),
++      EfiBootServicesData
++      );
++
++    //
++    // Create a migrated FV info HOB so that the measurement code
++    // will use the shadow data for measurement.
++    //
++    MigratedFvInfo.FvOrgBase  = ShadowPeiBase + PcdGet32 (PcdOvmfPeiMemFvSize);
++    MigratedFvInfo.FvNewBase  = PcdGet32 (PcdOvmfPeiMemFvBase);
++    MigratedFvInfo.FvDataBase = PcdGet32 (PcdOvmfShadowPeiBase);
++    MigratedFvInfo.FvLength   = PcdGet32 (PcdOvmfPeiMemFvSize);
++    BuildGuidDataHob (&gEdkiiMigratedFvInfoGuid, &MigratedFvInfo, sizeof (MigratedFvInfo));
++  }
++
+   //
+   // Let PEI know about the DXE FV so it can find the DXE Core
+   //
+diff --git a/OvmfPkg/XenPlatformPei/XenPlatformPei.inf b/OvmfPkg/XenPlatformPei/XenPlatformPei.inf
+index 20c27ff34b6c..153f5fc596c8 100644
+--- a/OvmfPkg/XenPlatformPei/XenPlatformPei.inf
++++ b/OvmfPkg/XenPlatformPei/XenPlatformPei.inf
+@@ -45,6 +45,7 @@
+ [Guids]
+   gEfiMemoryTypeInformationGuid
+   gEfiXenInfoGuid
++  gEdkiiMigratedFvInfoGuid                                             ## SOMETIMES_CONSUMES     ## HOB
+ 
+ [LibraryClasses]
+   BaseLib
+@@ -79,6 +80,7 @@
+   gUefiOvmfPkgTokenSpaceGuid.PcdPciMmio32Size
+   gUefiOvmfPkgTokenSpaceGuid.PcdPciMmio64Base
+   gUefiOvmfPkgTokenSpaceGuid.PcdPciMmio64Size
++  gUefiOvmfPkgTokenSpaceGuid.PcdOvmfShadowPeiBase
+   gUefiOvmfPkgTokenSpaceGuid.PcdQ35TsegMbytes
+   gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiS3Enable
+   gEfiMdeModulePkgTokenSpaceGuid.PcdFlashNvStorageFtwSpareSize

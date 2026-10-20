@@ -1,0 +1,39 @@
+From 342cf135e781a978e6125e11bd313568b8b5b195 Mon Sep 17 00:00:00 2001
+From: Igor Druzhinin <igor.druzhinin@citrix.com>
+Date: Wed, 29 Mar 2017 22:19:20 +0100
+Subject: [PATCH] CA-243975 Fix openvswitch service startup failure
+
+In case ovs-vsctl.log is not writable for some reason (e.g. there is no
+space left on device) the return code of the service startup script is
+incorrect. Separate the return code from logging to avoid this.
+
+Signed-off-by: Igor Druzhinin <igor.druzhinin@citrix.com>
+---
+ utilities/ovs-lib.in | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/utilities/ovs-lib.in b/utilities/ovs-lib.in
+index 93085ca..f875098 100644
+--- a/utilities/ovs-lib.in
++++ b/utilities/ovs-lib.in
+@@ -63,7 +63,16 @@ ovs_ctl () {
+         ;;
+         *)
+             echo "`date -u`:$@" >> "${logdir}/ovs-ctl.log"
+-            "${datadir}/scripts/ovs-ctl" "$@" 2>&1 | tee -a "${logdir}/ovs-ctl.log"
++            # The exit status of ovs-ctl shall be preserved even if ovs-ctl.log
++            # is not writeable.
++            display=`"${datadir}/scripts/ovs-ctl" "$@" 2>&1`
++            rc=$?
++            if test -w "${logdir}/ovs-ctl.log"; then
++                 echo "${display}" | tee -a "${logdir}/ovs-ctl.log"
++            else
++                 echo "${display}"
++            fi
++            return ${rc}
+         ;;
+     esac
+ }
+-- 
+2.7.4
+

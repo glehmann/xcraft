@@ -1,0 +1,3 @@
+# Additional options for the memory ballooning daemon.
+# SQUEEZED_OPTIONS= : extra commandline startup arguments for squeezed
+SQUEEZED_OPTIONS=

@@ -1,0 +1,160 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Anthony PERARD <anthony.perard@citrix.com>
+Date: Mon, 18 May 2026 14:49:55 +0200
+Subject: [PATCH] OvmfPkg/XenPvBlkDxe: Fix memory barrier macro
+
+The macro "xen_mb()" needs to be a full memory barrier, that is it
+needs to also prevent stores from been reorder after loads which an
+x86 CPU can do (as I understand from reading [1]). So this patch makes
+use of "mfence" instruction.
+
+Currently, there's a good chance that OvmfXen hang in
+XenPvBlockSync(), in an infinite loop, waiting for the last request to
+be consumed by the backend. On the other hand, the backend didn't know
+there were a new request and don't do anything. This is because there
+is two ways the backend look for request, either it's working on one
+and use RING_FINAL_CHECK_FOR_REQUESTS(), or it's waiting for an
+event/notification. So the frontend (OvmfXen) doesn't need to send
+a notification if the backend is already working, checking for needed
+notification is done by RING_PUSH_REQUESTS_AND_CHECK_NOTIFY().
+
+That last marco is where order of store vs load is important, the
+macro first store the fact that there's a new request, then load the
+value of the last event that the backend have done to check if an
+asynchronous notification is needed. If those store and load are
+reorder, OvmfXen could take the wrong decision of not sending a
+notification and both sides just wait.
+
+To fix this, we need to tell the CPU to not reorder stores after loads.
+
+Aarch64 implementation of MemoryFence() is using "dmb sy" which seems
+to prevent any reordering.
+
+[1] https://en.wikipedia.org/wiki/Memory_ordering#Runtime_memory_ordering
+
+Signed-off-by: Anthony PERARD <anthony.perard@citrix.com>
+
+diff --git a/OvmfPkg/XenPvBlkDxe/FullMemoryFence.h b/OvmfPkg/XenPvBlkDxe/FullMemoryFence.h
+new file mode 100644
+index 000000000000..e3d1df3d0e9d
+--- /dev/null
++++ b/OvmfPkg/XenPvBlkDxe/FullMemoryFence.h
+@@ -0,0 +1,27 @@
++/** @file
++  Copyright (C) 2022, Citrix Ltd.
++
++  SPDX-License-Identifier: BSD-2-Clause-Patent
++**/
++
++#if defined (MDE_CPU_IA32) || defined (MDE_CPU_X64)
++
++//
++// Like MemoryFence() but prevent stores from been reorded with loads by
++// the CPU on X64.
++//
++VOID
++EFIAPI
++FullMemoryFence (
++  VOID
++  );
++
++#else
++
++//
++// Only implement FullMemoryFence() on X86 as MemoryFence() is probably
++// fine on other platform.
++//
++#define FullMemoryFence()  MemoryFence()
++
++#endif
+diff --git a/OvmfPkg/XenPvBlkDxe/X86GccFullMemoryFence.c b/OvmfPkg/XenPvBlkDxe/X86GccFullMemoryFence.c
+new file mode 100644
+index 000000000000..92d107def470
+--- /dev/null
++++ b/OvmfPkg/XenPvBlkDxe/X86GccFullMemoryFence.c
+@@ -0,0 +1,20 @@
++/** @file
++  Copyright (C) 2022, Citrix Ltd.
++
++  SPDX-License-Identifier: BSD-2-Clause-Patent
++**/
++
++#include "FullMemoryFence.h"
++
++//
++// Like MemoryFence() but prevent stores from been reorded with loads by
++// the CPU on X64.
++//
++VOID
++EFIAPI
++FullMemoryFence (
++  VOID
++  )
++{
++  __asm__ __volatile__ ("mfence":::"memory");
++}
+diff --git a/OvmfPkg/XenPvBlkDxe/X86MsftFullMemoryFence.c b/OvmfPkg/XenPvBlkDxe/X86MsftFullMemoryFence.c
+new file mode 100644
+index 000000000000..fcb08f7601cd
+--- /dev/null
++++ b/OvmfPkg/XenPvBlkDxe/X86MsftFullMemoryFence.c
+@@ -0,0 +1,22 @@
++/** @file
++  Copyright (C) 2022, Citrix Ltd.
++
++  SPDX-License-Identifier: BSD-2-Clause-Patent
++**/
++
++#include "FullMemoryFence.h"
++#include <intrin.h>
++
++//
++// Like MemoryFence() but prevent stores from been reorded with loads by
++// the CPU on X64.
++//
++VOID
++EFIAPI
++FullMemoryFence (
++  VOID
++  )
++{
++  _ReadWriteBarrier ();
++  _mm_mfence ();
++}
+diff --git a/OvmfPkg/XenPvBlkDxe/XenPvBlkDxe.h b/OvmfPkg/XenPvBlkDxe/XenPvBlkDxe.h
+index 350b7bd309c0..67ee1899e9a8 100644
+--- a/OvmfPkg/XenPvBlkDxe/XenPvBlkDxe.h
++++ b/OvmfPkg/XenPvBlkDxe/XenPvBlkDxe.h
+@@ -11,8 +11,9 @@
+ #define __EFI_XEN_PV_BLK_DXE_H__
+ 
+ #include <Uefi.h>
++#include "FullMemoryFence.h"
+ 
+-#define xen_mb()   MemoryFence()
++#define xen_mb()   FullMemoryFence()
+ #define xen_rmb()  MemoryFence()
+ #define xen_wmb()  MemoryFence()
+ 
+diff --git a/OvmfPkg/XenPvBlkDxe/XenPvBlkDxe.inf b/OvmfPkg/XenPvBlkDxe/XenPvBlkDxe.inf
+index 5dd8e8be1183..dc91865265c1 100644
+--- a/OvmfPkg/XenPvBlkDxe/XenPvBlkDxe.inf
++++ b/OvmfPkg/XenPvBlkDxe/XenPvBlkDxe.inf
+@@ -30,9 +30,17 @@
+   ComponentName.c
+   ComponentName.h
+   DriverBinding.h
++  FullMemoryFence.h
+   XenPvBlkDxe.c
+   XenPvBlkDxe.h
+ 
++[Sources.IA32]
++  X86GccFullMemoryFence.c | GCC
++  X86MsftFullMemoryFence.c | MSFT
++
++[Sources.X64]
++  X86GccFullMemoryFence.c | GCC
++  X86MsftFullMemoryFence.c | MSFT
+ 
+ [LibraryClasses]
+   UefiDriverEntryPoint

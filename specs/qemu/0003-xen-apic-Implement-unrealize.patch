@@ -1,0 +1,31 @@
+From a6622aeb69878fc9a6cfe8c9f7eae3220b4e9c32 Mon Sep 17 00:00:00 2001
+From: Ross Lagerwall <ross.lagerwall@citrix.com>
+Date: Mon, 3 Jul 2017 13:55:23 +0100
+Subject: [PATCH 3/4] xen-apic: Implement unrealize
+
+Implement the unrealize function as this is called during vCPU unplug.
+
+Signed-off-by: Ross Lagerwall <ross.lagerwall@citrix.com>
+diff --git a/hw/i386/xen/xen_apic.c b/hw/i386/xen/xen_apic.c
+index f30398fa4ae9..17582e9379e9 100644
+--- a/hw/i386/xen/xen_apic.c
++++ b/hw/i386/xen/xen_apic.c
+@@ -49,6 +49,10 @@ static void xen_apic_realize(DeviceState *dev, Error **errp)
+     msi_nonbroken = true;
+ }
+ 
++static void xen_apic_unrealize(DeviceState *dev)
++{
++}
++
+ static int xen_apic_set_base(APICCommonState *s, uint64_t val)
+ {
+     return 0;
+@@ -81,6 +85,7 @@ static void xen_apic_class_init(ObjectClass *klass, const void *data)
+     APICCommonClass *k = APIC_COMMON_CLASS(klass);
+ 
+     k->realize = xen_apic_realize;
++    k->unrealize = xen_apic_unrealize;
+     k->set_base = xen_apic_set_base;
+     k->set_tpr = xen_apic_set_tpr;
+     k->get_tpr = xen_apic_get_tpr;

@@ -1,0 +1,35 @@
+Fix nvme_exit for pci devices
+
+Since upstream commit 1901b49 (and subsequent fixing commits), nvme has been
+trying to use an exclusive bar for msix. However it always attempts to delete
+the memory subregion for iomem when performing nvme_exit. This causes an
+assertion failure when using the msix exclusive bar as the subregion was never
+added to bar0. When using the exclusive bar, the iomem region is registered
+with the pci device instead of directly adding it as a subregion.
+During pci_dev_unrealize the io_regions are cleaned up before the device's own
+exit function is called (nvme_exit), so in the case we use msix_exclusive_bar
+there is no need to delete the subregion.
+
+Signed-off-by: Gerald Elder-Vass <gerald.elder-vass@citrix.com>
+
+diff --git a/hw/nvme/ctrl.c b/hw/nvme/ctrl.c
+index 795196666f2d..f39514ddb98c 100644
+--- a/hw/nvme/ctrl.c
++++ b/hw/nvme/ctrl.c
+@@ -9056,6 +9056,7 @@ static void nvme_exit(PCIDevice *pci_dev)
+     if (n->params.msix_exclusive_bar && !pci_is_vf(pci_dev)) {
+         msix_uninit_exclusive_bar(pci_dev);
+     } else {
++        memory_region_del_subregion(&n->bar0, &n->iomem);
+         msix_uninit(pci_dev, &n->bar0, &n->bar0);
+     }
+ 
+@@ -9063,8 +9064,6 @@ static void nvme_exit(PCIDevice *pci_dev)
+         if (n->namespaces[i])
+             blk_remove_bs(n->namespaces[i]->blkconf.blk);
+     }
+-
+-    memory_region_del_subregion(&n->bar0, &n->iomem);
+ }
+ 
+ static const Property nvme_props[] = {

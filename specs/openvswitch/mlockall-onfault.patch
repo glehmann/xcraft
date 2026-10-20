@@ -1,0 +1,37 @@
+vswitchd: Use MCL_ONFAULT
+
+mlockall locks thread stack pages into memory, even pages which have not
+yet been demand-paged.  As vswitchd has a lot of threads and the default
+stack size on x86_64 is 8 MiB, this consumes a lot of memory.  On two
+systems I looked at, vswitchd used ~150 MiB of RSS when idle after
+startup.
+
+Use the new MCL_ONFAULT flag to only lock pages into memory once they
+have been demand-paged in. This still satisfies the requirement that
+vswitchd is not swapped out but frees up ~144 MiB of unswappable memory
+(18 threads x 8 MiB).  After this, vswitchd uses ~6 MiB when idle after
+startup.
+diff --git a/vswitchd/ovs-vswitchd.c b/vswitchd/ovs-vswitchd.c
+index 407bfc60eb68..9dc666bc73b1 100644
+--- a/vswitchd/ovs-vswitchd.c
++++ b/vswitchd/ovs-vswitchd.c
+@@ -54,6 +54,10 @@
+ #include "lib/vswitch-idl.h"
+ #include "lib/dns-resolve.h"
+ 
++#ifndef MCL_ONFAULT
++#define MCL_ONFAULT     4
++#endif
++
+ VLOG_DEFINE_THIS_MODULE(vswitchd);
+ 
+ /* --mlockall: If set, locks all process memory into physical RAM, preventing
+@@ -93,7 +97,7 @@ main(int argc, char *argv[])
+ 
+     if (want_mlockall) {
+ #ifdef HAVE_MLOCKALL
+-        if (mlockall(MCL_CURRENT | MCL_FUTURE)) {
++        if (mlockall(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT)) {
+             VLOG_ERR("mlockall failed: %s", ovs_strerror(errno));
+         } else {
+             set_memory_locked();

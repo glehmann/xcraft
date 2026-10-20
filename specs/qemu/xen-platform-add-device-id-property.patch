@@ -1,0 +1,58 @@
+diff --git a/hw/i386/xen/xen_platform.c b/hw/i386/xen/xen_platform.c
+index c8b852be0cc1..99fc57c6a2cf 100644
+--- a/hw/i386/xen/xen_platform.c
++++ b/hw/i386/xen/xen_platform.c
+@@ -27,6 +27,7 @@
+ #include "qapi/error.h"
+ #include "hw/ide/pci.h"
+ #include "hw/pci/pci.h"
++#include "hw/qdev-properties.h"
+ #include "migration/vmstate.h"
+ #include "net/net.h"
+ #include "trace.h"
+@@ -69,6 +70,8 @@ struct PCIXenPlatformState {
+     /* Log from guest drivers */
+     char log_buffer[4096];
+     int log_buffer_off;
++
++    uint16_t device_id;
+ };
+ 
+ #define TYPE_XEN_PLATFORM "xen-platform"
+@@ -563,6 +566,8 @@ static void xen_platform_realize(PCIDevice *dev, Error **errp)
+ 
+     pci_conf[PCI_INTERRUPT_PIN] = 1;
+ 
++    pci_set_word(pci_conf + PCI_DEVICE_ID, d->device_id);
++
+     platform_ioport_bar_setup(d);
+     pci_register_bar(dev, 0, PCI_BASE_ADDRESS_SPACE_IO, &d->bar);
+ 
+@@ -581,6 +586,11 @@ static void platform_reset(DeviceState *dev)
+     platform_fixed_ioport_reset(s);
+ }
+ 
++static const Property xen_platform_props[] = {
++    DEFINE_PROP_UINT16("device-id", PCIXenPlatformState, device_id,
++                       PCI_DEVICE_ID_XEN_PLATFORM)
++};
++
+ static void xen_platform_class_init(ObjectClass *klass, const void *data)
+ {
+     DeviceClass *dc = DEVICE_CLASS(klass);
+@@ -588,7 +598,6 @@ static void xen_platform_class_init(ObjectClass *klass, const void *data)
+ 
+     k->realize = xen_platform_realize;
+     k->vendor_id = PCI_VENDOR_ID_XEN;
+-    k->device_id = PCI_DEVICE_ID_XEN_PLATFORM;
+     k->class_id = PCI_CLASS_OTHERS << 8 | 0x80;
+     k->subsystem_vendor_id = PCI_VENDOR_ID_XEN;
+     k->subsystem_id = PCI_DEVICE_ID_XEN_PLATFORM;
+@@ -597,6 +606,7 @@ static void xen_platform_class_init(ObjectClass *klass, const void *data)
+     dc->desc = "XEN platform pci device";
+     device_class_set_legacy_reset(dc, platform_reset);
+     dc->vmsd = &vmstate_xen_platform;
++    device_class_set_props(dc, xen_platform_props);
+ }
+ 
+ static const TypeInfo xen_platform_info = {

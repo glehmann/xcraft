@@ -1,0 +1,11 @@
+diff --git a/xsconsole.service b/xsconsole.service
+index 3e95342..587f67f 100644
+--- a/xsconsole.service
++++ b/xsconsole.service
+@@ -1,5 +1,5 @@
+ [Unit]
+-Description=XenServer Console
++Description=XCP-ng Console
+ After=xapi.service plymouth-quit-wait.service move-kernel-messages.service
+ Wants=xapi.service
+ 

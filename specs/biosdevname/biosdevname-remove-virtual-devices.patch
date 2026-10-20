@@ -1,0 +1,13 @@
+--- a/src/eths.c.bak	2015-08-28 07:37:57.761567078 +0000
++++ b/src/eths.c	2015-08-28 07:38:30.818063258 +0000
+@@ -204,7 +204,10 @@
+ 		"bonding",
+ 		"bridge",
+ 		"openvswitch",
++		"netbk",
++		"netfront",
+ 		"tun",
++		"vif",
+ 	};
+ 	for (i=0; i<sizeof(nonethernet_drivers)/sizeof(nonethernet_drivers[0]); i++) {
+ 		if (strncmp(dev->drvinfo.driver, nonethernet_drivers[i], sizeof(dev->drvinfo.driver)) == 0)

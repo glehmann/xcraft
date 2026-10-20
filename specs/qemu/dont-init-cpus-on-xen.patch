@@ -1,0 +1,79 @@
+piix: Don't initialize vCPUs running on Xen
+
+When running on Xen, QEMU doesn't handle the CPU execution context so
+initializing the CPUs serves no purpose other than using resources
+(memory + one thread per vCPU).
+
+Signed-off-by: Ross Lagerwall <ross.lagerwall@citrix.com>
+
+diff --git a/system/cpus.c b/system/cpus.c
+index 256723558d0c..e5b27e2a5603 100644
+--- a/system/cpus.c
++++ b/system/cpus.c
+@@ -33,6 +33,7 @@
+ #include "exec/gdbstub.h"
+ #include "accel/accel-cpu-ops.h"
+ #include "system/hw_accel.h"
++#include "system/xen.h"
+ #include "exec/cpu-common.h"
+ #include "qemu/thread.h"
+ #include "qemu/main-loop.h"
+@@ -46,6 +47,7 @@
+ #include "system/whpx.h"
+ #include "hw/boards.h"
+ #include "hw/hw.h"
++#include "hw/xen/xen.h"
+ #include "trace.h"
+ 
+ #ifdef CONFIG_LINUX
+@@ -491,6 +493,9 @@ void cpus_kick_thread(CPUState *cpu)
+ 
+ void qemu_cpu_kick(CPUState *cpu)
+ {
++    if (xen_enabled())
++        return;
++
+     qemu_cond_broadcast(cpu->halt_cond);
+     if (cpus_accel->kick_vcpu_thread) {
+         cpus_accel->kick_vcpu_thread(cpu);
+@@ -507,6 +512,9 @@ void qemu_cpu_kick_self(void)
+ 
+ bool qemu_cpu_is_self(CPUState *cpu)
+ {
++    // there are no thread since we don't init `cpu' under Xen.
++    if (xen_enabled())
++        return false;
+     return qemu_thread_is_self(cpu->thread);
+ }
+ 
+@@ -631,6 +639,9 @@ void pause_all_vcpus(void)
+         cpu_pause(cpu);
+     }
+ 
++    if (xen_enabled())
++        return;
++
+     /* We need to drop the replay_lock so any vCPU threads woken up
+      * can finish their replay tasks
+      */
+@@ -667,6 +678,10 @@ void cpu_remove_sync(CPUState *cpu)
+     cpu->stop = true;
+     cpu->unplug = true;
+     qemu_cpu_kick(cpu);
++
++    if (xen_enabled())
++        return;
++
+     bql_unlock();
+     qemu_thread_join(cpu->thread);
+     bql_lock();
+@@ -692,6 +707,9 @@ void qemu_init_vcpu(CPUState *cpu)
+ {
+     MachineState *ms = MACHINE(qdev_get_machine());
+ 
++    if (xen_enabled())
++        return;
++
+     cpu->nr_threads =  ms->smp.threads;
+     cpu->stopped = true;
+     cpu->random_seed = qemu_guest_random_seed_thread_part1();

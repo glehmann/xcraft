@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marta Lewandowska <mlewando@redhat.com>
+Date: Thu, 21 Nov 2024 11:32:18 -0600
+Subject: [PATCH] 10_linux.in: escape semicolon and ampersand on BLS upddate
+
+Besides escaping the character '/', escape ';' and '&' which may be set on on
+kernel parameters.
+
+Resolves: #RHEL-68531
+Signed-off-by: Marta Lewandowska <mlewando@redhat.com>
+Reviewed-by: Leo Sandoval <lsandova@redhat.com>
+---
+ util/grub.d/10_linux.in | 2 ++
+ 1 file changed, 2 insertions(+)
+ mode change 100644 => 100755 util/grub.d/10_linux.in
+
+diff --git a/util/grub.d/10_linux.in b/util/grub.d/10_linux.in
+old mode 100644
+new mode 100755
+index 041a11529..7754ef853
+--- a/util/grub.d/10_linux.in
++++ b/util/grub.d/10_linux.in
+@@ -176,6 +176,8 @@ update_bls_cmdline()
+             options="${options} ${GRUB_CMDLINE_LINUX_DEBUG}"
+         fi
+         options="$(echo "${options}" | sed -e 's/\//\\\//g')"
++        options="$(echo "${options}" | sed -e 's/\;/\\\;/g')"
++        options="$(echo "${options}" | sed -e 's/\\&/\\\\&/g')"
+         sed -i -e "s/^options.*/options ${options}/" "${blsdir}/${bls}.conf"
+     done
+ }

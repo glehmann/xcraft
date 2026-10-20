@@ -1,0 +1,25 @@
+From cc5c02ab215694414d314fe06c1a401b48ff2580 Mon Sep 17 00:00:00 2001
+Message-Id: <cc5c02ab215694414d314fe06c1a401b48ff2580.1693812488.git.lin.liu@citrix.com>
+From: Lin Liu <lin.liu@citrix.com>
+Date: Fri, 1 Sep 2023 07:42:36 +0000
+Subject: [PATCH] Update to use static version number for koji build
+
+Signed-off-by: Lin Liu <lin.liu@citrix.com>
+diff --git a/pyproject.toml b/pyproject.toml
+index 466850d..63362fa 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -98,12 +98,9 @@ homepage = "https://github.com/xenserver/python-libs/"
+ repository = "https://github.com/xenserver/python-libs/"
+ 
+ [build-system]
+-requires = ["setuptools>=42", "setuptools_scm[toml]"]
++requires = ["setuptools>=42"]
+ build-backend = "setuptools.build_meta"
+ 
+-[tool.setuptools_scm]
+-# This section is needed (can be empty) for setuptools_scm to be used by "pip install ."
+-
+ [tool.setuptools]
+ packages = ["xcp", "xcp.net", "xcp.net.ifrename"]
+ 

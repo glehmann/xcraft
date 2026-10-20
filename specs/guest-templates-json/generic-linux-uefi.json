@@ -1,0 +1,8 @@
+{
+    "uuid": "b73b736f-8dee-4bbe-9380-30d1e1854958",
+    "reference_label": "generic-linux-uefi",
+    "name_label": "Generic Linux UEFI",
+    "derived_from": "base-linux-uefi.json",
+    "min_memory": "1G",
+    "disks": [ { "size": "10G" } ]
+}

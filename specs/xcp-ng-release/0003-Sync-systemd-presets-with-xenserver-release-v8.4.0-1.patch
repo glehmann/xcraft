@@ -1,0 +1,27 @@
+From 287d3486a319df72c8dc908c439183eb5385dc4d Mon Sep 17 00:00:00 2001
+From: XenServer <xenserver@cloud.com>
+Date: Tue, 1 Oct 2024 15:00:00 +0000
+Subject: [PATCH] Sync systemd presets with xenserver-release-v8.4.0-13.tar.gz
+
+  * Fri Oct 04 2024 Ross Lagerwall <ross.lagerwall@citrix.com> - 8.4.0-13
+  - Enable new RRDD plugins
+
+Signed-off-by: Yann Dirson <yann.dirson@vates.tech>
+---
+ src/common/usr/lib/systemd/system-preset/89-default.preset | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/common/usr/lib/systemd/system-preset/89-default.preset b/src/common/usr/lib/systemd/system-preset/89-default.preset
+index 1839c39..e1dfaf6 100644
+--- a/src/common/usr/lib/systemd/system-preset/89-default.preset
++++ b/src/common/usr/lib/systemd/system-preset/89-default.preset
+@@ -161,6 +161,9 @@ enable save-boot-info.service
+ enable xcp-rrdd-iostat.service
+ enable xcp-rrdd-squeezed.service
+ enable xcp-rrdd-xenpm.service
++enable xcp-rrdd-dcmi.service
++enable xcp-rrdd-cpu.service
++enable xcp-rrdd-netdev.service
+ enable xapi-nbd.path
+ enable varstored-guard.service
+ enable secureboot-certificates.service

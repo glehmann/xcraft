@@ -1,0 +1,84 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tu Dinh <ngoc-tu.dinh@vates.tech>
+Date: Mon, 18 May 2026 14:49:55 +0200
+Subject: [PATCH] CA-297688, CA-293634: Keep caching enabled during SEC phase
+
+This eventually slows down UEFI guest booting significantly
+on Intel with PCI passthrough and on AMD all the time.
+
+On AMD there is no other way to avoid having caches disabled
+at this point except to keep it enabled in guest itself
+(since we cannot keep caching enabled in the hypervisor
+on AMD while code is executed exactly in OVMF high region).
+
+This alone doesn't fix Intel case as guest MTRRs are implemented
+in Xen for this platform and architectually guest CR0.CD doesn't
+affect guest caching (it's specifically emulated in Xen with
+guest PAT).
+
+For Intel case, temporary remove all variable MTRRs that might
+cover areas of memory SEC phase is operating on during FV
+decompression (which results in a lot of back-to-back memory
+operations) and make sure they are WB. Restore previous
+MTRR state right before jumping into PEI Core which is located
+in low memory and should be WB already.
+
+[anthony] rebase note:
+For OvmfXen, we use XenResetVector, which have CR0 already set with caching
+enabled. No need to change UefiCpuPkg/ResetVector anymore.
+
+diff --git a/OvmfPkg/Sec/SecMain.c b/OvmfPkg/Sec/SecMain.c
+index d13a9485094b..9e55a697d4a6 100644
+--- a/OvmfPkg/Sec/SecMain.c
++++ b/OvmfPkg/Sec/SecMain.c
+@@ -24,6 +24,7 @@
+ #include <Library/PeCoffExtraActionLib.h>
+ #include <Library/ExtractGuidedSectionLib.h>
+ #include <Library/LocalApicLib.h>
++#include <Library/MtrrLib.h>
+ #include <Library/CpuExceptionHandlerLib.h>
+ #include <Ppi/TemporaryRamSupport.h>
+ #include <Ppi/MpInitLibDep.h>
+@@ -1015,9 +1016,21 @@ SecStartupPhase2 (
+   EFI_FIRMWARE_VOLUME_HEADER  *BootFv;
+   EFI_PEI_CORE_ENTRY_POINT    PeiCoreEntryPoint;
+   EFI_PEI_PPI_DESCRIPTOR      *EfiPeiPpiDescriptor;
++  MTRR_SETTINGS               SavedMtrrSettings;
++  MTRR_SETTINGS               MtrrSettings;
+ 
+   SecCoreData = (EFI_SEC_PEI_HAND_OFF *)Context;
+ 
++  //
++  // Temporary make all memory above 1MB WB cacheable during FV decompression.
++  // Restore the original settings back right before jumping into PEI Core.
++  //
++  MtrrGetAllMtrrs (&SavedMtrrSettings);
++  CopyMem (&MtrrSettings, &SavedMtrrSettings, sizeof MtrrSettings);
++  ZeroMem (&MtrrSettings.Variables, sizeof MtrrSettings.Variables);
++  MtrrSettings.MtrrDefType = (MtrrSettings.MtrrDefType & ~0xff) | MTRR_CACHE_WRITE_BACK;
++  MtrrSetAllMtrrs (&MtrrSettings);
++
+   //
+   // Find PEI Core entry point. It will report SEC and Pei Core debug information if remote debug
+   // is enabled.
+@@ -1037,6 +1050,8 @@ SecStartupPhase2 (
+     EfiPeiPpiDescriptor = (EFI_PEI_PPI_DESCRIPTOR *)&mPrivateDispatchTableMp;
+   }
+ 
++  MtrrSetAllMtrrs (&SavedMtrrSettings);
++
+   //
+   // Transfer the control to the PEI core
+   //
+diff --git a/OvmfPkg/Sec/SecMain.inf b/OvmfPkg/Sec/SecMain.inf
+index 4a91fb2bbb2f..bf721e7bae87 100644
+--- a/OvmfPkg/Sec/SecMain.inf
++++ b/OvmfPkg/Sec/SecMain.inf
+@@ -52,6 +52,7 @@
+   PeCoffExtraActionLib
+   ExtractGuidedSectionLib
+   LocalApicLib
++  MtrrLib
+   MemEncryptSevLib
+   CpuExceptionHandlerLib
+   CcProbeLib

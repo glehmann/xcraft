@@ -1,0 +1,28 @@
+From 13c6e099d99efd0acd4969c1f72c2ec953415988 Mon Sep 17 00:00:00 2001
+From: Samuel Verschelde <stormi@laposte.net>
+Date: Fri, 6 Dec 2019 12:52:22 +0100
+Subject: [PATCH] Use xcp-ng-deps instead of groups.xml
+
+Signed-off-by: Samuel Verschelde <stormi@laposte.net>
+
+Orig-commit: 2731116cba1ef80a2628c041002f82258e1be5cb
+---
+ repository.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/repository.py b/repository.py
+index 29f1262..0238543 100644
+--- a/repository.py
++++ b/repository.py
+@@ -238,7 +238,7 @@ class MainYumRepository(YumRepositoryWithInfo):
+     """Represents a Yum repository containing the main XenServer installation."""
+ 
+     INFO_FILENAME = ".treeinfo"
+-    _targets = ['@xenserver_base', '@xenserver_dom0']
++    _targets = ['xcp-ng-deps']
+ 
+     def __init__(self, accessor):
+         super(MainYumRepository, self).__init__(accessor)
+-- 
+2.39.5
+

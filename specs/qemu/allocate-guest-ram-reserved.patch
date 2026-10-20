@@ -1,0 +1,111 @@
+xen-hvm: Allocate some memory region in a reserved area
+
+When allocating the VRAM, QEMU allocates it immediately after RAM. This
+mostly works fine as there is a gap between the end of RAM and the start
+of the MMIO region.  However, for instance when QEMU has 2G and the MMIO
+region is 2G, there is no gap and QEMU will allocate the VRAM at 2G which
+causes breakage since a BAR may be mapped to the same location.
+
+Force RAM block address for guest memory allocation to always point to
+a reserved area in guest address space.
+
+They are only two memory regions that allocated with guest memory at the
+moment, the VRAM and some memory for the TPM. Allocate a reserved address for
+those.
+diff --git a/hw/xen/xen-hvm-common.c b/hw/xen/xen-hvm-common.c
+index e390a0b7872a..61b6d794107f 100644
+--- a/hw/xen/xen-hvm-common.c
++++ b/hw/xen/xen-hvm-common.c
+@@ -32,7 +32,7 @@ bool xen_mr_is_grants(MemoryRegion *mr)
+     return mr == &xen_grants;
+ }
+ 
+-void xen_ram_alloc(ram_addr_t ram_addr, ram_addr_t size, MemoryRegion *mr,
++ram_addr_t xen_ram_alloc(ram_addr_t ram_addr, ram_addr_t size, MemoryRegion *mr,
+                    Error **errp)
+ {
+     unsigned target_page_bits = qemu_target_page_bits();
+@@ -40,16 +40,26 @@ void xen_ram_alloc(ram_addr_t ram_addr, ram_addr_t size, MemoryRegion *mr,
+     xen_pfn_t *pfn_list;
+     int i;
+ 
++    // Only vga.vram MemoryRegion is moved, any other region are still at
++    // their starting location, even after migration.
++    if (mr->name && !strcmp(mr->name, "tpm-crb-cmd")) {
++        ram_addr = TPM_RESERVED_ADDRESS;
++    }
++
+     if (runstate_check(RUN_STATE_INMIGRATE)) {
+         /* RAM already populated in Xen */
+         warn_report("%s: do not alloc "RAM_ADDR_FMT
+                 " bytes of ram at "RAM_ADDR_FMT" when runstate is INMIGRATE",
+                 __func__, size, ram_addr);
+-        return;
++        return ram_addr;
+     }
+ 
+     if (xen_mr_is_memory(mr)) {
+-        return;
++        return ram_addr;
++    }
++
++    if (mr->name && !strcmp(mr->name, "vga.vram")) {
++        ram_addr = VRAM_RESERVED_ADDRESS;
+     }
+ 
+     trace_xen_ram_alloc(ram_addr, size);
+@@ -67,6 +77,7 @@ void xen_ram_alloc(ram_addr_t ram_addr, ram_addr_t size, MemoryRegion *mr,
+     }
+ 
+     g_free(pfn_list);
++    return ram_addr;
+ }
+ 
+ static void xen_set_memory(struct MemoryListener *listener,
+diff --git a/hw/xen/xen_stubs.c b/hw/xen/xen_stubs.c
+index 5e565df39297..0203e7afffbc 100644
+--- a/hw/xen/xen_stubs.c
++++ b/hw/xen/xen_stubs.c
+@@ -18,7 +18,7 @@ void xen_hvm_modified_memory(ram_addr_t start, ram_addr_t length)
+     g_assert_not_reached();
+ }
+ 
+-void xen_ram_alloc(ram_addr_t ram_addr, ram_addr_t size,
++ram_addr_t xen_ram_alloc(ram_addr_t ram_addr, ram_addr_t size,
+                    struct MemoryRegion *mr, Error **errp)
+ {
+     g_assert_not_reached();
+diff --git a/include/system/xen.h b/include/system/xen.h
+index c2f283d1c269..3ad7d8609f55 100644
+--- a/include/system/xen.h
++++ b/include/system/xen.h
+@@ -28,8 +28,12 @@ extern bool xen_allowed;
+ #endif /* CONFIG_XEN_IS_POSSIBLE */
+ 
+ void xen_hvm_modified_memory(ram_addr_t start, ram_addr_t length);
+-void xen_ram_alloc(ram_addr_t ram_addr, ram_addr_t size,
+-                   struct MemoryRegion *mr, Error **errp);
++ram_addr_t xen_ram_alloc(ram_addr_t ram_addr, ram_addr_t size,
++                         struct MemoryRegion *mr, Error **errp);
+ bool xen_mr_is_memory(MemoryRegion *mr);
+ bool xen_mr_is_grants(MemoryRegion *mr);
++
++#define VRAM_RESERVED_ADDRESS  0xff000000
++#define TPM_RESERVED_ADDRESS   0xfed46000
++
+ #endif
+diff --git a/system/physmem.c b/system/physmem.c
+index e5dd760e0bca..fcb0bb735cba 100644
+--- a/system/physmem.c
++++ b/system/physmem.c
+@@ -1886,8 +1886,8 @@ static void ram_block_add(RAMBlock *new_block, Error **errp)
+ 
+     if (!new_block->host) {
+         if (xen_enabled()) {
+-            xen_ram_alloc(new_block->offset, new_block->max_length,
+-                          new_block->mr, &err);
++            new_block->offset = xen_ram_alloc(new_block->offset, new_block->max_length,
++                                              new_block->mr, &err);
+             if (err) {
+                 error_propagate(errp, err);
+                 qemu_mutex_unlock_ramlist();

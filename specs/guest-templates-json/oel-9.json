@@ -1,0 +1,7 @@
+{
+    "uuid": "609d03e9-d7aa-448b-b9bf-9a3f7c613506",
+    "reference_label": "oel-9",
+    "name_label": "Oracle Linux 9",
+    "derived_from": "base-el-7.json",
+    "disks": [ { "size": "15G" } ]
+}

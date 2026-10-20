@@ -1,0 +1,89 @@
+From 22bb29eabc2f68f3e60e99df4ef33984b7795a49 Mon Sep 17 00:00:00 2001
+From: Michael Brown <mcb30@ipxe.org>
+Date: Thu, 18 Feb 2021 12:13:12 +0000
+Subject: [PATCH] [prefix] Add a generic raw image prefix
+
+Provide a generic raw image prefix, which assumes that the iPXE image
+has been loaded in its entirety on a paragraph boundary.
+
+The resulting .raw image can be loaded via RPL using an rpld.conf file
+such as:
+
+    HOST {
+        ethernet = 00:00:00:00:00:00/6;
+        FILE {
+            path="ipxe.raw";
+            load=0x2000;
+        };
+        execute=0x2000;
+    };
+
+Debugged-by: Johannes Heimansberg <git@jhe.dedyn.io>
+Signed-off-by: Michael Brown <mcb30@ipxe.org>
+---
+ src/arch/x86/prefix/rawprefix.S | 53 +++++++++++++++++++++++++++++++++
+ 1 file changed, 53 insertions(+)
+ create mode 100644 src/arch/x86/prefix/rawprefix.S
+
+diff --git a/src/arch/x86/prefix/rawprefix.S b/src/arch/x86/prefix/rawprefix.S
+new file mode 100644
+index 00000000..4cf5f391
+--- /dev/null
++++ b/src/arch/x86/prefix/rawprefix.S
+@@ -0,0 +1,53 @@
++/*
++ * Raw binary prefix
++ *
++ * Assumes that entire image is already loaded as a contiguous block
++ * on a paragraph boundary and entered in real mode.
++ *
++ */
++
++FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
++
++	.text
++	.arch i386
++	.org 0
++	.code16
++
++#include <librm.h>
++
++	.section ".prefix", "ax", @progbits
++	.globl	_raw_start
++_raw_start:
++
++	/* Adjust %cs so that %cs:0000 is the start of the image */
++	movw	%cs, %ax
++	call	1f
++1:	popw	%bx
++	subw	$1b, %bx
++	shrw	$4, %bx
++	addw	%bx, %ax
++	pushw	%ax
++	pushw	$2f
++	lret
++2:
++	/* Install iPXE */
++	call	install
++
++	/* Set up real-mode stack */
++	movw	%bx, %ss
++	movw	$_estack16, %sp
++
++	/* Jump to .text16 segment */
++	pushw	%ax
++	pushw	$1f
++	lret
++	.section ".text16", "awx", @progbits
++1:
++	/* Run iPXE */
++	virtcall main
++
++	/* Uninstall iPXE */
++	call	uninstall
++
++	/* Boot next device */
++	int $0x18
+-- 
+2.39.5
+

@@ -1,0 +1,31 @@
+From 8e9ee6f765273d2c385b590a593e784472753d87 Mon Sep 17 00:00:00 2001
+From: "Richard W.M. Jones" <rjones@redhat.com>
+Date: Wed, 26 Jan 2022 15:47:02 +0000
+Subject: [PATCH 24/24] configure: Only use OC_* for building executables
+
+Fedora >= 36 fills LD_FLAGS with lots of cruft, particularly stuff for
+"package notes" which contains build paths.
+
+In any case it seems pointless having both the OC_* variables and also
+including the regular CFLAGS/LDFLAGS.  Give me full control over what
+ocamlopt uses.
+---
+ configure.ac | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/configure.ac b/configure.ac
+index 9e6c0b9745..cab4cbd579 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -37,7 +37,7 @@ CONFIGURE_ARGS="$*"
+ # at the moment they are not taken into account on Windows, because
+ # flexlink, which is used to build executables on this platform, can
+ # not handle them.
+-mkexe="\$(CC) \$(OC_CFLAGS) \$(CFLAGS) \$(OC_LDFLAGS) \$(LDFLAGS)"
++mkexe="\$(CC) \$(OC_CFLAGS) \$(OC_LDFLAGS)"
+ 
+ # Flags for building executable files with debugging symbols
+ mkexedebugflag="-g"
+-- 
+2.37.0.rc2
+

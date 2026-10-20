@@ -1,0 +1,37 @@
+From 54c4fd11e44bc877b8d2053e40ea5fcef75145be Mon Sep 17 00:00:00 2001
+From: Gerald Elder-Vass <gerald.elder-vass@citrix.com>
+Date: Mon, 30 Mar 2026 12:40:10 +0000
+Subject: [PATCH 3/3] CP-312095: Add piix3-ide for cross-compatibility to QEMU
+ 10.x
+
+In QEMU upstream commit 7851b21 the piix3-ide-xen was removed as it
+duplicated the piix3-ide device (after 0f84458 made them identical).
+Therefore the global option(s) for piix3-ide-xen will be ignored unless
+they are updated to apply to piix3-ide instead.
+
+Provide both piix3-ide-xen and piix3-ide options to maintain behaviour
+across versions during the upgrade period.
+Options which are not relevant or used will simply generate a warning in
+the daemon.log but are otherwise ignored.
+
+Signed-off-by: Gerald Elder-Vass <gerald.elder-vass@citrix.com>
+---
+ ocaml/xenopsd/xc/device.ml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ocaml/xenopsd/xc/device.ml b/ocaml/xenopsd/xc/device.ml
+index adedf798d..a2971937d 100644
+--- a/ocaml/xenopsd/xc/device.ml
++++ b/ocaml/xenopsd/xc/device.ml
+@@ -2788,7 +2788,7 @@ module Backend = struct
+         ; ["-global"; "PIIX4_PM.revision_id=0x1"]
+         ; ["-global"; "ide-hd.ver=0.10.2"]
+         ; mult
+-            ["piix3-ide-xen"; "piix3-usb-uhci"; nic_type]
++            ["piix3-ide"; "piix3-ide-xen"; "piix3-usb-uhci"; nic_type]
+             ["subvendor_id=0x5853"; "subsystem_id=0x0001"]
+           |> List.concat_map (fun x -> ["-global"; x])
+         ]
+-- 
+2.53.0
+

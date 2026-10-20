@@ -1,0 +1,33 @@
+From 1a6cbe1d94a5e51c4c2289577fd83aa1dff4498b Mon Sep 17 00:00:00 2001
+Message-ID: <1a6cbe1d94a5e51c4c2289577fd83aa1dff4498b.1774954123.git.gerald.elder-vass@citrix.com>
+From: Gerald Elder-Vass <gerald.elder-vass@citrix.com>
+Date: Tue, 31 Mar 2026 10:48:24 +0000
+Subject: [PATCH 1/1] Revert "vnc: increase max display size"
+
+This reverts commit 1f1736a8f16d27a99abd371caaeedc10e6411d15.
+
+VNX_MAX_[HEIGHT|WIDTH] was increased for 4k VNC support, there is no
+reason to support 4k VNC at this point and it has no effect in the vGPU
+feature so we can reduce this to save memory.
+---
+ ui/vnc.h | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/ui/vnc.h b/ui/vnc.h
+index b86216b88b82..332b227b021b 100644
+--- a/ui/vnc.h
++++ b/ui/vnc.h
+@@ -82,8 +82,8 @@ typedef void VncSendHextileTile(VncState *vs,
+ 
+ /* VNC_MAX_WIDTH must be a multiple of VNC_DIRTY_PIXELS_PER_BIT. */
+ 
+-#define VNC_MAX_WIDTH ROUND_UP(5120, VNC_DIRTY_PIXELS_PER_BIT)
+-#define VNC_MAX_HEIGHT 2160
++#define VNC_MAX_WIDTH ROUND_UP(2560, VNC_DIRTY_PIXELS_PER_BIT)
++#define VNC_MAX_HEIGHT 2048
+ 
+ /* VNC_DIRTY_BITS is the number of bits in the dirty bitmap. */
+ #define VNC_DIRTY_BITS (VNC_MAX_WIDTH / VNC_DIRTY_PIXELS_PER_BIT)
+-- 
+2.52.0
+

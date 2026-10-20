@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tu Dinh <ngoc-tu.dinh@vates.tech>
+Date: Mon, 18 May 2026 14:49:55 +0200
+Subject: [PATCH] set-default-resolution-1024-768
+
+Moved changes to OvmfPkg/Include/Dsc/OvmfDisplayPcds.dsc.inc
+
+Signed-off-by: Tu Dinh <ngoc-tu.dinh@vates.tech>
+
+diff --git a/OvmfPkg/Include/Dsc/OvmfDisplayPcds.dsc.inc b/OvmfPkg/Include/Dsc/OvmfDisplayPcds.dsc.inc
+index ecd22b0bd5ff..446bfb1597da 100644
+--- a/OvmfPkg/Include/Dsc/OvmfDisplayPcds.dsc.inc
++++ b/OvmfPkg/Include/Dsc/OvmfDisplayPcds.dsc.inc
+@@ -2,10 +2,10 @@
+ #    SPDX-License-Identifier: BSD-2-Clause-Patent
+ ##
+ 
+-  gEfiMdeModulePkgTokenSpaceGuid.PcdVideoHorizontalResolution|1280
+-  gEfiMdeModulePkgTokenSpaceGuid.PcdVideoVerticalResolution|800
+-  gEfiMdeModulePkgTokenSpaceGuid.PcdSetupVideoHorizontalResolution|1280
+-  gEfiMdeModulePkgTokenSpaceGuid.PcdSetupVideoVerticalResolution|800
++  gEfiMdeModulePkgTokenSpaceGuid.PcdVideoHorizontalResolution|1024
++  gEfiMdeModulePkgTokenSpaceGuid.PcdVideoVerticalResolution|768
++  gEfiMdeModulePkgTokenSpaceGuid.PcdSetupVideoHorizontalResolution|1024
++  gEfiMdeModulePkgTokenSpaceGuid.PcdSetupVideoVerticalResolution|768
+   gEfiMdeModulePkgTokenSpaceGuid.PcdConOutRow|0
+   gEfiMdeModulePkgTokenSpaceGuid.PcdConOutColumn|0
+   gEfiMdeModulePkgTokenSpaceGuid.PcdSetupConOutRow|0

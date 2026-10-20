@@ -1,0 +1,63 @@
+From 983772eb53d1fa1eccae3461197ebbf68b1da6ed Mon Sep 17 00:00:00 2001
+From: Jordan Hargrave <Jordan_Hargrave@dell.com>
+Date: Fri, 12 Jul 2013 14:24:55 -0500
+Subject: [PATCH] Fix man/help pages
+
+---
+ biosdevname.1       |  8 ++++----
+ src/bios_dev_name.c | 12 ++++++------
+ 2 files changed, 10 insertions(+), 10 deletions(-)
+
+diff --git a/biosdevname.1 b/biosdevname.1
+index 2408920d33b5..b019da190b00 100644
+--- a/biosdevname.1
++++ b/biosdevname.1
+@@ -31,16 +31,16 @@ Treat [args] as ethernet devs
+ .B \-d, \-\-debug
+ Enable debugging
+ .TP
+-.B \-\-policy \fI[physical|all_ethN]
++.B \-p, \-\-policy \fI[physical|all_ethN]
+ .TP
+-.B \-\-prefix \fI[string]
++.B \-P, \-\-prefix \fI[string]
+ string use for embedded NICs in the physical policy (default=em)
+ .TP
+-.B \-\-nopirq
++.B \-x, \-\-nopirq
+ Do not use $PIR table for mapping PCI device to slot. Some BIOS have
+ incorrect values.
+ .TP
+-.B \-\-smbios \fI[x.y]
++.B \-s, \-\-smbios \fI[x.y]
+ Require minimum SMBIOS version x.y
+ .SH POLICIES
+ .br
+diff --git a/src/bios_dev_name.c b/src/bios_dev_name.c
+index 11f02bf72146..e6c0a0fca2fa 100644
+--- a/src/bios_dev_name.c
++++ b/src/bios_dev_name.c
+@@ -24,10 +24,10 @@ static void usage(void)
+ 	fprintf(stderr, " Options:\n");
+ 	fprintf(stderr, "   -i        or --interface           treat [args] as ethernet devs\n");
+ 	fprintf(stderr, "   -d        or --debug               enable debugging\n");
+-	fprintf(stderr, "   --policy [physical | all_ethN ]\n");
+-	fprintf(stderr, "   --prefix [string]                  string use for embedded NICs (default='em')\n");
+-	fprintf(stderr, "   --smbios [x.y]		       Require SMBIOS x.y or greater\n");
+-	fprintf(stderr, "   --nopirq			       Don't use $PIR table for slot numbers\n");
++	fprintf(stderr, "   -p        or --policy [physical | all_ethN ]\n");
++	fprintf(stderr, "   -P        or --prefix [string]     string use for embedded NICs (default='em')\n");
++	fprintf(stderr, "   -s        or --smbios [x.y]	       Require SMBIOS x.y or greater\n");
++	fprintf(stderr, "   -x        or --nopirq	       Don't use $PIR table for slot numbers\n");
+ 	fprintf(stderr, " You must be root to run this, as it must read from /dev/mem.\n");
+ }
+ 
+@@ -65,7 +65,7 @@ parse_opts(int argc, char **argv)
+ 			{0, 0, 0, 0}
+ 		};
+ 		c = getopt_long(argc, argv,
+-				"dinp:",
++				"dip:",
+ 				long_options, &option_index);
+ 		if (c == -1)
+ 			break;

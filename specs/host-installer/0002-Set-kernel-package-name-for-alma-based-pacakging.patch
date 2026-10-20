@@ -1,0 +1,25 @@
+From 928856cb223aba1c21b977622ffa27f3d6696cbb Mon Sep 17 00:00:00 2001
+From: Yann Dirson <yann.dirson@vates.tech>
+Date: Wed, 23 Jul 2025 09:34:58 +0200
+Subject: [PATCH 2/2] Set kernel-package name for alma-based pacakging
+
+---
+ constants.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/constants.py b/constants.py
+index c032791..32da59f 100644
+--- a/constants.py
++++ b/constants.py
+@@ -178,7 +178,7 @@ INIT_SERVICE_FILES = [
+ ]
+ 
+ # package names
+-KERNEL_PKG = 'kernel'
++KERNEL_PKG = 'kernel-core'
+ 
+ # optional features
+ FEATURES_DIR = "/etc/xensource/features"
+-- 
+2.39.5
+

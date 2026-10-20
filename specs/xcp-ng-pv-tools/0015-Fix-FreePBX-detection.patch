@@ -1,0 +1,27 @@
+From 7ff1a7490094f940f43b51606d185dc30ba7bfe4 Mon Sep 17 00:00:00 2001
+From: Samuel Verschelde <stormi-xcp@ylix.fr>
+Date: Mon, 3 May 2021 20:26:20 +0200
+Subject: [PATCH] Fix FreePBX detection
+
+The existing regexp fails because it's not an extended regexp
+and since sed is called with -r it must be an extended regexp.
+So I fixed that and also synced with the latest regexp for CentOS.
+
+Signed-Off-By: Samuel Verschelde <stormi-xcp@ylix.fr>
+---
+ mk/xe-linux-distribution | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/mk/xe-linux-distribution b/mk/xe-linux-distribution
+index 6cd22c4..45fbb70 100755
+--- a/mk/xe-linux-distribution
++++ b/mk/xe-linux-distribution
+@@ -417,7 +417,7 @@ identify_sangoma()
+     fi
+ 
+     eval $(sed -rn \
+-              's/^Sangoma Linux release \([0-9]*\)\.\([0-9]*\)\(\.[0-9]*\)\? (.*)/distro=sangoma;major=\1;minor=\2/gp;' \
++              's/^Sangoma Linux release ([0-9]*)\.([0-9]*).*$/distro=sangoma;major=\1;minor=\2/gp;' \
+               "${sangoma_release}")
+ 
+     if [ -z "${major}" -o -z "${distro}" ] ; then

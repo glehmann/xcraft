@@ -1,0 +1,162 @@
+From c6ec1370daf22253fba9c8c8c81ee66bd9a3c93d Mon Sep 17 00:00:00 2001
+From: Wouter Verhelst <w@uter.be>
+Date: Thu, 22 Jun 2023 10:55:38 +0200
+Subject: [PATCH] Update certificate expiry dates
+
+These certificates were generated in 2016 with a validity of 10 years,
+which means they will expire in about 3 years from now (and then test
+suites will start failing etc).
+
+Regenerate these certificates, again with a validity of 10 years, to
+avoid issues a few years from now with distributions carrying older
+versions of our code by then.
+
+(cherry picked from commit 5b6dda99bbfbfe287ebacb5d545496b57f6e6e8d)
+Origin: https://github.com/NetworkBlockDevice/nbd/commit/5b6dda99bbfbfe287ebacb5d545496b57f6e6e8d
+Related-to: https://github.com/NetworkBlockDevice/nbd/issues/197
+Signed-off-by: Philippe Coval <philippe.coval@vates.tech>
+---
+ tests/run/certs/ca-cert.pem     | 36 ++++++++++++++--------------
+ tests/run/certs/client-cert.pem | 42 ++++++++++++++++-----------------
+ tests/run/certs/server-cert.pem | 40 +++++++++++++++----------------
+ 3 files changed, 59 insertions(+), 59 deletions(-)
+
+diff --git a/tests/run/certs/ca-cert.pem b/tests/run/certs/ca-cert.pem
+index 17d696d..b6facf7 100644
+--- a/tests/run/certs/ca-cert.pem
++++ b/tests/run/certs/ca-cert.pem
+@@ -1,20 +1,20 @@
+ -----BEGIN CERTIFICATE-----
+-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
+ -----END CERTIFICATE-----
+diff --git a/tests/run/certs/client-cert.pem b/tests/run/certs/client-cert.pem
+index 896b1cc..2b9d4c1 100644
+--- a/tests/run/certs/client-cert.pem
++++ b/tests/run/certs/client-cert.pem
+@@ -1,23 +1,23 @@
+ -----BEGIN CERTIFICATE-----
+-MIID2DCCApCgAwIBAgIMWP4qOjgK3Gxf+ttOMA0GCSqGSIb3DQEBCwUAMBUxEzAR
+-BgNVBAMTCkFsZXggQmxpZ2gwHhcNMTcwNDI0MTYzOTIyWhcNMjcwNDIyMTYzOTIy
+-WjBnMRIwEAYDVQQDEwlsb2NhbGhvc3QxIjAgBgNVBAoTGU5hbWUgb2YgeW91ciBv
+-cmdhbml6YXRpb24xDzANBgNVBAcTBkxvbmRvbjEPMA0GA1UECBMGTG9uZG9uMQsw
+-CQYDVQQGEwJHQjCCAVIwDQYJKoZIhvcNAQEBBQADggE/ADCCAToCggExAL/9CGLM
+-UcAmF98YxdyReDzIm3YCPhsYxUZtS4IYJCpCPAxDeVoosrJAE9wBiJStB6eS6F3O
+-VGYyhCIgMT9QYpC+CulBL5tzb+ibm1AdEnFnZERKe77MOa5t2ya+dZYBpuR8FsFe
+-f2mr5Fm8wwzxymcPIy+/11Bv2ZY+2clJoKhkgp4vpUEEW1TGFYjPVIY38aTHKewN
+-Z6lkndhi1+0w/lx255xg8E1svnjcLsyO6EYoqOoc8KJXFlt/ceFZ1lLlZ4zK2U83
+-uYt1o2BcP9AvjdykVRCGa/8N2IZYjDojPfFQGuUji+t/KVs0Z0I7UrpUME3P8kgY
+-2kTFRzJeiT7DEn8MeMhiSc+UIi0c32zKb6AXhRZOpHDsWsRRf7enfyVnPkJxmJ1F
+-iaJb2UiBln13/E0CAwEAAaN2MHQwDAYDVR0TAQH/BAIwADATBgNVHSUEDDAKBggr
+-BgEFBQcDAjAPBgNVHQ8BAf8EBQMDB6AAMB0GA1UdDgQWBBTU3iifL/dS/hDo5o0a
+-d7lCZvntITAfBgNVHSMEGDAWgBTJmh5kGpw4GOpTX6URYj4QgiRl2DANBgkqhkiG
+-9w0BAQsFAAOCATEAlTVJX8pcaPCmzKQspilugK/EBOVi/TNaKDoLYpH98c+AAaqT
+-Kbzr6aWi5/aYDIc9mCQKbpWasNy8E6p8FNpYfykwdQZOnW0Y5ENCsR9Db7n/foGs
+-wv+vGTPY7mQcPnh1OZzCpQ8cVZjCCwIbloOtbz7NQzmWe3F3oQ/S/UFQSauNzfgP
+-x49V/zoUwltsGZ4AczRMJTgvc8IY3cO9XDfmLL8nl7eoscihTASpvSLQlR7zAO8r
+-kRuYeoEF8m3uv7ChTV8ndXesx+LlH1ZnUVYPDdB1rDnltVfoOGCUzPiItbnlOSOM
+-Z0EH2DuHUF/BjYJ7C5MN5cyMsVmvoJf9HjRteOdnhL+JK1tp0gnTcpsA3z9S0Qm7
+-lgUiqcVwR2lDU+EJHHuYngp/N5nYzllJU9LefA==
++MIID3zCCApegAwIBAgIUWpyk3l+KkBJ/RyoXNbno/oY3a6AwDQYJKoZIhvcNAQEL
++BQAwFTETMBEGA1UEAxMKQWxleCBCbGlnaDAeFw0yMzA2MjIwODU1MzFaFw0zMzA2
++MTkwODU1MzFaMGcxCzAJBgNVBAYTAkdCMQ8wDQYDVQQIEwZMb25kb24xDzANBgNV
++BAcTBkxvbmRvbjEiMCAGA1UEChMZTmFtZSBvZiB5b3VyIG9yZ2FuaXphdGlvbjES
++MBAGA1UEAxMJbG9jYWxob3N0MIIBUjANBgkqhkiG9w0BAQEFAAOCAT8AMIIBOgKC
++ATEAv/0IYsxRwCYX3xjF3JF4PMibdgI+GxjFRm1LghgkKkI8DEN5WiiyskAT3AGI
++lK0Hp5LoXc5UZjKEIiAxP1BikL4K6UEvm3Nv6JubUB0ScWdkREp7vsw5rm3bJr51
++lgGm5HwWwV5/aavkWbzDDPHKZw8jL7/XUG/Zlj7ZyUmgqGSCni+lQQRbVMYViM9U
++hjfxpMcp7A1nqWSd2GLX7TD+XHbnnGDwTWy+eNwuzI7oRiio6hzwolcWW39x4VnW
++UuVnjMrZTze5i3WjYFw/0C+N3KRVEIZr/w3YhliMOiM98VAa5SOL638pWzRnQjtS
++ulQwTc/ySBjaRMVHMl6JPsMSfwx4yGJJz5QiLRzfbMpvoBeFFk6kcOxaxFF/t6d/
++JWc+QnGYnUWJolvZSIGWfXf8TQIDAQABo3UwczAMBgNVHRMBAf8EAjAAMBMGA1Ud
++JQQMMAoGCCsGAQUFBwMCMA4GA1UdDwEB/wQEAwIFoDAdBgNVHQ4EFgQU1N4ony/3
++Uv4Q6OaNGne5Qmb57SEwHwYDVR0jBBgwFoAUYKMazifOsldg5K9vOebqm6cReQ4w
++DQYJKoZIhvcNAQELBQADggExAH3E7wMt6Cg7Sr8evYDwQkI84hsKqzpK9cuFRUAE
++/FctEBXAdIpVVE72+TlpjBIC01WsI4fxU86hl8Er0W8wpyiNI4FksirbNFVk6e7r
++jKJGMSOfdY6kpqjJ8nOP727PWi3A/ZOEtij9GYQlD0DHxAMl+k+ekCmwS1KseD1c
++ri7NWoxK95NXEZEg5K1CxMqjQoVnSgQyhQP0XYKfB9ExnINVmP3IAQL0nKeRuU0h
++qiKWaLHNwej1HjsEEJnmpkRrAnkkvxXImBF1qaNl3NBlqcknikFIp21/l5lB4wMu
++MrJUI4t1tu2/2Sovw8nAwTMOfgG6c28bxd6pq/cNiHSkpFpQ+U4nVAau86uRrRD9
++zg+uvo8n8Pki/bwg/if+cdmVspSe9Lyf2tUtCm/XoPZQWcI=
+ -----END CERTIFICATE-----
+diff --git a/tests/run/certs/server-cert.pem b/tests/run/certs/server-cert.pem
+index 39206d4..b8114e5 100644
+--- a/tests/run/certs/server-cert.pem
++++ b/tests/run/certs/server-cert.pem
+@@ -1,22 +1,22 @@
+ -----BEGIN CERTIFICATE-----
+-MIIDoTCCAlmgAwIBAgIEVxYYzTANBgkqhkiG9w0BAQsFADAVMRMwEQYDVQQDEwpB
+-bGV4IEJsaWdoMB4XDTE2MDQxOTExMzg1M1oXDTI2MDQxNzExMzg1M1owODEiMCAG
+-A1UEChMZTmFtZSBvZiB5b3VyIG9yZ2FuaXphdGlvbjESMBAGA1UEAxMJbG9jYWxo
+-b3N0MIIBUjANBgkqhkiG9w0BAQEFAAOCAT8AMIIBOgKCATEA190qI8Ict55jeto3
+-EumIxub2y/Ae9CWz5EAhUWQFVQc1IWxIl08Q2N2cFy89kagZ2DiDsScm6QZumiE/
+-PyP7y5pXlSOn/DZ+p/K+i9LNznGHuEZQqYLIXwhsI+xEMa+KP65NgM/vAnpn5Zda
+-JCSJR2pGL1Iajszix+n37M8jMMvEopo0Wjj+GjnIkm/PPLIfOXnrR+pBrE8np4p7
+-JvcJnW3qFt+zy7GIo3f99wjkaMjEl0Eud5DpF9n0VcRItRfNCRLLTT7IOfcl6M+/
+-dWGa/pIuKdhpoNmwZxzdGc9hQDlr+QLTpW8M1xzx0Mfq0rJIOfSpSSXw007iwAqD
+-YVd8D3Ai6zmVY5CjRypzyngiAYc02QZHo80U15JoC71lgh5RTFSopXDClgBJ0grM
+-BNXvtwIDAQABo3YwdDAMBgNVHRMBAf8EAjAAMBMGA1UdJQQMMAoGCCsGAQUFBwMB
+-MA8GA1UdDwEB/wQFAwMHoAAwHQYDVR0OBBYEFLkZ9EimCBJwP1HidVQzLyCOS2y1
+-MB8GA1UdIwQYMBaAFMmaHmQanDgY6lNfpRFiPhCCJGXYMA0GCSqGSIb3DQEBCwUA
+-A4IBMQBFmq3zn64V6+k+O141gwsyJ6me7ag4zitCIdx3moh/GVQ3Y746IMu3KMI2
+-nxIdwyTahI97TsuIek9D/QDME7NylnHBSP+/h5ptV/zFFvYxAinCP8AHtca5WKBk
+-TiB22V3Oq4Ywg5gVJucuM6O9j6LhvDv/9g4Jsy1SzPK1GLa/XhojFAcwVYfaCsax
+-BiZkeMV/yLnoIi6MLUWf7qR7+b6XFKTedgAUT2j2C6VfNk8PBNG+uVAKThFWDrv6
+-yf9zMD9aNRjYlwFFUwFE58OF9frSZJMS9abx6ELCBqv9ElFnGAH1J0/CPKFNuuIQ
+-qgnOmhzjurvOge3mxpP37PRnYr/HgwtslIYR8vRTnBtZTvbL5lYE1bqIwlyXisdL
+-daDNOxFgThSfts25XQxtTJPe0IEd
++MIIDsDCCAmigAwIBAgIUWxSn6kYFMM05Wk3oJphIxLgb094wDQYJKoZIhvcNAQEL
++BQAwFTETMBEGA1UEAxMKQWxleCBCbGlnaDAeFw0yMzA2MjIwODU1MDBaFw0zMzA2
++MTkwODU1MDBaMDgxIjAgBgNVBAoTGU5hbWUgb2YgeW91ciBvcmdhbml6YXRpb24x
++EjAQBgNVBAMTCWxvY2FsaG9zdDCCAVIwDQYJKoZIhvcNAQEBBQADggE/ADCCAToC
++ggExANfdKiPCHLeeY3raNxLpiMbm9svwHvQls+RAIVFkBVUHNSFsSJdPENjdnBcv
++PZGoGdg4g7EnJukGbpohPz8j+8uaV5Ujp/w2fqfyvovSzc5xh7hGUKmCyF8IbCPs
++RDGvij+uTYDP7wJ6Z+WXWiQkiUdqRi9SGo7M4sfp9+zPIzDLxKKaNFo4/ho5yJJv
++zzyyHzl560fqQaxPJ6eKeyb3CZ1t6hbfs8uxiKN3/fcI5GjIxJdBLneQ6RfZ9FXE
++SLUXzQkSy00+yDn3JejPv3Vhmv6SLinYaaDZsGcc3RnPYUA5a/kC06VvDNcc8dDH
++6tKySDn0qUkl8NNO4sAKg2FXfA9wIus5lWOQo0cqc8p4IgGHNNkGR6PNFNeSaAu9
++ZYIeUUxUqKVwwpYASdIKzATV77cCAwEAAaN1MHMwDAYDVR0TAQH/BAIwADATBgNV
++HSUEDDAKBggrBgEFBQcDATAOBgNVHQ8BAf8EBAMCBaAwHQYDVR0OBBYEFD6D8W6F
++Rm4xyy15aaCH4AvBycUPMB8GA1UdIwQYMBaAFGCjGs4nzrJXYOSvbznm6punEXkO
++MA0GCSqGSIb3DQEBCwUAA4IBMQAhfI3SSVN1+OFyHSN2XpALHSC84wcPwifwPCsG
+++sq6DR+4Q1VhbVkot+qVBQkjne4zCpPKwXMkehteKhRICA/lcr4/A7MyVUu3pYWz
++T5kCCe70jdh7FGw47jz32TLuFPRNBzPTkMXAYpzfX8zr+i8G1Tiwi2YD6hchTdMW
++bvRZannPUQCaaRDzLwnIURgMNFIIG+7KbfdOCyClb3drG2pE4RP9z0kZWXdIG5bg
++2F+G9Q8Syao0oMrEQWwOnHLF/aIa3R2rIg56u/EDD1Lrp/7vTVAhoG+OgnuRWw0R
++0CRUN134xfNg/afhlW/5eueF9mZdKu5RdkDqjn2yIUAIbsCHa0lGOwEWM8vcCrt5
++dER1BLvrylEuM6ivYLBMOGzRNA/HAqcXw16mtpcElycLyg+g
+ -----END CERTIFICATE-----

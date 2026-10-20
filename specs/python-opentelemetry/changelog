@@ -1,0 +1,23 @@
+* Fri Jul 23 2021 Fedora Release Engineering <releng@fedoraproject.org> - 0.8.0-7
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_35_Mass_Rebuild
+
+* Fri Jun 04 2021 Python Maint <python-maint@redhat.com> - 0.8.0-6
+- Rebuilt for Python 3.10
+
+* Sat Feb 13 2021 Mohamed El Morabity <melmorabity@fedoraproject.org> - 0.8.0-5
+- Fix documentation build with new RTD theme (RHBZ #1919861)
+
+* Wed Jan 27 2021 Fedora Release Engineering <releng@fedoraproject.org> - 0.8.0-4
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_34_Mass_Rebuild
+
+* Wed Jul 29 2020 Fedora Release Engineering <releng@fedoraproject.org> - 0.8.0-3
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_33_Mass_Rebuild
+
+* Wed Jul 22 2020 Mohamed El Morabity <melmorabity@fedoraproject.org> - 0.8.0-2
+- Update requirements patch to drop version condition on PyMySQL (RHBZ #1858698)
+
+* Thu Jun 18 2020 Mohamed El Morabity <melmorabity@fedoraproject.org> - 0.8.0-1
+- Update to 0.8.0
+
+* Sun May 24 2020 Mohamed El Morabity <melmorabity@fedoraproject.org> - 0.7.1-1
+- Initial RPM release

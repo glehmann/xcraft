@@ -1,0 +1,71 @@
+From 89e40096021f3714393c35c0f8bbe99cb100da57 Mon Sep 17 00:00:00 2001
+Message-ID: <89e40096021f3714393c35c0f8bbe99cb100da57.1764164612.git.gerald.elder-vass@citrix.com>
+In-Reply-To: <74f6f75964965c1cb59e2c230cf613e5e72e189d.1764164612.git.gerald.elder-vass@citrix.com>
+References: <74f6f75964965c1cb59e2c230cf613e5e72e189d.1764164612.git.gerald.elder-vass@citrix.com>
+From: Gerald Elder-Vass <gerald.elder-vass@citrix.com>
+Date: Wed, 26 Nov 2025 13:43:09 +0000
+Subject: [PATCH 4/5] Revert "target/i386: Remove X86CPU::kvm_no_smi_migration
+ field"
+
+This reverts commit 82912391139f9f5eb6164ffb18f37fda441c8fb4.
+---
+ target/i386/cpu.c     | 2 ++
+ target/i386/cpu.h     | 3 +++
+ target/i386/kvm/kvm.c | 7 ++++++-
+ 3 files changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/target/i386/cpu.c b/target/i386/cpu.c
+index 6d85149e6e1b..44c959fbe0dc 100644
+--- a/target/i386/cpu.c
++++ b/target/i386/cpu.c
+@@ -9970,6 +9970,8 @@ static const Property x86_cpu_properties[] = {
+     DEFINE_PROP_BOOL("x-amd-topoext-features-only", X86CPU, amd_topoext_features_only, true),
+     DEFINE_PROP_BOOL("lmce", X86CPU, enable_lmce, false),
+     DEFINE_PROP_BOOL("l3-cache", X86CPU, enable_l3_cache, true),
++    DEFINE_PROP_BOOL("kvm-no-smi-migration", X86CPU, kvm_no_smi_migration,
++                     false),
+     DEFINE_PROP_BOOL("kvm-pv-enforce-cpuid", X86CPU, kvm_pv_enforce_cpuid,
+                      false),
+     DEFINE_PROP_BOOL("vmware-cpuid-freq", X86CPU, vmware_cpuid_freq, true),
+diff --git a/target/i386/cpu.h b/target/i386/cpu.h
+index f977fc49a774..d4955643745a 100644
+--- a/target/i386/cpu.h
++++ b/target/i386/cpu.h
+@@ -2311,6 +2311,9 @@ struct ArchCPU {
+     /* if set, limit maximum value for phys_bits when host_phys_bits is true */
+     uint8_t host_phys_bits_limit;
+ 
++    /* Stop SMI delivery for migration compatibility with old machines */
++    bool kvm_no_smi_migration;
++
+     /* Forcefully disable KVM PV features not exposed in guest CPUIDs */
+     bool kvm_pv_enforce_cpuid;
+ 
+diff --git a/target/i386/kvm/kvm.c b/target/i386/kvm/kvm.c
+index 369626f8c8d7..f99d8b1e03b5 100644
+--- a/target/i386/kvm/kvm.c
++++ b/target/i386/kvm/kvm.c
+@@ -5057,7 +5057,6 @@ static int kvm_put_vcpu_events(X86CPU *cpu, int level)
+     events.sipi_vector = env->sipi_vector;
+ 
+     if (has_msr_smbase) {
+-        events.flags |= KVM_VCPUEVENT_VALID_SMM;
+         events.smi.smm = !!(env->hflags & HF_SMM_MASK);
+         events.smi.smm_inside_nmi = !!(env->hflags2 & HF2_SMM_INSIDE_NMI_MASK);
+         if (kvm_irqchip_in_kernel()) {
+@@ -5072,6 +5071,12 @@ static int kvm_put_vcpu_events(X86CPU *cpu, int level)
+             events.smi.pending = 0;
+             events.smi.latched_init = 0;
+         }
++        /* Stop SMI delivery on old machine types to avoid a reboot
++         * on an inward migration of an old VM.
++         */
++        if (!cpu->kvm_no_smi_migration) {
++            events.flags |= KVM_VCPUEVENT_VALID_SMM;
++        }
+     }
+ 
+     if (level >= KVM_PUT_RESET_STATE) {
+-- 
+2.47.3
+

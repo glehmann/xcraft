@@ -1,0 +1,387 @@
+From ca773d86a83b65ac67793c14e8ec2ee7e773f37a Mon Sep 17 00:00:00 2001
+From: Chunjie Zhu <chunjie.zhu@cloud.com>
+Date: Tue, 22 Aug 2023 03:54:21 +0000
+Subject: [PATCH] CP-15129: Convert to use systemd services
+
+diff --git a/xenserver/automake.mk b/xenserver/automake.mk
+index ead0f4a7c..4a132fb1e 100644
+--- a/xenserver/automake.mk
++++ b/xenserver/automake.mk
+@@ -10,8 +10,6 @@ EXTRA_DIST += \
+ 	xenserver/LICENSE \
+ 	xenserver/README.rst \
+ 	xenserver/automake.mk \
+-	xenserver/etc_init.d_openvswitch \
+-	xenserver/etc_init.d_openvswitch-xapi-update \
+ 	xenserver/etc_logrotate.d_openvswitch \
+ 	xenserver/etc_profile.d_openvswitch.sh \
+ 	xenserver/etc_xapi.d_plugins_openvswitch-cfg-update \
+@@ -22,7 +20,10 @@ EXTRA_DIST += \
+ 	xenserver/opt_xensource_libexec_InterfaceReconfigureBridge.py \
+ 	xenserver/opt_xensource_libexec_InterfaceReconfigureVswitch.py \
+ 	xenserver/opt_xensource_libexec_interface-reconfigure \
++	xenserver/usr_lib_systemd_system_openvswitch-xapi-sync.service \
++	xenserver/usr_lib_systemd_system_openvswitch.service \
+ 	xenserver/usr_lib_xsconsole_plugins-base_XSFeatureVSwitch.py \
++	xenserver/usr_share_openvswitch_scripts_ovs-start \
+ 	xenserver/usr_share_openvswitch_scripts_ovs-xapi-sync \
+ 	xenserver/usr_share_openvswitch_scripts_sysconfig.template
+ 
+diff --git a/xenserver/etc_init.d_openvswitch b/xenserver/etc_init.d_openvswitch
+deleted file mode 100755
+index 7d2103fa2..000000000
+--- a/xenserver/etc_init.d_openvswitch
++++ /dev/null
+@@ -1,154 +0,0 @@
+-#!/bin/sh
+-#
+-# openvswitch
+-#
+-# chkconfig: 2345 09 91
+-# description: Manage Open vSwitch kernel modules and user-space daemons
+-
+-# Copyright (C) 2009, 2010, 2011 Nicira, Inc.
+-#
+-# Licensed under the Apache License, Version 2.0 (the "License");
+-# you may not use this file except in compliance with the License.
+-# You may obtain a copy of the License at:
+-#
+-#     http://www.apache.org/licenses/LICENSE-2.0
+-#
+-# Unless required by applicable law or agreed to in writing, software
+-# distributed under the License is distributed on an "AS IS" BASIS,
+-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-# See the License for the specific language governing permissions and
+-# limitations under the License.
+-### BEGIN INIT INFO
+-# Provides:          openvswitch-switch
+-# Required-Start:
+-# Required-Stop:
+-# Default-Start:     2 3 4 5
+-# Default-Stop:      0 1 6
+-# Short-Description: Open vSwitch switch
+-### END INIT INFO
+-
+-. /usr/share/openvswitch/scripts/ovs-lib || exit 1
+-. /etc/xensource-inventory
+-test -e /etc/sysconfig/openvswitch && . /etc/sysconfig/openvswitch
+-
+-case `cat /etc/xensource/network.conf` in
+-    vswitch|openvswitch)
+-        ;;
+-    bridge)
+-        exit 0
+-        ;;
+-    *)
+-        echo "Open vSwitch disabled (/etc/xensource/network.conf is invalid)" >&2
+-        exit 0
+-        ;;
+-esac
+-
+-start_ovs_xapi_sync () {
+-    if daemon_is_running ovs-xapi-sync; then
+-        log_success_msg "ovs-xapi-sync is already running"
+-    else
+-        PYTHONPATH=/usr/share/openvswitch/python \
+-            /usr/share/openvswitch/scripts/ovs-xapi-sync \
+-            --log-file --pidfile --detach --monitor unix:/var/run/openvswitch/db.sock
+-    fi
+-}
+-
+-start () {
+-    set ovs_ctl ${1-start}
+-    set "$@" --system-id="$INSTALLATION_UUID"
+-    set "$@" --system-type="$PRODUCT_BRAND"
+-    set "$@" --system-version="$PRODUCT_VERSION-$BUILD_NUMBER"
+-    set "$@" --external-id=xs-system-uuid="$INSTALLATION_UUID"
+-    set "$@" --daemon-cwd=/var/xen/openvswitch
+-    if test X"$FORCE_COREFILES" != X; then
+-        set "$@" --force-corefiles="$FORCE_COREFILES"
+-    fi
+-    if test X"$OVSDB_SERVER_PRIORITY" != X; then
+-        set "$@" --ovsdb-server-priority="$OVSDB_SERVER_PRIORITY"
+-    fi
+-    if test X"$VSWITCHD_PRIORITY" != X; then
+-        set "$@" --ovs-vswitchd-priority="$VSWITCHD_PRIORITY"
+-    fi
+-    if test X"$VSWITCHD_MLOCKALL" != X; then
+-        set "$@" --mlockall="$VSWITCHD_MLOCKALL"
+-    fi
+-    if test ! -e /var/run/openvswitch.booted; then
+-        touch /var/run/openvswitch.booted
+-        set "$@" --delete-bridges
+-    fi
+-    set "$@" $OVS_CTL_OPTS
+-    "$@"
+-
+-    start_ovs_xapi_sync
+-
+-    ovs_ctl --protocol=gre enable-protocol
+-
+-    touch /var/lock/subsys/openvswitch
+-}
+-
+-force_reload_kmod () {
+-    start force-reload-kmod
+-
+-    # Restart the high-availability daemon if it is running.  Otherwise
+-    # it loses its heartbeat and reboots the system after a few minutes.
+-    if pidof xhad >/dev/null && test -e /etc/xensource/xhad.conf; then
+-        PATH=$PATH:/opt/xensource/xha
+-        action "Stopping HA daemon" ha_stop_daemon
+-        action "Starting HA daemon" ha_start_daemon
+-    fi
+-
+-    action "Stopping ovs-xapi-sync" stop_daemon ovs-xapi-sync
+-    action "Starting ovs-xapi-sync" start_ovs_xapi_sync
+-}
+-
+-stop () {
+-    ovs_ctl stop
+-    stop_daemon ovs-xapi-sync
+-    rm -f /var/lock/subsys/openvswitch
+-}
+-
+-restart () {
+-    if [ "$1" = "--save-flows=yes" ]; then
+-        stop_daemon ovs-xapi-sync
+-        start restart
+-    else
+-        stop
+-        start
+-    fi
+-}
+-
+-case $1 in
+-    start)
+-        start
+-        ;;
+-    stop)
+-        stop
+-        ;;
+-    restart)
+-        shift
+-        restart "$@"
+-        ;;
+-    reload|force-reload)
+-        # The main OVS daemons keep up-to-date, but ovs-xapi-sync needs help.
+-        if daemon_is_running ovs-xapi-sync; then
+-            action "Configuring Open vSwitch external IDs" \
+-                ovs-appctl -t ovs-xapi-sync flush-cache
+-        fi
+-        ;;
+-    status)
+-        ovs_ctl status && daemon_status ovs-xapi-sync
+-        ;;
+-    version)
+-        ovs_ctl version
+-        ;;
+-    force-reload-kmod)
+-        force_reload_kmod
+-        ;;
+-    help)
+-        printf "openvswitch [start|stop|restart|reload|force-reload|status|version]\n"
+-        ;;
+-    *)
+-        printf "Unknown command: $1\n"
+-        exit 1
+-        ;;
+-esac
+diff --git a/xenserver/etc_init.d_openvswitch-xapi-update b/xenserver/etc_init.d_openvswitch-xapi-update
+deleted file mode 100755
+index 12a9db2a1..000000000
+--- a/xenserver/etc_init.d_openvswitch-xapi-update
++++ /dev/null
+@@ -1,80 +0,0 @@
+-#!/bin/bash
+-#
+-# openvswitch-xapi-update
+-#
+-# chkconfig: 2345 95 01
+-# description: Update Open vSwitch configuration from XAPI database at boot
+-
+-# Copyright (C) 2009, 2010 Nicira, Inc.
+-#
+-# Licensed under the Apache License, Version 2.0 (the "License");
+-# you may not use this file except in compliance with the License.
+-# You may obtain a copy of the License at:
+-#
+-#     http://www.apache.org/licenses/LICENSE-2.0
+-#
+-# Unless required by applicable law or agreed to in writing, software
+-# distributed under the License is distributed on an "AS IS" BASIS,
+-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-# See the License for the specific language governing permissions and
+-# limitations under the License.
+-### BEGIN INIT INFO
+-# Provides:      openvswitch-xapi-update
+-# Required-Start: $network $remote_fs
+-# Required-Stop: $network
+-# Default-Start:  3 5
+-# Default-Stop:
+-# Short-Description:    openvswitch-xapi-update
+-# Description:          reconfigures Open vSwitch based on XAPI configuration
+-### END INIT INFO
+-
+-. /etc/init.d/functions
+-
+-function do_host_call {
+-    xe host-call-plugin host-uuid="$INSTALLATION_UUID" plugin="openvswitch-cfg-update" fn="update" >/dev/null
+-}
+-
+-function start {
+-    if [ ! -f /etc/xensource-inventory ]; then
+-        printf "openvswitch-xapi-update ERROR: XenSource inventory not present in /etc/xensource-inventory\n"
+-        exit 1
+-    fi
+-
+-    if test -e /etc/xensource/network.conf; then
+-        NETWORK_MODE=$(cat /etc/xensource/network.conf)
+-    fi
+-
+-    case ${NETWORK_MODE:=openvswitch} in
+-        vswitch|openvswitch)
+-            ;;
+-        bridge)
+-            exit 0
+-            ;;
+-        *)
+-            echo "Open vSwitch disabled (/etc/xensource/network.conf is invalid)" >&2
+-            exit 0
+-            ;;
+-    esac
+-
+-    source /etc/xensource-inventory
+-    action "Updating configuration" do_host_call
+-}
+-
+-case "$1" in
+-    start)
+-        start
+-        ;;
+-    stop)
+-        # Nothing to do here.
+-        ;;
+-    restart)
+-        start
+-        ;;
+-    help)
+-        printf "openvswitch-xapi-update [start|stop|restart]\n"
+-        ;;
+-    *)
+-        printf "Unknown command: $1\n"
+-        exit 1
+-        ;;
+-esac
+diff --git a/xenserver/usr_lib_systemd_system_openvswitch-xapi-sync.service b/xenserver/usr_lib_systemd_system_openvswitch-xapi-sync.service
+new file mode 100644
+index 000000000..f0dc6851a
+--- /dev/null
++++ b/xenserver/usr_lib_systemd_system_openvswitch-xapi-sync.service
+@@ -0,0 +1,13 @@
++[Unit]
++Description=Open vSwitch XAPI Sync
++Requires=openvswitch.service
++After=syslog.target openvswitch.service
++
++[Service]
++Environment=PYTHONPATH=/usr/share/openvswitch/python
++ExecStart=/usr/share/openvswitch/scripts/ovs-xapi-sync unix:/var/run/openvswitch/db.sock --log-file
++Restart=on-failure
++RestartSec=10
++
++[Install]
++WantedBy=multi-user.target
+diff --git a/xenserver/usr_lib_systemd_system_openvswitch.service b/xenserver/usr_lib_systemd_system_openvswitch.service
+new file mode 100644
+index 000000000..31f18ef3c
+--- /dev/null
++++ b/xenserver/usr_lib_systemd_system_openvswitch.service
+@@ -0,0 +1,15 @@
++[Unit]
++Description=Open vSwitch
++Before=xapi.service xcp-networkd.service network.target
++After=syslog.target interface-rename.service network-pre.target
++PartOf=network.target
++
++[Service]
++Type=forking
++Environment=ASAN_OPTIONS=abort_on_error=1:disable_coredump=0:unmap_shadow_on_exit=1
++ExecStart=/usr/share/openvswitch/scripts/ovs-start
++ExecStop=/usr/share/openvswitch/scripts/ovs-ctl stop
++OOMScoreAdjust=-1000
++
++[Install]
++WantedBy=multi-user.target
+diff --git a/xenserver/usr_lib_xsconsole_plugins-base_XSFeatureVSwitch.py b/xenserver/usr_lib_xsconsole_plugins-base_XSFeatureVSwitch.py
+index 8946917d5..0bdcd63c9 100644
+--- a/xenserver/usr_lib_xsconsole_plugins-base_XSFeatureVSwitch.py
++++ b/xenserver/usr_lib_xsconsole_plugins-base_XSFeatureVSwitch.py
+@@ -21,6 +21,7 @@ import socket
+ import subprocess
+ 
+ vsctl="/usr/bin/ovs-vsctl"
++ovsctl="/usr/share/openvswitch/scripts/ovs-ctl"
+ 
+ if __name__ == "__main__":
+     raise Exception("This script is a plugin for xsconsole and cannot run independently")
+@@ -38,7 +39,7 @@ class VSwitchService:
+ 
+     def version(self):
+         try:
+-            output = ShellPipe(["service", self.name, "version"]).Stdout()
++            output = ShellPipe([self.processname, "-V"]).Stdout()
+         except StandardError as e:
+             XSLogError("vswitch version retrieval error: " + str(e))
+             return "<unknown>"
+@@ -49,7 +50,7 @@ class VSwitchService:
+ 
+     def status(self):
+         try:
+-            output = ShellPipe(["service", self.name, "status"]).Stdout()
++            output = ShellPipe([ovsctl, "status"]).Stdout()
+         except StandardError as e:
+             XSLogError("vswitch status retrieval error: " + str(e))
+             return "<unknown>"
+diff --git a/xenserver/usr_share_openvswitch_scripts_ovs-start b/xenserver/usr_share_openvswitch_scripts_ovs-start
+new file mode 100644
+index 000000000..93a71ddbc
+--- /dev/null
++++ b/xenserver/usr_share_openvswitch_scripts_ovs-start
+@@ -0,0 +1,33 @@
++#!/bin/sh
++
++. /usr/share/openvswitch/scripts/ovs-lib || exit 1
++. /etc/xensource-inventory
++test -e /etc/sysconfig/openvswitch && . /etc/sysconfig/openvswitch
++
++set ovs_ctl start
++set "$@" --system-id="$INSTALLATION_UUID"
++set "$@" --system-type="$PRODUCT_BRAND"
++set "$@" --system-version="$PRODUCT_VERSION-$BUILD_NUMBER"
++set "$@" --external-id=xs-system-uuid="$INSTALLATION_UUID"
++set "$@" --daemon-cwd=/var/xen/openvswitch
++if test X"$FORCE_COREFILES" != X; then
++    set "$@" --force-corefiles="$FORCE_COREFILES"
++fi
++if test X"$OVSDB_SERVER_PRIORITY" != X; then
++    set "$@" --ovsdb-server-priority="$OVSDB_SERVER_PRIORITY"
++fi
++if test X"$VSWITCHD_PRIORITY" != X; then
++    set "$@" --ovs-vswitchd-priority="$VSWITCHD_PRIORITY"
++fi
++if test X"$VSWITCHD_MLOCKALL" != X; then
++    set "$@" --mlockall="$VSWITCHD_MLOCKALL"
++fi
++if test ! -e /var/run/openvswitch.booted; then
++    touch /var/run/openvswitch.booted
++    set "$@" --delete-bridges
++fi
++
++set "$@" $OVS_CTL_OPTS
++"$@"
++
++ovs_ctl --protocol=gre enable-protocol
+-- 
+2.34.1
+

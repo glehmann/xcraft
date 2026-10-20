@@ -1,0 +1,24 @@
+From 4e28498530a9ebb929ab840d25345bca1d5fab72 Mon Sep 17 00:00:00 2001
+From: Yann Dirson <yann.dirson@vates.tech>
+Date: Mon, 7 Jul 2025 13:50:10 +0200
+Subject: [PATCH 1/4] manpage-check: enable more error diagnostics
+
+---
+ Makefile.am | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Makefile.am b/Makefile.am
+index cb8076433..9e1975bee 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -367,6 +367,7 @@ if HAVE_GROFF
+ ALL_LOCAL += manpage-check
+ manpage-check: $(man_MANS) $(dist_man_MANS) $(noinst_man_MANS)
+ 	@error=false; \
++	set -x; \
+ 	for manpage in $?; do \
+ 	  LANG=en_US.UTF-8 groff -w mac -w delim -w escape -w input -w missing -w tab -T utf8 -man -p -z $$manpage >$@.tmp 2>&1; \
+ 	  if grep warning: $@.tmp; then error=:; fi; \
+-- 
+2.39.5
+

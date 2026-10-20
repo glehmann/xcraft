@@ -1,0 +1,119 @@
+diff --git a/hw/nvme/ctrl.c b/hw/nvme/ctrl.c
+index 795196666f2d..d00388d5c843 100644
+--- a/hw/nvme/ctrl.c
++++ b/hw/nvme/ctrl.c
+@@ -8629,6 +8629,7 @@ static int nvme_add_pm_capability(PCIDevice *pci_dev, uint8_t offset)
+     return 0;
+ }
+ 
++#ifdef CONFIG_SPDM_SOCKET
+ static bool pcie_doe_spdm_rsp(DOECap *doe_cap)
+ {
+     void *req = pcie_doe_get_write_mbox_ptr(doe_cap);
+@@ -8649,6 +8650,7 @@ static DOEProtocol doe_spdm_prot[] = {
+     { PCI_VENDOR_ID_PCI_SIG, PCI_SIG_DOE_SECURED_CMA, pcie_doe_spdm_rsp },
+     { }
+ };
++#endif
+ 
+ static bool nvme_init_pci(NvmeCtrl *n, PCIDevice *pci_dev, Error **errp)
+ {
+@@ -8736,6 +8738,7 @@ static bool nvme_init_pci(NvmeCtrl *n, PCIDevice *pci_dev, Error **errp)
+ 
+     nvme_update_msixcap_ts(pci_dev, n->conf_msix_qsize);
+ 
++#ifdef CONFIG_SPDM_SOCKET
+     pcie_cap_deverr_init(pci_dev);
+ 
+     /* DOE Initialisation */
+@@ -8754,6 +8757,7 @@ static bool nvme_init_pci(NvmeCtrl *n, PCIDevice *pci_dev, Error **errp)
+             return false;
+         }
+     }
++#endif
+ 
+     if (n->params.cmb_size_mb) {
+         nvme_init_cmb(n, pci_dev);
+@@ -9040,10 +9044,12 @@ static void nvme_exit(PCIDevice *pci_dev)
+         g_free(n->cmb.buf);
+     }
+ 
++#ifdef CONFIG_SPDM_SOCKET
+     if (pci_dev->doe_spdm.spdm_socket > 0) {
+         spdm_socket_close(pci_dev->doe_spdm.spdm_socket,
+                           SPDM_SOCKET_TRANSPORT_TYPE_PCI_DOE);
+     }
++#endif
+ 
+     if (n->pmr.dev) {
+         host_memory_backend_set_mapped(n->pmr.dev, false);
+@@ -9101,7 +9107,9 @@ static const Property nvme_props[] = {
+     DEFINE_PROP_BOOL("msix-exclusive-bar", NvmeCtrl, params.msix_exclusive_bar,
+                      false),
+     DEFINE_PROP_UINT16("mqes", NvmeCtrl, params.mqes, 0x7ff),
++#ifdef CONFIG_SPDM_SOCKET
+     DEFINE_PROP_UINT16("spdm_port", PCIDevice, spdm_port, 0),
++#endif
+     DEFINE_PROP_BOOL("ctratt.mem", NvmeCtrl, params.ctratt.mem, false),
+     DEFINE_PROP_BOOL("atomic.dn", NvmeCtrl, params.atomic_dn, 0),
+     DEFINE_PROP_UINT16("atomic.awun", NvmeCtrl, params.atomic_awun, 0),
+@@ -9177,9 +9185,11 @@ static void nvme_pci_write_config(PCIDevice *dev, uint32_t address,
+ {
+     uint16_t old_num_vfs = pcie_sriov_num_vfs(dev);
+ 
++#ifdef CONFIG_SPDM_SOCKET
+     if (pcie_find_capability(dev, PCI_EXT_CAP_ID_DOE)) {
+         pcie_doe_write_config(&dev->doe_spdm, address, val, len);
+     }
++#endif
+     pci_default_write_config(dev, address, val, len);
+     pcie_cap_flr_write_config(dev, address, val, len);
+     nvme_sriov_post_write_config(dev, old_num_vfs);
+@@ -9187,12 +9197,14 @@ static void nvme_pci_write_config(PCIDevice *dev, uint32_t address,
+ 
+ static uint32_t nvme_pci_read_config(PCIDevice *dev, uint32_t address, int len)
+ {
++#ifdef CONFIG_SPDM_SOCKET
+     uint32_t val;
+     if (dev->spdm_port && pcie_find_capability(dev, PCI_EXT_CAP_ID_DOE)) {
+         if (pcie_doe_read_config(&dev->doe_spdm, address, len, &val)) {
+             return val;
+         }
+     }
++#endif
+     return pci_default_read_config(dev, address, len);
+ }
+ 
+diff --git a/include/hw/pci/pci_device.h b/include/hw/pci/pci_device.h
+index 735e9eac38cf..9fe9f5147adb 100644
+--- a/include/hw/pci/pci_device.h
++++ b/include/hw/pci/pci_device.h
+@@ -164,11 +164,13 @@ struct PCIDevice {
+     MSIVectorReleaseNotifier msix_vector_release_notifier;
+     MSIVectorPollNotifier msix_vector_poll_notifier;
+ 
++#ifdef CONFIG_SPDM_SOCKET
+     /* SPDM */
+     uint16_t spdm_port;
+ 
+     /* DOE */
+     DOECap doe_spdm;
++#endif
+ 
+     /* ID of standby device in net_failover pair */
+     char *failover_pair_id;
+diff --git a/include/hw/pci/pcie_doe.h b/include/hw/pci/pcie_doe.h
+index 9e1275db8ae1..9833b3659cd2 100644
+--- a/include/hw/pci/pcie_doe.h
++++ b/include/hw/pci/pcie_doe.h
+@@ -109,8 +109,10 @@ struct DOECap {
+     DOEProtocol *protocols;
+     uint16_t protocol_num;
+ 
++#ifdef SPDM_SOCKET
+     /* Used for spdm-socket */
+     int spdm_socket;
++#endif
+ };
+ 
+ void pcie_doe_init(PCIDevice *pdev, DOECap *doe_cap, uint16_t offset,

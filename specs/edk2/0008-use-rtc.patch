@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tu Dinh <ngoc-tu.dinh@vates.tech>
+Date: Mon, 18 May 2026 14:49:55 +0200
+Subject: [PATCH] use-rtc
+
+
+diff --git a/OvmfPkg/OvmfXen.dsc b/OvmfPkg/OvmfXen.dsc
+index b0f897760204..aa2952ea45d6 100644
+--- a/OvmfPkg/OvmfXen.dsc
++++ b/OvmfPkg/OvmfXen.dsc
+@@ -223,7 +223,6 @@
+   XenPlatformLib|OvmfPkg/Library/XenPlatformLib/XenPlatformLib.inf
+   XenIoMmioLib|OvmfPkg/Library/XenIoMmioLib/XenIoMmioLib.inf
+ 
+-  RealTimeClockLib|OvmfPkg/Library/XenRealTimeClockLib/XenRealTimeClockLib.inf
+   TimeBaseLib|EmbeddedPkg/Library/TimeBaseLib/TimeBaseLib.inf
+ !ifdef $(DEBUG_ON_HYPERVISOR_CONSOLE)
+   DebugLib|OvmfPkg/Library/PlatformDebugLibIoPort/PlatformRomDebugLibIoPortNocheck.inf
+@@ -600,7 +599,7 @@
+   }
+   MdeModulePkg/Universal/ResetSystemRuntimeDxe/ResetSystemRuntimeDxe.inf
+   MdeModulePkg/Universal/Metronome/Metronome.inf
+-  EmbeddedPkg/RealTimeClockRuntimeDxe/RealTimeClockRuntimeDxe.inf
++  PcAtChipsetPkg/PcatRealTimeClockRuntimeDxe/PcatRealTimeClockRuntimeDxe.inf
+   MdeModulePkg/Universal/DriverHealthManagerDxe/DriverHealthManagerDxe.inf
+   MdeModulePkg/Universal/BdsDxe/BdsDxe.inf
+   MdeModulePkg/Logo/LogoDxe.inf
+diff --git a/OvmfPkg/OvmfXen.fdf b/OvmfPkg/OvmfXen.fdf
+index 71dd98b553d4..b155b3ad27b5 100644
+--- a/OvmfPkg/OvmfXen.fdf
++++ b/OvmfPkg/OvmfXen.fdf
+@@ -255,7 +255,7 @@ INF  MdeModulePkg/Bus/Pci/PciHostBridgeDxe/PciHostBridgeDxe.inf
+ INF  MdeModulePkg/Bus/Pci/PciBusDxe/PciBusDxe.inf
+ INF  MdeModulePkg/Universal/ResetSystemRuntimeDxe/ResetSystemRuntimeDxe.inf
+ INF  MdeModulePkg/Universal/Metronome/Metronome.inf
+-INF  EmbeddedPkg/RealTimeClockRuntimeDxe/RealTimeClockRuntimeDxe.inf
++INF  PcAtChipsetPkg/PcatRealTimeClockRuntimeDxe/PcatRealTimeClockRuntimeDxe.inf
+ 
+ INF  OvmfPkg/XenIoPvhDxe/XenIoPvhDxe.inf
+ INF  OvmfPkg/XenIoPciDxe/XenIoPciDxe.inf

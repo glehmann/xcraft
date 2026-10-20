@@ -1,0 +1,43 @@
+From f74ce602264d05f3b17de6d431f887fa0f0d5932 Mon Sep 17 00:00:00 2001
+From: Roger Pau Monne <roger.pau@citrix.com>
+Date: Fri, 17 Oct 2025 17:51:36 +0200
+Subject: [PATCH] hw/xen: pass PCI domain to xc_physdev_map_pirq_msi()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+It's currently impossible for passthrough devices on segment different
+than 0 to work correctly, as the PCI domain is not provided to
+xc_physdev_map_pirq_msi(), and hence it's unconditionally assumed that
+all devices are on segment 0.
+
+Adjust the call to xc_physdev_map_pirq_msi() to pass the PCI domain in
+the high 16bits of the bus parameter.  On versions of Xen where this
+is not supported the passed segment will be ignored and assume to be 0,
+no worse than the current state.
+
+Signed-off-by: Roger Pau Monné <roger.pau@citrix.com>
+Reviewed-by: Frediano Ziglio <freddy77@gmail.com>
+Reviewed-by: Anthony PERARD <anthony.perard@vates.tech>
+Reviewed-by: Edgar E. Iglesias <edgar.iglesias@amd.com>
+Message-ID: <20251017155136.16540-1-roger.pau@citrix.com>
+Signed-off-by: Philippe Mathieu-Daudé <philmd@linaro.org>
+---
+ hw/xen/xen_pt_msi.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/hw/xen/xen_pt_msi.c b/hw/xen/xen_pt_msi.c
+index e9ba17317aba..df15ccf0d030 100644
+--- a/hw/xen/xen_pt_msi.c
++++ b/hw/xen/xen_pt_msi.c
+@@ -138,6 +138,7 @@ static int msi_msix_setup(XenPCIPassthroughState *s,
+         rc = xc_physdev_map_pirq_msi(xen_xc, xen_domid, XEN_PT_AUTO_ASSIGN,
+                                      ppirq, PCI_DEVFN(s->real_device.dev,
+                                                       s->real_device.func),
++                                     ((uint32_t)s->real_device.domain << 16) |
+                                      s->real_device.bus,
+                                      msix_entry, table_base);
+         if (rc) {
+-- 
+2.47.3
+

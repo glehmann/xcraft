@@ -1,0 +1,27 @@
+xen-hvm: Handle framebuffer relocation
+
+It is possible for a guest to relocate the linear framebuffer by writing to the
+BAR. This causes QEMU to report an error and if the VM is migrated, the
+destination QEMU hits an assertion.
+The problem is that updating the BAR causes the PCI core code to call the del
+region callback followed by the add region callback but the xen-hvm code
+ignores the del region call and therefore the subsequent call to
+xen_relocate_memory() during the add region callback fails because the source
+address is not correct.
+
+Handle remove region events for the linear framebuffer to fix this issue.
+
+Signed-off-by: Ross Lagerwall <ross.lagerwall@citrix.com>
+diff --git a/hw/i386/xen/xen-hvm.c b/hw/i386/xen/xen-hvm.c
+index 4f2800aea35b..fd66875f13ba 100644
+--- a/hw/i386/xen/xen-hvm.c
++++ b/hw/i386/xen/xen-hvm.c
+@@ -522,7 +522,7 @@ static void xen_set_memory(struct MemoryListener *listener,
+         return;
+     }
+ 
+-    if (log_dirty != add) {
++    if (!(log_dirty == add || (section->mr == framebuffer && start_addr > 0xbffff))) {
+         return;
+     }
+ 

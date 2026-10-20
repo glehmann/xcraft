@@ -1,0 +1,32 @@
+From 13c1abe10abd1c24307a6777b6cedfc5b46b088d Mon Sep 17 00:00:00 2001
+From: Michael Brown <mcb30@ipxe.org>
+Date: Wed, 12 May 2021 10:09:33 +0100
+Subject: [PATCH] [prefix] Specify i486 architecture for LZMA decompressor
+
+The decompressor uses the i486 "bswap" instruction, but does not
+require any instructions that exist only on i586 or above.  Update the
+".arch" directive to reflect the requirements of the code as
+implemented.
+
+Reported-by: Martin Habets <habetsm.xilinx@gmail.com>
+Signed-off-by: Michael Brown <mcb30@ipxe.org>
+---
+ src/arch/x86/prefix/unlzma.S | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/arch/x86/prefix/unlzma.S b/src/arch/x86/prefix/unlzma.S
+index 956eeb24..979f699e 100644
+--- a/src/arch/x86/prefix/unlzma.S
++++ b/src/arch/x86/prefix/unlzma.S
+@@ -44,7 +44,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+  */
+ 
+ 	.text
+-	.arch i586
++	.arch i486
+ 	.section ".prefix.lib", "ax", @progbits
+ 
+ #ifdef CODE16
+-- 
+2.39.5
+

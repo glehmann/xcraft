@@ -1,0 +1,21 @@
+realtek: Increase the number of rx descriptors to 32
+
+The PVS server sends a burst of 12 UDP packets and with only 4 rx
+descriptors, 8 packets are dropped.  After a timeout, the client resends
+the request and the PVS server again sends 12 UDP packets. Ideally the
+protocol should be more resilient to these dropped packets, but fix it
+anyway by increasing the number of rx descriptors for the realtek card
+to 32.
+diff --git a/src/drivers/net/realtek.h b/src/drivers/net/realtek.h
+index 4d13784c..77a35b49 100644
+--- a/src/drivers/net/realtek.h
++++ b/src/drivers/net/realtek.h
+@@ -237,7 +237,7 @@ enum realtek_legacy_status {
+ #define RTL_RDSAR 0xe4
+ 
+ /** Number of receive descriptors */
+-#define RTL_NUM_RX_DESC 4
++#define RTL_NUM_RX_DESC 32
+ 
+ /** Receive buffer length */
+ #define RTL_RX_MAX_LEN \

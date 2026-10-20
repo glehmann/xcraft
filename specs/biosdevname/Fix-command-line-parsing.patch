@@ -1,0 +1,25 @@
+From 11d0ae50aadeb2917dffc809f8bd2f4a78089675 Mon Sep 17 00:00:00 2001
+From: Jordan Hargrave <Jordan_Hargrave@dell.com>
+Date: Thu, 8 Aug 2013 15:07:44 -0500
+Subject: [PATCH] Fix command line parsing
+
+---
+ src/bios_dev_name.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/bios_dev_name.c b/src/bios_dev_name.c
+index 5001f85609e7..d0a917a8a0f8 100644
+--- a/src/bios_dev_name.c
++++ b/src/bios_dev_name.c
+@@ -68,7 +68,7 @@ parse_opts(int argc, char **argv)
+ 			{0, 0, 0, 0}
+ 		};
+ 		c = getopt_long(argc, argv,
+-				"dip:",
++				"dip:P:xs:v",
+ 				long_options, &option_index);
+ 		if (c == -1)
+ 			break;
+-- 
+2.47.0
+

@@ -1,0 +1,175 @@
+From 1c4e074b93b1b0d51885557b6e12d6b8f5f823c6 Mon Sep 17 00:00:00 2001
+From: "ben.sims@citrix.com" <ben.sims@citrix.com>
+Date: Tue, 31 Mar 2020 08:38:15 +0000
+Subject: [PATCH] CP-33348 - Allow media replace qmp command to take a numeric
+ socket fds for nbd.
+
+diff --git a/block/nbd.c b/block/nbd.c
+index d5a2b21c6d14..7abbe9f9155c 100644
+--- a/block/nbd.c
++++ b/block/nbd.c
+@@ -1654,10 +1654,13 @@ static void nbd_parse_filename(const char *filename, QDict *options,
+         return;
+     }
+ 
+-    /* are we a UNIX or TCP socket? */
++    qdict_put_str(options, "server.uri", host_spec);
++    /* are we a UNIX or TCP socket, or a preopened socket? */
+     if (strstart(host_spec, "unix:", &unixpath)) {
+         qdict_put_str(options, "server.type", "unix");
+         qdict_put_str(options, "server.path", unixpath);
++    } else if (strstart(host_spec, "fd:", &unixpath)) {
++        qdict_put_str(options, "server.type", "fd");
+     } else {
+         InetSocketAddress *addr = g_new(InetSocketAddress, 1);
+ 
+@@ -1721,22 +1724,20 @@ static SocketAddress *nbd_config(BDRVNBDState *s, QDict *options,
+ {
+     SocketAddress *saddr = NULL;
+     QDict *addr = NULL;
+-    Visitor *iv = NULL;
+ 
++    const char *uri;
++    /*
++     * Important to drain the QDict options as block.c checks to see
++     * if it is empty on return.
++     */
+     qdict_extract_subqdict(options, &addr, "server.");
+     if (!qdict_size(addr)) {
+         error_setg(errp, "NBD server address missing");
+         goto done;
+     }
+ 
+-    iv = qobject_input_visitor_new_flat_confused(addr, errp);
+-    if (!iv) {
+-        goto done;
+-    }
+-
+-    if (!visit_type_SocketAddress(iv, NULL, &saddr, errp)) {
+-        goto done;
+-    }
++    uri = qdict_get_str(addr, "uri");
++    saddr = socket_parse(uri, errp);
+ 
+     if (socket_address_parse_named_fd(saddr, errp) < 0) {
+         qapi_free_SocketAddress(saddr);
+@@ -1746,7 +1747,6 @@ static SocketAddress *nbd_config(BDRVNBDState *s, QDict *options,
+ 
+ done:
+     qobject_unref(addr);
+-    visit_free(iv);
+     return saddr;
+ }
+ 
+diff --git a/include/monitor/monitor.h b/include/monitor/monitor.h
+index c3740ec616a0..790637ea4fd9 100644
+--- a/include/monitor/monitor.h
++++ b/include/monitor/monitor.h
+@@ -51,6 +51,7 @@ int monitor_read_password(MonitorHMP *mon, ReadLineFunc *readline_func,
+ 
+ AddfdInfo *monitor_fdset_add_fd(int fd, bool has_fdset_id, int64_t fdset_id,
+                                 const char *opaque, Error **errp);
++int monitor_fdset_get_fd(int64_t fdset_id, int flags);
+ int monitor_fdset_dup_fd_add(int64_t fdset_id, int flags, Error **errp);
+ void monitor_fdset_dup_fd_remove(int dup_fd);
+ 
+diff --git a/monitor/fds.c b/monitor/fds.c
+index cc35d2ec3349..8be735ce50f5 100644
+--- a/monitor/fds.c
++++ b/monitor/fds.c
+@@ -409,6 +409,32 @@ AddfdInfo *monitor_fdset_add_fd(int fd, bool has_fdset_id, int64_t fdset_id,
+     return fdinfo;
+ }
+ 
++int monitor_fdset_get_fd(int64_t fdset_id, int flags)
++{
++    MonFdset *mon_fdset;
++    MonFdsetFd *mon_fdset_fd;
++    int mon_fd_flags;
++    int mask = O_ACCMODE;
++
++    QEMU_LOCK_GUARD(&mon_fdsets_lock);
++    QLIST_FOREACH(mon_fdset, &mon_fdsets, next) {
++        if (mon_fdset->id == fdset_id) {
++            QLIST_FOREACH(mon_fdset_fd, &mon_fdset->fds, next) {
++                mon_fd_flags = fcntl(mon_fdset_fd->fd, F_GETFL);
++                if (mon_fd_flags == -1) {
++                    return -1;
++                }
++
++                if ((flags & mask) == (mon_fd_flags & mask)) {
++                    return mon_fdset_fd->fd;
++                }
++            }
++        }
++    }
++
++    return -1;
++}
++
+ int monitor_fdset_dup_fd_add(int64_t fdset_id, int flags, Error **errp)
+ {
+ #ifdef _WIN32
+diff --git a/stubs/fdset.c b/stubs/fdset.c
+index 2950fd91fd32..cc1055bfaf58 100644
+--- a/stubs/fdset.c
++++ b/stubs/fdset.c
+@@ -3,6 +3,12 @@
+ #include "monitor/monitor.h"
+ #include "../monitor/monitor-internal.h"
+ 
++int monitor_fdset_get_fd(int64_t fdset_id, int flags)
++{
++    errno = ENOSYS;
++    return -1;
++}
++
+ int monitor_fdset_dup_fd_add(int64_t fdset_id, int flags, Error **errp)
+ {
+     errno = ENOSYS;
+diff --git a/util/qemu-sockets.c b/util/qemu-sockets.c
+index 4773755fd582..f8e291675cb8 100644
+--- a/util/qemu-sockets.c
++++ b/util/qemu-sockets.c
+@@ -1193,15 +1193,23 @@ fail:
+     return NULL;
+ }
+ 
++static int get_fd_from_fdset(const char *fdstr)
++{
++    int fdset_id = qemu_parse_fd(fdstr);
++    return (fdset_id == -1 ?
++            -1 : monitor_fdset_get_fd(fdset_id, O_RDWR));
++}
++
+ static int socket_get_fd(const char *fdstr, Error **errp)
+ {
+     Monitor *cur_mon = monitor_cur();
+-    int fd;
++    int fd = -1;
+     if (cur_mon) {
+-        fd = monitor_get_fd(cur_mon, fdstr, errp);
+-        if (fd < 0) {
+-            return -1;
+-        }
++        /*
++         * Don't create error object if search fails
++         * as we fall back to look in the fdset
++         */
++        fd = monitor_get_fd(cur_mon, fdstr, NULL);
+     } else {
+         if (qemu_strtoi(fdstr, NULL, 10, &fd) < 0) {
+             error_setg_errno(errp, errno,
+@@ -1210,6 +1218,12 @@ static int socket_get_fd(const char *fdstr, Error **errp)
+             return -1;
+         }
+     }
++
++    /* fd may have been added to the fdset */
++    if ((fd < 0) && ((fd = get_fd_from_fdset(fdstr)) < 0)) {
++        error_setg(errp, "Socket fd '%s' not found in monitor or fdset.", fdstr);
++        return -1;
++    }
+     if (!fd_is_socket(fd)) {
+         error_setg(errp, "File descriptor '%s' is not a socket", fdstr);
+         close(fd);

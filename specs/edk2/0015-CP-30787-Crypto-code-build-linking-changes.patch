@@ -1,0 +1,63 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Edwin=20T=C3=B6r=C3=B6k?= <edvin.torok@citrix.com>
+Date: Mon, 18 May 2026 14:49:55 +0200
+Subject: [PATCH] CP-30787: Crypto code build&linking changes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+if secureboot is not enabled disable all Crypto.
+if it is enabled then disable the following:
+disable DSA/ECC X509 signature algorithms
+disable MD4, Ciphers, RsaExt, Pkcs7Sign, and Dh
+
+Signed-off-by: Edwin Török <edvin.torok@citrix.com>
+
+[anthony] rebased:
+MD4, ARC4, TDES removed upstreamed.
+
+Resolve conflicts using Cipher/CryptAeadAesGcmNull.c
+
+Signed-off-by: Tu Dinh <ngoc-tu.dinh@vates.tech>
+
+diff --git a/CryptoPkg/Library/BaseCryptLib/BaseCryptLib.inf b/CryptoPkg/Library/BaseCryptLib/BaseCryptLib.inf
+index f0156d3ac850..d8a672165147 100644
+--- a/CryptoPkg/Library/BaseCryptLib/BaseCryptLib.inf
++++ b/CryptoPkg/Library/BaseCryptLib/BaseCryptLib.inf
+@@ -42,17 +42,17 @@
+   Hash/CryptDispatchApDxe.c
+   Hmac/CryptHmac.c
+   Kdf/CryptHkdf.c
+-  Cipher/CryptAes.c
+-  Cipher/CryptAeadAesGcm.c
++  Cipher/CryptAesNull.c
++  Cipher/CryptAeadAesGcmNull.c
+   Pk/CryptRsaBasic.c
+-  Pk/CryptRsaExt.c
++  Pk/CryptRsaExtNull.c
+   Pk/CryptPkcs1Oaep.c
+-  Pk/CryptPkcs5Pbkdf2.c
+-  Pk/CryptPkcs7Sign.c
++  Pk/CryptPkcs5Pbkdf2Null.c
++  Pk/CryptPkcs7SignNull.c
+   Pk/CryptPkcs7VerifyCommon.c
+   Pk/CryptPkcs7VerifyBase.c
+   Pk/CryptPkcs7VerifyEku.c
+-  Pk/CryptDh.c
++  Pk/CryptDhNull.c
+   Pk/CryptX509.c
+   Pk/CryptAuthenticode.c
+   Pk/CryptTs.c
+diff --git a/CryptoPkg/Library/BaseCryptLib/SmmCryptLib.inf b/CryptoPkg/Library/BaseCryptLib/SmmCryptLib.inf
+index 85ce7b89b944..77bed8c1ccae 100644
+--- a/CryptoPkg/Library/BaseCryptLib/SmmCryptLib.inf
++++ b/CryptoPkg/Library/BaseCryptLib/SmmCryptLib.inf
+@@ -45,7 +45,7 @@
+   Hash/CryptDispatchApMm.c
+   Hmac/CryptHmac.c
+   Kdf/CryptHkdf.c
+-  Cipher/CryptAes.c
++  Cipher/CryptAesNull.c
+   Cipher/CryptAeadAesGcmNull.c
+   Pk/CryptRsaBasic.c
+   Pk/CryptRsaExt.c

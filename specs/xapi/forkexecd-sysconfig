@@ -1,0 +1,3 @@
+# Additional options for the XCP forking deamon.
+# FORKEXECD_OPTIONS= : extra commandline startup arguments for forkexecd
+FORKEXECD_OPTIONS=

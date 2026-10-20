@@ -1,0 +1,201 @@
+From bad71b32564565d340497a4e29b10577b0239b42 Mon Sep 17 00:00:00 2001
+From: Igor Druzhinin <igor.druzhinin@citrix.com>
+Date: Tue, 20 Jun 2017 17:24:43 +0100
+Subject: [PATCH] CA-256542 Workaround unassigned accesses caused by ballooning
+
+Xen Balloon memory hotplug makes a guest to populate memory areas
+which are not sufficiently described in QEMU. Some legacy Linux
+kernels, in turn, may try to allocate DMA buffers for emulated devices
+in these areas. When QEMU receives an address which is not present
+in its memory map it marks that as 'unassigned' and avoids any
+DMA processing. That eventually results in broken emulation and
+guest error reporting.
+
+Since we want to support legacy guests as we did on QEMU-trad we
+introduce "allow-unassigned" mode in a form of machine option.
+We try to intercept and correctly process all the unassigned memory
+accesses in QEMU in this mode.
+
+Signed-off-by: Igor Druzhinin <igor.druzhinin@citrix.com>
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index 4e2def76a19b..81dbef178461 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -1672,6 +1672,21 @@ static void pc_machine_set_trad_compat(Object *obj, bool value, Error **errp)
+     pcms->is_trad_compat = value;
+ }
+ 
++static bool pc_machine_get_allow_unassigned(Object *obj, Error **errp)
++{
++    PCMachineState *pcms = PC_MACHINE(obj);
++
++    return pcms->allow_unassigned;
++}
++
++static void pc_machine_set_allow_unassigned(Object *obj, bool value,
++                                            Error **errp)
++{
++    PCMachineState *pcms = PC_MACHINE(obj);
++
++    pcms->allow_unassigned = value;
++}
++
+ static void pc_machine_initfn(Object *obj)
+ {
+     PCMachineState *pcms = PC_MACHINE(obj);
+@@ -1697,6 +1712,7 @@ static void pc_machine_initfn(Object *obj)
+ #endif
+     pcms->fd_bootchk = true;
+     pcms->default_bus_bypass_iommu = false;
++    pcms->allow_unassigned = false;
+     pcms->is_trad_compat = false;
+ 
+     pc_system_flash_create(pcms);
+@@ -1862,6 +1878,9 @@ static void pc_machine_class_init(ObjectClass *oc, const void *data)
+ 
+     object_class_property_add_bool(oc, PC_MACHINE_TRAD_COMPAT,
+         pc_machine_get_trad_compat, pc_machine_set_trad_compat);
++
++    object_class_property_add_bool(oc, PC_MACHINE_ALLOW_UNASSIGNED,
++        pc_machine_get_allow_unassigned, pc_machine_set_allow_unassigned);
+ }
+ 
+ static const TypeInfo pc_machine_info = {
+diff --git a/hw/i386/xen/xen-hvm.c b/hw/i386/xen/xen-hvm.c
+index ceb2242aa710..0a0cd5243df1 100644
+--- a/hw/i386/xen/xen-hvm.c
++++ b/hw/i386/xen/xen-hvm.c
+@@ -30,10 +30,12 @@
+ #include "system/runstate.h"
+ #include "system/xen-mapcache.h"
+ #include "system/xen.h"
++#include "system/ram_addr.h"
+ 
+ static MemoryRegion ram_640k, ram_lo, ram_hi;
+ static MemoryRegion *framebuffer;
+ static bool xen_in_migration;
++static bool allow_unassigned;
+ 
+ /* Compatibility with older version */
+ 
+@@ -657,6 +659,10 @@ void xen_hvm_init_pc(PCMachineState *pcms, MemoryRegion **ram_memory)
+     /* Disable ACPI build because Xen handles it */
+     pcms->acpi_build_enabled = false;
+ 
++    /* Allow unassigned memory accesses if requested */
++    allow_unassigned = object_property_get_bool(qdev_get_machine(),
++                                                PC_MACHINE_ALLOW_UNASSIGNED,
++                                                &error_abort);
+     return;
+ 
+ err:
+@@ -759,3 +765,34 @@ void arch_handle_ioreq(XenIOState *state, ioreq_t *req)
+         hw_error("Invalid ioreq type 0x%x\n", req->type);
+     }
+ }
++
++void xen_unassigned_access(MemoryRegion *mr, hwaddr addr, bool is_write,
++                           void *val, unsigned size)
++{
++    uint8_t *host;
++
++    if (!allow_unassigned) {
++        return;
++    }
++
++    /* XXX How do we know if this is for DMA? Assume it is for now... */
++    host = xen_map_cache(mr, addr, 0, 0, 0, true, is_write);
++    if (!host) {
++        error_report("unhandled unassigned %s: addr=0x%"HWADDR_PRIx" size=%u",
++                     is_write ? "write" : "read", addr, size);
++        if (!is_write) {
++            memset(val, 0xff, size);
++        }
++        return;
++    }
++
++    DPRINTF("unassigned %s: addr=0x%1x host=0x%1x size=%u\n",
++            is_write ? "write": "read", addr, (uint64_t)host, size);
++
++    if (is_write) {
++        memcpy(host, val, size);
++        cpu_physical_memory_set_dirty_range(addr, size, 1 << DIRTY_MEMORY_MIGRATION);
++    } else {
++        memcpy(val, host, size);
++    }
++}
+diff --git a/include/hw/i386/pc.h b/include/hw/i386/pc.h
+index 7e0936122b8b..7c9a8a008ab3 100644
+--- a/include/hw/i386/pc.h
++++ b/include/hw/i386/pc.h
+@@ -60,6 +60,7 @@ typedef struct PCMachineState {
+     CXLState cxl_devices_state;
+ 
+     bool is_trad_compat;
++    bool allow_unassigned;
+ } PCMachineState;
+ 
+ #define PC_MACHINE_ACPI_DEVICE_PROP "acpi-device"
+@@ -71,6 +72,7 @@ typedef struct PCMachineState {
+ #define PC_MACHINE_MAX_FW_SIZE      "max-fw-size"
+ #define PC_MACHINE_SMBIOS_EP        "smbios-entry-point-type"
+ #define PC_MACHINE_TRAD_COMPAT      "trad-compat"
++#define PC_MACHINE_ALLOW_UNASSIGNED "allow-unassigned"
+ 
+ /**
+  * PCMachineClass:
+diff --git a/include/hw/xen/xen.h b/include/hw/xen/xen.h
+index e94c6e5a3189..68772cfae990 100644
+--- a/include/hw/xen/xen.h
++++ b/include/hw/xen/xen.h
+@@ -7,6 +7,8 @@
+ #ifndef QEMU_HW_XEN_H
+ #define QEMU_HW_XEN_H
+ 
++#include "exec/hwaddr.h"
++
+ /*
+  * C files using Xen toolstack libraries will have included those headers
+  * already via xen_native.h, and having __XEM_TOOLS__ defined will have
+@@ -46,4 +48,7 @@ qemu_irq *xen_interrupt_controller_init(void);
+ 
+ void xen_register_framebuffer(struct MemoryRegion *mr);
+ 
++void xen_unassigned_access(MemoryRegion *mr, hwaddr addr, bool is_write,
++                           void *val, unsigned size);
++
+ #endif /* QEMU_HW_XEN_H */
+diff --git a/system/memory.c b/system/memory.c
+index 56465479406f..47ff37709717 100644
+--- a/system/memory.c
++++ b/system/memory.c
+@@ -34,6 +34,7 @@
+ #include "hw/boards.h"
+ #include "migration/vmstate.h"
+ #include "system/address-spaces.h"
++#include "hw/xen/xen.h"
+ 
+ #include "memory-internal.h"
+ 
+@@ -1337,6 +1338,11 @@ static uint64_t unassigned_mem_read(void *opaque, hwaddr addr,
+ #ifdef DEBUG_UNASSIGNED
+     printf("Unassigned mem read " HWADDR_FMT_plx "\n", addr);
+ #endif
++    if (xen_enabled()) {
++        uint64_t val;
++        xen_unassigned_access((MemoryRegion *) opaque, addr, false, &val, size);
++        return val;
++    }
+     return 0;
+ }
+ 
+@@ -1346,6 +1352,9 @@ static void unassigned_mem_write(void *opaque, hwaddr addr,
+ #ifdef DEBUG_UNASSIGNED
+     printf("Unassigned mem write " HWADDR_FMT_plx " = 0x%"PRIx64"\n", addr, val);
+ #endif
++    if (xen_enabled()) {
++        xen_unassigned_access((MemoryRegion *) opaque, addr, true, &val, size);
++    }
+ }
+ 
+ static bool unassigned_mem_accepts(void *opaque, hwaddr addr,

@@ -1,0 +1,140 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tu Dinh <ngoc-tu.dinh@vates.tech>
+Date: Mon, 18 May 2026 14:49:55 +0200
+Subject: [PATCH] Add extra debug statements
+
+These statements are logged at ERROR level so they are present even in
+"release" builds. They make it easier to determine where the VM is in the
+bootup process.
+
+The key points of interest are:
+
+* PV block device connected
+* Bootloader started (StartImage) and any error returned
+* ExitBootServices() called
+* SetVirtualAddressMap() called
+
+diff --git a/MdeModulePkg/Core/Dxe/DxeMain/DxeMain.c b/MdeModulePkg/Core/Dxe/DxeMain/DxeMain.c
+index e7b3d0be8465..bafef5a6a4a4 100644
+--- a/MdeModulePkg/Core/Dxe/DxeMain/DxeMain.c
++++ b/MdeModulePkg/Core/Dxe/DxeMain/DxeMain.c
+@@ -779,6 +779,8 @@ CoreExitBootServices (
+ {
+   EFI_STATUS  Status;
+ 
++  DEBUG ((DEBUG_ERROR, "ExitBootServices -> (0x%p, 0x%lx)\n", ImageHandle, MapKey));
++
+   //
+   // Notify other drivers of their last chance to use boot services
+   // before the memory map is terminated.
+@@ -802,6 +804,7 @@ CoreExitBootServices (
+     // Notify other drivers that ExitBootServices fail
+     //
+     CoreNotifySignalList (&gEventExitBootServicesFailedGuid);
++    DEBUG ((DEBUG_ERROR, "ExitBootServices <- (%r)\n", Status));
+     return Status;
+   }
+ 
+@@ -859,6 +862,8 @@ CoreExitBootServices (
+   //
+   gRuntime->AtRuntime = TRUE;
+ 
++  DEBUG ((DEBUG_ERROR, "ExitBootServices <- (%r)\n", Status));
++
+   return Status;
+ }
+ 
+diff --git a/MdeModulePkg/Core/Dxe/Image/Image.c b/MdeModulePkg/Core/Dxe/Image/Image.c
+index ec9112478107..ea32e6236ef6 100644
+--- a/MdeModulePkg/Core/Dxe/Image/Image.c
++++ b/MdeModulePkg/Core/Dxe/Image/Image.c
+@@ -1750,7 +1750,11 @@ CoreStartImage (
+     //
+     DEBUG_CODE_BEGIN ();
+     if (EFI_ERROR (Image->Status)) {
+-      DEBUG ((DEBUG_ERROR, "Error: Image at %11p start failed: %r\n", Image->Info.ImageBase, Image->Status));
++      if (Image->Status == EFI_UNSUPPORTED) {
++        DEBUG ((DEBUG_WARN, "Error: Image at %11p start failed: %r\n", Image->Info.ImageBase, Image->Status));
++      } else {
++        DEBUG ((DEBUG_ERROR, "Error: Image at %11p start failed: %r\n", Image->Info.ImageBase, Image->Status));
++      }
+     }
+ 
+     DEBUG_CODE_END ();
+diff --git a/MdeModulePkg/Core/Dxe/Mem/Page.c b/MdeModulePkg/Core/Dxe/Mem/Page.c
+index ceb7d2984ee8..7a13dba7c882 100644
+--- a/MdeModulePkg/Core/Dxe/Mem/Page.c
++++ b/MdeModulePkg/Core/Dxe/Mem/Page.c
+@@ -951,7 +951,7 @@ CoreConvertPagesEx (
+     //
+     if (ChangingType && (NewType != EfiConventionalMemory)) {
+       if (Entry->End < End) {
+-        DEBUG ((DEBUG_ERROR | DEBUG_PAGE, "ConvertPages: range %lx - %lx covers multiple entries\n", Start, End));
++        DEBUG ((DEBUG_WARN | DEBUG_PAGE, "ConvertPages: range %lx - %lx covers multiple entries\n", Start, End));
+         return EFI_NOT_FOUND;
+       }
+     }
+diff --git a/MdeModulePkg/Core/RuntimeDxe/Runtime.c b/MdeModulePkg/Core/RuntimeDxe/Runtime.c
+index c66ed71e35e1..97363f73b679 100644
+--- a/MdeModulePkg/Core/RuntimeDxe/Runtime.c
++++ b/MdeModulePkg/Core/RuntimeDxe/Runtime.c
+@@ -252,11 +252,14 @@ RuntimeDriverSetVirtualAddressMap (
+   LIST_ENTRY               *Link;
+   EFI_PHYSICAL_ADDRESS     VirtImageBase;
+ 
++  DEBUG ((DEBUG_ERROR, "SetVirtualAddressMap -> (0x%lx, 0x%lx, 0x%x)\n", MemoryMapSize, DescriptorSize, DescriptorVersion));
++
+   //
+   // Can only switch to virtual addresses once the memory map is locked down,
+   // and can only set it once
+   //
+   if (!mRuntime.AtRuntime || mRuntime.VirtualMode) {
++    DEBUG ((DEBUG_ERROR, "SetVirtualAddressMap <- (%r)\n", EFI_UNSUPPORTED));
+     return EFI_UNSUPPORTED;
+   }
+ 
+@@ -264,6 +267,7 @@ RuntimeDriverSetVirtualAddressMap (
+   // Only understand the original descriptor format
+   //
+   if ((DescriptorVersion != EFI_MEMORY_DESCRIPTOR_VERSION) || (DescriptorSize < sizeof (EFI_MEMORY_DESCRIPTOR))) {
++    DEBUG ((DEBUG_ERROR, "SetVirtualAddressMap <- (%r)\n", EFI_INVALID_PARAMETER));
+     return EFI_INVALID_PARAMETER;
+   }
+ 
+@@ -376,6 +380,8 @@ RuntimeDriverSetVirtualAddressMap (
+   mVirtualMap         = NULL;
+   mVirtualMapMaxIndex = 0;
+ 
++  DEBUG ((DEBUG_ERROR, "SetVirtualAddressMap <- (%r)\n", EFI_SUCCESS));
++
+   return EFI_SUCCESS;
+ }
+ 
+diff --git a/MdeModulePkg/Library/UefiBootManagerLib/BmBoot.c b/MdeModulePkg/Library/UefiBootManagerLib/BmBoot.c
+index 22ab4d7e48bc..f85b6ca80f2b 100644
+--- a/MdeModulePkg/Library/UefiBootManagerLib/BmBoot.c
++++ b/MdeModulePkg/Library/UefiBootManagerLib/BmBoot.c
+@@ -2112,8 +2112,9 @@ EfiBootManagerBoot (
+ 
+   REPORT_STATUS_CODE (EFI_PROGRESS_CODE, PcdGet32 (PcdProgressCodeOsLoaderStart));
+ 
++  DEBUG ((DEBUG_ERROR, "About to call StartImage (0x%p)\n", ImageHandle));
+   Status = gBS->StartImage (ImageHandle, &BootOption->ExitDataSize, &BootOption->ExitData);
+-  DEBUG ((DEBUG_INFO | DEBUG_LOAD, "Image Return Status = %r\n", Status));
++  DEBUG ((DEBUG_ERROR | DEBUG_LOAD, "Image Return Status = %r\n", Status));
+   BootOption->Status = Status;
+ 
+   //
+diff --git a/OvmfPkg/XenPvBlkDxe/BlockFront.c b/OvmfPkg/XenPvBlkDxe/BlockFront.c
+index eb503eb7c18c..adab158be935 100644
+--- a/OvmfPkg/XenPvBlkDxe/BlockFront.c
++++ b/OvmfPkg/XenPvBlkDxe/BlockFront.c
+@@ -355,7 +355,7 @@ Again:
+   }
+ 
+   DEBUG ((
+-    DEBUG_INFO,
++    DEBUG_ERROR,
+     "XenPvBlk: New disk with %ld 512B-sectors and logical sector size of %d bytes\n",
+     Dev->MediaInfo.Sectors,
+     Dev->MediaInfo.SectorSize

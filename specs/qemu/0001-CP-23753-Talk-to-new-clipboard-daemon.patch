@@ -1,0 +1,442 @@
+From bd478cbdd904bbb3d6d63add81d9138b0bad266b Mon Sep 17 00:00:00 2001
+From: Liang Dai <liang.dai1@citrix.com>
+Date: Wed, 16 Aug 2017 22:00:37 +0800
+Subject: [PATCH] CP-23753: Talk to new clipboard daemon
+
+Signed-off-by: Liang Dai <liang.dai1@citrix.com>
+diff --git a/qemu-options.hx b/qemu-options.hx
+index ab23f14d21..f5c475f6c7 100644
+--- a/qemu-options.hx
++++ b/qemu-options.hx
+@@ -2653,6 +2653,9 @@ ARCHHEADING(, QEMU_ARCH_I386)
+ 
+ ARCHHEADING(i386 target only:, QEMU_ARCH_I386)
+ 
++DEF("vnc-clipboard-socket-fd", HAS_ARG, QEMU_OPTION_vnc_clipboard_socket_fd,
++    "-vnc-clipboard-socket-fd fd   file descriptor for unix domain socket connected to xs-clipbpard/xcp-clipboardd (Xen only)\n", QEMU_ARCH_ALL)
++
+ DEF("win2k-hack", 0, QEMU_OPTION_win2k_hack,
+     "-win2k-hack     use it when installing Windows 2000 to avoid a disk full bug\n",
+     QEMU_ARCH_I386)
+diff --git a/system/vl.c b/system/vl.c
+index 3b7057e6c6..e23459268f 100644
+--- a/system/vl.c
++++ b/system/vl.c
+@@ -141,6 +141,7 @@
+ #include "system/iothread.h"
+ #include "qemu/guest-random.h"
+ #include "qemu/keyval.h"
++#include "ui/xen-clipboard.h"
+ 
+ #define MAX_VIRTIO_CONSOLES 1
+ 
+@@ -3464,6 +3465,14 @@ void qemu_init(int argc, char **argv)
+                 vnc_parse(optarg);
+                 display_remote++;
+                 break;
++            case QEMU_OPTION_vnc_clipboard_socket_fd:
++                if (!sscanf(optarg, "%d", &xen_clipboardd_fd) ||
++                    xen_clipboardd_fd < 0)
++                {
++                    error_report("invalid argument");
++                    exit(1);
++                }
++                break;
+ #endif
+             case QEMU_OPTION_no_reboot:
+                 olist = qemu_find_opts("action");
+diff --git a/ui/meson.build b/ui/meson.build
+index 6371422c46..ac7d14bc71 100644
+--- a/ui/meson.build
++++ b/ui/meson.build
+@@ -40,6 +40,7 @@ vnc_ss.add(files(
+   'vnc-ws.c',
+   'vnc-jobs.c',
+   'vnc-clipboard.c',
++  'xen-clipboard.c',
+ ))
+ vnc_ss.add(zlib, jpeg)
+ vnc_ss.add(when: sasl, if_true: files('vnc-auth-sasl.c'))
+diff --git a/ui/vnc-clipboard.c b/ui/vnc-clipboard.c
+index 124b6fbd9c..645f0ab649 100644
+--- a/ui/vnc-clipboard.c
++++ b/ui/vnc-clipboard.c
+@@ -133,6 +133,19 @@ err:
+     return NULL;
+ }
+ 
++static void vnc_clipboard_send_legacy(VncState *vs,
++                                      const uint8_t *buf,
++                                      unsigned int len)
++{
++    char pad[3] = { 0, 0, 0 };
++
++    vnc_write_u8(vs, VNC_MSG_SERVER_CUT_TEXT); /* ServerCutText */
++    vnc_write(vs, pad, 3);   /* padding */
++    vnc_write_u32(vs, len);  /* length */
++    vnc_write(vs, buf, len); /* data */
++    vnc_flush(vs);
++}
++
+ static void vnc_clipboard_send(VncState *vs, uint32_t count, uint32_t *dwords)
+ {
+     int i;
+@@ -197,29 +210,38 @@ static void vnc_clipboard_update_info(VncState *vs, QemuClipboardInfo *info)
+     bool self_update = info->owner == &vs->cbpeer;
+     uint32_t flags = 0;
+ 
+-    if (info != vs->cbinfo) {
+-        qemu_clipboard_info_unref(vs->cbinfo);
+-        vs->cbinfo = qemu_clipboard_info_ref(info);
+-        vs->cbpending = 0;
+-        if (!self_update) {
+-            if (info->types[QEMU_CLIPBOARD_TYPE_TEXT].available) {
+-                flags |= VNC_CLIPBOARD_TEXT;
++    if (vnc_has_feature(vs, VNC_FEATURE_CLIPBOARD_EXT)) {
++        if (info != vs->cbinfo) {
++            qemu_clipboard_info_unref(vs->cbinfo);
++            vs->cbinfo = qemu_clipboard_info_ref(info);
++            vs->cbpending = 0;
++            if (!self_update) {
++                if (info->types[QEMU_CLIPBOARD_TYPE_TEXT].available) {
++                    flags |= VNC_CLIPBOARD_TEXT;
++                }
++                flags |= VNC_CLIPBOARD_NOTIFY;
++                vnc_clipboard_send(vs, 1, &flags);
+             }
+-            flags |= VNC_CLIPBOARD_NOTIFY;
+-            vnc_clipboard_send(vs, 1, &flags);
++            return;
+         }
+-        return;
+     }
+ 
+     if (self_update) {
+         return;
+     }
+ 
+-    for (type = 0; type < QEMU_CLIPBOARD_TYPE__COUNT; type++) {
+-        if (vs->cbpending & (1 << type)) {
+-            vs->cbpending &= ~(1 << type);
+-            vnc_clipboard_provide(vs, info, type);
++    if (vnc_has_feature(vs, VNC_FEATURE_CLIPBOARD_EXT)) {
++        for (type = 0; type < QEMU_CLIPBOARD_TYPE__COUNT; type++) {
++            if (vs->cbpending & (1 << type)) {
++                vs->cbpending &= ~(1 << type);
++                vnc_clipboard_provide(vs, info, type);
++            }
+         }
++    } else {
++        type = QEMU_CLIPBOARD_TYPE_TEXT;
++        vnc_clipboard_send_legacy(vs,
++                                  info->types[type].data,
++                                  info->types[type].size);
+     }
+ }
+ 
+@@ -330,7 +352,10 @@ void vnc_server_cut_text_caps(VncState *vs)
+                VNC_CLIPBOARD_TEXT);
+     caps[1] = 0;
+     vnc_clipboard_send(vs, 2, caps);
++}
+ 
++void vnc_clipboard_register_notifier(VncState *vs)
++{
+     if (!vs->cbpeer.notifier.notify) {
+         vs->cbpeer.name = "vnc";
+         vs->cbpeer.notifier.notify = vnc_clipboard_notify;
+diff --git a/ui/vnc.c b/ui/vnc.c
+index 68ca4a68e7..2ec163fb0c 100644
+--- a/ui/vnc.c
++++ b/ui/vnc.c
+@@ -55,6 +55,7 @@
+ #include "qemu/help_option.h"
+ #include "io/dns-resolver.h"
+ #include "monitor/monitor.h"
++#include "ui/xen-clipboard.h"
+ 
+ #define VNC_REFRESH_INTERVAL_BASE GUI_REFRESH_INTERVAL_DEFAULT
+ #define VNC_REFRESH_INTERVAL_INC  50
+@@ -3392,6 +3393,8 @@ static void vnc_connect(VncDisplay *vd, QIOChannelSocket *sioc,
+             }
+         }
+     }
++
++    vnc_clipboard_register_notifier(vs);
+ }
+ 
+ void vnc_start_protocol(VncState *vs)
+@@ -4355,6 +4358,11 @@ int vnc_init_func(void *opaque, QemuOpts *opts, Error **errp)
+         error_propagate(errp, local_err);
+         return -1;
+     }
++    xen_clipboardd_init(&local_err);
++    if (local_err != NULL) {
++        error_reportf_err(local_err, "Failed to start VNC clipboard: ");
++        exit(1);
++    }
+     return 0;
+ }
+ 
+diff --git a/ui/vnc.h b/ui/vnc.h
+index f2dab2f4d9..b86216b88b 100644
+--- a/ui/vnc.h
++++ b/ui/vnc.h
+@@ -64,6 +64,7 @@ typedef struct VncState VncState;
+ typedef struct VncJob VncJob;
+ typedef struct VncRect VncRect;
+ typedef struct VncRectEntry VncRectEntry;
++typedef struct XenClipboarddState XenClipboarddState;
+ 
+ typedef int VncReadEvent(VncState *vs, uint8_t *data, size_t len);
+ 
+@@ -97,6 +98,8 @@ typedef void VncSendHextileTile(VncState *vs,
+ 
+ #define VNC_AUTH_CHALLENGE_SIZE 16
+ 
++#define VNC_CLIPBOARD_DATA_HEADER_LEN 4
++
+ typedef struct VncDisplay VncDisplay;
+ 
+ #include "vnc-auth-vencrypt.h"
+@@ -351,6 +354,16 @@ struct VncState
+     QTAILQ_ENTRY(VncState) next;
+ };
+ 
++struct XenClipboarddState {
++    QIOChannelSocket *sioc;     /* The underlying socket */
++    QIOChannel *ioc;            /* The channel currently used for I/O */
++    guint ioc_tag;
++    gboolean disconnecting;
++    size_t read_handler_expect;
++    Buffer input;
++    QemuClipboardPeer cbpeer;
++};
++
+ typedef struct VncWorker {
+     uint8_t lossy_rect[VNC_STAT_ROWS][VNC_STAT_COLS];
+ 
+@@ -644,5 +657,6 @@ void vnc_zrle_clear(VncWorker *worker);
+ void vnc_server_cut_text_caps(VncState *vs);
+ void vnc_client_cut_text(VncState *vs, size_t len, uint8_t *text);
+ void vnc_client_cut_text_ext(VncState *vs, int32_t len, uint32_t flags, uint8_t *data);
++void vnc_clipboard_register_notifier(VncState *vs);
+ 
+ #endif /* QEMU_VNC_H */
+diff --git a/ui/xen-clipboard.c b/ui/xen-clipboard.c
+new file mode 100644
+index 0000000000..c249cf6df1
+--- /dev/null
++++ b/ui/xen-clipboard.c
+@@ -0,0 +1,192 @@
++/*
++ * Copyright (c) 2026  Citrix Systems Inc.
++ *
++ * This work is licensed under the terms of the GNU GPL, version 2 or later.
++ * See the COPYING file in the top-level directory.
++ */
++
++#include "qemu/osdep.h" /* Needed for Error */
++#include "ui/clipboard.h"
++#include "ui/vnc.h"
++#include "ui/xen-clipboard.h"
++
++int xen_clipboardd_fd = -1;
++
++static void xen_clipboardd_disconnect(XenClipboarddState *vcs)
++{
++    Error *err = NULL;
++
++    if (vcs->ioc_tag) {
++        g_source_remove(vcs->ioc_tag);
++    }
++    if (qio_channel_close(vcs->ioc, &err) < 0) {
++        error_reportf_err(err, "Failed to close vnc clipboard socket: ");
++    }
++    buffer_free(&vcs->input);
++    object_unref(OBJECT(vcs->ioc));
++    object_unref(OBJECT(vcs->sioc));
++    g_free(vcs);
++}
++
++static int xen_clipboardd_process(XenClipboarddState *vcs, uint8_t *data, size_t len)
++{
++    QemuClipboardInfo *info;
++
++    const uint32_t dlen = *((uint32_t*)data);
++    if (len == VNC_CLIPBOARD_DATA_HEADER_LEN) {
++       return VNC_CLIPBOARD_DATA_HEADER_LEN + dlen;
++    }
++
++    info = qemu_clipboard_info_new(&vcs->cbpeer,
++                                   QEMU_CLIPBOARD_SELECTION_CLIPBOARD);
++
++    qemu_clipboard_set_data(&vcs->cbpeer,
++                            info,
++                            QEMU_CLIPBOARD_TYPE_TEXT,
++                            dlen,
++                            data + VNC_CLIPBOARD_DATA_HEADER_LEN,
++                            true);
++
++    qemu_clipboard_info_unref(info);
++
++    vcs->read_handler_expect = VNC_CLIPBOARD_DATA_HEADER_LEN;
++    return 0;
++}
++
++static void xen_send_to_clipboardd(XenClipboarddState *xcs,
++                                   size_t len,
++                                   uint8_t *text)
++{
++    Error *err = NULL;
++
++    if (xcs && xcs->ioc) {
++        if (qio_channel_write_all(xcs->ioc, (const char *)&len,
++                                  VNC_CLIPBOARD_DATA_HEADER_LEN, &err)) {
++            goto failure;
++        }
++
++        if (qio_channel_write_all(xcs->ioc,
++                                  (const char *)text, len, &err)) {
++            goto failure;
++        }
++    }
++    return;
++
++failure:
++    error_reportf_err(err, "Failed to send xen_send_to_clipboardd: ");
++    xen_clipboardd_disconnect(xcs);
++}
++
++static void xen_clipboard_notify(Notifier *notifier, void *data)
++{
++    const QemuClipboardNotify *notify = data;
++    XenClipboarddState *xcs = container_of(notifier,
++                                           XenClipboarddState,
++                                           cbpeer.notifier);
++
++    const bool self_update = notify->info->owner == &xcs->cbpeer;
++    if (self_update)
++    {
++      return;
++    }
++
++    switch (notify->type) {
++    case QEMU_CLIPBOARD_UPDATE_INFO:
++        if (notify->info->types[QEMU_CLIPBOARD_TYPE_TEXT].available) {
++          xen_send_to_clipboardd(xcs,
++              notify->info->types[QEMU_CLIPBOARD_TYPE_TEXT].size,
++              notify->info->types[QEMU_CLIPBOARD_TYPE_TEXT].data);
++        }
++        return;
++    case QEMU_CLIPBOARD_RESET_SERIAL:
++        /* ignore */
++        return;
++    }
++}
++
++static ssize_t xen_recv_from_clipboardd(XenClipboarddState *vcs)
++{
++    ssize_t ret;
++    Error *err = NULL;
++
++    buffer_reserve(&vcs->input, 4096);
++    ret = qio_channel_read(vcs->ioc, (char *)(buffer_end(&vcs->input)),
++                           4096, &err);
++
++    if (ret <= 0) {
++        vcs->disconnecting = TRUE;
++
++        error_reportf_err(err, "Failed to read vnc clipboard data: ");
++        return 0;
++    }
++
++    vcs->input.offset += ret;
++    return ret;
++}
++
++/* This callback will be called when the external clipboardd daemon has sent us
++ * data through the unix domain socket. */
++static gboolean xen_clipboardd_io(QIOChannel *ioc,
++                                  GIOCondition condition,
++                                  void *opaque)
++{
++    ssize_t ret;
++    XenClipboarddState *vcs = opaque;
++
++    if (condition & G_IO_IN) {
++        ret = xen_recv_from_clipboardd(vcs);
++        if (!ret) {
++            if (vcs->disconnecting) {
++                xen_clipboardd_disconnect(vcs);
++                return FALSE;
++            }
++            return TRUE;
++        }
++
++        while (vcs->input.offset >= vcs->read_handler_expect) {
++            size_t len = vcs->read_handler_expect;
++
++            ret = xen_clipboardd_process(vcs, vcs->input.buffer, len);
++            if (vcs->disconnecting) {
++                xen_clipboardd_disconnect(vcs);
++                return FALSE;
++            }
++            if (!ret) {
++                buffer_advance(&vcs->input, len);
++            } else {
++                vcs->read_handler_expect = ret;
++            }
++        }
++    }
++    return TRUE;
++}
++
++void xen_clipboardd_init(Error **errp)
++{
++    XenClipboarddState *vcs;
++    QIOChannelSocket *sioc;
++
++    if (xen_clipboardd_fd < 0) {
++        return;
++    }
++
++    sioc = qio_channel_socket_new_fd(xen_clipboardd_fd, errp);
++    if (!sioc) {
++        return;
++    }
++
++    vcs = g_new0(XenClipboarddState, 1);
++    vcs->sioc = sioc;
++    vcs->ioc = QIO_CHANNEL(sioc);
++    object_ref(OBJECT(vcs->ioc));
++    vcs->read_handler_expect = VNC_CLIPBOARD_DATA_HEADER_LEN;
++
++    vcs->ioc_tag = qio_channel_add_watch(vcs->ioc, G_IO_IN,
++                                         xen_clipboardd_io,
++                                         vcs, NULL);
++
++    vcs->cbpeer.name = "xen-clipboardd";
++    vcs->cbpeer.notifier.notify = xen_clipboard_notify;
++    vcs->cbpeer.request = NULL;
++    qemu_clipboard_peer_register(&vcs->cbpeer);
++}
+diff --git a/ui/xen-clipboard.h b/ui/xen-clipboard.h
+new file mode 100644
+index 0000000000..2e926365f5
+--- /dev/null
++++ b/ui/xen-clipboard.h
+@@ -0,0 +1,13 @@
++/*
++ * Copyright (c) 2026  Citrix Systems Inc.
++ *
++ * This work is licensed under the terms of the GNU GPL, version 2 or later.
++ * See the COPYING file in the top-level directory.
++ */
++#ifndef QEMU_XEN_CLIPBOARD_H
++#define QEMU_XEN_CLIPBOARD_H
++
++extern int xen_clipboardd_fd;
++void xen_clipboardd_init(Error **errp);
++
++#endif /* QEMU_XEN_CLIPBOARD_H */

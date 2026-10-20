@@ -1,0 +1,22 @@
+Protect i386 machine state PC Speaker when not xen enabled
+
+Introduced by 6b8d1416482f ("audio: create pcspk device early")
+
+Fixes: 6b8d1416482f6b8d1416482f
+Signed-off-by: Gerald Elder-Vass <gerald.elder-vass@citrix.com>
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index c7ef1a61516e..f42169288b86 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -1686,9 +1686,11 @@ static void pc_machine_initfn(Object *obj)
+     pcms->default_bus_bypass_iommu = false;
+ 
+     pc_system_flash_create(pcms);
++#ifdef CONFIG_PCSPK
+     pcms->pcspk = isa_new(TYPE_PC_SPEAKER);
+     object_property_add_alias(OBJECT(pcms), "pcspk-audiodev",
+                               OBJECT(pcms->pcspk), "audiodev");
++#endif
+     if (pcmc->pci_enabled) {
+         cxl_machine_init(obj, &pcms->cxl_devices_state);
+     }

@@ -1,0 +1,158 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Anthony PERARD <anthony.perard@citrix.com>
+Date: Mon, 18 May 2026 14:49:55 +0200
+Subject: [PATCH] SecurityPkg/Tcg2Config: Hide unsupported configuration
+ options
+
+Hide part of the TCG2 config menu via new config options, hardcoded at the
+moment.
+
+Add new PPI commands that the Xen module supports.
+
+Signed-off-by: Anthony PERARD <anthony.perard@citrix.com>
+
+diff --git a/SecurityPkg/Tcg/Tcg2Config/Tcg2Config.vfr b/SecurityPkg/Tcg/Tcg2Config/Tcg2Config.vfr
+index 6cf20bf70927..15557a1769e0 100644
+--- a/SecurityPkg/Tcg/Tcg2Config/Tcg2Config.vfr
++++ b/SecurityPkg/Tcg/Tcg2Config/Tcg2Config.vfr
+@@ -42,6 +42,7 @@ formset
+       text   = STRING_TOKEN(STR_TCG2_DEVICE_STATE_PROMPT),
+         text   = STRING_TOKEN(STR_TCG2_DEVICE_STATE_CONTENT);
+ 
++    suppressif ideqval TCG2_CONFIGURATION_INFO.TpmConfigVersionSupported == 0;
+     oneof varid  = TCG2_CONFIGURATION.TpmDevice,
+           questionid = KEY_TPM_DEVICE,
+           prompt = STRING_TOKEN(STR_TCG2_DEVICE_PROMPT),
+@@ -50,6 +51,7 @@ formset
+             option text = STRING_TOKEN(STR_TCG2_TPM_1_2),          value = TPM_DEVICE_1_2,          flags = RESET_REQUIRED;
+             option text = STRING_TOKEN(STR_TCG2_TPM_2_0_DTPM),     value = TPM_DEVICE_2_0_DTPM,     flags = DEFAULT | MANUFACTURING | RESET_REQUIRED;
+     endoneof;
++    endif;
+ 
+     suppressif ideqvallist TCG2_CONFIGURATION.TpmDevice == TPM_DEVICE_NULL TPM_DEVICE_1_2;
+ 
+@@ -65,6 +67,7 @@ formset
+       text   = STRING_TOKEN(STR_TPM2_ACPI_REVISION_STATE_PROMPT),
+         text   = STRING_TOKEN(STR_TPM2_ACPI_REVISION_STATE_CONTENT);
+ 
++    suppressif ideqval TCG2_CONFIGURATION_INFO.ChangeAcpiRevSupported == 0;
+     oneof varid  = TCG2_VERSION.Tpm2AcpiTableRev,
+           questionid = KEY_TPM2_ACPI_REVISION,
+           prompt = STRING_TOKEN(STR_TPM2_ACPI_REVISION_PROMPT),
+@@ -73,6 +76,7 @@ formset
+             option text = STRING_TOKEN(STR_TPM2_ACPI_REVISION_3),     value = TPM2_ACPI_REVISION_3,     flags = RESET_REQUIRED;
+             option text = STRING_TOKEN(STR_TPM2_ACPI_REVISION_4),     value = TPM2_ACPI_REVISION_4,     flags = DEFAULT | MANUFACTURING | RESET_REQUIRED;
+     endoneof;
++    endif;
+ 
+     subtitle text = STRING_TOKEN(STR_NULL);
+ 
+@@ -125,6 +129,7 @@ formset
+       text   = STRING_TOKEN(STR_TCG2_PPI_VERSION_STATE_PROMPT),
+         text   = STRING_TOKEN(STR_TCG2_PPI_VERSION_STATE_CONTENT);
+ 
++    suppressif ideqval TCG2_CONFIGURATION_INFO.TpmConfigPpiVersionSupported == 0;
+     oneof varid  = TCG2_VERSION.PpiVersion,
+           questionid = KEY_TCG2_PPI_VERSION,
+           prompt = STRING_TOKEN(STR_TCG2_PPI_VERSION_PROMPT),
+@@ -133,6 +138,7 @@ formset
+             option text = STRING_TOKEN(STR_TCG2_PPI_VERSION_1_2), value = TCG2_PPI_VERSION_1_2, flags = RESET_REQUIRED;
+             option text = STRING_TOKEN(STR_TCG2_PPI_VERSION_1_3), value = TCG2_PPI_VERSION_1_3, flags = DEFAULT | MANUFACTURING | RESET_REQUIRED;
+     endoneof;
++    endif;
+ 
+     oneof name = Tpm2Operation,
+           questionid = KEY_TPM2_OPERATION,
+@@ -140,15 +146,34 @@ formset
+           help   = STRING_TOKEN(STR_TCG2_OPERATION_HELP),
+           flags  = INTERACTIVE | NUMERIC_SIZE_1,
+             option text = STRING_TOKEN(STR_TCG2_NO_ACTION), value = TCG2_PHYSICAL_PRESENCE_NO_ACTION, flags = DEFAULT | MANUFACTURING | RESET_REQUIRED;
++            suppressif ideqval TCG2_CONFIGURATION_INFO.ChangeEnabledStateSupported == 0;
+             option text = STRING_TOKEN(STR_TCG2_ENABLE), value = TCG2_PHYSICAL_PRESENCE_ENABLE, flags = RESET_REQUIRED;
+             option text = STRING_TOKEN(STR_TCG2_DISABLE), value = TCG2_PHYSICAL_PRESENCE_DISABLE, flags = RESET_REQUIRED;
++            endif;
+             option text = STRING_TOKEN(STR_TCG2_CLEAR), value = TCG2_PHYSICAL_PRESENCE_CLEAR, flags = RESET_REQUIRED;
+             option text = STRING_TOKEN(STR_TCG2_SET_PCD_BANKS), value = TCG2_PHYSICAL_PRESENCE_SET_PCR_BANKS, flags = RESET_REQUIRED;
+             suppressif ideqval TCG2_CONFIGURATION_INFO.ChangeEPSSupported == 0;
+             option text = STRING_TOKEN(STR_TCG2_CHANGE_EPS), value = TCG2_PHYSICAL_PRESENCE_CHANGE_EPS, flags = RESET_REQUIRED;
+             endif
+             option text = STRING_TOKEN(STR_TCG2_LOG_ALL_DIGESTS), value = TCG2_PHYSICAL_PRESENCE_LOG_ALL_DIGESTS, flags = RESET_REQUIRED;
++            suppressif ideqval TCG2_CONFIGURATION_INFO.ChangeEndorsementSupported == 0;
+             option text = STRING_TOKEN(STR_TCG2_DISABLE_ENDORSEMENT_ENABLE_STORAGE_HIERARCHY), value = TCG2_PHYSICAL_PRESENCE_DISABLE_ENDORSEMENT_ENABLE_STORAGE_HIERARCHY, flags = RESET_REQUIRED;
++            endif;
++            option text = STRING_TOKEN(STR_TCG2_ENABLE_BLOCK_SID), value = TCG2_PHYSICAL_PRESENCE_ENABLE_BLOCK_SID, flags = RESET_REQUIRED;
++            option text = STRING_TOKEN(STR_TCG2_DISABLE_BLOCK_SID), value = TCG2_PHYSICAL_PRESENCE_DISABLE_BLOCK_SID, flags = RESET_REQUIRED;
++
++            suppressif ideqval TCG2_CONFIGURATION_INFO.ChangePpiManagementFlagsSupported == 0;
++            option text = STRING_TOKEN(STR_TCG2_SET_PP_REQUIRED_FOR_CLEAR_TRUE), value = TCG2_PHYSICAL_PRESENCE_SET_PP_REQUIRED_FOR_CLEAR_TRUE, flags = RESET_REQUIRED;
++            option text = STRING_TOKEN(STR_TCG2_SET_PP_REQUIRED_FOR_CLEAR_FALSE), value = TCG2_PHYSICAL_PRESENCE_SET_PP_REQUIRED_FOR_CLEAR_FALSE, flags = RESET_REQUIRED;
++            option text = STRING_TOKEN(STR_TCG2_SET_PP_REQUIRED_FOR_CHANGE_PCRS_FALSE), value = TCG2_PHYSICAL_PRESENCE_SET_PP_REQUIRED_FOR_CHANGE_PCRS_FALSE, flags = RESET_REQUIRED;
++            option text = STRING_TOKEN(STR_TCG2_SET_PP_REQUIRED_FOR_CHANGE_PCRS_TRUE), value = TCG2_PHYSICAL_PRESENCE_SET_PP_REQUIRED_FOR_CHANGE_PCRS_TRUE, flags = RESET_REQUIRED;
++            option text = STRING_TOKEN(STR_TCG2_SET_PP_REQUIRED_FOR_CHANGE_EPS_FALSE), value = TCG2_PHYSICAL_PRESENCE_SET_PP_REQUIRED_FOR_CHANGE_EPS_FALSE, flags = RESET_REQUIRED;
++            option text = STRING_TOKEN(STR_TCG2_SET_PP_REQUIRED_FOR_CHANGE_EPS_TRUE), value = TCG2_PHYSICAL_PRESENCE_SET_PP_REQUIRED_FOR_CHANGE_EPS_TRUE, flags = RESET_REQUIRED;
++            option text = STRING_TOKEN(STR_TCG2_SET_PP_REQUIRED_FOR_ENABLE_BLOCK_SID_FUNC_TRUE), value = TCG2_PHYSICAL_PRESENCE_SET_PP_REQUIRED_FOR_ENABLE_BLOCK_SID_FUNC_TRUE, flags = RESET_REQUIRED;
++            option text = STRING_TOKEN(STR_TCG2_SET_PP_REQUIRED_FOR_ENABLE_BLOCK_SID_FUNC_FALSE), value = TCG2_PHYSICAL_PRESENCE_SET_PP_REQUIRED_FOR_ENABLE_BLOCK_SID_FUNC_FALSE, flags = RESET_REQUIRED;
++            option text = STRING_TOKEN(STR_TCG2_SET_PP_REQUIRED_FOR_DISABLE_BLOCK_SID_FUNC_TRUE), value = TCG2_PHYSICAL_PRESENCE_SET_PP_REQUIRED_FOR_DISABLE_BLOCK_SID_FUNC_TRUE, flags = RESET_REQUIRED;
++            option text = STRING_TOKEN(STR_TCG2_SET_PP_REQUIRED_FOR_DISABLE_BLOCK_SID_FUNC_FALSE), value = TCG2_PHYSICAL_PRESENCE_SET_PP_REQUIRED_FOR_DISABLE_BLOCK_SID_FUNC_FALSE, flags = RESET_REQUIRED;
++            endif;
+     endoneof;
+ 
+     suppressif questionref(Tpm2Operation) != TCG2_PHYSICAL_PRESENCE_SET_PCR_BANKS;
+diff --git a/SecurityPkg/Tcg/Tcg2Config/Tcg2ConfigImpl.c b/SecurityPkg/Tcg/Tcg2Config/Tcg2ConfigImpl.c
+index fc7cfc788b3e..d6c0dfb1ec30 100644
+--- a/SecurityPkg/Tcg/Tcg2Config/Tcg2ConfigImpl.c
++++ b/SecurityPkg/Tcg/Tcg2Config/Tcg2ConfigImpl.c
+@@ -1007,6 +1007,13 @@ InstallTcg2ConfigForm (
+     }
+   }
+ 
++  Tcg2ConfigInfo.TpmConfigVersionSupported = FALSE;
++  Tcg2ConfigInfo.TpmConfigPpiVersionSupported = FALSE;
++  Tcg2ConfigInfo.ChangePpiManagementFlagsSupported = TRUE;
++  Tcg2ConfigInfo.ChangeAcpiRevSupported = FALSE;
++  Tcg2ConfigInfo.ChangeEnabledStateSupported = FALSE;
++  Tcg2ConfigInfo.ChangeEndorsementSupported = FALSE;
++
+   //
+   // Set ConfigInfo, to control the check box.
+   //
+diff --git a/SecurityPkg/Tcg/Tcg2Config/Tcg2ConfigNvData.h b/SecurityPkg/Tcg/Tcg2Config/Tcg2ConfigNvData.h
+index 69ef5600478d..312f33d72a50 100644
+--- a/SecurityPkg/Tcg/Tcg2Config/Tcg2ConfigNvData.h
++++ b/SecurityPkg/Tcg/Tcg2Config/Tcg2ConfigNvData.h
+@@ -71,6 +71,12 @@ typedef struct {
+   BOOLEAN    TpmDeviceInterfacePtpFifoSupported;
+   BOOLEAN    TpmDeviceInterfacePtpCrbSupported;
+   BOOLEAN    ChangeEPSSupported;
++  BOOLEAN  TpmConfigVersionSupported;
++  BOOLEAN  TpmConfigPpiVersionSupported;
++  BOOLEAN  ChangePpiManagementFlagsSupported;
++  BOOLEAN  ChangeAcpiRevSupported;
++  BOOLEAN  ChangeEnabledStateSupported;
++  BOOLEAN  ChangeEndorsementSupported;
+ } TCG2_CONFIGURATION_INFO;
+ 
+ //
+diff --git a/SecurityPkg/Tcg/Tcg2Config/Tcg2ConfigStrings.uni b/SecurityPkg/Tcg/Tcg2Config/Tcg2ConfigStrings.uni
+index ee7fa081b6c6..c65369384ed0 100644
+--- a/SecurityPkg/Tcg/Tcg2Config/Tcg2ConfigStrings.uni
++++ b/SecurityPkg/Tcg/Tcg2Config/Tcg2ConfigStrings.uni
+@@ -70,6 +70,18 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ #string STR_TCG2_CHANGE_EPS                #language en-US "TPM2 ChangeEPS"
+ #string STR_TCG2_LOG_ALL_DIGESTS           #language en-US "TCG2 LogAllDigests"
+ #string STR_TCG2_DISABLE_ENDORSEMENT_ENABLE_STORAGE_HIERARCHY   #language en-US "TPM2 HierarchyControl (TPM_RH_OWNER NO, TPM_RH_ENDORSEMENT YES)"
++#string STR_TCG2_ENABLE_BLOCK_SID          #language en-US "Block SID authentication in a TCG Storage device"
++#string STR_TCG2_DISABLE_BLOCK_SID         #language en-US "Allow SID authentication in a TCG Storage device"
++#string STR_TCG2_SET_PP_REQUIRED_FOR_CLEAR_TRUE                         #language en-US "Set PP required to Clear"
++#string STR_TCG2_SET_PP_REQUIRED_FOR_CLEAR_FALSE                        #language en-US "Allow Clear without PP"
++#string STR_TCG2_SET_PP_REQUIRED_FOR_CHANGE_PCRS_FALSE                  #language en-US "Allow ChangePCRS without PP"
++#string STR_TCG2_SET_PP_REQUIRED_FOR_CHANGE_PCRS_TRUE                   #language en-US "Set PP required to ChangePCRS"
++#string STR_TCG2_SET_PP_REQUIRED_FOR_CHANGE_EPS_FALSE                   #language en-US "Allow ChangeEPS without PP"
++#string STR_TCG2_SET_PP_REQUIRED_FOR_CHANGE_EPS_TRUE                    #language en-US "Set PP required to ChangeEPS"
++#string STR_TCG2_SET_PP_REQUIRED_FOR_ENABLE_BLOCK_SID_FUNC_TRUE         #language en-US "Set PP required to block SID auth"
++#string STR_TCG2_SET_PP_REQUIRED_FOR_ENABLE_BLOCK_SID_FUNC_FALSE        #language en-US "Allow to block SID auth without PP"
++#string STR_TCG2_SET_PP_REQUIRED_FOR_DISABLE_BLOCK_SID_FUNC_TRUE        #language en-US "Set PP required to allow SID auth"
++#string STR_TCG2_SET_PP_REQUIRED_FOR_DISABLE_BLOCK_SID_FUNC_FALSE       #language en-US "Allow to allow SID auth without PP"
+ 
+ #string STR_TCG2_OPERATION_PARAMETER       #language en-US "TPM2 Operation Parameter"
+ #string STR_TCG2_OPERATION_PARAMETER_HELP  #language en-US "Additional TPM2 Operation Parameter need be sent with Operation Code (required for SetPCRBanks)"

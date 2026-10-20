@@ -1,0 +1,116 @@
+From c633cd75cab1b4fd3e048da218b9590b8b08b2f3 Mon Sep 17 00:00:00 2001
+From: Ming Lu <ming.lu@cloud.com>
+Date: Mon, 12 May 2025 15:28:38 +0800
+Subject: [PATCH 09/10] CP-54444: In upgrade convert interface-rename data for
+ networkd
+
+The interface-rename functionality will disappear after the upgrade. The
+networkd will replace the interface-rename to maintain the order of the
+host network devices without renaming them.
+
+The order generated and maintained by interface-rename before upgrade
+should be passed to the networkd during upgrade so that the networkd can
+still keep the order after upgrade.
+
+This commit is to transform the data during upgrade.
+
+Signed-off-by: Ming Lu <ming.lu@cloud.com>
+---
+ netutil.py | 10 ++++++++++
+ upgrade.py | 48 ++++++++++++++++++++++++++++++++++++++++++++----
+ 2 files changed, 54 insertions(+), 4 deletions(-)
+
+diff --git a/netutil.py b/netutil.py
+index ff1df70..712dcab 100644
+--- a/netutil.py
++++ b/netutil.py
+@@ -356,3 +356,13 @@ def disable_ipv6_module(root):
+     dv6fd.write("alias net-pf-10 off\n")
+     dv6fd.close()
+ 
++
++from xcp.net.ifrename.dynamic import DynamicRules
++
++def net_devs_of_last_boot(file_path):
++    dynamic_rules = DynamicRules(file_path)
++    if not dynamic_rules.load_and_parse():
++        LOG.warning(f"Failed to parse the interface-rename dynamic rules.")
++        return []
++    else:
++        return [(d.tname, d.mac.as_string(sep=":")) for d in dynamic_rules.lastboot]
+diff --git a/upgrade.py b/upgrade.py
+index cb3876f..b8390eb 100644
+--- a/upgrade.py
++++ b/upgrade.py
+@@ -174,6 +174,47 @@ class Upgrader(object):
+             else:
+                 logger.log("WARNING: /%s did not exist in the backup image." % f)
+ 
++        def convert_interface_rename_data(src, dest):
++            """
++            Convert data of interface-rename to the data consumed by xcp-networkd.
++            src - the mount point of backup partition which contains the interface-rename data.
++            dest - the mount point of the root partition of installation.
++            """
++            interface_rename_dir = os.path.join(
++                src,
++                'etc/sysconfig/network-scripts/interface-rename-data/'
++            )
++            src_file_path = os.path.join(interface_rename_dir, 'dynamic-rules.json')
++            dest_file_path = os.path.join(
++                dest,
++                constants.FIRSTBOOT_DATA_DIR,
++                'initial_network_device_rules.conf'
++            )
++            net_devs = []
++            if os.path.exists(src_file_path):
++                net_devs = netutil.net_devs_of_last_boot(src_file_path)
++            else:
++                logger.log(f"The interface-rename data file {src_file_path} does not exist.")
++
++            if not net_devs:
++                return
++
++            # The sorting result of interface-rename is to rename the interfaces to eth<N>
++            pattern = re.compile(r'^eth(\d+)$')
++            try:
++                with open(dest_file_path, mode='w', encoding='utf-8') as f:
++                    for (name, mac) in net_devs:
++                        match = pattern.search(name)
++                        if match:
++                            position = match.group(1)
++                            line = f'{position}:mac="{mac}"\n'
++                            logger.log(f"Converted interface-rename data: {line}")
++                            f.write(line)
++                        else:
++                            logger.error(f'Network device name {name} is not like ethN.')
++            except Exception as e:
++                logger.error(f"Failed to convert interface-rename data: {e}")
++
+         backup_volume = partitionDevice(target_disk, backup_partnum)
+         tds = util.TempMount(backup_volume, 'upgrade-src-', options=['ro'])
+         try:
+@@ -200,6 +241,9 @@ class Upgrader(object):
+                                         restore_file(tds.mount_point, fn, attr=f.get('attr'))
+                             else:
+                                 restore_file(tds.mount_point, f['dir'])
++
++            convert_interface_rename_data(tds.mount_point, mounts['root'])
++
+         finally:
+             tds.unmount()
+ 
+@@ -441,10 +485,6 @@ class ThirdGenUpgrader(Upgrader):
+ 
+         restore_list.append('etc/sysconfig/mkinitrd.latches')
+ 
+-        # EA-1069: Udev network device naming
+-        restore_list += [{'dir': 'etc/sysconfig/network-scripts/interface-rename-data'}]
+-        restore_list += [{'dir': 'etc/sysconfig/network-scripts/interface-rename-data/.from_install'}]
+-
+         # CA-67890: preserve root's ssh state
+         restore_list += [{'dir': 'root/.ssh'}]
+ 
+-- 
+2.39.5
+

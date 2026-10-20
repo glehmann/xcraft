@@ -1,0 +1,64 @@
+From 78274917e2e38e234ae891a6ad0408ec06fa845b Mon Sep 17 00:00:00 2001
+From: Anoob Soman <anoob.soman@citrix.com>
+Date: Wed, 19 Jul 2017 12:07:37 +0100
+Subject: [PATCH 3/3] xen-platform: Emit XEN_PLATFORM_PV_DRIVER_INFO after
+ preamble
+
+After drivers writes a four-byte build number to IO port `0x10`, emit
+XEN_PLATFORM_PV_DRIVER_INFO event.
+
+Signed-off-by: Anoob Soman <anoob.soman@citrix.com>
+diff --git a/hw/i386/xen/xen_platform.c b/hw/i386/xen/xen_platform.c
+index 835c570bb8e7..78b824f39b56 100644
+--- a/hw/i386/xen/xen_platform.c
++++ b/hw/i386/xen/xen_platform.c
+@@ -26,6 +26,7 @@
+ #include "qemu/osdep.h"
+ #include "qapi/error.h"
+ #include "qapi/qapi-commands-misc.h"
++#include "qapi/qapi-events-misc.h"
+ #include "hw/ide/pci.h"
+ #include "hw/pci/pci.h"
+ #include "hw/qdev-properties.h"
+@@ -334,6 +335,9 @@ static void platform_fixed_ioport_writel(void *opaque, uint32_t addr,
+     case 0:
+         /* PV driver version */
+         s->driver_build_number = val;
++        /* End of preamble */
++        qapi_event_send_xen_platform_pv_driver_info(s->driver_product_version,
++                s->driver_build_number);
+         break;
+     }
+ }
+diff --git a/qapi/misc.json b/qapi/misc.json
+index bd2c10e96278..c58f0e0d7276 100644
+--- a/qapi/misc.json
++++ b/qapi/misc.json
+@@ -338,6 +338,27 @@
+ ##
+ { 'command': 'query-xen-platform-pv-driver-info', 'returns': 'XenPvDriverInfo' }
+ 
++##
++# @XEN_PLATFORM_PV_DRIVER_INFO:
++#
++# Emitted when XEN PV driver write build number to io-port 0x10,
++# marking the end of preamble.
++#
++# @product-num: Product number of XEN PV driver.
++#
++# @build-num: Build number of XEN PV driver.
++#
++# Since: X.Y
++#
++# .. qmp-example::
++#
++# <- { "event": "XEN_PLATFORM_PV_DRIVER_INFO",
++#      "data": { "product-num": 3, "build-num": 1},
++#      "timestamp": { "seconds": 1500394278, "microseconds": 878290 } }
++##
++{ 'event': 'XEN_PLATFORM_PV_DRIVER_INFO' ,
++  'data': { 'product-num': 'int', 'build-num': 'int' } }
++
+ ##
+ # @AddfdInfo:
+ #

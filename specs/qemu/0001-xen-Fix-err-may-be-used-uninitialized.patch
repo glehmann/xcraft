@@ -1,0 +1,26 @@
+From cfc0e6a86e378d280a05cbe83e57bb973fb038e0 Mon Sep 17 00:00:00 2001
+From: Anthony PERARD <anthony.perard@vates.tech>
+Date: Fri, 29 May 2026 12:01:53 +0200
+Subject: [PATCH] xen: Fix `err` may be used uninitialized
+
+Signed-off-by: Anthony PERARD <anthony.perard@vates.tech>
+---
+ hw/xen/xen-mapcache.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hw/xen/xen-mapcache.c b/hw/xen/xen-mapcache.c
+index 77b01db2c67d..38321bfbebbc 100644
+--- a/hw/xen/xen-mapcache.c
++++ b/hw/xen/xen-mapcache.c
+@@ -211,7 +211,7 @@ static void xen_remap_bucket(MapCache *mc,
+     uint8_t *vaddr_base;
+     g_autofree uint32_t *refs = NULL;
+     g_autofree xen_pfn_t *pfns = NULL;
+-    g_autofree int *err;
++    g_autofree int *err = NULL;
+     unsigned int i;
+     hwaddr nb_pfn = size >> XC_PAGE_SHIFT;
+ 
+-- 
+Anthony PERARD
+

@@ -1,0 +1,65 @@
+From 42c9d6b7dc6bde379173d74b3932754fb17b76da Mon Sep 17 00:00:00 2001
+Message-ID: <42c9d6b7dc6bde379173d74b3932754fb17b76da.1764154288.git.gerald.elder-vass@citrix.com>
+In-Reply-To: <61995ad32249580db2c1e899b495a41abfe44d3e.1764154288.git.gerald.elder-vass@citrix.com>
+References: <61995ad32249580db2c1e899b495a41abfe44d3e.1764154288.git.gerald.elder-vass@citrix.com>
+From: Gerald Elder-Vass <gerald.elder-vass@citrix.com>
+Date: Wed, 26 Nov 2025 10:48:57 +0000
+Subject: [PATCH 02/12] Revert "hw/i386/x86: Remove
+ X86MachineClass::save_tsc_khz field"
+
+This reverts commit 42cbccfcb0635257721aa6a0e55cb80e85756ecf.
+---
+ hw/i386/x86.c         | 1 +
+ include/hw/i386/x86.h | 5 +++++
+ target/i386/machine.c | 5 +++--
+ 3 files changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/hw/i386/x86.c b/hw/i386/x86.c
+index f80533df1c54..e2d04092992d 100644
+--- a/hw/i386/x86.c
++++ b/hw/i386/x86.c
+@@ -382,6 +382,7 @@ static void x86_machine_class_init(ObjectClass *oc, const void *data)
+     mc->get_default_cpu_node_id = x86_get_default_cpu_node_id;
+     mc->possible_cpu_arch_ids = x86_possible_cpu_arch_ids;
+     mc->kvm_type = x86_kvm_type;
++    x86mc->save_tsc_khz = true;
+     x86mc->fwcfg_dma_enabled = true;
+     nc->nmi_monitor_handler = x86_nmi;
+ 
+diff --git a/include/hw/i386/x86.h b/include/hw/i386/x86.h
+index 8755cad50a36..a56ac190d301 100644
+--- a/include/hw/i386/x86.h
++++ b/include/hw/i386/x86.h
+@@ -28,8 +28,13 @@
+ #include "system/igvm-cfg.h"
+ 
+ struct X86MachineClass {
++    /*< private >*/
+     MachineClass parent;
+ 
++    /*< public >*/
++
++    /* TSC rate migration: */
++    bool save_tsc_khz;
+     /* use DMA capable linuxboot option rom */
+     bool fwcfg_dma_enabled;
+     /* CPU and apic information: */
+diff --git a/target/i386/machine.c b/target/i386/machine.c
+index dd2dac1d443c..6cb561c63229 100644
+--- a/target/i386/machine.c
++++ b/target/i386/machine.c
+@@ -1060,8 +1060,9 @@ static bool tsc_khz_needed(void *opaque)
+ {
+     X86CPU *cpu = opaque;
+     CPUX86State *env = &cpu->env;
+-
+-    return env->tsc_khz;
++    MachineClass *mc = MACHINE_GET_CLASS(qdev_get_machine());
++    X86MachineClass *x86mc = X86_MACHINE_CLASS(mc);
++    return env->tsc_khz && x86mc->save_tsc_khz;
+ }
+ 
+ static const VMStateDescription vmstate_tsc_khz = {
+-- 
+2.47.3
+

@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""
+Tool to generate note.bin, which contains vendor name, variant, major and
+minor version numbers.
+It is ELF note file section.
+"""
+
+import struct
+import argparse
+
+
+def pad(buf):
+    """Pad to a multiple of 4 bytes"""
+    return buf + b'\x00' * ((((len(buf) - 1) & ~3) + 4) - len(buf))
+
+
+def write_note(note_file, vendor, note_type, contents):
+    """Form and write ELF note section"""
+    name = vendor.encode("ascii", "strict")  # vendor
+    desc = contents.encode() + b'\x00'
+
+    note = struct.pack('III', len(name), len(desc), note_type)
+    note += name
+    note = pad(note)
+
+    note += desc
+    note = pad(note)
+
+    note_file.write(note)
+
+
+def main():
+    """Main function to parse arguments and function calls"""
+    parser = argparse.ArgumentParser(description='Handling DMV info\
+                                     operations.')
+    parser.add_argument('-v', type=str, help='Driver variant')
+    parser.add_argument('-m', type=str, help='Driver version')
+    parser.add_argument('-o', type=str, help='Release')
+    parser.add_argument('-r', type=str, help='Vendor')
+
+    args = parser.parse_args()
+
+    with open("note.bin", "w+b") as note_file:
+        # Type 1: driver variant
+        # This is the selectable variant
+        write_note(note_file, args.r, 1, args.v)
+
+        # Type 2: driver version
+        # This is the version of the driver variant
+        write_note(note_file, args.r, 2, args.m)
+
+        # Type 3: release version
+        # This is the version-release.
+        # Not strictly necessary, but included for completeness and debugging
+        # purposes.
+        write_note(note_file, args.r, 3, args.o)
+
+
+if __name__ == '__main__':
+    main()

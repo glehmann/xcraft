@@ -1,0 +1,116 @@
+From 358b79f1fa49b485f3b06a5079973b3e475a6183 Mon Sep 17 00:00:00 2001
+From: Lin Liu <Lin.Liu01@cloud.com>
+Date: Thu, 3 Apr 2025 06:38:04 +0000
+Subject: [PATCH 04/10] CP-53716: Minor refine for comments
+
+- Drop etc/sysconfig/network-scripts
+- Drop /etc/sysconfig/network
+- Interface without colon taken as label/name
+
+Signed-off-by: Lin Liu <Lin.Liu01@cloud.com>
+---
+ backend.py           | 30 ------------------------------
+ doc/parameters.txt   |  4 ++--
+ netutil.py           |  3 +++
+ test/test_netutil.py | 10 ++++++++++
+ 4 files changed, 15 insertions(+), 32 deletions(-)
+
+diff --git a/backend.py b/backend.py
+index 9d60716..33322e3 100644
+--- a/backend.py
++++ b/backend.py
+@@ -1449,40 +1449,10 @@ def configureNetworking(mounts, admin_iface, admin_bridge, admin_config, hn_conf
+     # Clean install only below this point
+ 
+ 
+-    network_scripts_dir = os.path.join(mounts['root'], 'etc/sysconfig/network-scripts')
+-    if not os.path.exists(network_scripts_dir):
+-        os.makedirs(network_scripts_dir, exist_ok=True)
+-
+-    # remove any files that may be present in the filesystem already,
+-    # particularly those created by kudzu:
+-    network_scripts = os.listdir(network_scripts_dir)
+-    for s in network_scripts:
+-        if s.startswith('ifcfg-'):
+-            os.unlink(os.path.join(network_scripts_dir, s))
+-
+-    # write the configuration file for the loopback interface
+-    lo = open(os.path.join(network_scripts_dir, 'ifcfg-lo'), 'w')
+-    lo.write("DEVICE=lo\n")
+-    lo.write("IPADDR=127.0.0.1\n")
+-    lo.write("NETMASK=255.0.0.0\n")
+-    lo.write("NETWORK=127.0.0.0\n")
+-    lo.write("BROADCAST=127.255.255.255\n")
+-    lo.write("ONBOOT=yes\n")
+-    lo.write("NAME=loopback\n")
+-    lo.close()
+-
+-    # now we need to write /etc/sysconfig/network
+-    nfd = open("%s/etc/sysconfig/network" % mounts["root"], "w")
+-    nfd.write("NETWORKING=yes\n")
+     if admin_config.modev6:
+-        nfd.write("NETWORKING_IPV6=yes\n")
+         util.runCmd2(['chroot', mounts['root'], 'systemctl', 'enable', 'ip6tables'])
+     else:
+-        nfd.write("NETWORKING_IPV6=no\n")
+         netutil.disable_ipv6_module(mounts["root"])
+-    nfd.write("IPV6_AUTOCONF=no\n")
+-    nfd.write('NTPSERVERARGS="iburst prefer"\n')
+-    nfd.close()
+ 
+     netutil.save_inteface_rules(os.path.join(mounts['root'], constants.FIRSTBOOT_DATA_DIR,
+                                              "initial_network_device_rules.conf"))
+diff --git a/doc/parameters.txt b/doc/parameters.txt
+index 32200b5..ddd7869 100644
+--- a/doc/parameters.txt
++++ b/doc/parameters.txt
+@@ -162,9 +162,9 @@ Installer
+     - eth: literal string "eth", has no meaning, just for backward compatibility
+     - X: number, starting from 0,  the expected order of this interface
+     - d|s: has no meaning, just for backward compatibility
+-    - mac: valid Mac address
++    - mac: valid MAC address
+     - pci: valid PCI address. An index of 0 is implied when one is not provided
+-    - label: valid interface name, it needs to be quoted to distinguish from other kind and take priority than others
++    - label: valid interface name. A string is taken as label if it does not contains `:` or quoted
+ 
+ 
+   --network_config=dhcp[:vlan=vlan]|static:ip=ip;netmask=netmask[;gateway=gw][;dns=dns1[,dns2]][;domain=domain][;vlan=vlan]
+diff --git a/netutil.py b/netutil.py
+index 10fb18e..ff1df70 100644
+--- a/netutil.py
++++ b/netutil.py
+@@ -315,6 +315,9 @@ def parse_rule(rule):
+ 
+     if val[0] == '"' and val[-1] == '"':
+         return Rule(slot, "label", val[1:-1])
++    if ":" not in val:
++        # Can't be a valid mac or pci, take it as label
++        return Rule(slot, "label", val.lower())
+     if RX_MAC.match(val) is not None:
+         return Rule(slot, "mac", val.lower())
+     if RX_PCI.match(val) is not None:
+diff --git a/test/test_netutil.py b/test/test_netutil.py
+index f3074e0..75c2d66 100644
+--- a/test/test_netutil.py
++++ b/test/test_netutil.py
+@@ -49,6 +49,16 @@ class TestInterfaceRules(unittest.TestCase):
+         self.assertEqual(rule1, rule2)
+         self.assertEqual(rule1, rule3)
+ 
++    def test_rule_without_colon_taken_as_label(self):
++        """interface without colon take as label"""
++        rule1 = parse_rule("1:ens2")
++        self.assertEqual(rule1, Rule(1, "label", "ens2"))
++
++    def test_rule_with_quote_take_as_label(self):
++        """interface quoted should taken as label"""
++        rule1 = parse_rule('1:"ens2"')
++        self.assertEqual(rule1, Rule(1, "label", "ens2"))
++
+     def test_rule_type(self):
+         """
+         rule type (dynamic|static) just ignored
+-- 
+2.39.5
+

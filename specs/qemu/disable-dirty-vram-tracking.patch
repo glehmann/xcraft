@@ -1,0 +1,26 @@
+Don't call into xen_track_dirty_vram if not in migration
+
+Avoid expensive hypercall when possible (like qemu-trad) - send a full
+frame update into console layer instead. This doesn't seem to have any
+noticable effect on VNC traffic for stdvga and cirrus VGA devices.
+At the same time, there is significant performance increase for Dom0 CPU
+time bound workloads, e.g. intra-VM network bandwidth. We still need to
+call xen_track_dirty_vram during migration to avoid any increase in
+downtime.
+
+diff --git a/hw/i386/xen/xen-hvm.c b/hw/i386/xen/xen-hvm.c
+index 0a0cd5243df1..f1f9a2430603 100644
+--- a/hw/i386/xen/xen-hvm.c
++++ b/hw/i386/xen/xen-hvm.c
+@@ -407,6 +407,11 @@ static void xen_sync_dirty_bitmap(XenIOState *state,
+         return;
+     }
+ 
++    if (likely(!xen_in_migration)) {
++        memory_region_set_dirty(framebuffer, 0, size);
++        return;
++    }
++
+     rc = xen_track_dirty_vram(xen_domid, start_addr >> target_page_bits,
+                               npages, dirty_bitmap);
+     if (rc < 0) {

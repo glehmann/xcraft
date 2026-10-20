@@ -1,0 +1,35 @@
+migration: Check for unmigratable flag when saving rather than loading
+
+The code previously checked for unmigratable devices on the load side rather
+than the save side.  This meant that QEMU crashed on the save side when trying
+to save the device state for unmigratable devices and on the load side it would
+fail migrations even after an unmigratable device had been unplugged. Move the
+check from the load side to the save side to fix this.
+
+diff --git a/migration/savevm.c b/migration/savevm.c
+index fabbeb296ae9..6ae894cbc584 100644
+--- a/migration/savevm.c
++++ b/migration/savevm.c
+@@ -3110,11 +3110,6 @@ int qemu_loadvm_state(QEMUFile *f)
+     Error *local_err = NULL;
+     int ret;
+ 
+-    if (qemu_savevm_state_blocked(&local_err)) {
+-        error_report_err(local_err);
+-        return -EINVAL;
+-    }
+-
+     qemu_loadvm_thread_pool_create(mis);
+ 
+     ret = qemu_loadvm_state_header(f);
+@@ -3386,6 +3381,10 @@ void qmp_xen_save_devices_state(const char *filename, bool has_live, bool live,
+     vm_stop(RUN_STATE_SAVE_VM);
+     global_state_store_running();
+ 
++    if (qemu_savevm_state_blocked(errp)) {
++        goto the_end;
++    }
++
+     ioc = qio_channel_file_new_path(filename, O_WRONLY | O_CREAT | O_TRUNC,
+                                     0660, errp);
+     if (!ioc) {

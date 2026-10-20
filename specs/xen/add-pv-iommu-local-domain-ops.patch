@@ -1,0 +1,469 @@
+diff --git a/xen/common/pv_iommu.c b/xen/common/pv_iommu.c
+index 3721d6b8c8f3..b35d44c4a54e 100644
+--- a/xen/common/pv_iommu.c
++++ b/xen/common/pv_iommu.c
+@@ -17,13 +17,250 @@
+  * along with this program; If not, see <http://www.gnu.org/licenses/>.
+  */
+ 
++#include <asm/p2m.h>
++#include <asm/event.h>
+ #include <xen/guest_access.h>
++#include <xen/param.h>
++#include <public/pv-iommu.h>
+ 
+ #define ret_t long
+ 
++/*
++ * The bfn_foreign_offset is where the 1:1 BFN:MFN region starts.
++ * This value must be after the Dom0 1:1 PFN:MFN range.
++ * The default for bfn_foreign_offset is calculated as follows:
++ * 1 TB (40 address bits on some GPUs) - 768 G (max host memory that we
++ * want to support and have everything fit under 1 T) - 4 G (MMIO hole)
++ * - 4 G ("wiggle room").
++ */
++
++uint64_t __read_mostly bfn_foreign_offset = (248ULL << 30) >> PAGE_SHIFT;
++size_param("xen_pviommu_foreign_offset", bfn_foreign_offset);
++
++static int get_paged_frame(unsigned long gfn, mfn_t *mfn,
++                           struct page_info **page, int readonly,
++                           struct domain *rd)
++{
++    p2m_type_t p2mt;
++
++    *page = get_page_from_gfn(rd, gfn, &p2mt,
++                             (readonly) ? P2M_ALLOC : P2M_UNSHARE);
++    if ( !(*page) )
++    {
++        *mfn = INVALID_MFN;
++        if ( p2m_is_shared(p2mt) )
++            return -EIO;
++        if ( p2m_is_paging(p2mt) )
++        {
++            p2m_mem_paging_populate(rd, _gfn(gfn));
++            return -EIO;
++        }
++        return -EIO;
++    }
++    *mfn = page_to_mfn(*page);
++
++    return 0;
++}
++
++int can_use_iommu_check(struct domain *d)
++{
++    if ( !iommu_enabled || (!is_hardware_domain(d) && !is_iommu_enabled(d)) )
++        return 0;
++
++    if ( is_hardware_domain(d) && iommu_hwdom_passthrough )
++        return 0;
++
++    if ( is_hardware_domain(d) && paging_mode_translate(d) )
++        return 0;
++
++    if ( boot_cpu_data.x86_vendor == X86_VENDOR_AMD )
++        return 0;
++
++    return 1;
++}
++
++void do_iommu_sub_op(struct pv_iommu_op *op)
++{
++    struct domain *d = current->domain;
++    struct domain *rd = NULL;
++
++    /* Only order 0 pages supported */
++    if ( IOMMU_get_page_order(op->flags) != 0 )
++    {
++        op->status = -ENOSPC;
++        goto finish;
++    }
++
++    switch ( op->subop_id )
++    {
++        case IOMMUOP_query_caps:
++        {
++            op->flags = 0;
++            op->status = 0;
++            if ( can_use_iommu_check(d) )
++            {
++                op->flags |= IOMMU_QUERY_map_cap | IOMMU_QUERY_map_all_mfns;
++                op->u.query_caps.offset = bfn_foreign_offset;
++            }
++            break;
++        }
++        case IOMMUOP_map_page:
++        {
++            mfn_t mfn, tmp;
++            unsigned int flags;
++            struct page_info *page = NULL;
++
++            /* Check if calling domain can create IOMMU mappings */
++            if ( !can_use_iommu_check(d) )
++            {
++                op->status = -EPERM;
++                goto finish;
++            }
++
++            /* Lookup page struct backing gfn */
++            if ( (op->flags & IOMMU_MAP_OP_no_ref_cnt) )
++            {
++                mfn = _mfn(op->u.map_page.gfn);
++                page = mfn_to_page(mfn);
++                if (!page)
++                {
++                    op->status = -EPERM; // Should this be something else?
++                    goto finish;
++                }
++            } else if ( get_paged_frame(op->u.map_page.gfn, &mfn, &page, 0, d) )
++            {
++                op->status = -EPERM; // Should this be something else?
++                goto finish;
++            }
++
++            /* Check for conflict with existing BFN mappings */
++            if ( !iommu_lookup_page(d, _dfn(op->u.map_page.bfn), &tmp, &flags) )
++            {
++                if ( !(op->flags & IOMMU_MAP_OP_no_ref_cnt) )
++                    put_page(page);
++                op->status = -EPERM;
++                goto finish;
++            }
++
++            flags = 0;
++
++            if ( op->flags & IOMMU_OP_readable )
++                flags |= IOMMUF_readable;
++
++            if ( op->flags & IOMMU_OP_writeable )
++                flags |= IOMMUF_writable;
++
++            if ( iommu_legacy_map(d, _dfn(op->u.map_page.bfn), mfn, 1, flags) )
++            {
++                if ( !(op->flags & IOMMU_MAP_OP_no_ref_cnt) )
++                    put_page(page);
++                op->status = -EIO;
++                goto finish;
++            }
++
++            op->status = 0;
++            break;
++        }
++
++        case IOMMUOP_unmap_page:
++        {
++            struct page_info *page;
++            mfn_t mfn;
++            unsigned int flags;
++
++            /* Check if there is a valid BFN mapping for this domain */
++            if ( iommu_lookup_page(d, _dfn(op->u.unmap_page.bfn), &mfn, &flags) )
++            {
++                op->status = -ENOENT;
++                goto finish;
++            }
++
++            if ( iommu_legacy_unmap(d, _dfn(op->u.unmap_page.bfn), 1) )
++            {
++                op->status = -EIO;
++                goto finish;
++            }
++
++            /* Use MFN from B2M mapping to lookup page */
++            page = mfn_to_page(mfn);
++            if ( !(op->flags & IOMMU_MAP_OP_no_ref_cnt) )
++                put_page(page);
++
++            op->status = 0;
++            break;
++        }
++        default:
++            op->status = -ENODEV;
++            break;
++    }
++
++finish:
++    if ( rd )
++        rcu_unlock_domain(rd);
++
++    return;
++}
++
+ ret_t do_iommu_op(XEN_GUEST_HANDLE_PARAM(void) arg, unsigned int count)
+ {
+-    return -ENOSYS;
++    ret_t ret = 0;
++    int i;
++    struct pv_iommu_op op;
++    struct domain *d = current->domain;
++
++    if ( !is_hardware_domain(d) )
++        return -ENOSYS;
++
++    if ( (int)count < 0 )
++        return -EINVAL;
++
++    if ( count > 1 )
++        this_cpu(iommu_dont_flush_iotlb) = 1;
++
++    for ( i = 0; i < count; i++ )
++    {
++        if ( i && hypercall_preempt_check() )
++        {
++            ret =  i;
++            goto flush_pages;
++        }
++        if ( unlikely(__copy_from_guest_offset(&op, arg, i, 1)) )
++        {
++            ret = -EFAULT;
++            goto flush_pages;
++        }
++        do_iommu_sub_op(&op);
++        if ( unlikely(__copy_to_guest_offset(arg, i, &op, 1)) )
++        {
++            ret = -EFAULT;
++            goto flush_pages;
++        }
++    }
++
++flush_pages:
++    if ( count > 1 )
++    {
++        int rc = 0;
++
++        this_cpu(iommu_dont_flush_iotlb) = 0;
++        if ( i )
++            rc = iommu_iotlb_flush_all(d, IOMMU_FLUSHF_added |
++                                       IOMMU_FLUSHF_modified);
++
++        if ( rc < 0 )
++            ret = rc;
++    }
++    if ( ret > 0 )
++    {
++        XEN_GUEST_HANDLE_PARAM(pv_iommu_op_t) op =
++            guest_handle_cast(arg, pv_iommu_op_t);
++        ASSERT(ret < count);
++        guest_handle_add_offset(op, i);
++        arg = guest_handle_cast(op, void);
++        ret = hypercall_create_continuation(__HYPERVISOR_iommu_op,
++                                           "hi", arg, count - i);
++    }
++    return ret;
+ }
+ 
+ /*
+diff --git a/xen/drivers/passthrough/x86/iommu.c b/xen/drivers/passthrough/x86/iommu.c
+index 2d58ab4848f6..e65b48ccd121 100644
+--- a/xen/drivers/passthrough/x86/iommu.c
++++ b/xen/drivers/passthrough/x86/iommu.c
+@@ -342,6 +342,7 @@ static int __hwdom_init cf_check map_subtract_iomemcap(unsigned long s,
+ 
+ struct map_data {
+     struct domain *d;
++    unsigned long offset;
+     unsigned int flush_flags;
+     bool mmio_ro;
+ };
+@@ -359,7 +360,7 @@ static int __hwdom_init cf_check identity_map(unsigned long s, unsigned long e,
+ 
+     if ( paging_mode_translate(d) )
+     {
+-        if ( info->mmio_ro )
++        if ( info->mmio_ro || info->offset )
+         {
+             ASSERT_UNREACHABLE();
+             /* End the rangeset iteration, as other regions will also fail. */
+@@ -380,6 +381,7 @@ static int __hwdom_init cf_check identity_map(unsigned long s, unsigned long e,
+          * Read-only ranges are strictly MMIO and need an additional iomem
+          * permissions check.
+          */
++        ASSERT(!info->mmio_ro || !info->offset);
+         while ( info->mmio_ro && s <= e && !iomem_access_permitted(d, s, e) )
+         {
+             /*
+@@ -398,7 +400,7 @@ static int __hwdom_init cf_check identity_map(unsigned long s, unsigned long e,
+             }
+             s++;
+         }
+-        while ( (rc = iommu_map(d, _dfn(s), _mfn(s), e - s + 1,
++        while ( (rc = iommu_map(d, _dfn(s + info->offset), _mfn(s), e - s + 1,
+                                 perms, &info->flush_flags)) > 0 )
+         {
+             s += rc;
+@@ -418,9 +420,10 @@ static int __hwdom_init cf_check identity_map(unsigned long s, unsigned long e,
+ void __hwdom_init arch_iommu_hwdom_init(struct domain *d)
+ {
+     unsigned int i;
+-    struct rangeset *map;
++    struct rangeset *map, *offset_map = NULL;
+     struct map_data map_data = { .d = d };
+     struct handle_iomemcap iomem = {};
++    unsigned long ram_offset = can_use_iommu_check(d) ? bfn_foreign_offset : 0;
+     int rc;
+ 
+     BUG_ON(!is_hardware_domain(d));
+@@ -446,7 +449,9 @@ void __hwdom_init arch_iommu_hwdom_init(struct domain *d)
+         return;
+ 
+     map = rangeset_new(NULL, NULL, 0);
+-    if ( !map )
++    if ( ram_offset )
++        offset_map = rangeset_new(NULL, NULL, 0);
++    if ( !map || (ram_offset && !offset_map) )
+         panic("IOMMU init: unable to allocate rangeset\n");
+ 
+     if ( iommu_hwdom_inclusive )
+@@ -460,6 +465,7 @@ void __hwdom_init arch_iommu_hwdom_init(struct domain *d)
+     for ( i = 0; i < e820.nr_map; i++ )
+     {
+         const struct e820entry entry = e820.map[i];
++        struct rangeset *dest_map = map;
+ 
+         switch ( entry.type )
+         {
+@@ -471,20 +477,30 @@ void __hwdom_init arch_iommu_hwdom_init(struct domain *d)
+         case E820_RAM:
+             if ( iommu_hwdom_strict )
+                 continue;
++            if ( ram_offset )
++            {
++                /*
++                 * RAM regions should go to the offset map, remove in case the
++                 * region was added by the usage of the inclusive option.
++                 */
++                rc = rangeset_remove_range(map, PFN_DOWN(entry.addr),
++                                           PFN_DOWN(entry.addr + entry.size - 1));
++                dest_map = offset_map;
++            }
+             break;
+ 
+         default:
+             continue;
+         }
+ 
+-        rc = rangeset_add_range(map, PFN_DOWN(entry.addr),
++        rc = rangeset_add_range(dest_map, PFN_DOWN(entry.addr),
+                                 PFN_DOWN(entry.addr + entry.size - 1));
+         if ( rc )
+             panic("IOMMU failed to add identity range: %d\n", rc);
+     }
+ 
+     /* Remove any areas in-use by Xen. */
+-    rc = remove_xen_ranges(map);
++    rc = remove_xen_ranges(offset_map ?: map);
+     if ( rc )
+         panic("IOMMU failed to remove Xen ranges: %d\n", rc);
+ 
+@@ -515,6 +531,17 @@ void __hwdom_init arch_iommu_hwdom_init(struct domain *d)
+ 
+     rc = rangeset_report_ranges(map, 0, ~0UL, identity_map, &map_data);
+     rangeset_destroy(map);
++
++    if ( offset_map )
++    {
++        map_data.offset = ram_offset;
++
++        rc = rangeset_report_ranges(offset_map, 0, ~0UL, identity_map,
++                                    &map_data);
++        map_data.offset = 0;
++        rangeset_destroy(offset_map);
++    }
++
+     if ( !rc && is_pv_domain(d) )
+     {
+         map_data.mmio_ro = true;
+diff --git a/xen/include/public/pv-iommu.h b/xen/include/public/pv-iommu.h
+new file mode 100644
+index 000000000000..f598a8feba76
+--- /dev/null
++++ b/xen/include/public/pv-iommu.h
+@@ -0,0 +1,73 @@
++/*
++ * Permission is hereby granted, free of charge, to any person obtaining a copy
++ * of this software and associated documentation files (the "Software"), to
++ * deal in the Software without restriction, including without limitation the
++ * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
++ * sell copies of the Software, and to permit persons to whom the Software is
++ * furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice shall be included in
++ * all copies or substantial portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++ * DEALINGS IN THE SOFTWARE.
++ */
++
++#ifndef __XEN_PUBLIC_PV_IOMMU_H__
++#define __XEN_PUBLIC_PV_IOMMU_H__
++
++#include "xen.h"
++
++#define IOMMUOP_query_caps            1
++#define IOMMUOP_map_page              2
++#define IOMMUOP_unmap_page            3
++
++struct pv_iommu_op {
++    uint16_t subop_id;
++
++#define IOMMU_page_order (0xf1 << 10)
++#define IOMMU_get_page_order(flags) ((flags & IOMMU_page_order) >> 10)
++#define IOMMU_QUERY_map_cap (1 << 0)
++#define IOMMU_QUERY_map_all_mfns (1 << 1)
++#define IOMMU_OP_readable (1 << 0)
++#define IOMMU_OP_writeable (1 << 1)
++#define IOMMU_MAP_OP_no_ref_cnt (1 << 2)
++    uint16_t flags;
++    int32_t status;
++
++    union {
++        struct {
++            uint64_t offset;
++        } query_caps;
++
++        struct {
++            uint64_t bfn;
++            uint64_t gfn;
++        } map_page;
++
++        struct {
++            uint64_t bfn;
++        } unmap_page;
++    } u;
++};
++
++
++typedef struct pv_iommu_op pv_iommu_op_t;
++DEFINE_XEN_GUEST_HANDLE(pv_iommu_op_t);
++
++#endif
++
++/*
++ * Local variables:
++ * mode: C
++ * c-file-style: "BSD"
++ * c-basic-offset: 4
++ * tab-width: 4
++ * indent-tabs-mode: nil
++ * End:
++ */
+diff --git a/xen/include/xen/iommu.h b/xen/include/xen/iommu.h
+index 36851c668e46..53b5373db66b 100644
+--- a/xen/include/xen/iommu.h
++++ b/xen/include/xen/iommu.h
+@@ -39,6 +39,9 @@ TYPE_SAFE(uint64_t, dfn);
+ #define dfn_x
+ #endif
+ 
++extern uint64_t bfn_foreign_offset;
++int can_use_iommu_check(struct domain *d);
++
+ static inline dfn_t __must_check dfn_add(dfn_t dfn, unsigned long i)
+ {
+     return _dfn(dfn_x(dfn) + i);

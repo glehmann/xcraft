@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tu Dinh <ngoc-tu.dinh@vates.tech>
+Date: Fri, 17 Jul 2026 11:20:08 +0000
+Subject: [PATCH] Place the boot logo according to Microsoft's guidelines
+
+Use EdkiiPlatformLogoDisplayAttributeMicrosoft, which automatically puts
+the logo at the right place.
+
+Origin: vendor
+Bug-Vates: XCPNG-3554
+Signed-off-by: Tu Dinh <ngoc-tu.dinh@vates.tech>
+
+diff --git a/MdeModulePkg/Logo/Logo.c b/MdeModulePkg/Logo/Logo.c
+index 8ab874d2dadb..5ede2dcb02fd 100644
+--- a/MdeModulePkg/Logo/Logo.c
++++ b/MdeModulePkg/Logo/Logo.c
+@@ -26,7 +26,7 @@ EFI_HII_HANDLE             mHiiHandle;
+ LOGO_ENTRY                 mLogos[] = {
+   {
+     IMAGE_TOKEN (IMG_LOGO),
+-    EdkiiPlatformLogoDisplayAttributeCenter,
++    EdkiiPlatformLogoDisplayAttributeMicrosoft,
+     0,
+     0
+   }

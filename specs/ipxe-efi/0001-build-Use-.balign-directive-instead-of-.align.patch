@@ -1,0 +1,238 @@
+From c160fb259378e5f08190db39b5bf4f697f892e7c Mon Sep 17 00:00:00 2001
+From: Michael Brown <mcb30@ipxe.org>
+Date: Fri, 12 Feb 2021 23:22:54 +0000
+Subject: [PATCH] [build] Use .balign directive instead of .align
+
+The semantics of the assembler's .align directive vary by CPU
+architecture.  For the ARM builds, it specifies a power of two rather
+than a number of bytes.  This currently leads to the .einfo entries
+(which do not appear in the final binary) having an alignment of 256
+bytes for the ARM builds.
+
+Fix by switching to the GNU-specific directive .balign, which is
+consistent across architectures
+
+Signed-off-by: Michael Brown <mcb30@ipxe.org>
+---
+ src/arch/x86/core/stack.S                   | 2 +-
+ src/arch/x86/core/stack16.S                 | 2 +-
+ src/arch/x86/interface/pcbios/e820mangler.S | 2 +-
+ src/arch/x86/interface/pxe/pxe_entry.S      | 4 ++--
+ src/arch/x86/prefix/exeprefix.S             | 2 +-
+ src/arch/x86/prefix/mromprefix.S            | 2 +-
+ src/arch/x86/prefix/romprefix.S             | 8 ++++----
+ src/arch/x86/prefix/unlzma.S                | 2 +-
+ src/arch/x86/transitions/liba20.S           | 2 +-
+ src/arch/x86/transitions/librm.S            | 6 +++---
+ src/include/errno.h                         | 4 ++--
+ 11 files changed, 18 insertions(+), 18 deletions(-)
+
+diff --git a/src/arch/x86/core/stack.S b/src/arch/x86/core/stack.S
+index 995c397c..baa19ff8 100644
+--- a/src/arch/x86/core/stack.S
++++ b/src/arch/x86/core/stack.S
+@@ -13,7 +13,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+  ****************************************************************************
+  */
+ 	.section ".stack", "aw", @nobits
+-	.align 8
++	.balign 8
+ 	.globl _stack
+ _stack:
+ 	.space STACK_SIZE
+diff --git a/src/arch/x86/core/stack16.S b/src/arch/x86/core/stack16.S
+index 4bc6f081..ad67e4f2 100644
+--- a/src/arch/x86/core/stack16.S
++++ b/src/arch/x86/core/stack16.S
+@@ -7,7 +7,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+  ****************************************************************************
+  */
+ 	.section ".stack16", "aw", @nobits
+-	.align 8
++	.balign 8
+ 	.globl _stack16
+ _stack16:
+ 	.space 4096
+diff --git a/src/arch/x86/interface/pcbios/e820mangler.S b/src/arch/x86/interface/pcbios/e820mangler.S
+index d5d97b48..296a6488 100644
+--- a/src/arch/x86/interface/pcbios/e820mangler.S
++++ b/src/arch/x86/interface/pcbios/e820mangler.S
+@@ -67,7 +67,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+  ****************************************************************************
+  */
+ 	.section ".data16", "aw", @progbits
+-	.align 16
++	.balign 16
+ 	.globl hidemem_base
+ 	.globl hidemem_umalloc
+ 	.globl hidemem_textdata
+diff --git a/src/arch/x86/interface/pxe/pxe_entry.S b/src/arch/x86/interface/pxe/pxe_entry.S
+index 663aa842..3a5a100e 100644
+--- a/src/arch/x86/interface/pxe/pxe_entry.S
++++ b/src/arch/x86/interface/pxe/pxe_entry.S
+@@ -34,7 +34,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+  */
+ 	.section ".text16.data", "aw", @progbits
+ 	.globl ppxe
+-	.align 16
++	.balign 16
+ ppxe:
+ 	.ascii "!PXE"			/* Signature */
+ 	.byte pxe_length		/* StructLength */
+@@ -72,7 +72,7 @@ undiheader:
+  */
+ 	.section ".text16.data", "aw", @progbits
+ 	.globl pxenv
+-	.align 16
++	.balign 16
+ pxenv:
+ 	.ascii "PXENV+"			/* Signature */
+ 	.word 0x0201			/* Version */
+diff --git a/src/arch/x86/prefix/exeprefix.S b/src/arch/x86/prefix/exeprefix.S
+index c351456e..0eab8c12 100644
+--- a/src/arch/x86/prefix/exeprefix.S
++++ b/src/arch/x86/prefix/exeprefix.S
+@@ -110,7 +110,7 @@ overlay:
+ 	/* Overlay number */
+ 	.word	0
+ 
+-	.align 16, 0
++	.balign 16, 0
+ 
+ 	.globl	_exe_start
+ _exe_start:
+diff --git a/src/arch/x86/prefix/mromprefix.S b/src/arch/x86/prefix/mromprefix.S
+index 2b5c6bf6..d08284d7 100644
+--- a/src/arch/x86/prefix/mromprefix.S
++++ b/src/arch/x86/prefix/mromprefix.S
+@@ -492,7 +492,7 @@ mromheader:
+ 	.word	0
+ 	.size	mromheader, . - mromheader
+ 
+-	.align	4
++	.balign	4
+ mpciheader:
+ 	.ascii	"PCIR"			/* Signature */
+ 	.word	pci_vendor_id		/* Vendor identification */
+diff --git a/src/arch/x86/prefix/romprefix.S b/src/arch/x86/prefix/romprefix.S
+index 3abef0ea..a9934a72 100644
+--- a/src/arch/x86/prefix/romprefix.S
++++ b/src/arch/x86/prefix/romprefix.S
+@@ -88,7 +88,7 @@ checksum:
+ 	.previous
+ 
+ .ifeqs	BUSTYPE, "PCIR"
+-	.align	4
++	.balign	4
+ pciheader:
+ 	.ascii	"PCIR"			/* Signature */
+ 	.word	pci_vendor_id		/* Vendor identification */ 
+@@ -136,7 +136,7 @@ pci_devlist_end:
+ 	 * BIOSes will scan on 16-byte boundaries rather than using
+ 	 * the offset stored at 0x1a
+ 	 */
+-	.align	16
++	.balign	16
+ pnpheader:
+ 	.ascii	"$PnP"			/* Signature */
+ 	.byte	0x01			/* Structure revision */
+@@ -184,7 +184,7 @@ prodstr_pci_id:
+ 
+ 	.globl	undiheader	
+ 	.weak	undiloader
+-	.align	4
++	.balign	4
+ undiheader:
+ 	.ascii	"UNDI"			/* Signature */
+ 	.byte	undiheader_len		/* Length of structure */
+@@ -199,7 +199,7 @@ undiheader:
+ 	.equ undiheader_len, . - undiheader
+ 	.size undiheader, . - undiheader
+ 
+-	.align	4
++	.balign	4
+ ipxeheader:
+ 	.ascii	"iPXE"			/* Signature */
+ 	.byte	ipxeheader_len		/* Length of structure */
+diff --git a/src/arch/x86/prefix/unlzma.S b/src/arch/x86/prefix/unlzma.S
+index ce18c756..956eeb24 100644
+--- a/src/arch/x86/prefix/unlzma.S
++++ b/src/arch/x86/prefix/unlzma.S
+@@ -231,7 +231,7 @@ rep_len_dec:	.space	sizeof__lzma_len_dec
+ literal:	.rept	( ( 1 << LZMA_LC ) * 0x300 )
+ 		.word	0
+ 		.endr
+-	.align	4
++	.balign	4
+ 	.equ	sizeof__lzma_dec, . - lzma_dec
+ 	.previous
+ 
+diff --git a/src/arch/x86/transitions/liba20.S b/src/arch/x86/transitions/liba20.S
+index 6c1e1f62..57603353 100644
+--- a/src/arch/x86/transitions/liba20.S
++++ b/src/arch/x86/transitions/liba20.S
+@@ -285,7 +285,7 @@ enable_a20:
+ 	ret
+ 
+ 	.section ".text16.early.data", "aw", @progbits
+-	.align	2
++	.balign	2
+ enable_a20_method:
+ 	.word	0
+ 	.size	enable_a20_method, . - enable_a20_method
+diff --git a/src/arch/x86/transitions/librm.S b/src/arch/x86/transitions/librm.S
+index 9d3eff95..f2fa8c50 100644
+--- a/src/arch/x86/transitions/librm.S
++++ b/src/arch/x86/transitions/librm.S
+@@ -99,7 +99,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+  ****************************************************************************
+  */
+ 	.section ".data16.gdt", "aw", @progbits
+-	.align 16
++	.balign 16
+ gdt:
+ gdtr:		/* The first GDT entry is unused, the GDTR can fit here. */
+ gdt_limit:		.word gdt_length - 1
+@@ -224,7 +224,7 @@ RC_TMP_END:
+ 
+ 	/* Shared temporary static buffer */
+ 	.section ".bss16.rm_tmpbuf", "aw", @nobits
+-	.align 16
++	.balign 16
+ rm_tmpbuf:
+ 	.space	VC_TMP_END
+ 	.size	rm_tmpbuf, . - rm_tmpbuf
+@@ -1470,7 +1470,7 @@ interrupt_wrapper:
+  ****************************************************************************
+  */
+ 	.section ".pages", "aw", @nobits
+-	.align	SIZEOF_PT
++	.balign	SIZEOF_PT
+ 
+ 	/* Page map level 4 entries (PML4Es)
+ 	 *
+diff --git a/src/include/errno.h b/src/include/errno.h
+index 342384fa..decde38e 100644
+--- a/src/include/errno.h
++++ b/src/include/errno.h
+@@ -259,7 +259,7 @@ static inline void eplatform_discard ( int dummy __unused, ... ) {}
+  */
+ #define __einfo_error( einfo ) ( {					\
+ 	__asm__ ( ".section \".einfo\", \"\", " PROGBITS_OPS "\n\t"	\
+-		  ".align 8\n\t"					\
++		  ".balign 8\n\t"					\
+ 		  "\n1:\n\t"						\
+ 		  ".long ( 4f - 1b )\n\t"				\
+ 		  ".long %c0\n\t"					\
+@@ -268,7 +268,7 @@ static inline void eplatform_discard ( int dummy __unused, ... ) {}
+ 		  ".long %c1\n\t"					\
+ 		  "\n2:\t.asciz \"" __einfo_desc ( einfo ) "\"\n\t"	\
+ 		  "\n3:\t.asciz \"" __FILE__ "\"\n\t"			\
+-		  ".align 8\n\t"					\
++		  ".balign 8\n\t"					\
+ 		  "\n4:\n\t"						\
+ 		  ".previous\n\t" : :					\
+ 		  "i" ( __einfo_errno ( einfo ) ),			\
+-- 
+2.39.5
+

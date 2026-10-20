@@ -1,0 +1,87 @@
+diff --git a/tools/include/xenctrl.h b/tools/include/xenctrl.h
+index 9ceca0cffc2f..f3f8b77be653 100644
+--- a/tools/include/xenctrl.h
++++ b/tools/include/xenctrl.h
+@@ -1855,7 +1855,8 @@ int xc_cpuid_apply_policy(xc_interface *xch,
+                           uint32_t domid, bool restore,
+                           const uint32_t *featureset,
+                           unsigned int nr_features, bool pae, bool itsc,
+-                          bool nested_virt, const struct xc_xend_cpuid *xend,
++                          bool nested_virt, unsigned int cps,
++                          const struct xc_xend_cpuid *xend,
+                           const struct xc_msr *msr);
+ int xc_mca_op(xc_interface *xch, struct xen_mc *mc);
+ int xc_mca_op_inject_v2(xc_interface *xch, unsigned int flags,
+diff --git a/tools/libs/guest/xg_cpuid_x86.c b/tools/libs/guest/xg_cpuid_x86.c
+index 1b844879cfac..83cbaedad1c9 100644
+--- a/tools/libs/guest/xg_cpuid_x86.c
++++ b/tools/libs/guest/xg_cpuid_x86.c
+@@ -576,7 +576,7 @@ static int xc_msr_policy(xc_interface *xch, domid_t domid,
+ 
+ int xc_cpuid_apply_policy(xc_interface *xch, uint32_t domid, bool restore,
+                           const uint32_t *featureset, unsigned int nr_features,
+-                          bool pae, bool itsc, bool nested_virt,
++                          bool pae, bool itsc, bool nested_virt, unsigned int cps,
+                           const struct xc_xend_cpuid *xend,
+                           const struct xc_msr *msr)
+ {
+@@ -742,6 +742,46 @@ int xc_cpuid_apply_policy(xc_interface *xch, uint32_t domid, bool restore,
+             }
+             break;
+         }
++
++        /*
++         * BODGE: XenServer legacy cores-per-socket.  Needs to remain like
++         * this for backwards compatibility with migration streams which lack
++         * CPUID data.
++         */
++        if ( cps > 0 )
++        {
++            p->policy.basic.htt = true;
++
++            /*
++             * This (cps * 2) is wrong, and contrary to the statement in the
++             * AMD manual.  However, Xen unconditionally offers Intel-style
++             * APIC IDs (odd IDs for hyperthreads) which breaks the AMD APIC
++             * Enumeration Requirements.
++             *
++             * Fake up cores-per-socket as a socket with twice as many cores
++             * as expected, with every odd core offline.
++             */
++            p->policy.basic.lppp = cps * 2;
++
++            switch ( p->policy.x86_vendor )
++            {
++            case X86_VENDOR_INTEL:
++                for ( i = 0; (p->policy.cache.subleaf[i].type &&
++                              i < ARRAY_SIZE(p->policy.cache.raw)); ++i )
++                {
++                    p->policy.cache.subleaf[i].cores_per_package = (cps * 2) - 1;
++                    p->policy.cache.subleaf[i].threads_per_cache = 0;
++                }
++                break;
++
++            case X86_VENDOR_AMD:
++            case X86_VENDOR_HYGON:
++                p->policy.extd.cmp_legacy = true;
++                p->policy.extd.apic_id_size = 0;
++                p->policy.extd.nc = (cps * 2) - 1;
++                break;
++            }
++        }
+     }
+ 
+     nr_leaves = ARRAY_SIZE(p->leaves);
+diff --git a/tools/libs/light/libxl_cpuid.c b/tools/libs/light/libxl_cpuid.c
+index 6d23880a897c..42d555719ea9 100644
+--- a/tools/libs/light/libxl_cpuid.c
++++ b/tools/libs/light/libxl_cpuid.c
+@@ -512,7 +512,7 @@ int libxl__cpuid_legacy(libxl_ctx *ctx, uint32_t domid, bool restore,
+             info->tsc_mode == LIBXL_TSC_MODE_ALWAYS_EMULATE);
+ 
+     r = xc_cpuid_apply_policy(ctx->xch, domid, restore, NULL, 0,
+-                              pae, itsc, nested_virt,
++                              pae, itsc, nested_virt, 0,
+                               info->cpuid ? info->cpuid->cpuid : NULL,
+                               info->cpuid ? info->cpuid->msr : NULL);
+     if (r)

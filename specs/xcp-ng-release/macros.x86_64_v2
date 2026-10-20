@@ -1,0 +1,4 @@
+%_target_platform x86_64-%{_vendor}-%{_target_os}%{?_gnu}
+%x86_64_v2 1
+%__cflags_arch_x86_64_level %[0%{?x86_64_v2} ? "-v2" : ""]%[ (!0%{?x86_64_v2} && 0%{?rhel} == 9) ? "-v2" : ""]%[ (!0%{?x86_64_v2} && 0%{?rhel} > 9) ? "-v3" : ""]
+%__cflags_arch_x86_64 -march=x86-64%{?__cflags_arch_x86_64_level:%{__cflags_arch_x86_64_level}}

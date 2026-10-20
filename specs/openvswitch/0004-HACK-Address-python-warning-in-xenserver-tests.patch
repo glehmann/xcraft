@@ -1,0 +1,30 @@
+From 5063c53b9b9a3616778c6a5a39e9e77066b80a45 Mon Sep 17 00:00:00 2001
+From: Yann Dirson <yann.dirson@vates.tech>
+Date: Mon, 7 Jul 2025 14:47:44 +0200
+Subject: [PATCH 4/4] HACK Address python warning in xenserver tests
+
+Not sure what's intended with that regexp.  /proc/ardence seems to relate to
+https://www.techmonitor.ai/technology/citrix_buys_streaming_software_supplier_ardence
+and I'm not sure we can get a hand on a sample file content for testing.
+xenserver: avoid python complaining against invalid escape sequence
+---
+ xenserver/opt_xensource_libexec_interface-reconfigure | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/xenserver/opt_xensource_libexec_interface-reconfigure b/xenserver/opt_xensource_libexec_interface-reconfigure
+index 9c20725de..49848eba5 100755
+--- a/xenserver/opt_xensource_libexec_interface-reconfigure
++++ b/xenserver/opt_xensource_libexec_interface-reconfigure
+@@ -95,7 +95,8 @@ def check_allowed(pif):
+         macline = filter(lambda x: x.startswith("HWaddr:"), f.readlines())
+         f.close()
+         if len(macline) == 1:
+-            p = re.compile(".*\s%(MAC)s\s.*" % pifrec, re.IGNORECASE)
++            #p = re.compile(".*\s%(MAC)s\s.*" % pifrec, re.IGNORECASE)
++            p = re.compile(".* %(MAC)s .*" % pifrec, re.IGNORECASE)
+             if p.match(macline[0]):
+                 log("Skipping PVS device %(device)s (%(MAC)s)" % pifrec)
+                 return False
+-- 
+2.39.5
+

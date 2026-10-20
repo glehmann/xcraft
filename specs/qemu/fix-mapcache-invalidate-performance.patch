@@ -1,0 +1,96 @@
+xen-mapcache: Fix invalidate performance
+
+If there are many simultaneous invalidate calls via coroutines, the invalidate
+call will be scheduled in a bh function. However, these bh functions will only
+be executed during the next iteration of aio_bh_poll() and in reverse order of
+submission. I observed up to 100 ms delay for some invalidate operations when
+installing Windows Server 2025 with 64 vCPUs. This is long enough to cause the
+installation to fail.
+
+Fix the delays and installation failure by maintaining a queue of invalidations
+(so that they are executed in order) and executing multiple invalidations in
+one go.
+
+Signed-off-by: Ross Lagerwall <ross.lagerwall@citrix.com>
+diff --git a/hw/xen/xen-mapcache.c b/hw/xen/xen-mapcache.c
+index e31d3797025f..77b01db2c67d 100644
+--- a/hw/xen/xen-mapcache.c
++++ b/hw/xen/xen-mapcache.c
+@@ -74,10 +74,18 @@ typedef struct MapCache {
+     void *opaque;
+ } MapCache;
+ 
++typedef struct XenMapCacheData {
++    Coroutine *co;
++    uint8_t *buffer;
++    QTAILQ_ENTRY(XenMapCacheData) next;
++} XenMapCacheData;
++
+ static MapCache *mapcache;
+ static MapCache *mapcache_grants_ro;
+ static MapCache *mapcache_grants_rw;
+ static xengnttab_handle *xen_region_gnttabdev;
++static QTAILQ_HEAD(, XenMapCacheData) inval_queue;
++static QemuMutex inval_lock;
+ 
+ static inline void mapcache_lock(MapCache *mc)
+ {
+@@ -185,6 +193,9 @@ void xen_map_cache_init(phys_offset_to_gaddr_t f, void *opaque)
+                                                    max_mcache_size);
+ 
+     setrlimit(RLIMIT_AS, &rlimit_as);
++
++    qemu_mutex_init(&inval_lock);
++    QTAILQ_INIT(&inval_queue);
+ }
+ 
+ static void xen_remap_bucket(MapCache *mc,
+@@ -622,11 +633,6 @@ static void xen_invalidate_map_cache_entry_unlocked(MapCache *mc,
+     }
+ }
+ 
+-typedef struct XenMapCacheData {
+-    Coroutine *co;
+-    uint8_t *buffer;
+-} XenMapCacheData;
+-
+ static void xen_invalidate_map_cache_entry_single(MapCache *mc, uint8_t *buffer)
+ {
+     mapcache_lock(mc);
+@@ -643,10 +649,19 @@ static void xen_invalidate_map_cache_entry_all(uint8_t *buffer)
+ 
+ static void xen_invalidate_map_cache_entry_bh(void *opaque)
+ {
+-    XenMapCacheData *data = opaque;
++    XenMapCacheData *data;
++
++    qemu_mutex_lock(&inval_lock);
+ 
+-    xen_invalidate_map_cache_entry_all(data->buffer);
+-    aio_co_wake(data->co);
++    while ((data = QTAILQ_FIRST(&inval_queue)) != NULL) {
++        QTAILQ_REMOVE(&inval_queue, data, next);
++        qemu_mutex_unlock(&inval_lock);
++        xen_invalidate_map_cache_entry_all(data->buffer);
++        aio_co_wake(data->co);
++        qemu_mutex_lock(&inval_lock);
++    }
++
++    qemu_mutex_unlock(&inval_lock);
+ }
+ 
+ void coroutine_mixed_fn xen_invalidate_map_cache_entry(uint8_t *buffer)
+@@ -656,8 +671,12 @@ void coroutine_mixed_fn xen_invalidate_map_cache_entry(uint8_t *buffer)
+             .co = qemu_coroutine_self(),
+             .buffer = buffer,
+         };
++
++        qemu_mutex_lock(&inval_lock);
++        QTAILQ_INSERT_TAIL(&inval_queue, &data, next);
++        qemu_mutex_unlock(&inval_lock);
+         aio_bh_schedule_oneshot(qemu_get_current_aio_context(),
+-                                xen_invalidate_map_cache_entry_bh, &data);
++                                xen_invalidate_map_cache_entry_bh, NULL);
+         qemu_coroutine_yield();
+     } else {
+         xen_invalidate_map_cache_entry_all(buffer);
