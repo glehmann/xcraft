@@ -9,6 +9,7 @@ import shutil
 import tomllib
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -16,6 +17,8 @@ from pydantic import BaseModel, ConfigDict
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+
+    from xcraft.specs import Package
 
 
 def write_atomically(path: Path, text: str) -> None:
@@ -182,6 +185,21 @@ class Project:
     def source_cache(self) -> Path:
         """Source archives, as ``<sha256>/<filename>``."""
         return self.state / "cache/sources"
+
+    @cached_property
+    def packages(self) -> dict[str, Package]:
+        """The packages, by name, from their specs."""
+        from xcraft.specs import load_packages  # noqa: PLC0415, which needs the project
+
+        return load_packages(self)
+
+    @cached_property
+    def deps(self) -> dict[str, set[str]]:
+        """The build dependencies of each package: the packages to build before it."""
+        from xcraft.graph import build_deps  # noqa: PLC0415, which needs the project
+        from xcraft.lock import load_lock  # noqa: PLC0415
+
+        return build_deps(self.packages, load_lock(self).image)
 
     def log(self, package: str) -> Path:
         """Return the log of the last build of `package`."""
