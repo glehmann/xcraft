@@ -2249,6 +2249,9 @@ runtime = [
     "xz-devel",
     "zlib-ng-compat-devel",
 ]
+"kernel-headers" = [
+    "rsync",
+]
 "libempserver" = [
     "cmake-filesystem",
     "json-c-devel",

@@ -34,7 +34,7 @@
 Name: kernel
 License: GPLv2
 Version: %{usver}
-Release: 2%{dist}
+Release: 3%{dist}
 ExclusiveOS: Linux
 Summary: The Linux kernel
 BuildRequires: kmod
@@ -48,6 +48,8 @@ BuildRequires: openssl
 BuildRequires: rsync
 BuildRequires: systemtap-sdt-devel
 BuildRequires: perl-interpreter
+# the headers are in their own package, kept in sync: the builds get ours, not Alma's of the same version
+BuildRequires: kernel-headers-xcpng = %{version}
 
 # These build dependencies are needed for building the main kernel and
 # modules as well live patches.
@@ -133,22 +135,6 @@ The kernel package contains the Linux kernel (vmlinuz), the core of any
 Linux operating system. The kernel handles the basic functions of the operating
 system: memory allocation, process allocation, device input and output, etc.
 
-
-%package headers
-License: GPLv2
-Summary: Header files for the Linux kernel for use by glibc
-Group: Development/System
-Obsoletes: glibc-kernheaders < 3.0-46
-Provides: glibc-kernheaders = 3.0-46
-Provides: kernel-headers = %{uname}
-Conflicts: kernel-headers < %{uname}
-
-%description headers
-Kernel-headers includes the C header files that specify the interface
-between the Linux kernel and userspace libraries and programs.  The
-header files define structures and constants that are needed for
-building most standard programs and are also needed for rebuilding the
-glibc package.
 
 %package devel
 License: GPLv2
@@ -293,9 +279,6 @@ make INSTALL_MOD_PATH=%{buildroot} vdso_install
 # # Save debuginfo
 # install -d -m 755 %{buildroot}/usr/lib/debug/lib/modules/%{uname}
 # install -m 755 vmlinux %{buildroot}/usr/lib/debug/lib/modules/%{uname}
-
-# Install -headers files
-make INSTALL_HDR_PATH=%{buildroot}/usr headers_install
 
 # perf tool binary and supporting scripts/binaries
 %{perf_make} %{perf_python3} DESTDIR=%{buildroot} lib=%{_lib} install-bin
@@ -445,9 +428,6 @@ fi
 %doc LICENSES/exceptions/Linux-syscall-note
 %doc Documentation/process/license-rules.rst
 
-%files headers
-/usr/include/*
-
 %files devel
 /lib/modules/%{uname}/build
 /lib/modules/%{uname}/source
@@ -460,6 +440,8 @@ fi
 %{_datadir}/perf-core/
 %{_mandir}/man[1-8]/perf*
 %{_sysconfdir}/bash_completion.d/perf
+# in kernel-headers before, which only has the kernel's
+%{_includedir}/perf/perf_dlfilter.h
 %doc tools/perf/Documentation/examples.txt
 %license COPYING
 
@@ -473,6 +455,9 @@ fi
 %{?_cov_results_package}
 
 %changelog
+* Wed Oct 21 2026 Gaëtan Lehmann <gaetan.lehmann@vates.tech> - 6.12.0-3
+- Move the headers to the kernel-headers package, but perf_dlfilter.h, to perf
+
 * Fri Aug 07 2026 Yann Dirson <yann.dirson@vates.tech> - 6.12.0-2
 - Add "Provides: kernel-xcpng" so the installer can be sure to pull this kernel not Alma's
 - Disable XS modification of CONFIG_MODULE_SIG_FORCE behaviour
