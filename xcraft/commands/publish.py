@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
@@ -13,6 +13,10 @@ from xcraft import remote
 from xcraft.commands import load
 from xcraft.display import console
 from xcraft.signing import dev_signer, release_signer
+
+if TYPE_CHECKING:
+    from xcraft.project import Project
+    from xcraft.signing import Signer
 
 
 def publish(
@@ -46,6 +50,20 @@ def publish(
     if not (local or project.config.remote):
         msg = "no remote storage to publish to: see [remote] in xcraft.toml, or use --local"
         raise typer.BadParameter(msg)
+    signer = choose_signer(project, local=local, unsigned=unsigned, dev_key=dev_key)
+    with project.lock():
+        dest = (output or project.state / "publish" / project.config.arch).absolute()
+        keys = snapshot(project, dest, signer=signer, push=not local)
+        if not local and (storage := project.config.remote):
+            publisher.upload_snapshot(project, keys, dest, publisher.snapshot_name(project, storage), signer=signer)
+
+
+def choose_signer(project: Project, *, local: bool, unsigned: bool, dev_key: bool) -> Signer | None:
+    """Return the signer of a snapshot: the release key, or the developer's.
+
+    That is with `dev_key`, or without release key, for a `local` snapshot, or one published to a storage on this
+    machine.
+    """
     signer = None if unsigned else dev_signer(project) if dev_key else release_signer(project)
     if dev_key and not signer:
         msg = "no developer's key: run xcraft key create"
@@ -60,15 +78,17 @@ def publish(
     if not (signer or local or unsigned):
         msg = "no key to sign the packages: see [sign] in xcraft.toml, or use --dev-key or --unsigned"
         raise typer.BadParameter(msg)
-    with project.lock():
-        results = builder.build(project, sorted(project.packages))
-        if failed := [r.name for r in results if r.status in ("failed", "skipped")]:
-            msg = f"not built: {', '.join(failed)}"
-            raise RuntimeError(msg)
-        keys = builder.build_keys(project)
-        upstream = publisher.resolve_runtime(project, keys)
-        dest = (output or project.state / "publish" / project.config.arch).absolute()
-        publisher.assemble(project, keys, dest, signer=signer, push=not local)
-        console.print(f"[bold green]✓[/] snapshot in {dest}: {len(keys)} packages, {len(upstream)} upstream ones")
-        if not local and (storage := project.config.remote):
-            publisher.upload_snapshot(project, keys, dest, publisher.snapshot_name(project, storage), signer=signer)
+    return signer
+
+
+def snapshot(project: Project, dest: Path, *, signer: Signer | None, push: bool) -> dict[str, str]:
+    """Build or fetch all our packages, make the snapshot in `dest`, and return the keys of the packages."""
+    results = builder.build(project, sorted(project.packages))
+    if failed := [r.name for r in results if r.status in ("failed", "skipped")]:
+        msg = f"not built: {', '.join(failed)}"
+        raise RuntimeError(msg)
+    keys = builder.build_keys(project)
+    upstream = publisher.resolve_runtime(project, keys)
+    publisher.assemble(project, keys, dest, signer=signer, push=push)
+    console.print(f"[bold green]✓[/] snapshot in {dest}: {len(keys)} packages, {len(upstream)} upstream ones")
+    return keys

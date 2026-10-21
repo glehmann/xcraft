@@ -35,6 +35,7 @@ xcraft --install-completion  # optional
 | `xcraft repo <pkg>... --test ID` / `--pre ID` | A repository of new test builds, for test hosts |
 | `xcraft repo <pkg>... --test ID --host h [--upgrade]` | The same, copied to test hosts over ssh, and upgraded there |
 | `xcraft publish [--locked] [--local] [--unsigned] [--dev-key]` | Publish a snapshot of the distribution, as the latest one |
+| `xcraft iso [--netinstall] [--output f] [-V id] [--locked] [--unsigned]` | Make the installation ISO, from a local snapshot (see [Installation ISO](#installation-iso)) |
 | `xcraft key create` / `xcraft key show [--export]` | The developer's key, which signs the test builds |
 | `xcraft push` | Upload everything the remote storage misses: the source archives and the builds of all packages, then make all the `index.html` pages |
 | `xcraft push sources [<pkg>...] [--check]` | Upload the source archives missing from the remote storage, or only check |
@@ -219,6 +220,23 @@ xcraft patchset --package xapi --base v26.4.0
 
 The patches are applied by `%autosetup` or `%autopatch`, in the order of their numbers. Then `xcraft build` checks
 them, and `xcraft bump` makes a release of them.
+
+## Installation ISO
+
+`xcraft iso` makes the installation ISO of XCP-ng, like [create-install-image](https://github.com/xcp-ng/create-install-image)
+does, from the snapshot `xcraft publish --local` makes, in `.xcraft/publish/<arch>/`, with nothing else to install:
+
+- `install.img`, the installer's root filesystem, is installed from the snapshot: its packages, `[iso] installer` in
+  `xcraft.toml`, are published with the others. The firmware files no driver names are removed, and the files of
+  `iso/installimg/` are added, like its systemd units;
+- the boot files come from our packages: the kernel, Xen's debug builds, grub's image for CDs and host-installer's
+  grub configurations, for UEFI, with isolinux, for BIOS, configured by the files of `iso/tree/`;
+- its repository has `[iso] packages`, `xcp-ng-deps` by default, and what they need, signed like the snapshot, unless
+  `--netinstall`, where the installer gets the packages from the network;
+- it is hybrid: it boots with BIOS and UEFI, from a CD or a USB stick.
+
+The tools making it, like xorriso and syslinux, are installed in the containers making it, in the versions of the
+lock, which records them in `iso`. The ISO is `.xcraft/iso/xcp-ng-<version>[-netinstall].iso` by default.
 
 ## Remote storage
 

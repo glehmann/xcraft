@@ -18,6 +18,7 @@ from xcraft.commands import (
     graph,
     impacts,
     import_,
+    iso,
     key,
     lock,
     log,
@@ -50,6 +51,7 @@ app.command(rich_help_panel="Upstream packages")(ack.ack)
 app.command(rich_help_panel="Building")(clean.clean)
 app.command("import", rich_help_panel="Packages")(import_.import_)
 app.command(rich_help_panel="Publishing")(publish.publish)
+app.command(rich_help_panel="Publishing")(iso.iso)
 app.add_typer(push.app, name="push", rich_help_panel="Sharing")
 app.add_typer(fetch.app, name="fetch", rich_help_panel="Sharing")
 app.add_typer(key.app, name="key", rich_help_panel="Publishing")

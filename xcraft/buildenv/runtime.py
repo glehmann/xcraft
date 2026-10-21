@@ -2,9 +2,10 @@
 
 Run as root in the build environment, with our builds as the xcraft repository:
 ``runtime.py <input> <output>``. The input has the locked packages, as
-``{name: [evr, arch]}``, which keep their versions, and the extra packages.
-Each package is resolved alone, without weak dependencies, as some of ours
-conflict with others.
+``{name: [evr, arch]}``, which keep their versions, the extra packages, and
+those of the installer. Each package is resolved alone, without weak
+dependencies, as some of ours conflict with others, and the installer's
+together.
 """
 
 import json
@@ -40,13 +41,16 @@ roots = sorted(
     | set(data["extra"])
 )
 needed, errors = {}, {}
-for root in roots:
+# the installer's packages together too: some only need others along with another, like (libsss_sudo if sudo)
+groups = [*((root, [root]) for root in roots), *([("install.img", data["installer"])] if data["installer"] else [])]
+for name, group in groups:
     base.reset(goal=True)
     try:
-        base.install(root)
+        for root in group:
+            base.install(root)
         base.resolve()
     except dnf.exceptions.Error as e:
-        errors[root] = str(e)
+        errors[name] = str(e)
         continue
     for p in base.transaction.install_set:
         if not p.reponame.startswith("xcraft-"):
