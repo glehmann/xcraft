@@ -1,3 +1,6 @@
+# the packages of the same archive, which xcraft bump --version updates together
+same_version = [["kernel", "kernel-headers"]]
+
 # the local storage of local-s3.sh, for development
 [remote]
 url = "http://xcraft.web.garage.localhost:3902"
