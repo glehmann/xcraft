@@ -1,10 +1,11 @@
 """The lock of upstream packages: the exact versions the builds use, per architecture.
 
 ``locks/<arch>.toml`` has one version of each upstream package installed in
-the build environment image or in a build root, for the whole tree, and the
-upstream packages each of our builds installed besides the image's. The build
-environment only sees the locked version of a locked package; packages not
-locked yet are taken at their latest version, and added to the lock.
+the build environment image, in a build root or with the tools making the ISO,
+for the whole tree, and the upstream packages each of our builds installed
+besides the image's. The build environment only sees the locked version of a
+locked package; packages not locked yet are taken at their latest version, and
+added to the lock.
 
 When an update changes upstream packages in the build root of one of our
 packages, it gets pending entries, with the versions its release was built
@@ -49,6 +50,8 @@ class Lock(BaseModel):
     """Upstream packages of the build environment image."""
     runtime: list[str] = []
     """Upstream packages of the published repositories: what our packages need at runtime, and the extra ones."""
+    iso: list[str] = []
+    """Upstream packages of the tools making the ISO, besides the image's."""
     packages: dict[str, Locked] = {}
     buildroots: dict[str, list[str]] = {}
     """Upstream packages installed by the build of each of our packages, besides the image's."""
@@ -120,6 +123,7 @@ def _entries(lock: Lock) -> set[str]:
     """Return the entries of `lock`, like ``buildroots.xen gcc``, to show what changes."""
     return {
         *(f"{field} {name}" for field, names in (("image", lock.image), ("runtime", lock.runtime)) for name in names),
+        *(f"iso {name}" for name in lock.iso),
         *(f"packages {name}-{p.evr}.{p.arch}" for name, p in lock.packages.items()),
         *(f"buildroots.{package} {name}" for package, names in lock.buildroots.items() for name in names),
         *(
@@ -141,8 +145,12 @@ def save_lock(project: Project, lock: Lock) -> None:
             msg = f"the lock would change, which --locked forbids: {', '.join(changes)}"
             raise RuntimeError(msg)
         return
-    lines = ["# written by xcraft build, xcraft lock and xcraft publish", "", f"image = {_array(sorted(lock.image))}"]
-    lines += [f"runtime = {_array(sorted(lock.runtime))}", "", "[packages]"]
+    lines = [
+        "# written by xcraft build, xcraft lock, xcraft publish and xcraft iso",
+        "",
+        f"image = {_array(sorted(lock.image))}",
+    ]
+    lines += [f"runtime = {_array(sorted(lock.runtime))}", f"iso = {_array(sorted(lock.iso))}", "", "[packages]"]
     lines += [
         f"{json.dumps(name)} = {{ {', '.join(f'{field} = {json.dumps(value)}' for field, value in p)} }}"
         for name, p in sorted(lock.packages.items())

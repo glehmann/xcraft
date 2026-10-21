@@ -98,6 +98,29 @@ class Publish(BaseModel):
     """Upstream packages to publish too, for convenience, like mc, with what they need."""
 
 
+class Iso(BaseModel):
+    """What xcraft iso makes, from the snapshot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    installer: list[str] = [
+        # the mandatory packages of AlmaLinux's @core, but kexec-tools, xfsprogs and yum
+        *["audit", "basesystem", "bash", "coreutils", "cronie", "cronie-noanacron", "curl", "dnf", "e2fsprogs"],
+        *["filesystem", "firewalld", "glibc", "grubby", "hostname", "iproute", "iproute-tc", "iputils"],
+        *["irqbalance", "kbd", "less", "logrotate", "man-db", "ncurses", "openssh-clients", "openssh-server"],
+        *["p11-kit", "parted", "policycoreutils", "procps-ng", "rootfiles", "rpm", "rpm-plugin-audit"],
+        *["selinux-policy-targeted", "setup", "shadow-utils", "sssd-common", "sssd-kcm", "sudo", "systemd"],
+        *["util-linux", "vim-minimal"],
+        # the installer, xl for its preinit, and the hardware support
+        *["host-installer-startup", "chrony", "dhcp-client", "xen-dom0-tools", "kernel", "linux-firmware"],
+        # for debugging
+        *["netcat", "pciutils", "usbutils"],
+    ]
+    """Packages of the installer's root filesystem, install.img: they are published too."""
+    packages: list[str] = ["xcp-ng-deps"]
+    """Packages of the repository of the ISO, with what they need, unless --netinstall."""
+
+
 class Config(BaseModel):
     """Settings of an xcraft project, from its ``xcraft.toml``."""
 
@@ -137,6 +160,7 @@ class Config(BaseModel):
     publish: Publish = Publish()
     same_version: list[list[str]] = []
     """Groups of packages with the same version, like kernel and kernel-headers: bump --version updates them all."""
+    iso: Iso = Iso()
     sign: Sign | None = None
     """The key signing the published packages: they are not signed without one."""
 

@@ -1,4 +1,4 @@
-# written by xcraft build, xcraft lock and xcraft publish
+# written by xcraft build, xcraft lock, xcraft publish and xcraft iso
 
 image = [
     "R-srpm-macros",
@@ -292,6 +292,7 @@ runtime = [
     "annobin-docs",
     "annobin-plugin-gcc",
     "attr",
+    "audit",
     "audit-libs",
     "authselect",
     "authselect-libs",
@@ -313,6 +314,7 @@ runtime = [
     "busybox",
     "bzip2",
     "bzip2-libs",
+    "c-ares",
     "ca-certificates",
     "chkconfig",
     "chrony",
@@ -335,6 +337,7 @@ runtime = [
     "cups-filesystem",
     "cups-libs",
     "curl",
+    "cyrus-sasl-gssapi",
     "cyrus-sasl-lib",
     "dbus",
     "dbus-broker",
@@ -373,6 +376,8 @@ runtime = [
     "file-libs",
     "filesystem",
     "findutils",
+    "firewalld",
+    "firewalld-filesystem",
     "flex",
     "fonts-srpm-macros",
     "forge-srpm-macros",
@@ -402,10 +407,12 @@ runtime = [
     "gnutls-dane",
     "gnutls-utils",
     "go-srpm-macros",
+    "gobject-introspection",
     "gpgme",
     "graphite2",
     "grep",
     "groff-base",
+    "grubby",
     "gssproxy",
     "gzip",
     "harfbuzz",
@@ -421,6 +428,7 @@ runtime = [
     "ipcalc",
     "ipmitool",
     "iproute",
+    "iproute-tc",
     "iptables-legacy",
     "iptables-legacy-libs",
     "iptables-libs",
@@ -428,6 +436,7 @@ runtime = [
     "iptables-nft-services",
     "iptables-utils",
     "iputils",
+    "irqbalance",
     "iscsi-initiator-utils",
     "iscsi-initiator-utils-iscsiuio",
     "isns-utils-libs",
@@ -467,6 +476,7 @@ runtime = [
     "libcom_err",
     "libcomps",
     "libcurl",
+    "libdhash",
     "libdnf",
     "libdrm",
     "libeconf",
@@ -528,6 +538,10 @@ runtime = [
     "libss",
     "libssh",
     "libssh-config",
+    "libsss_certmap",
+    "libsss_idmap",
+    "libsss_nss_idmap",
+    "libsss_sudo",
     "libstdc++",
     "libtalloc",
     "libtasn1",
@@ -579,6 +593,7 @@ runtime = [
     "netcat",
     "newt",
     "nfs-utils",
+    "nftables",
     "npth",
     "nspr",
     "nss",
@@ -587,6 +602,7 @@ runtime = [
     "nss-sysinit",
     "nss-tools",
     "nss-util",
+    "numactl-libs",
     "nvme-cli",
     "ocaml-srpm-macros",
     "ocl-icd",
@@ -696,12 +712,16 @@ runtime = [
     "python3-dnf",
     "python3-dnf-plugins-core",
     "python3-fasteners",
+    "python3-firewall",
+    "python3-gobject-base",
+    "python3-gobject-base-noarch",
     "python3-hawkey",
     "python3-idna",
     "python3-libcomps",
     "python3-libdnf",
     "python3-libs",
     "python3-newt",
+    "python3-nftables",
     "python3-pam",
     "python3-pip-wheel",
     "python3-ply",
@@ -729,6 +749,8 @@ runtime = [
     "rpm",
     "rpm-build-libs",
     "rpm-libs",
+    "rpm-plugin-audit",
+    "rpm-plugin-selinux",
     "rpm-sequoia",
     "rpm-sign-libs",
     "rsync",
@@ -745,6 +767,8 @@ runtime = [
     "screen",
     "sdparm",
     "sed",
+    "selinux-policy",
+    "selinux-policy-targeted",
     "setup",
     "sg3_utils",
     "sg3_utils-libs",
@@ -754,8 +778,13 @@ runtime = [
     "slang",
     "smartmontools",
     "sqlite-libs",
+    "sssd-client",
+    "sssd-common",
+    "sssd-kcm",
+    "sssd-krb5-common",
     "strace",
     "stunnel",
+    "sudo",
     "swtpm",
     "swtpm-libs",
     "swtpm-tools",
@@ -790,6 +819,26 @@ runtime = [
     "zlib-ng-compat-devel",
     "zstd",
 ]
+iso = [
+    "cryptsetup-libs",
+    "device-mapper",
+    "device-mapper-libs",
+    "dosfstools",
+    "kbd",
+    "kbd-legacy",
+    "kbd-misc",
+    "kmod",
+    "kmod-libs",
+    "libburn",
+    "libisoburn",
+    "libisofs",
+    "memtest86+",
+    "mtools",
+    "syslinux",
+    "syslinux-nonlinux",
+    "systemd-udev",
+    "xorriso",
+]
 
 [packages]
 "R-srpm-macros" = { evr = "1.3.7-2.el10_3.alma_altarch", arch = "noarch", source = "R-rpm-macros", repo = "epel", sha256 = "7bc9b7c55a321c5d1df261842e2d775b96ad12976e2302d7aff5bf06bf5a7bd7" }
@@ -810,6 +859,7 @@ runtime = [
 "apr-util-openssl" = { evr = "1.6.3-23.el10_2.1", arch = "x86_64_v2", source = "apr-util", repo = "appstream", sha256 = "d5939d757357192820462244ceee72c5615c770562b4984f6bb84c324ca2bf19" }
 "asciidoc" = { evr = "10.2.0-12.el10", arch = "noarch", source = "asciidoc", repo = "appstream", sha256 = "bb34a342421805e3df245b074ee2787ca5d2f0134e2fecbefafad3285a14a74c" }
 "attr" = { evr = "2.6.0-1.el10_2", arch = "x86_64_v2", source = "attr", repo = "baseos", sha256 = "e1543ffd12b2fc48707d0dd824d49822a85e997516f2477e66e27a815675852b" }
+"audit" = { evr = "4.0.3-5.el10", arch = "x86_64_v2", source = "audit", repo = "baseos", sha256 = "1163f2f180c379c644924aa3019bba7af2f3898cbf55474623246fe08d66f216" }
 "audit-libs" = { evr = "4.0.3-5.el10", arch = "x86_64_v2", source = "audit", repo = "baseos", sha256 = "a575c868e10c5851b20abe5d59f7ef518cc79dac741c92a2a527c8b2edc98b7e" }
 "authselect" = { evr = "1.5.2-1.el10", arch = "x86_64_v2", source = "authselect", repo = "baseos", sha256 = "58508426b02dca9e1f1df37736a12c1348edaafbda88acaccc3575bbd64bbc0a" }
 "authselect-libs" = { evr = "1.5.2-1.el10", arch = "x86_64_v2", source = "authselect", repo = "baseos", sha256 = "e75846ffd7dd5e84885d5c2fa59b39282a9fbd9a00a2ba19f614fc9e39f1b3e4" }
@@ -837,6 +887,7 @@ runtime = [
 "bzip2" = { evr = "1.0.8-25.el10", arch = "x86_64_v2", source = "bzip2", repo = "baseos", sha256 = "85da6062c8bff69fe8eaae120ba2fa6831eaf4f5ba214158b4ab510db18adf3f" }
 "bzip2-devel" = { evr = "1.0.8-25.el10", arch = "x86_64_v2", source = "bzip2", repo = "appstream", sha256 = "e77661d2c70cdd1c11158ec995aa2ae390ffd728fab4ec3e1141f72a2ca11fde" }
 "bzip2-libs" = { evr = "1.0.8-25.el10", arch = "x86_64_v2", source = "bzip2", repo = "baseos", sha256 = "aa03374c786a4929fee2f59dd53d08078acd3309f69d92887f4c7b83fe731f6c" }
+"c-ares" = { evr = "1.34.6-2.el10_2", arch = "x86_64_v2", source = "c-ares", repo = "baseos", sha256 = "0474f7475623cee2adb7d8fa1dfb84c9bbea57977cacedd959ad1c5cf066b3c6" }
 "ca-certificates" = { evr = "2025.2.80_v9.0.305-102.el10_1", arch = "noarch", source = "ca-certificates", repo = "baseos", sha256 = "6b4b153b35901ac27e57d41b1ec98f7754c0642d361e782dde5f9ba6765fda2d" }
 "cairo" = { evr = "1.18.2-2.el10_2.1", arch = "x86_64_v2", source = "cairo", repo = "appstream", sha256 = "f3d78f61f4ab5c187c0ea956cde868ffe776b9d9b5db10a45a26f1780a30bf06" }
 "cairo-devel" = { evr = "1.18.2-2.el10_2.1", arch = "x86_64_v2", source = "cairo", repo = "appstream", sha256 = "4bb8588e5594af0ba74e022b4117b99be4f1262e74d4ebfe0014df8a5f019319" }
@@ -859,6 +910,7 @@ runtime = [
 "createrepo_c" = { evr = "1.1.2-4.el10", arch = "x86_64_v2", source = "createrepo_c", repo = "appstream", sha256 = "6f69f732bd30d3cd2753af7baaaaf4ff36a16d36197cb4bac7a1a980f2e83f9b" }
 "createrepo_c-libs" = { evr = "1.1.2-4.el10", arch = "x86_64_v2", source = "createrepo_c", repo = "appstream", sha256 = "3c5451bb61e1156e2b719bfe7f7f85d8117d4c379cdb962879e55b9dcaae0dd5" }
 "cronie" = { evr = "1.7.0-14.el10", arch = "x86_64_v2", source = "cronie", repo = "baseos", sha256 = "2c3b6690ba27f0f323d2c294d61e1d186877b34dd48c1e94e4bfd612f19d35bd" }
+"cronie-anacron" = { evr = "1.7.0-14.el10", arch = "x86_64_v2", source = "cronie", repo = "baseos", sha256 = "3b40c1266f0213122cd11f9cd6e3b00b7c65aa73f3527b17a0dd3f67878bc403" }
 "cronie-noanacron" = { evr = "1.7.0-14.el10", arch = "x86_64_v2", source = "cronie", repo = "baseos", sha256 = "23d1d227a099c8a209697b8827a008727f5eafa8a12ec6cd5947c8ee4934c5c5" }
 "crontabs" = { evr = "1.11^20190603git9e74f2d-6.el10", arch = "noarch", source = "crontabs", repo = "baseos", sha256 = "879f1342347b6802f274b970f093d44aae46a05c3b3694c96cfec3fc83181b41" }
 "crypto-policies" = { evr = "20260216-1.git0e54016.el10_2.2.alma.1", arch = "noarch", source = "crypto-policies", repo = "baseos", sha256 = "a261c568310cf92be13d55bf43a8de4ba6723c776251efd78f35e58935d5b3dc" }
@@ -870,6 +922,7 @@ runtime = [
 "curl" = { evr = "8.12.1-4.el10_2.7", arch = "x86_64_v2", source = "curl", repo = "baseos", sha256 = "31210db916a8ab458a13cb2fafe15d22281a34c0aa0279e0b85a1dc2f1f3f296" }
 "cyrus-sasl" = { evr = "2.1.28-30.el10_2", arch = "x86_64_v2", source = "cyrus-sasl", repo = "baseos", sha256 = "218fffff4f92ba5d91147263acfde1dd51262986f3c0c939257bcb105401baeb" }
 "cyrus-sasl-devel" = { evr = "2.1.28-30.el10_2", arch = "x86_64_v2", source = "cyrus-sasl", repo = "appstream", sha256 = "a50be8367cb967ec445935bbe26cd002a569783d3594c94dca1435c1e37b27a6" }
+"cyrus-sasl-gssapi" = { evr = "2.1.28-30.el10_2", arch = "x86_64_v2", source = "cyrus-sasl", repo = "baseos", sha256 = "510957e5bd7477d4c9efe17517fa6641a9a28875521b8d436daaf0a26d8477ff" }
 "cyrus-sasl-lib" = { evr = "2.1.28-30.el10_2", arch = "x86_64_v2", source = "cyrus-sasl", repo = "baseos", sha256 = "ef2d7524b165f412bcedcbcf3236d28e2d0989965c76801cc17930cad0d0549d" }
 "dbus" = { evr = "1:1.14.10-5.el10", arch = "x86_64_v2", source = "dbus", repo = "baseos", sha256 = "2429aeaa8f841561075614cd2c151976d84f6fa41163e03e2b6016c01ad9b651" }
 "dbus-broker" = { evr = "36-5.el10_2", arch = "x86_64_v2", source = "dbus-broker", repo = "baseos", sha256 = "ca4c4f50a0b7bdcfd554135474fea98369c780e0b7328c94935247d36c173267" }
@@ -929,6 +982,8 @@ runtime = [
 "file-libs" = { evr = "5.45-9.el10", arch = "x86_64_v2", source = "file", repo = "baseos", sha256 = "a4b00b8e8ee9f32ab46b798bdd6916d9b98dd67dea474c902379bfca38824836" }
 "filesystem" = { evr = "3.18-17.el10", arch = "x86_64_v2", source = "filesystem", repo = "baseos", sha256 = "66e95a11d94cb3c6923ab4e8e14947af3fa81209b7072ec8546239c94fd78ac6" }
 "findutils" = { evr = "1:4.10.0-5.el10", arch = "x86_64_v2", source = "findutils", repo = "baseos", sha256 = "0d86cc13b34e26c0f7a3a77488ec38b216fe9b26e7cd89d0cf704ceeda72c733" }
+"firewalld" = { evr = "2.4.3-4.el10_2", arch = "noarch", source = "firewalld", repo = "baseos", sha256 = "f5f4a3dde4648d63c0788338b29d659529a82ad20b6b847a4d2435f0936d52d2" }
+"firewalld-filesystem" = { evr = "2.4.3-4.el10_2", arch = "noarch", source = "firewalld", repo = "baseos", sha256 = "e06163c486be0d18b840a03a604ca734b588e22687a876bf7c906423da1266c2" }
 "flex" = { evr = "2.6.4-19.el10", arch = "x86_64_v2", source = "flex", repo = "appstream", sha256 = "ced8a8995cfcfa0ccac6da12565cd133c253ce54b8c735b74c1ec637de70a00c" }
 "fmt" = { evr = "11.0.2-1.el10_0.alma_altarch", arch = "x86_64_v2", source = "fmt", repo = "epel", sha256 = "6dbbfb99fb56a190a1318aa387744ca983087d0a1a707d51385d03830d215b0e" }
 "fontconfig" = { evr = "2.15.0-7.el10", arch = "x86_64_v2", source = "fontconfig", repo = "appstream", sha256 = "fe6f01d0e4f7096a1aa4555c3ca13c0e61082b7b008b17f9c00b6cfa3407c45a" }
@@ -986,6 +1041,7 @@ runtime = [
 "gnutls-utils" = { evr = "3.8.10-5.el10_2", arch = "x86_64_v2", source = "gnutls", repo = "appstream", sha256 = "bd207ff1ff6a7fe0ee1860691e69aaa3e3bc5eb37c2b8a14c487059cd4e2c515" }
 "go-filesystem" = { evr = "3.8.0-1.el10", arch = "x86_64_v2", source = "go-rpm-macros", repo = "appstream", sha256 = "24ebdbde4115f2b53c6136e83686797ecb4939ff7e6dda5a4fb243122a126a56" }
 "go-srpm-macros" = { evr = "3.8.0-1.el10", arch = "noarch", source = "go-rpm-macros", repo = "appstream", sha256 = "9e5e87cd317a9329616ce89932e0d9c86668c820926ad28d3a55e3421290c4e2" }
+"gobject-introspection" = { evr = "1.79.1-6.el10", arch = "x86_64_v2", source = "gobject-introspection", repo = "baseos", sha256 = "f6a8164fbf3966e3762293b1f69b95c4ca7691ca2bdc31f48ef9bdb706530e75" }
 "golang" = { evr = "1.26.7-2.el10_2.alma.1", arch = "x86_64_v2", source = "golang", repo = "appstream", sha256 = "4753564fbf75c773aa42214a7f8f983ca2af1835c575adfddef8155d214e6dd2" }
 "golang-bin" = { evr = "1.26.7-2.el10_2.alma.1", arch = "x86_64_v2", source = "golang", repo = "appstream", sha256 = "088ad2ec66874cb0bdebec645ba8b2cace1b00e26822cad5f4248b0a8cb9930a" }
 "golang-race" = { evr = "1.26.7-2.el10_2.alma.1", arch = "x86_64_v2", source = "golang", repo = "appstream", sha256 = "205869c367745fcc2eaf8eec9f90c24d609091beaab8c571e330f1f57eb543ff" }
@@ -1001,6 +1057,7 @@ runtime = [
 "graphviz" = { evr = "9.0.0-15.el10", arch = "x86_64_v2", source = "graphviz", repo = "appstream", sha256 = "cd98550c7bd992fe0e3c2f3e09ec327e087eb92f66456767f1d8e6749999f23b" }
 "grep" = { evr = "3.11-10.el10", arch = "x86_64_v2", source = "grep", repo = "baseos", sha256 = "b0c5ef874347ff443b763d42bbc7f102c7ed19ab01436839e163cd0f0f3a5f7a" }
 "groff-base" = { evr = "1.23.0-10.el10", arch = "x86_64_v2", source = "groff", repo = "baseos", sha256 = "46e0e7b3ae9c88d5bbb8640a66d1203b3759c2a3ad6ae9505d377a19aac5614a" }
+"grubby" = { evr = "8.40-83.el10.alma.1", arch = "x86_64_v2", source = "grubby", repo = "baseos", sha256 = "93b3b09095b6ff97a58201296c2ba50704c62a0bffcf8f00167b0706157f44b4" }
 "gssproxy" = { evr = "0.9.2-10.el10", arch = "x86_64_v2", source = "gssproxy", repo = "baseos", sha256 = "5e084d73094f2018898c71eeeed8a23af5481732edae754c42f3c382c619f5f6" }
 "gzip" = { evr = "1.13-4.el10_2", arch = "x86_64_v2", source = "gzip", repo = "baseos", sha256 = "b4d7e20d83319b9cc41e19776f6c6f904ca2a983b36c29b9e9d2d6eab01f2b03" }
 "harfbuzz" = { evr = "8.4.0-6.el10", arch = "x86_64_v2", source = "harfbuzz", repo = "baseos", sha256 = "587b44404de519c23a390c5b92b949df490d1c0d16864a3ee550a31ae5023041" }
@@ -1022,6 +1079,7 @@ runtime = [
 "ipcalc" = { evr = "1.0.3-12.el10", arch = "x86_64_v2", source = "ipcalc", repo = "baseos", sha256 = "0e44ee94cb902670970d287e23ebbe621a17987d58085f1a8f4ef405877397d1" }
 "ipmitool" = { evr = "1.8.19-10.el10_1", arch = "x86_64_v2", source = "ipmitool", repo = "appstream", sha256 = "4550cda8984ed290630221da9df30975ec06885fb30d2f077959ce8008ef5fbd" }
 "iproute" = { evr = "6.17.0-2.el10", arch = "x86_64_v2", source = "iproute", repo = "baseos", sha256 = "9baa9a6609d6c8c6459337e53dd0f049f8788e8cf7951bad0964ef484c924b43" }
+"iproute-tc" = { evr = "6.17.0-2.el10", arch = "x86_64_v2", source = "iproute", repo = "baseos", sha256 = "80604b5f3154cd3c909e51298cbc02779eddffb7e5429e84f91a7e992d9b9e75" }
 "iptables-legacy" = { evr = "1.8.11-7.1.el10_0.alma_altarch", arch = "x86_64_v2", source = "iptables-epel", repo = "epel", sha256 = "f5de3bc62592daa8849ddd04e28993a635a07f0d9a1a695e21c53d379b4dca9c" }
 "iptables-legacy-libs" = { evr = "1.8.11-7.1.el10_0.alma_altarch", arch = "x86_64_v2", source = "iptables-epel", repo = "epel", sha256 = "1c0202a9dfe6c567f68196d9579e487a4cd0313983aebf44c40fb86353788f7e" }
 "iptables-libs" = { evr = "1.8.11-16.el10_2", arch = "x86_64_v2", source = "iptables", repo = "baseos", sha256 = "333b0aac978ce354ed3f7fbe63fb6bc68caeee51e08c015339cec6a910109af3" }
@@ -1029,6 +1087,7 @@ runtime = [
 "iptables-nft-services" = { evr = "1.8.11-16.el10_2", arch = "noarch", source = "iptables", repo = "appstream", sha256 = "a4884b26c90a7bddecc994120ad3b75e37ddb75fb8df8a9a9bda97b9aaea488f" }
 "iptables-utils" = { evr = "1.8.11-16.el10_2", arch = "x86_64_v2", source = "iptables", repo = "appstream", sha256 = "314eeb204a0dcb3ed80d1404fbf8619fa5169575c45ad07d094052f93c4cc6f2" }
 "iputils" = { evr = "20240905-5.el10", arch = "x86_64_v2", source = "iputils", repo = "baseos", sha256 = "923b62ef51f2759c5fa94300585a03ec4ceeb2c8515a1c5c4bb08b95f9210787" }
+"irqbalance" = { evr = "2:1.9.4-6.el10", arch = "x86_64_v2", source = "irqbalance", repo = "baseos", sha256 = "8515b2f40caf1ef4ecb765a6b107515f8863191078af7a2e41394ddf63d893e3" }
 "iscsi-initiator-utils" = { evr = "6.2.1.11-1.git4b3e853.el10_2.2", arch = "x86_64_v2", source = "iscsi-initiator-utils", repo = "baseos", sha256 = "b6cb5e8a32da68c71ebf6bf0734c61635826a99960029ec5bbe5acd09f8eafc0" }
 "iscsi-initiator-utils-iscsiuio" = { evr = "6.2.1.11-1.git4b3e853.el10_2.2", arch = "x86_64_v2", source = "iscsi-initiator-utils", repo = "baseos", sha256 = "dd8bb7caa5c4ea7d41e52a8548bf45954dbfe4bd6608748b5d448ee03f7f98f5" }
 "isns-utils-libs" = { evr = "0.103-1.el10_2.1", arch = "x86_64_v2", source = "isns-utils", repo = "baseos", sha256 = "a929058067b0a6d054ef5a043dd833149bde13955ae08b9d72ada4849ffd70fa" }
@@ -1083,6 +1142,7 @@ runtime = [
 "libbpf" = { evr = "2:1.7.0-1.el10", arch = "x86_64_v2", source = "libbpf", repo = "baseos", sha256 = "2e635e399f4cf9e445b130d66c3df2452a79d708b72f78dc8ba559bcc6074b59" }
 "libbrotli" = { evr = "1.1.0-8.el10_2", arch = "x86_64_v2", source = "brotli", repo = "baseos", sha256 = "90038bd984eae5d810cdc00e5abb9a0d36770792d88a100cc90c09dfebe85f88" }
 "libbsd" = { evr = "0.12.2-4.el10_0.alma_altarch", arch = "x86_64_v2", source = "libbsd", repo = "epel", sha256 = "37114b48cf77053bed118e45814b6b7ac9c930d6be7e7e2c47145df7ef283883" }
+"libburn" = { evr = "1.5.6-6.el10", arch = "x86_64_v2", source = "libburn", repo = "appstream", sha256 = "32b4cd57ceab528af601635aa15f84c05f5dbfd8701a1506415acdb229cdc5f5" }
 "libcap" = { evr = "2.69-7.el10_2.1", arch = "x86_64_v2", source = "libcap", repo = "baseos", sha256 = "a533ba80d9ae554416c1eb7369d5a2a578ef8d31457f00802878fff2c215304b" }
 "libcap-ng" = { evr = "0.8.4-6.el10", arch = "x86_64_v2", source = "libcap-ng", repo = "baseos", sha256 = "a652a668464ee57a3f71c0fa396c1851c760099362b6066202c747ecc101e0d6" }
 "libcap-ng-devel" = { evr = "0.8.4-6.el10", arch = "x86_64_v2", source = "libcap-ng", repo = "appstream", sha256 = "ee7853ce21db03ad77ced89a0e06c628e80190fdc5f7a931b6f593e5dffb388a" }
@@ -1099,6 +1159,7 @@ runtime = [
 "libcurl-devel" = { evr = "8.12.1-4.el10_2.7", arch = "x86_64_v2", source = "curl", repo = "appstream", sha256 = "3331c37aea6bc1db0e80bfc598ad000fde602baeb4a1feb66b947950b1336f7a" }
 "libcurl-minimal" = { evr = "8.12.1-4.el10_2.7", arch = "x86_64_v2", source = "curl", repo = "baseos", sha256 = "c8c2ae51c49c3b9fb5d9b13cbb7fb8cac78ff95d07000726daa2b98f2134709e" }
 "libdatrie" = { evr = "0.2.13-11.el10", arch = "x86_64_v2", source = "libdatrie", repo = "appstream", sha256 = "a49f2abd4c95c366882fc1ab5aeebcf97e17ecd9dfd1bfb5dc4d498b9e281971" }
+"libdhash" = { evr = "0.5.0-58.el10", arch = "x86_64_v2", source = "ding-libs", repo = "baseos", sha256 = "156222338aacca0eda8197657f6bf98082a4c96cf6284afedf97a50988b4abd7" }
 "libdnf" = { evr = "0.73.1-15.el10_2.alma.1", arch = "x86_64_v2", source = "libdnf", repo = "baseos", sha256 = "d10836bd54c06f0a350ee4a3e368c28c2b0cb5a8e94192a7ed36eead8dd1cd57" }
 "libdrm" = { evr = "2.4.128-1.el10", arch = "x86_64_v2", source = "libdrm", repo = "baseos", sha256 = "0c2abb11ef72fbd7f134ed6c18ae109d1b2ee783e266cc5492e7f34bc7fd74ba" }
 "libdwarves1" = { evr = "1.31-1.el10", arch = "x86_64_v2", source = "dwarves", repo = "appstream", sha256 = "72f7e5ae2f6ce9b85030417eb36d03ff11969780508ff89699c84a2cbb8042c3" }
@@ -1123,6 +1184,8 @@ runtime = [
 "libidn2-devel" = { evr = "2.3.7-3.el10", arch = "x86_64_v2", source = "libidn2", repo = "appstream", sha256 = "cd9451a4d2b360bac2f62dda5cb7190c13a5cff3a4eab363e4cce81695522e92" }
 "libijs" = { evr = "0.35-24.el10", arch = "x86_64_v2", source = "libijs", repo = "appstream", sha256 = "bfe65e7d076b745768234d3966ccd5e45c2767cc13da6034ea55453b2656c49d" }
 "libini_config" = { evr = "1.3.1-58.el10", arch = "x86_64_v2", source = "ding-libs", repo = "baseos", sha256 = "5b2e9c895ed580b768d1929cdc75583a5f36595d1dd96b557151e7a4f3c3d185" }
+"libisoburn" = { evr = "1.5.6-6.el10", arch = "x86_64_v2", source = "libisoburn", repo = "appstream", sha256 = "b25c00d7e25e158badda5626726e6756bba6ee660c7de73b20c0c99ae06ff7e5" }
+"libisofs" = { evr = "1.5.6-6.el10", arch = "x86_64_v2", source = "libisofs", repo = "appstream", sha256 = "e5dfbbab0d28911ec85d2c7cc976db8285a219213a9cc76e7ba9420748acc37d" }
 "libjcat" = { evr = "0.2.2-2.el10", arch = "x86_64_v2", source = "libjcat", repo = "baseos", sha256 = "6b28ba258945a0642551e8833ecab94ff988958a0cc629e707e5beb2a480b32a" }
 "libjpeg-turbo" = { evr = "3.0.2-4.el10", arch = "x86_64_v2", source = "libjpeg-turbo", repo = "appstream", sha256 = "728508ad184277169cd63265cdcbf67bbe0f5bde3b0965172eae70edb4d5917e" }
 "libjpeg-turbo-devel" = { evr = "3.0.2-4.el10", arch = "x86_64_v2", source = "libjpeg-turbo", repo = "appstream", sha256 = "357d103110c330c358a6840620e61e1352f54aff7007025d4ae4ad12f421c872" }
@@ -1184,6 +1247,10 @@ runtime = [
 "libssh" = { evr = "0.12.0-3.el10_2", arch = "x86_64_v2", source = "libssh", repo = "baseos", sha256 = "e5703f2dc176f26a12f6168203d2d0813db112ae8fe0d4680de5e22d75233d71" }
 "libssh-config" = { evr = "0.12.0-3.el10_2", arch = "noarch", source = "libssh", repo = "baseos", sha256 = "42473901905bfd812bc9f2ddd5acb2b88e2b135c977f8b3f96f1c8052c50c3d2" }
 "libssh-devel" = { evr = "0.12.0-3.el10_2", arch = "x86_64_v2", source = "libssh", repo = "appstream", sha256 = "cf889169a138c1d2fe2a780dbecef2c94ee338f4bea052c8ec705aec8df146db" }
+"libsss_certmap" = { evr = "2.12.0-3.el10_2.2", arch = "x86_64_v2", source = "sssd", repo = "baseos", sha256 = "0e36d8104eecc6093be8a994f8516c7113b8bf0738a8a765e6967bd0c3a4a7f4" }
+"libsss_idmap" = { evr = "2.12.0-3.el10_2.2", arch = "x86_64_v2", source = "sssd", repo = "baseos", sha256 = "41b6dbf5233b8dc9e07dd37dee8d377f35e0c8935a6ea80a67bed91108c82229" }
+"libsss_nss_idmap" = { evr = "2.12.0-3.el10_2.2", arch = "x86_64_v2", source = "sssd", repo = "baseos", sha256 = "b53770cb6dd52746ffe717d9ccfb898f538f709ec6ee8401a65fc698d058102f" }
+"libsss_sudo" = { evr = "2.12.0-3.el10_2.2", arch = "x86_64_v2", source = "sssd", repo = "baseos", sha256 = "bd271f490dfbdf09305cdbbe4b780d274077a1292c9ed90b3e530708081a8eba" }
 "libstdc++" = { evr = "14.3.1-4.4.el10.alma.2", arch = "x86_64_v2", source = "gcc", repo = "baseos", sha256 = "c93a43126ac19716c076ea234b014d471fe7b1b320137ea603a48768389e56b3" }
 "libstdc++-devel" = { evr = "14.3.1-4.4.el10.alma.2", arch = "x86_64_v2", source = "gcc", repo = "appstream", sha256 = "0009fd00ce85ec81642030676ffd237e50796d2402442c91f05b7ad35c19ad05" }
 "libtalloc" = { evr = "2.4.3-100.el10", arch = "x86_64_v2", source = "libtalloc", repo = "baseos", sha256 = "2029cdb930a9fc4649a8806bf1bf80484a7812f70c030f21de633b274ea86b23" }
@@ -1247,6 +1314,7 @@ runtime = [
 "make" = { evr = "1:4.4.1-9.el10", arch = "x86_64_v2", source = "make", repo = "baseos", sha256 = "6e1dce95ec84dd2f727abb78a936cbd754bd7ecc6c9ce63098c76f01a350121f" }
 "man-db" = { evr = "2.12.0-10.el10", arch = "x86_64_v2", source = "man-db", repo = "baseos", sha256 = "60bc47bceade8e2a9431cadb3954e36b8526ed11d895613806d951a45987beba" }
 "mdadm" = { evr = "4.4-3.el10_2.2", arch = "x86_64_v2", source = "mdadm", repo = "baseos", sha256 = "4b515e286200f1f54c1f7de693ca5b5e52f353d479c778f50988a027830de1cc" }
+"memtest86+" = { evr = "7.00-8.el10", arch = "x86_64_v2", source = "memtest86+", repo = "appstream", sha256 = "7a9b57c0dd974319bc98478a1d868ea390985757dd4fbbca5312139a497cc84c" }
 "mercurial" = { evr = "6.8.1-2.el10_0.alma_altarch", arch = "x86_64_v2", source = "mercurial", repo = "epel", sha256 = "ebce46805ece0f0c26a812d5d2b8a2f8e864b1c5ff3a5655a0089d153c9b7e92" }
 "mokutil" = { evr = "2:0.7.2-4.el10.alma.1", arch = "x86_64_v2", source = "mokutil", repo = "baseos", sha256 = "42e1b4154034f835f683db1407485de6ca62915813f47f3accfbdbab2e50ccd2" }
 "mpdecimal" = { evr = "2.5.1-12.el10", arch = "x86_64_v2", source = "mpdecimal", repo = "baseos", sha256 = "1e21e561aadc58c12e8382792f6273b8c86ebf43ccfca0216ef5866b6cf29398" }
@@ -1263,6 +1331,7 @@ runtime = [
 "netcat" = { evr = "1.238-1.el10_3.alma_altarch", arch = "x86_64_v2", source = "netcat", repo = "epel", sha256 = "018fc0456066f8c2e75a9a1f64dc1022d091196411a9015e77ed5b391cf13f14" }
 "newt" = { evr = "0.52.24-5.el10", arch = "x86_64_v2", source = "newt", repo = "baseos", sha256 = "6b02cdd0b0a7e6b1720f88bc781aed12c0c067d686e41f764794e67aecad1bf9" }
 "nfs-utils" = { evr = "1:2.8.3-5.el10_2", arch = "x86_64_v2", source = "nfs-utils", repo = "baseos", sha256 = "e1a85fcb442e27d3b3db431a137d2fec65e3a7197a1537a7d9fd4976f44d4dec" }
+"nftables" = { evr = "1:1.1.5-6.el10_2", arch = "x86_64_v2", source = "nftables", repo = "baseos", sha256 = "1047492fa7a2826f9310a1cc88121e10114323e2073878874344587ae5745e4f" }
 "ninja-build" = { evr = "1.11.1-9.el10", arch = "x86_64_v2", source = "ninja-build", repo = "crb", sha256 = "3da3d855bc6cba68b05bb048cb23fc04cf8ef7525c132489e02b0f6f02103940" }
 "npth" = { evr = "1.6-21.el10", arch = "x86_64_v2", source = "npth", repo = "baseos", sha256 = "a21d4861f783e1241ba12e43492720beb4d794927909d5a23eac771e205692cb" }
 "nspr" = { evr = "4.39.0-5.el10_0", arch = "x86_64_v2", source = "nss", repo = "appstream", sha256 = "a46e1589396f1c2b4158895b8df8dab682e8403f63b5f6c1313d41e33bf3681d" }
@@ -1272,6 +1341,7 @@ runtime = [
 "nss-sysinit" = { evr = "3.124.0-5.el10_0", arch = "x86_64_v2", source = "nss", repo = "appstream", sha256 = "e43424771a5e7a184b8a0f73e5bc114243e90759104d737d27246db7350a03e7" }
 "nss-tools" = { evr = "3.124.0-5.el10_0", arch = "x86_64_v2", source = "nss", repo = "appstream", sha256 = "e2a8a86eb46fc4f0eea6819bbc0b240818b3f8e28ed1881a2a6826059a8b8f69" }
 "nss-util" = { evr = "3.124.0-5.el10_0", arch = "x86_64_v2", source = "nss", repo = "appstream", sha256 = "517d1b4b87533d0bfee5d8350639ace38677c4dfed922de8c197a4aa0de13f45" }
+"numactl-libs" = { evr = "2.0.19-3.el10", arch = "x86_64_v2", source = "numactl", repo = "baseos", sha256 = "63d47a068bbbba6afaa291816b52a01e0b05c376d20da4c712db365514182235" }
 "nvme-cli" = { evr = "2.16-2.el10", arch = "x86_64_v2", source = "nvme-cli", repo = "baseos", sha256 = "9f101ed10faacb37ba8425d7e55c1807ea1f45a688f1bdaf9b15587c47e8022a" }
 "ocaml-srpm-macros" = { evr = "10-4.el10", arch = "noarch", source = "ocaml-srpm-macros", repo = "appstream", sha256 = "f9ee48e40c5bc2dcdd87cb85a3d69088527801cf5c309f565753f834df097cb7" }
 "ocl-icd" = { evr = "2.3.2-8.el10", arch = "x86_64_v2", source = "ocl-icd", repo = "baseos", sha256 = "03892a33768d07db2f8e564650a0cc84aaa10ef1ffeb895fd5939cf579c86865" }
@@ -1526,6 +1596,9 @@ runtime = [
 "python3-dnf-plugin-versionlock" = { evr = "4.7.0-10.el10", arch = "noarch", source = "dnf-plugins-core", repo = "baseos", sha256 = "2f7d1cc362a087288f197a1ba211280f9056ee9407c852a8206e3863b10452f2" }
 "python3-dnf-plugins-core" = { evr = "4.7.0-10.el10", arch = "noarch", source = "dnf-plugins-core", repo = "baseos", sha256 = "3e9a81c73c438c444d1459eec704ff8a321d42cdade6a96d19138e9c83d901cb" }
 "python3-fasteners" = { evr = "0.19-9.el10_0.alma_altarch", arch = "noarch", source = "python-fasteners", repo = "epel", sha256 = "aa3dcaecd790aba6eaf533953a072a42098889dfdbdcfcad5b2c3ffee2eba0c2" }
+"python3-firewall" = { evr = "2.4.3-4.el10_2", arch = "noarch", source = "firewalld", repo = "baseos", sha256 = "c008b6b62ec34fbcbae74fdd41f8a8e6deb2b742f38670141c120adf18ed290b" }
+"python3-gobject-base" = { evr = "3.46.0-7.el10", arch = "x86_64_v2", source = "pygobject3", repo = "baseos", sha256 = "99529acd903327bdc2f3d8b8596a902180200db9974c1cea1bb0e75f63f90d72" }
+"python3-gobject-base-noarch" = { evr = "3.46.0-7.el10", arch = "noarch", source = "pygobject3", repo = "baseos", sha256 = "8964c1908c4a51047dea2d36d0ef9ee62e70110e50ac1114d95a5ec68d27c7e0" }
 "python3-hawkey" = { evr = "0.73.1-15.el10_2.alma.1", arch = "x86_64_v2", source = "libdnf", repo = "baseos", sha256 = "e9c91eb5300aada43d0af620ea663ebb8358d5d8736c5f00e4c04c4f0b83799c" }
 "python3-idna" = { evr = "3.7-6.el10_2", arch = "noarch", source = "python-idna", repo = "baseos", sha256 = "f19d8229b047cbda17f4e61fba52cf30be1bff6378bc22f58adcbb497584f8a9" }
 "python3-isort" = { evr = "5.13.2-5.el10_0.alma_altarch", arch = "noarch", source = "python-isort", repo = "epel", sha256 = "f01383c7ef2fde94d6abf1f90df1fb23637dd63c37fd54c80d7fafc376efb20f" }
@@ -1534,6 +1607,7 @@ runtime = [
 "python3-libs" = { evr = "3.12.15-1.el10_2", arch = "x86_64_v2", source = "python3.12", repo = "baseos", sha256 = "2245f3bc1ecc7cee482693434f2fc0cf4ecdb6dc98cd731c939849ea7477bdcf" }
 "python3-mccabe" = { evr = "0.7.0-11.el10_0.alma_altarch", arch = "noarch", source = "python-mccabe", repo = "epel", sha256 = "6c05ae20e6a6e181e56249b2c8cf7b35d845ab2c580d5124c8d11498c35e8c90" }
 "python3-newt" = { evr = "0.52.24-5.el10", arch = "x86_64_v2", source = "newt", repo = "appstream", sha256 = "e23cf6ec6e3c681bf4b125819fcc6b13fe49474a54f711bc8fb67b73fdbc3bb6" }
+"python3-nftables" = { evr = "1:1.1.5-6.el10_2", arch = "x86_64_v2", source = "nftables", repo = "baseos", sha256 = "143d60d63811c6291bc942172baef590f92276b9031ff74693e314992630823b" }
 "python3-packaging" = { evr = "24.2-2.el10", arch = "noarch", source = "python-packaging", repo = "baseos", sha256 = "34f09b71d61ef37a3c1aa1c59f09d68c14f9f92b36d842d408b8da7b6061b1f0" }
 "python3-pam" = { evr = "2.0.2-10.el10", arch = "noarch", source = "python-pam", repo = "appstream", sha256 = "cdbdfcfdb8ac5dbacc9b1c69c4fa785cfe9501542635dc56e837c57454f1a94b" }
 "python3-pip" = { evr = "23.3.2-11.el10_2", arch = "noarch", source = "python-pip", repo = "appstream", sha256 = "da926fa0fa1a2ca6a4c4f00a5ff3eebc88d4f785589a68d280036ebf0a994263" }
@@ -1573,6 +1647,8 @@ runtime = [
 "rpm-build-libs" = { evr = "4.19.1.1-23.el10.alma.1", arch = "x86_64_v2", source = "rpm", repo = "baseos", sha256 = "0dd6c3ff95ce85eaab0c35befb67209ba4c44c8ef1fa26976a3a6a5ad4b68ffc" }
 "rpm-devel" = { evr = "4.19.1.1-23.el10.alma.1", arch = "x86_64_v2", source = "rpm", repo = "appstream", sha256 = "5cabd6e2dad36e85ff1ae298094c3b6846a97da515b3e32833dc47956da89977" }
 "rpm-libs" = { evr = "4.19.1.1-23.el10.alma.1", arch = "x86_64_v2", source = "rpm", repo = "baseos", sha256 = "14bcdd1e669f341d98011269b8b72d840e4167c710c85828f53c2240c4aad15c" }
+"rpm-plugin-audit" = { evr = "4.19.1.1-23.el10.alma.1", arch = "x86_64_v2", source = "rpm", repo = "baseos", sha256 = "3db6811d827901731eb5e84088d6d3bb2f7404a00871b444c5976129f056e0fb" }
+"rpm-plugin-selinux" = { evr = "4.19.1.1-23.el10.alma.1", arch = "x86_64_v2", source = "rpm", repo = "baseos", sha256 = "e4323e8de14a655181c33340f11fdc2b19ed56b22c38780c84b9b59228171d5a" }
 "rpm-sequoia" = { evr = "1.10.2.1-1.el10_2", arch = "x86_64_v2", source = "rust-rpm-sequoia", repo = "baseos", sha256 = "b01bc5a960ce949d22db72067cf581b94aad1f88b57dcd0e522fe03ab6fc0bb1" }
 "rpm-sign-libs" = { evr = "4.19.1.1-23.el10.alma.1", arch = "x86_64_v2", source = "rpm", repo = "baseos", sha256 = "88e6de7d53b83a854d2b999c0bfb7c52ed2ca707d1947f49d0b223219c8d8edc" }
 "rsvg-pixbuf-loader" = { evr = "2.57.1-9.el10", arch = "x86_64_v2", source = "librsvg2", repo = "appstream", sha256 = "4dc2cc3db207e6ffa6644fa2afcbc1742244765966a8570919fd8860092c397a" }
@@ -1590,6 +1666,8 @@ runtime = [
 "screen" = { evr = "5.0.1-6.el10_2.alma_altarch", arch = "x86_64_v2", source = "screen", repo = "epel", sha256 = "95d0d7f2f66bf600bcf4c9430f8b346049c555211b7665b436315966e23a2a6b" }
 "sdparm" = { evr = "1.12-9.el10_0.alma_altarch", arch = "x86_64_v2", source = "sdparm", repo = "epel", sha256 = "74a59614aabaa3e913579b3eefbe9fac2a46a232cd434f0d3043c4c04fcb149e" }
 "sed" = { evr = "4.9-5.el10", arch = "x86_64_v2", source = "sed", repo = "baseos", sha256 = "ceb561c43c39f0534795e2169972170f7e5dcd7e5d23b5ff8714b71a2f4ec3d5" }
+"selinux-policy" = { evr = "42.1.18-4.el10_2.4", arch = "noarch", source = "selinux-policy", repo = "baseos", sha256 = "704421fb936b81fe323cd448c2ea60d86af48ebae4a0f8fab2e6c26da88f2466" }
+"selinux-policy-targeted" = { evr = "42.1.18-4.el10_2.4", arch = "noarch", source = "selinux-policy", repo = "baseos", sha256 = "55c9c5f2d7ed432a99e688ea7331b74dabb8411b476826c7594014ecc9d7f4f4" }
 "setup" = { evr = "2.14.5-7.el10", arch = "noarch", source = "setup", repo = "baseos", sha256 = "4065c6f500ac20468530177b1a6012145c490c018a5d2812c951b0b7e919bc5b" }
 "sg3_utils" = { evr = "1.48-7.el10_2.1", arch = "x86_64_v2", source = "sg3_utils", repo = "baseos", sha256 = "35f2b0722476cdae4470214fd5c0ca6c241b127615dfe852ce34465e17d3eaf4" }
 "sg3_utils-libs" = { evr = "1.48-7.el10_2.1", arch = "x86_64_v2", source = "sg3_utils", repo = "baseos", sha256 = "c18b4cc451f33750835c048475bd4998eb13e34243f73203a71311677d46f26a" }
@@ -1602,6 +1680,10 @@ runtime = [
 "source-highlight" = { evr = "3.1.9-25.el10", arch = "x86_64_v2", source = "source-highlight", repo = "appstream", sha256 = "97bc57330b336358c6ec8185dd420750a33aec797fd23d9df96ddf4d2b56b03a" }
 "sqlite-libs" = { evr = "3.46.1-6.el10_2", arch = "x86_64_v2", source = "sqlite", repo = "baseos", sha256 = "51aa6837357d2201989fe9c15654c9854c1f02a91e503a19372743ec7f00b4c2" }
 "squashfs-tools" = { evr = "4.6.1-6.el10", arch = "x86_64_v2", source = "squashfs-tools", repo = "baseos", sha256 = "97765c6f098d474049dacca13ce55f9f3cd6d54d0af83bf34632aadf13dfd4ea" }
+"sssd-client" = { evr = "2.12.0-3.el10_2.2", arch = "x86_64_v2", source = "sssd", repo = "baseos", sha256 = "ef7e311c9d9e2ad30412ff031464ba38f87ef962626761b5c9235c5f1b2e8062" }
+"sssd-common" = { evr = "2.12.0-3.el10_2.2", arch = "x86_64_v2", source = "sssd", repo = "baseos", sha256 = "c9ae74ac52fe6c91cdf8ea0ed1476161efdef27ecad6e8378e7392403ba04f3a" }
+"sssd-kcm" = { evr = "2.12.0-3.el10_2.2", arch = "x86_64_v2", source = "sssd", repo = "baseos", sha256 = "e960a4dea630467e7fa85d7164da14b9276ca7881373eb26c8d9582e0d14b719" }
+"sssd-krb5-common" = { evr = "2.12.0-3.el10_2.2", arch = "x86_64_v2", source = "sssd", repo = "baseos", sha256 = "12dbfb2684fcbba2fdd46da24e35b7731e27b1445b7a156555b9f50d4062a0d9" }
 "strace" = { evr = "6.12-3.el10", arch = "x86_64_v2", source = "strace", repo = "baseos", sha256 = "c66a5fd1669d90f41930a488d8643ee10713cf955137c87a4e020973d16fe5fe" }
 "stunnel" = { evr = "5.72-8.el10", arch = "x86_64_v2", source = "stunnel", repo = "baseos", sha256 = "42cf1de635d5dfd61607e1e245fe1d3f525c95ff26b2ebd17393ab882b758e19" }
 "subversion" = { evr = "1.14.5-3.el10", arch = "x86_64_v2", source = "subversion", repo = "appstream", sha256 = "bd9983d22f42e1b4ed13229ee19c109e11cd401a8d7bd5733e4b635bca678796" }
@@ -1610,6 +1692,8 @@ runtime = [
 "swtpm" = { evr = "0.9.0-5.el10", arch = "x86_64_v2", source = "swtpm", repo = "appstream", sha256 = "4d84604ad8e0e2b616ec98036612d370c1b50e986b3f5ef726b2e87bb4f25d9a" }
 "swtpm-libs" = { evr = "0.9.0-5.el10", arch = "x86_64_v2", source = "swtpm", repo = "appstream", sha256 = "9c1988541581949ec55b4bca293c2064c97cf6af98ec3c8282fe10f276b1d892" }
 "swtpm-tools" = { evr = "0.9.0-5.el10", arch = "x86_64_v2", source = "swtpm", repo = "appstream", sha256 = "0ef3c87070c1e2084164bbc8e34208bc46ebf9a433f2c9259dcff19f6d5e5c36" }
+"syslinux" = { evr = "6.04-0.34.el10.alma.2", arch = "x86_64_v2", source = "syslinux", repo = "baseos", sha256 = "0c11c015af04359c8964911e8bc5bb300536c9ffe57bd20abe8e5937871350d8" }
+"syslinux-nonlinux" = { evr = "6.04-0.34.el10.alma.2", arch = "noarch", source = "syslinux", repo = "baseos", sha256 = "b9f8651cb0411892cd4347497e6ecc0b22fbe96151dac0c32dd6cbce95b53c5a" }
 "sysprof-capture-devel" = { evr = "47.2-1.el10", arch = "x86_64_v2", source = "sysprof", repo = "appstream", sha256 = "0f13aa69243619138f64c72756eb104d78b3dd32a8e37275f667d8024683b21b" }
 "sysstat" = { evr = "12.7.6-4.el10", arch = "x86_64_v2", source = "sysstat", repo = "appstream", sha256 = "eff404903252447435d497c57ab7f7cef6554841f1400f134be1309ccdb64168" }
 "systemd" = { evr = "257-23.el10_2.2.alma.1", arch = "x86_64_v2", source = "systemd", repo = "baseos", sha256 = "9c7c2dd9542290b4d3eda4883390be582df2dd49e1f8a8d553ad4e30df4ea622" }
@@ -1659,6 +1743,7 @@ runtime = [
 "xml-common" = { evr = "0.6.3-65.el10", arch = "noarch", source = "sgml-common", repo = "appstream", sha256 = "850cda3bbf605e45e08c33124c08b9f42eb5a3a5ce7f9947c2a124b383ebe30d" }
 "xmlto" = { evr = "0.0.28-25.el10", arch = "x86_64_v2", source = "xmlto", repo = "appstream", sha256 = "8a9c29dc38826021eeff059e7fc537047053e7e71358d80f00a5295085a0eff0" }
 "xorg-x11-proto-devel" = { evr = "2024.1-3.el10", arch = "noarch", source = "xorg-x11-proto-devel", repo = "appstream", sha256 = "2bea35b7beb98d163c08e8c37bf95788ac663edee1a96ef0a653ce6e9b96c30e" }
+"xorriso" = { evr = "1.5.6-6.el10", arch = "x86_64_v2", source = "libisoburn", repo = "appstream", sha256 = "8c6007c4612d4816d64db7ae9a8080fba65a4a0de4162181e9212e22fea110bf" }
 "xxhash-devel" = { evr = "0.8.4-1.el10_3.alma_altarch", arch = "x86_64_v2", source = "xxhash", repo = "epel", sha256 = "5abbe6c4b0c8d2dca5d961a74d007009b3953766d78b819cce28bae6d44ae2d2" }
 "xxhash-libs" = { evr = "0.8.4-1.el10_3.alma_altarch", arch = "x86_64_v2", source = "xxhash", repo = "epel", sha256 = "3d529a598f755eef9b72e17c3f471ae538e43b3b25950112889c31ab142fa7ba" }
 "xz" = { evr = "1:5.6.2-4.el10_2.1", arch = "x86_64_v2", source = "xz", repo = "baseos", sha256 = "ffaa855f68ff23c4723d929a9ed9ee3f456315dd56e38f7083dc0063dd5839ea" }

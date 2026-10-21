@@ -37,7 +37,7 @@ KEY_FILE = "RPM-GPG-KEY"
 
 
 def resolve_runtime(project: Project, keys: dict[str, str]) -> list[str]:
-    """Add to the lock the upstream packages our builds need, and the extra ones, and return their names."""
+    """Add to the lock the upstream packages our builds need, the extra ones and the installer's, and return them."""
     lock = load_lock(project)
     repo = builds_repo(project, keys)
     with project.work("runtime") as work:
@@ -46,6 +46,7 @@ def resolve_runtime(project: Project, keys: dict[str, str]) -> list[str]:
                 {
                     "locked": {name: [p.evr, p.arch] for name, p in lock.packages.items()},
                     "extra": project.config.publish.extra,
+                    "installer": project.config.iso.installer,
                 }
             )
         )

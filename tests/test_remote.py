@@ -85,6 +85,8 @@ def page(directory: str) -> str:
 REMOTE = (
     '[remote]\nurl = "http://xcraft.web.garage.localhost:13902"\n'
     's3_endpoint = "http://localhost:13900"\nbucket = "xcraft"\n'
+    # no installer: the test projects do not have its packages
+    "[iso]\ninstaller = []\n"
 )
 
 
