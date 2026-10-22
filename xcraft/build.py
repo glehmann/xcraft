@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import time
 import urllib.request
@@ -52,37 +53,9 @@ if TYPE_CHECKING:
 
     from xcraft.project import Project
 
-# Run in the build tree, mounted on /build: installs the build dependencies, including the
-# dynamic ones, then runs `rpmbuild`, with stdin from /dev/null like koji and mock, so that
-# interactive steps of a build don't wait forever.
-_BUILD_SCRIPT = """\
-set -euo pipefail
-export CCACHE_DIR=/ccache PATH=/usr/lib64/ccache:$PATH
-spec=/build/SPECS/{spec}
-time {{
-# dnf may not see that the local repository changed when it is regenerated within a second
-{lock} dnf -q makecache --repo {repo} --refresh
-{replace}{lock} dnf -y builddep -D "_topdir /build" {defines} "$spec"
-if grep -q '^%generate_buildrequires' "$spec"; then
-    # rpmbuild -br exits with 11 while some dynamic BuildRequires are missing
-    while rc=0; rpmbuild -br -D "_topdir /build" {defines} "$spec" </dev/null || rc=$?; [ $rc -eq 11 ]; do
-        {lock} dnf -y builddep /build/SRPMS/*.buildreqs.nosrc.rpm
-        rm /build/SRPMS/*.buildreqs.nosrc.rpm
-    done
-    [ $rc -eq 0 ]
-    rm -f /build/SRPMS/*.buildreqs.nosrc.rpm
-fi
-{lock} python3 /xcraft/record.py /build/buildroot.json
-# like mock's login shell, for the environment of build dependencies, like opam's, which are not written for set -eu
-set +eu +o pipefail
-for profile in /etc/profile.d/*.sh; do . "$profile"; done
-set -eu -o pipefail
-rpmbuild -b{stage} -D "_topdir /build" {defines} "$spec" </dev/null
-}}
-{then}
-"""
-
-_RECIPE = hashlib.sha256((REPO_FILE + _BUILD_SCRIPT + (BUILDENV / "record.py").read_text()).encode()).hexdigest()
+_RECIPE = hashlib.sha256(
+    "".join([REPO_FILE, *((BUILDENV / script).read_text() for script in ("build.sh", "record.py"))]).encode()
+).hexdigest()
 """What makes the builds, besides the image and the packages: a change to it rebuilds them all."""
 
 
@@ -305,19 +278,15 @@ def _run_build(  # noqa: PLR0913
     ours. `suffix` is added to the release of a test build, as %autorev. The output goes to
     `log`, or to an interactive terminal without log.
     """
-    script = _BUILD_SCRIPT.format(
-        spec=main_spec(project.package_dirs[name]).name,
-        stage=rpmbuild_stage,
-        then=after,
-        lock=DNF_LOCK,
-        repo=repo_id(project),
-        defines=f'-D "autorev {suffix}"' if suffix else "",
-        # ours have their own versions, older ones for kernel-headers, and are not in the versionlock
-        replace=f"{DNF_LOCK} dnf -y --disableplugin=versionlock --repo {repo_id(project)} distro-sync"
-        f" {' '.join(replace)}\n"
-        if replace
-        else "",
-    )
+    parameters = {
+        "spec": main_spec(project.package_dirs[name]).name,
+        "stage": rpmbuild_stage,
+        "repo": repo_id(project),
+        "lock": DNF_LOCK,
+        "autorev": suffix,
+        "replace": " ".join(replace),
+    }
+    script = "".join(f"{p}={shlex.quote(value)}\n" for p, value in parameters.items()) + f". /xcraft/build.sh\n{after}"
     ccache = project.state / "ccache" / name
     ccache.mkdir(parents=True, exist_ok=True)
     tree = project.state / "build" / name
