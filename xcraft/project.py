@@ -104,6 +104,8 @@ class Publish(BaseModel):
     """Name of the release, in the paths of its repositories."""
     extra: list[str] = []
     """Upstream packages to publish too, for convenience, like mc, with what they need."""
+    build: bool = True
+    """Whether to publish the build repository too: the upstream packages the builds need, not in the base one."""
 
 
 class Iso(BaseModel):

@@ -304,6 +304,8 @@ ones they need at runtime, in the remote storage, laid out like the repositories
 ```
 repos/<release>/<date>[.<n>]/base/<arch>/    our RPMs and the upstream ones, with their repodata, for each architecture
 repos/<release>/<date>[.<n>]/base/Source/    the source RPMs of all of them
+repos/<release>/<date>[.<n>]/build/<arch>/   the upstream RPMs our builds need, but those of base/<arch>/
+repos/<release>/<date>[.<n>]/build/Source/   their source RPMs
 repos/<release>/latest/...                   a copy of the latest snapshot
 ```
 
@@ -321,6 +323,10 @@ repos/<release>/latest/...                   a copy of the latest snapshot
   environment, as dnf checks them when installing but not when downloading. The RPMs must also match the sha256 of
   the lock.
 - Each package of the snapshot must install from the packages of its architecture alone: a self-contained repository.
+- The build repository has what rebuilding our packages needs, with `base`: the packages of the build environment
+  image and of the build roots, as locked, but the upstream ones ours replace, like `kernel-headers`. Each of its
+  packages must install from it and `base`. `[publish] build = false` in `xcraft.toml` leaves it out, and so does
+  `xcraft iso`, which does not need it.
 - Our source RPMs are those of the first architecture: built from the same sources, those of the others differ by
   their build times only.
 - All snapshots are kept. The storage stores identical files once: our packages are copies of the pushed builds, and

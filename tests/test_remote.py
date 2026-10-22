@@ -89,6 +89,8 @@ REMOTE = (
     's3_endpoint = "http://localhost:13900"\nbucket = "xcraft"\n'
     # no installer: the test projects do not have its packages
     "[iso]\ninstaller = []\n"
+    # nor the build repository, with the hundreds of source packages of their build environment to download
+    "[publish]\nbuild = false\n"
 )
 
 
@@ -247,7 +249,7 @@ def test_push_needs_the_credentials(root: Path, monkeypatch: pytest.MonkeyPatch)
 def test_publish(root: Path) -> None:
     # two architectures the host runs, built for both
     two = REMOTE.replace('["linux/amd64/v2"]', '["linux/amd64/v2", "linux/amd64"]')
-    (root / "xcraft.toml").write_text(f'{two}[publish]\nextra = ["bc"]\n')
+    (root / "xcraft.toml").write_text(f'{two}extra = ["bc"]\n')
     code, output = xcraft("publish", "--unsigned")
     assert code == 0, output
     lock = load_lock(Project.find())
@@ -285,7 +287,7 @@ def test_publish(root: Path) -> None:
     assert code == 1
     assert re.search(r"--locked forbids: .*-runtime bc\b", output)
     # the upstream packages must be signed with the keys of the repositories
-    (root / "xcraft.toml").write_text(f'{REMOTE}[publish]\nextra = ["bc"]\n')
+    (root / "xcraft.toml").write_text(f'{REMOTE}extra = ["bc"]\n')
     srpm = root / f".xcraft/cache/srpms/bc-{lock.packages['bc'].evr}.src.rpm"
     shutil.copy(next(root.glob(".xcraft/cache/builds/x86_64_v2/trivial/*/SRPMS/*.src.rpm")), srpm)
     code, output = xcraft("publish", "--local")

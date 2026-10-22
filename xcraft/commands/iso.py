@@ -44,7 +44,7 @@ def iso(  # noqa: PLR0913, PLR0917
     signer = choose_signer(project, local=True, unsigned=unsigned, dev_key=False)
     with project.lock():
         dest = (project.state / "publish").absolute()
-        snapshot([project], dest, signer=signer, push=False)
+        snapshot([project], dest, signer=signer, push=False, build=False)
         repo = dest / REPO / project.arch
         path = make_iso(project, repo, output, netinstall=netinstall, volid=volid, signer=signer)
     console.print(f"[bold green]✓[/] {path}")

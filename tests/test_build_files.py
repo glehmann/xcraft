@@ -13,9 +13,11 @@ from xcraft.build import BuildError, build_keys, prepare_tree, previous_duration
 from xcraft.clean import clean, repos_disk_usage
 from xcraft.commands import complete_arch
 from xcraft.localrepo import RepoError, fresh_dir
+from xcraft.lock import Lock, save_lock
 from xcraft.project import Config, Project, ProjectLockedError
+from xcraft.publish import build_dependencies
 from xcraft.sources import cache_source, write_manifest
-from xcraft.specs import Package, hash_dir, main_spec
+from xcraft.specs import Binary, Package, hash_dir, main_spec
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -176,6 +178,14 @@ def test_platforms(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     x86, arm = Project.find().all_platforms()
     assert ("epel" in x86.repos, "epel-fedora" in x86.repos) == (True, False)
     assert ("epel" in arm.repos, "epel-fedora" in arm.repos) == (False, True)
+
+
+def test_build_dependencies(project: Project) -> None:
+    binary = Binary(name="kernel-headers", evr="6.12-1", arch="x86_64_v2", provides=[], requires=[])
+    project.packages = {"kernel": Package(name="kernel", binaries=[binary])}
+    lock = Lock(image=["bash", "gcc", "kernel-headers"], runtime=["bash"], buildroots={"xen": ["zlib-devel", "gcc"]})
+    save_lock(project, lock)
+    assert build_dependencies(project) == ["gcc", "zlib-devel"]  # but ours, and those of the base repository
 
 
 def test_keys_of_cycles(project: Project) -> None:
