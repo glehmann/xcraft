@@ -287,6 +287,9 @@ def _run_build(  # noqa: PLR0913
         "replace": " ".join(replace),
     }
     script = "".join(f"{p}={shlex.quote(value)}\n" for p, value in parameters.items()) + f". /xcraft/build.sh\n{after}"
+    if size := project.config.ccache_size.get(name):
+        # not in the recipe of the builds: it does not change them
+        script = f"export CCACHE_MAXSIZE={shlex.quote(size)}\n{script}"
     ccache = project.state / "ccache" / name
     ccache.mkdir(parents=True, exist_ok=True)
     tree = project.state / "build" / name
