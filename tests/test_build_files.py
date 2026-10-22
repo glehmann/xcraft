@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import os
 import re
 from typing import TYPE_CHECKING
@@ -10,6 +11,7 @@ import pytest
 
 from xcraft.build import BuildError, build_keys, prepare_tree, previous_duration, queued
 from xcraft.clean import clean, repos_disk_usage
+from xcraft.commands import complete_arch
 from xcraft.localrepo import RepoError, fresh_dir
 from xcraft.project import Config, Project, ProjectLockedError
 from xcraft.sources import cache_source, write_manifest
@@ -62,24 +64,24 @@ def test_main_spec(tmp_path: Path) -> None:
 
 def test_clean_keeps_sources_and_current_builds(project: Project) -> None:
     state = project.state
-    for path in ("cache/sources/abc/foo.tar.gz", "cache/builds/foo/current/RPMS/foo.rpm",
-                 "cache/builds/foo/old/RPMS/foo.rpm", "cache/builds/gone/old/RPMS/gone.rpm",
+    for path in ("cache/sources/abc/foo.tar.gz", "cache/builds/x86_64_v2/foo/current/RPMS/foo.rpm",
+                 "cache/builds/x86_64_v2/foo/old/RPMS/foo.rpm", "cache/builds/x86_64_v2/gone/old/RPMS/gone.rpm",
                  "build/foo/SPECS/foo.spec", "repo/foo.rpm", "ccache/foo/data"):  # fmt: skip
         (state / path).parent.mkdir(parents=True, exist_ok=True)
         (state / path).write_bytes(b"x" * 8192)
 
     keys = {"foo": "current", "bar": "current"}
     # only what is of the given packages
-    for path in ("cache/builds/bar/current/RPMS/bar.rpm", "cache/builds/bar/old/RPMS/bar.rpm",
+    for path in ("cache/builds/x86_64_v2/bar/current/RPMS/bar.rpm", "cache/builds/x86_64_v2/bar/old/RPMS/bar.rpm",
                  "build/bar/SPECS/bar.spec", "ccache/bar/data"):  # fmt: skip
         (state / path).parent.mkdir(parents=True, exist_ok=True)
         (state / path).write_bytes(b"x" * 8192)
     assert clean(project, keys, ["bar"], ccache=True) > 0
-    assert "cache/builds/bar/current/RPMS/bar.rpm" in files(state)
-    assert not [f for f in files(state) if f.startswith(("cache/builds/bar/old", "build/bar", "ccache/bar"))]
-    assert {"build/foo/SPECS/foo.spec", "cache/builds/foo/old/RPMS/foo.rpm"} <= set(files(state))
+    assert "cache/builds/x86_64_v2/bar/current/RPMS/bar.rpm" in files(state)
+    assert not [f for f in files(state) if f.startswith(("cache/builds/x86_64_v2/bar/old", "build/bar", "ccache/bar"))]
+    assert {"build/foo/SPECS/foo.spec", "cache/builds/x86_64_v2/foo/old/RPMS/foo.rpm"} <= set(files(state))
     # what the local repository, the snapshot and the repositories of xcraft repo still link
-    rpm = state / "cache/builds/bar/current/RPMS/bar.rpm"
+    rpm = state / "cache/builds/x86_64_v2/bar/current/RPMS/bar.rpm"
     for link in (state / "repo/bar.rpm", state / "publish/x86_64_v2/os/bar.rpm", project.root / "repo/bar.rpm"):
         link.parent.mkdir(parents=True, exist_ok=True)
         link.hardlink_to(rpm)
@@ -89,14 +91,18 @@ def test_clean_keeps_sources_and_current_builds(project: Project) -> None:
     assert repos_disk_usage(project) == 8192  # only repo/ has it now
 
     assert clean(project, keys) > 0
-    assert files(state) == ["cache/builds/foo/current/RPMS/foo.rpm", "cache/sources/abc/foo.tar.gz", "ccache/foo/data"]
+    assert files(state) == [
+        "cache/builds/x86_64_v2/foo/current/RPMS/foo.rpm",
+        "cache/sources/abc/foo.tar.gz",
+        "ccache/foo/data",
+    ]
     clean(project, keys, all_builds=True, ccache=True)
     assert files(state) == ["cache/sources/abc/foo.tar.gz"]
 
 
 def test_previous_duration(project: Project) -> None:
     assert previous_duration(project, "foo") is None
-    log = project.state / "cache/builds/foo/key/build.log"
+    log = project.state / "cache/builds/x86_64_v2/foo/key/build.log"
     log.parent.mkdir(parents=True)
     log.write_text("Wrote: foo.rpm\n\nreal\t4m13.250s\nuser\t9m1.000s\n")
     assert previous_duration(project, "foo") == 253.25
@@ -113,13 +119,15 @@ def test_queued(project: Project) -> None:
 
 
 def test_lock(project: Project) -> None:
-    other = Project(project.root, Config())  # as found by another command
-    with project.lock():
-        with project.lock():  # the command holding it can take it again
+    # the command holding it can take it again, also through the project on another platform
+    with project.lock(), project.lock(), project.all_platforms()[1].lock():
+        pass
+    project.state.mkdir(exist_ok=True)
+    with (project.state / "lock").open("w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)  # as another command does
+        with pytest.raises(ProjectLockedError, match="another xcraft command is building"), project.lock():
             pass
-        with pytest.raises(ProjectLockedError, match="another xcraft command is building"), other.lock():
-            pass
-    with other.lock():  # released
+    with project.lock():  # released
         pass
 
 
@@ -150,6 +158,24 @@ def test_package_dirs(project: Project) -> None:
     (project.specs / "xostor/foo").mkdir()
     with pytest.raises(RuntimeError, match="foo is in two repositories: base and xostor"):
         _ = Project(project.root, project.config).package_dirs
+
+
+def test_platforms(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "xcraft.toml").write_text("")
+    monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path))
+    monkeypatch.delenv("XCRAFT_ARCH", raising=False)
+    for machine, arch in (("x86_64", "x86_64_v2"), ("aarch64", "aarch64"), ("ppc64le", "x86_64_v2")):
+        monkeypatch.setattr(os, "uname", lambda machine=machine: os.uname_result(("Linux", "h", "r", "v", machine)))
+        assert Project.find().arch == arch  # the host's, or the first one
+    monkeypatch.setenv("XCRAFT_ARCH", "x86_64_v2")
+    assert Project.find().arch == "x86_64_v2"
+    assert Project.find("aarch64").arch == "aarch64"
+    with pytest.raises(RuntimeError, match="x86_64 is not an architecture of the project: x86_64_v2, aarch64"):
+        Project.find("x86_64")
+    assert (complete_arch(""), complete_arch("a")) == (["x86_64_v2", "aarch64"], ["aarch64"])
+    x86, arm = Project.find().all_platforms()
+    assert ("epel" in x86.repos, "epel-fedora" in x86.repos) == (True, False)
+    assert ("epel" in arm.repos, "epel-fedora" in arm.repos) == (False, True)
 
 
 def test_keys_of_cycles(project: Project) -> None:

@@ -8,10 +8,10 @@ import os
 import shutil
 import tomllib
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -45,10 +45,18 @@ class Repo(BaseModel):
     """The only packages taken from the repository, when given."""
     source_baseurl: str = ""
     """URL of the source packages of the repository, with all their versions, for publishing them."""
+    arches: list[str] = []
+    """The RPM architectures it is for, all when not given."""
+
+
+Platform = Literal["linux/amd64/v2", "linux/amd64", "linux/arm64"]
+ARCHES: dict[Platform, str] = {"linux/amd64/v2": "x86_64_v2", "linux/amd64": "x86_64", "linux/arm64": "aarch64"}
+"""The RPM architecture of each platform."""
 
 
 _ALMALINUX_KEY = "file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-10"
 _EPEL_KEY = "https://repo.almalinux.org/almalinux/RPM-GPG-KEY-AlmaLinux-10-EPEL-AltArch"
+_FEDORA_EPEL = "https://dl.fedoraproject.org/pub/epel"
 
 
 def _almalinux(section: str) -> Repo:
@@ -130,14 +138,23 @@ class Config(BaseModel):
         "ghcr.io/almalinux/10-base:10.2@sha256:ed618ca107e9fd47ee2a64d1d33119ef356cfaf65a338daaa3fad19b80ae5da4"
     )
     """Image the build environment is made from, with a digest to pin it."""
-    platform: str = "linux/amd64/v2"
+    platforms: list[Platform] = ["linux/amd64/v2", "linux/arm64"]
+    """Platforms of the builds: xcraft works on one at a time, see Project.find()."""
     repos: dict[str, Repo] = {
         # the current AlmaLinux 10 and its EPEL: the lock decides of the versions used
         **{s.lower(): _almalinux(s) for s in ("BaseOS", "AppStream", "CRB", "extras", "devel")},
+        # AlmaLinux rebuilds EPEL for x86_64_v2 only
         "epel": Repo(
             baseurl="https://epel.repo.almalinux.org/10/{arch}/",
             gpgkey=_EPEL_KEY,
             source_baseurl="https://epel.vault.almalinux.org/10/Source/",
+            arches=["x86_64_v2"],
+        ),
+        "epel-fedora": Repo(
+            baseurl=f"{_FEDORA_EPEL}/10/Everything/{{arch}}/",
+            gpgkey=f"{_FEDORA_EPEL}/RPM-GPG-KEY-EPEL-10",
+            source_baseurl=f"{_FEDORA_EPEL}/10/Everything/source/tree/",
+            arches=["x86_64", "aarch64"],
         ),
     }
     """The only repositories of the build environment, with the local builds."""
@@ -164,10 +181,9 @@ class Config(BaseModel):
     sign: Sign | None = None
     """The key signing the published packages: they are not signed without one."""
 
-    @property
-    def arch(self) -> str:
-        """RPM architecture of the platform."""
-        return {"linux/amd64/v2": "x86_64_v2", "linux/amd64": "x86_64", "linux/arm64": "aarch64"}[self.platform]
+
+_held: set[Path] = set()
+"""The roots of the projects whose lock this process holds."""
 
 
 @dataclass
@@ -176,19 +192,50 @@ class Project:
 
     root: Path
     config: Config
+    platform: Platform = "linux/amd64/v2"
+    """The platform xcraft works on, one of the configuration's: see find()."""
     frozen: bool = False
     """Whether the lock cannot change, with --locked."""
-    _locked: bool = field(default=False, init=False, repr=False, compare=False)
 
     @classmethod
-    def find(cls) -> Project:
-        """Return the project: $XCRAFT_PROJECT, or the checkout of xcraft's code, which comes with its specs."""
+    def find(cls, arch: str | None = None) -> Project:
+        """Return the project: $XCRAFT_PROJECT, or the checkout of xcraft's code, which comes with its specs.
+
+        It works on the platform of the RPM architecture `arch`, $XCRAFT_ARCH, or the host's, like x86_64 for
+        x86_64_v2, or else on the first one of the configuration.
+        """
         root = Path(os.environ.get("XCRAFT_PROJECT") or Path(__file__).resolve().parent.parent)
         if not (root / "xcraft.toml").exists():
             msg = f"no xcraft.toml in {root}, set XCRAFT_PROJECT to the xcraft project"
             raise RuntimeError(msg)
         with (root / "xcraft.toml").open("rb") as f:
-            return cls(root, Config.model_validate(tomllib.load(f)))
+            config = Config.model_validate(tomllib.load(f))
+        platforms = {ARCHES[p]: p for p in config.platforms}
+        if arch := arch or os.environ.get("XCRAFT_ARCH"):
+            if arch not in platforms:
+                msg = f"{arch} is not an architecture of the project: {', '.join(platforms)}"
+                raise RuntimeError(msg)
+            return cls(root, config, platforms[arch])
+        return next((p for p in cls(root, config).all_platforms() if p.native), cls(root, config, config.platforms[0]))
+
+    @property
+    def arch(self) -> str:
+        """The RPM architecture of the platform."""
+        return ARCHES[self.platform]
+
+    @property
+    def native(self) -> bool:
+        """Whether the host runs the platform, like x86_64_v2 on x86_64, rather than emulating it."""
+        return self.arch.startswith(os.uname().machine)
+
+    def all_platforms(self) -> list[Project]:
+        """Return the project on each platform of the configuration."""
+        return [replace(self, platform=platform) for platform in self.config.platforms]
+
+    @property
+    def repos(self) -> dict[str, Repo]:
+        """The repositories of the build environment for the platform."""
+        return {name: repo for name, repo in self.config.repos.items() if not repo.arches or self.arch in repo.arches}
 
     @property
     def specs(self) -> Path:
@@ -253,9 +300,9 @@ class Project:
     def lock(self) -> Generator[None]:
         """Hold the lock of the project, for the commands changing its packages or what xcraft generates.
 
-        It can be taken again while held.
+        It can be taken again while held, also through the project on another platform.
         """
-        if self._locked:
+        if self.root in _held:
             yield
             return
         self.state.mkdir(exist_ok=True)
@@ -265,8 +312,8 @@ class Project:
             except BlockingIOError:
                 msg = "another xcraft command is building or changing this project"
                 raise ProjectLockedError(msg) from None
-            self._locked = True
+            _held.add(self.root)
             try:
                 yield
             finally:
-                self._locked = False
+                _held.remove(self.root)

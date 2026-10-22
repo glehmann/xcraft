@@ -138,7 +138,7 @@ def _upstream_srpms(project: Project, names: list[str], on_line: Callable[[str],
         (work / "sources.repo").write_text(
             "".join(
                 f"[{name}-source]\nname={name} sources\nbaseurl={repo.source_baseurl}\nenabled=0\ngpgcheck=0\n"
-                for name, repo in project.config.repos.items()
+                for name, repo in project.repos.items()
                 if repo.source_baseurl
             )
         )
@@ -164,7 +164,7 @@ def _upstream_srpms(project: Project, names: list[str], on_line: Callable[[str],
 
 def _signed_path(project: Project, signer: Signer, name: str, key: str) -> str:
     """Return the path of the tree of a signed build in the remote storage."""
-    return f"signed/{signer.key}/{project.config.arch}/{name}/{key}"
+    return f"signed/{signer.key}/{project.arch}/{name}/{key}"
 
 
 def _signed_build(project: Project, signer: Signer, name: str, key: str, *, push: bool) -> Path:
@@ -255,7 +255,7 @@ def _check_installable(project: Project, repo: Path) -> None:
 
 def _snapshot_path(project: Project, name: str) -> str:
     """Return the path of a snapshot in the storage, with its os/ and source/ repositories."""
-    return f"repos/{project.config.publish.release}/{name}/{project.config.arch}"
+    return f"repos/{project.config.publish.release}/{name}/{project.arch}"
 
 
 def snapshot_name(project: Project, storage: Remote) -> str:
@@ -316,6 +316,6 @@ def upload_snapshot(project: Project, keys: dict[str, str], src: Path, name: str
         remote.write_manifest(storage, latest, manifest)
         _delete_stale(storage, latest, keep)
         on_line("the pages of the directories")
-        signed = [f"signed/{signer.key}/{project.config.arch}/"] if signer else []
+        signed = [f"signed/{signer.key}/{project.arch}/"] if signer else []
         remote.update_pages(storage, [f"{snapshot}/", f"{latest}/", *signed])
     console.print(f"[bold green]✓[/] published {snapshot}, and as {latest}")

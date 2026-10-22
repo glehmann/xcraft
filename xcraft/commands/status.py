@@ -9,7 +9,7 @@ from rich.measure import Measurement
 from rich.table import Table
 
 from xcraft import build as builder
-from xcraft.commands import Packages, load
+from xcraft.commands import Arch, Packages, load
 from xcraft.display import console
 
 _STYLES = {
@@ -37,7 +37,7 @@ def _tests(builds: list[builder.TestBuild]) -> str:
     )
 
 
-def status(packages: Packages = None) -> None:
+def status(packages: Packages = None, arch: Arch = None) -> None:
     """Show the version of the given packages, or all, and whether it is built.
 
     The states: error (the spec cannot be parsed), building, queued (by a running
@@ -45,7 +45,7 @@ def status(packages: Packages = None) -> None:
     tests column shows the latest test or pre build of each ID, outdated when the
     package or its dependencies changed since.
     """
-    project = load(packages)
+    project = load(packages, arch=arch)
     keys = builder.build_keys(project)
     queue = [name for name in builder.queued(project) if not builder.cached_build(project, name, keys[name]).exists()]
     shown = sorted(set(packages or project.packages))

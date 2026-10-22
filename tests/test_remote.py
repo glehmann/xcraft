@@ -213,9 +213,11 @@ def test_builds(root: Path) -> None:
     assert code == 0, output
     assert output.splitlines()[0] == "↓ trivial fetched"
     assert output.splitlines()[-1] == "1 built, 1 fetched"
-    assert list((root / ".xcraft/cache/builds/trivial").glob("*/RPMS/noarch/trivial-1.0-1.xcpng8.99.noarch.rpm"))
+    assert list(
+        (root / ".xcraft/cache/builds/x86_64_v2/trivial").glob("*/RPMS/noarch/trivial-1.0-1.xcpng8.99.noarch.rpm")
+    )
     # built, even though the storage has it
-    shutil.rmtree(root / ".xcraft/cache/builds/trivial")
+    shutil.rmtree(root / ".xcraft/cache/builds/x86_64_v2/trivial")
     code, output = xcraft("build", "trivial", "--no-fetch")
     assert code == 0, output
     assert output.splitlines()[-1] == "1 built"
@@ -271,7 +273,7 @@ def test_publish(root: Path) -> None:
     # the upstream packages must be signed with the keys of the repositories
     (root / "xcraft.toml").write_text(f'{REMOTE}[publish]\nextra = ["bc"]\n')
     srpm = root / f".xcraft/cache/srpms/bc-{lock.packages['bc'].evr}.src.rpm"
-    shutil.copy(next(root.glob(".xcraft/cache/builds/trivial/*/SRPMS/*.src.rpm")), srpm)
+    shutil.copy(next(root.glob(".xcraft/cache/builds/x86_64_v2/trivial/*/SRPMS/*.src.rpm")), srpm)
     code, output = xcraft("publish", "--local")
     assert code == 1
     assert f"✗ source/{srpm.name}: digests SIGNATURES NOT OK" in output

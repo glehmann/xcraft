@@ -5,18 +5,18 @@ from __future__ import annotations
 from rich.table import Table
 
 from xcraft import build as builder
-from xcraft.commands import load
+from xcraft.commands import Arch, load
 from xcraft.display import console
 from xcraft.lock import load_lock
 
 
-def impacts() -> None:
+def impacts(arch: Arch = None) -> None:
     """Show the pending updates: the upstream packages updated since the releases of the packages built with them.
 
     For each impacted package: ✓ built with the current lock, ✗ not built with it yet.
     Decide with xcraft bump (new release) or xcraft ack (no release needed).
     """
-    project = load()
+    project = load(arch=arch)
     lock = load_lock(project)
     if not lock.pending:
         console.print("nothing pending")

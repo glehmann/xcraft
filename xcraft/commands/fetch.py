@@ -5,7 +5,7 @@ from __future__ import annotations
 import typer
 
 from xcraft import build as builder
-from xcraft.commands import Packages, load, remote_storage
+from xcraft.commands import Arch, Packages, load, remote_storage
 from xcraft.display import console
 from xcraft.project import Project
 
@@ -13,25 +13,25 @@ app = typer.Typer()
 
 
 @app.callback(invoke_without_command=True)
-def everything(ctx: typer.Context) -> None:
+def everything(ctx: typer.Context, arch: Arch = None) -> None:
     """Download what the caches do not have yet.
 
     Without a command: the current builds of all the packages, when there is a remote storage, then their sources.
     """
     if ctx.invoked_subcommand:
         return
-    if Project.find().config.remote:
-        builds()
-    sources()
+    if Project.find(arch).config.remote:
+        builds(arch=arch)
+    sources(arch=arch)
 
 
 @app.command()
-def sources(packages: Packages = None) -> None:
+def sources(packages: Packages = None, arch: Arch = None) -> None:
     """Put the source archives of the packages, all by default, in the source cache.
 
     Those missing are downloaded from the remote storage, or else from the URL of the package's Source0.
     """
-    project = load(packages)
+    project = load(packages, arch=arch)
     missing = {
         name: archives
         for name in packages or sorted(project.packages)
@@ -45,9 +45,9 @@ def sources(packages: Packages = None) -> None:
 
 
 @app.command()
-def builds(packages: Packages = None) -> None:
+def builds(packages: Packages = None, arch: Arch = None) -> None:
     """Download from the remote storage the current builds of the packages, all by default, missing from the cache."""
-    project = load(packages)
+    project = load(packages, arch=arch)
     remote_storage(project)
     keys = builder.build_keys(project)
     fetched, cached, absent = [], [], []

@@ -121,7 +121,7 @@ def build_keys(project: Project, autorev: dict[str, str] | None = None) -> dict[
     other get the key of them all.
     """
     lock, deps = load_lock(project), project.deps
-    base = json.dumps([image_tag(project), project.config.platform, project.config.extra_upstream, _RECIPE])
+    base = json.dumps([image_tag(project), project.platform, project.config.extra_upstream, _RECIPE])
 
     def inputs(name: str) -> str:
         buildroot = [f"{upstream}={lock.packages[upstream].evr}" for upstream in lock.buildroots.get(name, [])]
@@ -140,7 +140,7 @@ def build_keys(project: Project, autorev: dict[str, str] | None = None) -> dict[
 
 def cached_build(project: Project, name: str, key: str) -> Path:
     """Return where the build of `name` with `key` is cached."""
-    return project.state / "cache/builds" / name / key
+    return project.state / "cache/builds" / project.arch / name / key
 
 
 def has_normal_build(project: Project, name: str) -> bool:
@@ -204,7 +204,7 @@ def source_path(filename: str, digest: str) -> str:
 
 def build_path(project: Project, name: str, key: str) -> str:
     """Return the path of the tree of a build in the remote storage."""
-    return f"builds/{project.config.arch}/{name}/{key}"
+    return f"builds/{project.arch}/{name}/{key}"
 
 
 BUILD_FILES = ["RPMS", "SRPMS", "build.log"]
@@ -335,7 +335,7 @@ class Result:
 
 def previous_duration(project: Project, name: str) -> float | None:
     """Return how long the last cached build of `name` took, if any."""
-    builds = sorted((project.state / "cache/builds" / name).glob("*/build.log"), key=lambda log: log.stat().st_mtime)
+    builds = sorted(cached_build(project, name, "").glob("*/build.log"), key=lambda log: log.stat().st_mtime)
     for log in reversed(builds):
         # the build environment runs the build under `time`
         if times := re.findall(r"^real\s+(\d+)m([\d.]+)s$", log.read_text(errors="replace"), re.MULTILINE):

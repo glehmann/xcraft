@@ -8,7 +8,7 @@ import typer
 
 from xcraft import build as builder
 from xcraft import remote
-from xcraft.commands import Packages, load, remote_storage
+from xcraft.commands import Arch, Packages, load, remote_storage
 from xcraft.display import activity, console
 from xcraft.project import Project
 from xcraft.sources import read_manifest
@@ -17,15 +17,15 @@ app = typer.Typer()
 
 
 @app.callback(invoke_without_command=True)
-def everything(ctx: typer.Context) -> None:
+def everything(ctx: typer.Context, arch: Arch = None) -> None:
     """Upload to the remote storage what it does not have yet.
 
     Without a command: the sources and the builds of all the packages, then the pages of all its directories.
     """
     if ctx.invoked_subcommand:
         return
-    sources()
-    not_built = _push_builds(None)
+    sources(arch=arch)
+    not_built = _push_builds(None, arch)
     index()
     if not_built:
         msg = f"not built: {', '.join(not_built)}"
@@ -38,9 +38,10 @@ def sources(
     check: Annotated[
         bool, typer.Option("--check", help="Only fail when the remote storage misses archives, for CI.")
     ] = False,
+    arch: Arch = None,
 ) -> None:
     """Upload the source archives of the packages, all by default, from the source cache."""
-    project = load(packages)
+    project = load(packages, arch=arch)
     storage = remote_storage(project)
     archives = sorted(
         {
@@ -77,16 +78,16 @@ def sources(
 
 
 @app.command()
-def builds(packages: Packages = None) -> None:
+def builds(packages: Packages = None, arch: Arch = None) -> None:
     """Upload the current builds of the given packages, all by default. Test builds are never uploaded."""
-    if not_built := _push_builds(packages):
+    if not_built := _push_builds(packages, arch):
         msg = f"not built: {', '.join(not_built)}"
         raise RuntimeError(msg)
 
 
-def _push_builds(packages: list[str] | None) -> list[str]:
+def _push_builds(packages: list[str] | None, arch: str | None) -> list[str]:
     """Upload the current builds of `packages`, all by default, and return those not built."""
-    project = load(packages)
+    project = load(packages, arch=arch)
     storage = remote_storage(project)
     keys = builder.build_keys(project)
     pushed, present, not_built = [], [], []

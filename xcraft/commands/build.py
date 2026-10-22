@@ -7,7 +7,7 @@ from typing import Annotated
 import typer
 
 from xcraft import build as builder
-from xcraft.commands import Packages, Pre, Test, load, test_kind
+from xcraft.commands import Arch, Packages, Pre, Test, load, test_kind
 from xcraft.display import console
 from xcraft.graph import dependents
 
@@ -29,13 +29,14 @@ def build(  # noqa: PLR0913, PLR0917
     ] = False,
     test: Test = None,
     pre: Pre = None,
+    arch: Arch = None,
 ) -> None:
     """Build the given packages, all by default, and what they need, in the build environment.
 
     Each test or pre build of a package gets the next number <n> for its ID and release.
     """
     kind = test_kind(test, pre, packages)
-    project = load(packages, locked=locked)
+    project = load(packages, locked=locked, arch=arch)
     names = list(packages or sorted(project.packages))
     if with_dependents:
         names += sorted(dependents(project.deps, names) - set(names))

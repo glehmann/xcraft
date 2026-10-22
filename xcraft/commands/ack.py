@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-from xcraft.commands import Packages
+from xcraft.commands import Arch, Packages
 from xcraft.commands.bump import Dep, pending_packages
 from xcraft.display import console
 from xcraft.lock import load_lock, save_lock
 from xcraft.project import Project
 
 
-def ack(packages: Packages = None, dep: Dep = None) -> None:
+def ack(packages: Packages = None, dep: Dep = None, arch: Arch = None) -> None:
     """Acknowledge pending updates without a new release: all those of the given packages, or of the --dep ones.
 
     Say why in the commit.
     """
-    project = Project.find()
+    project = Project.find(arch)
     with project.lock():
         lock = load_lock(project)
         names = pending_packages(packages, lock.pending, dep or [])
