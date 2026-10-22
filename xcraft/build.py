@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 from rich.markup import escape
 from rich.text import Text
 
-from xcraft import remote
+from xcraft import ccache, remote
 from xcraft.container import BUILDENV, DNF_LOCK, ContainerError, build_image, image_tag, run, run_container
 from xcraft.display import (
     activity,
@@ -292,10 +292,10 @@ def _run_build(  # noqa: PLR0913
     if size := project.config.ccache_size.get(name):
         # not in the recipe of the builds: it does not change them
         script = f"export CCACHE_MAXSIZE={shlex.quote(size)}\n{script}"
-    ccache = project.state / "ccache" / name
-    ccache.mkdir(parents=True, exist_ok=True)
+    cache = ccache.local_path(project, name)
+    cache.mkdir(parents=True, exist_ok=True)
     tree = project.state / "build" / name
-    volumes = [f"{tree}:/build", f"{ccache}:/ccache", *repo.volumes()]
+    volumes = [f"{tree}:/build", f"{cache}:/ccache", *repo.volumes()]
     run_container(project, script, container=f"xcraft-{project.id}-{name}", volumes=volumes, log=log, on_line=on_line)
 
 
@@ -579,6 +579,8 @@ def _build_all(  # noqa: PLR0913
                 msg = f"not in the remote storage, for {project.arch}"
                 raise BuildError(msg)
             status = None if verbose else f"[{i}/{len(plan)}] building {name}{_estimate(project, name)}"
+            if use_remote:  # without a compiler cache, the one of the remote storage
+                ccache.fetch_missing(project, name)
             _build_one(project, name, repo, status=status, autorev=autorev)
         except (OSError, RuntimeError) as e:
             results[name] = Result(name, "failed")

@@ -41,9 +41,11 @@ xcraft --install-completion  # optional
 | `xcraft push sources [<pkg>...] [--check]` | Upload the source archives missing from the remote storage, or only check |
 | `xcraft push builds [<pkg>...]` | Upload the current builds missing from the remote storage, for CI |
 | `xcraft push index` | Make the `index.html` pages of all the directories of the remote storage |
+| `xcraft push ccache [<pkg>...]` | Upload the compiler caches of the packages, replacing those of the remote storage, for CI |
 | `xcraft fetch` | Download everything the caches miss: the current builds of all packages, then their source archives |
 | `xcraft fetch sources [<pkg>...]` | Download the source archives missing from the source cache, from the remote storage, or else from the URL of Source0 |
 | `xcraft fetch builds [<pkg>...]` | Download the current builds missing from the build cache |
+| `xcraft fetch ccache [<pkg>...]` | Download the compiler caches of the packages, replacing the local ones |
 | `xcraft lock` | Show the lock of upstream packages |
 | `xcraft lock --update [<pkg>...]` | Update locked packages, all or some (binary or source names), to their latest versions |
 | `xcraft impacts` | Show the pending updates: the upstream packages updated since the release of the packages built with them |
@@ -281,6 +283,10 @@ The writes use the credentials of `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY
   key covers everything the build depends on, so it is the same everywhere for the same commit. A build is a binary
   people install, so only CI should push builds, after `xcraft build --locked`, which fails when a build would
   change the lock, and so its key: `xcraft push builds`. Test builds are never pushed.
+- A build without the compiler cache of its package downloads the one of the storage first, unless `--no-fetch`: the
+  one CI pushes after its builds, with `xcraft push ccache`, so that rebuilding a modified package, like the kernel
+  with a patch, mostly finds its objects. The cache of a package is a tarball, in `ccache/<arch>/<package>/`, rather
+  than read by ccache from the storage, as the builds run without the network. `xcraft fetch ccache` gets it again.
 
 Without network, or when the storage is unavailable, everything still works with what is local.
 

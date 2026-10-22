@@ -14,9 +14,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.test_build import FIXTURES, xcraft
+from tests.test_build import FIXTURES, write_spec, xcraft
 from xcraft import remote
 from xcraft.build import BuildError, prepare_tree, source_path
+from xcraft.container import run
 from xcraft.lock import load_lock
 from xcraft.project import Project
 from xcraft.signing import check_signatures, create_dev_key
@@ -225,6 +226,40 @@ def test_builds(root: Path) -> None:
     code, output = xcraft("build", "trivial", "--no-fetch")
     assert code == 0, output
     assert output.splitlines()[-1] == "1 built"
+
+
+def ccache_hits(cache: Path) -> int:
+    """Return how many compilations were found in the compiler cache `cache`."""
+    run(Project.find(), "test-ccache", "CCACHE_DIR=/cache ccache --print-stats", volumes=[f"{cache}:/cache"])
+    log = (Project.find().state / "logs/_test-ccache.log").read_text()
+    stats = {k: int(v) for k, v in (line.split("\t") for line in log.splitlines() if "\t" in line)}
+    return stats["direct_cache_hit"] + stats["preprocessed_cache_hit"]
+
+
+def test_ccache(root: Path) -> None:
+    write_spec(root, "compiled", files="/usr/lib/compiled/t.o")
+    spec = root / "specs/base/compiled/compiled.spec"
+    build = "%build\necho 'int f(void) { return 0; }' > t.c\ngcc -c t.c -o t.o\n"
+    spec.write_text(
+        spec.read_text()
+        .replace("BuildArch: noarch\n", "")
+        .replace("%install\n", build + "%install\n")
+        .replace("touch %{buildroot}/usr/lib/compiled/t.o", "cp t.o %{buildroot}/usr/lib/compiled/t.o")
+    )
+    assert xcraft("build", "compiled")[0] == 0
+    cache = root / ".xcraft/ccache/compiled"
+    results = sorted(cache.rglob("*R"))  # the results of the compilations
+    assert results
+    assert xcraft("push", "ccache", "compiled") == (0, "↑ compiled\n1 pushed\n")
+    shutil.rmtree(cache)
+    assert xcraft("fetch", "ccache", "compiled") == (0, "↓ compiled\n1 fetched\n")
+    assert sorted(cache.rglob("*R")) == results
+    # a build without a compiler cache gets the one of the remote storage, and uses it, unless --no-fetch
+    for release, options, hits in (("2", ["--no-fetch"], 0), ("3", [], 1)):
+        shutil.rmtree(cache)
+        spec.write_text(re.sub(r"Release: \d+", f"Release: {release}", spec.read_text()))
+        assert xcraft("build", "compiled", *options)[0] == 0
+        assert ccache_hits(cache) == hits
 
 
 def test_unavailable_remote_storage(root: Path) -> None:

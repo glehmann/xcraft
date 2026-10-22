@@ -5,6 +5,7 @@ from __future__ import annotations
 import typer
 
 from xcraft import build as builder
+from xcraft import ccache
 from xcraft.commands import Arch, Packages, load, remote_storage
 from xcraft.display import console
 from xcraft.project import Project
@@ -42,6 +43,21 @@ def sources(packages: Packages = None, arch: Arch = None) -> None:
     if missing:
         raise typer.Exit(1)
     console.print("all the source archives are in the source cache")
+
+
+@app.command("ccache")
+def caches(packages: Packages = None, arch: Arch = None) -> None:
+    """Download the compiler caches of the given packages, all by default, replacing the local ones.
+
+    They are not downloaded by xcraft fetch without a command, but a build gets the one of its package when it has
+    none.
+    """
+    project = load(packages, arch=arch)
+    storage = remote_storage(project)
+    fetched = [name for name in packages or sorted(project.packages) if ccache.fetch(project, storage, name)]
+    for name in fetched:
+        console.print(f"[green]↓[/] {name}")
+    console.print(f"{len(fetched)} fetched")
 
 
 @app.command()
