@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import shutil
-import urllib.request
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated
 
 import typer
 
+from xcraft import process
 from xcraft.commands import Packages, load
 from xcraft.display import activity, console, download_progress
 from xcraft.importer import git
@@ -60,7 +60,7 @@ def _new_archives(project: Project, before: dict[str, Package], after: dict[str,
             shutil.rmtree(work, ignore_errors=True)
             work.mkdir(parents=True)
             with activity(f"downloading {url}") as on_line:
-                urllib.request.urlretrieve(url, work / archive_name(url), reporthook=download_progress(on_line))  # noqa: S310
+                process.download(url, work / archive_name(url), download_progress(on_line))
             digests[url] = cache_source(project.source_cache, work / archive_name(url))
             shutil.rmtree(work)
         # the file of a link, like the sources of kernel-headers, which are the kernel's

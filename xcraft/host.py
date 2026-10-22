@@ -7,8 +7,9 @@ kernel ignores the setuid bit of the emulated binaries.
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
+
+from xcraft import process
 
 _QEMU = {"x86_64_v2": "x86_64", "x86_64": "x86_64", "aarch64": "aarch64"}
 """The qemu name of each RPM architecture."""
@@ -73,5 +74,5 @@ def fix_emulation(fixes: list[tuple[Path, str]]) -> None:
     """Register the `fixes`, files of the distribution and their new content, in /etc/binfmt.d/, with sudo."""
     *writes, restart = fix_commands(fixes)
     for cmd, (_, text) in zip(writes, fixes, strict=True):
-        subprocess.run(cmd, input=text, text=True, check=True, stdout=subprocess.DEVNULL)
-    subprocess.run(restart, check=True)
+        process.run(cmd, input=text, capture=True)
+    process.run(restart)

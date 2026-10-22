@@ -19,12 +19,11 @@ import hashlib
 import re
 import shlex
 import shutil
-import subprocess
 import tempfile
-import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from xcraft import process
 from xcraft.container import run
 from xcraft.display import download_progress
 from xcraft.sources import cache_source, sha256_of, write_manifest
@@ -43,7 +42,7 @@ _ARCHIVE = re.compile(r"\.(tar(\.\w+)?|tgz|tbz2|txz|zip|gem|crate)$")
 
 def git(*args: str) -> str:
     """Run git and return its stripped output."""
-    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout.strip()
+    return process.run(["git", *args], capture=True).stdout.strip()
 
 
 def read_origin(pkg_dir: Path) -> tuple[str, str, str] | None:
@@ -64,10 +63,8 @@ def _fetch_lookaside(  # noqa: PLR0913
         raise RuntimeError(msg)
     with tempfile.TemporaryDirectory(prefix="xcraft-lookaside-") as tmp:
         path = Path(tmp) / filename
-        urllib.request.urlretrieve(  # noqa: S310
-            lookaside.format(checksum=checksum),
-            path,
-            reporthook=download_progress(on_line, f"downloading {filename}: "),
+        process.download(
+            lookaside.format(checksum=checksum), path, download_progress(on_line, f"downloading {filename}: ")
         )
         with path.open("rb") as f:
             if hashlib.file_digest(f, algorithm.lower()).hexdigest() != checksum:
@@ -161,7 +158,7 @@ def _import_srpm(project: Project, pkg_dir: Path, url: str, *, on_line: Callable
     """Replace `pkg_dir` with the content of the source RPM at `url`, and return its SHA-256."""
     with tempfile.TemporaryDirectory(prefix="xcraft-import-") as tmp, _replacing(pkg_dir) as new:
         srpm = Path(tmp) / url.rsplit("/", 1)[-1]
-        urllib.request.urlretrieve(url, srpm, reporthook=download_progress(on_line, f"downloading {srpm.name}: "))  # noqa: S310
+        process.download(url, srpm, download_progress(on_line, f"downloading {srpm.name}: "))
         content = Path(tmp) / "content"
         content.mkdir()
         # rpm2cpio is not on every host

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from rich.markup import escape
 
+from xcraft import process
 from xcraft.container import ContainerError, run, signing_image
 from xcraft.display import console
 
@@ -39,9 +40,7 @@ class Signer:
     def gpg(self, *args: str) -> str:
         """Run gpg in the keyring, and return its output."""
         try:
-            return subprocess.run(
-                ["gpg", "--batch", *args], check=True, capture_output=True, text=True, env=self._env()
-            ).stdout
+            return process.run(["gpg", "--batch", *args], capture=True, env=self._env()).stdout
         except subprocess.CalledProcessError as e:
             msg = f"gpg {' '.join(args)}: {e.stderr.strip()}"
             raise SigningError(msg) from e
@@ -66,10 +65,8 @@ class Signer:
             return
         env = self._env()
         try:
-            subprocess.run(["gpg-connect-agent", "/bye"], check=True, capture_output=True, env=env)  # starts it
-            socket = subprocess.run(
-                ["gpgconf", "--list-dirs", "agent-extra-socket"], check=True, capture_output=True, text=True, env=env
-            ).stdout.strip()
+            process.run(["gpg-connect-agent", "/bye"], capture=True, env=env)  # starts it
+            socket = process.run(["gpgconf", "--list-dirs", "agent-extra-socket"], capture=True, env=env).stdout.strip()
         except subprocess.CalledProcessError as e:
             msg = f"no gpg agent: {e.stderr.strip()}"
             raise SigningError(msg) from e

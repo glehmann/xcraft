@@ -17,6 +17,8 @@ from rich.progress_bar import ProgressBar
 from rich.table import Column
 from rich.text import Text
 
+from xcraft import process
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable, Iterator
     from pathlib import Path
@@ -93,7 +95,7 @@ def page_log(lines: Iterable[str]) -> None:
     env = {"LESS": "FRX", **os.environ}
     with (
         contextlib.suppress(BrokenPipeError),  # the pager was quit
-        subprocess.Popen(pager, stdin=subprocess.PIPE, text=True, env=env) as proc,
+        process.popen(pager, stdin=subprocess.PIPE, env=env) as proc,
     ):
         out = Console(file=proc.stdin, force_terminal=True, width=console.width, highlight=False, soft_wrap=True)
         for line in lines:

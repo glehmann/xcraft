@@ -20,7 +20,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from xcraft import host
+from xcraft import host, process
 from xcraft.display import activity
 from xcraft.lock import Lock, Locked, load_lock, save_lock
 from xcraft.project import ProjectLockedError
@@ -78,7 +78,7 @@ def image_tag(project: Project) -> str:
 
 
 def _exists(tag: str) -> bool:
-    return not subprocess.run(["podman", "image", "exists", tag], check=False).returncode
+    return not process.run(["podman", "image", "exists", tag], check=False).returncode
 
 
 def build_image(project: Project) -> str:
@@ -130,10 +130,10 @@ def _podman_build(  # noqa: PLR0913
         build_args = [arg for name, value in args.items() for arg in ("--build-arg", f"{name}={value}")]
         # the metadata of the dnf cache, which the containers solved, slow to solve again under emulation, in an
         # overlay, in which the build changes nothing
-        if subprocess.run(["podman", "volume", "exists", volume := _dnf_cache(project)], check=False).returncode:
-            subprocess.run(["podman", "volume", "create", volume], check=True, capture_output=True)
+        if process.run(["podman", "volume", "exists", volume := _dnf_cache(project)], check=False).returncode:
+            process.run(["podman", "volume", "create", volume], capture=True)
         inspect = ["podman", "volume", "inspect", "--format", "{{.Mountpoint}}", volume]
-        cache = subprocess.run(inspect, check=True, capture_output=True, text=True).stdout.strip()
+        cache = process.run(inspect, capture=True).stdout.strip()
         cmd = ["podman", "build", "--platform", project.platform, "--volume", f"{cache}:/var/cache/dnf:O", *build_args]
         cmd += ["--tag", tag, str(context)]
         log = project.state / f"logs/_{step}.log"
@@ -283,7 +283,7 @@ def run_container(  # noqa: PLR0913
     ]  # fmt: skip
     try:
         returncode = (
-            subprocess.run(cmd, check=False).returncode if log is None else _run_logged(cmd, log, on_line, container)
+            process.run(cmd, check=False).returncode if log is None else _run_logged(cmd, log, on_line, container)
         )
     except BaseException:
         _kill(container)
@@ -296,7 +296,7 @@ def run_container(  # noqa: PLR0913
 def _kill(container: str) -> None:
     # bash, the init process of the container, ignores the signals stopping podman: killed, and removed at once,
     # not later by --rm, as another container of the same name may follow
-    subprocess.run(["podman", "rm", "--force", "--time", "0", container], capture_output=True, check=False)
+    process.run(["podman", "rm", "--force", "--time", "0", container], check=False, capture=True)
 
 
 def _run_logged(cmd: list[str], log: Path, on_line: Callable[[str], None] | None, container: str | None) -> int:
@@ -304,7 +304,7 @@ def _run_logged(cmd: list[str], log: Path, on_line: Callable[[str], None] | None
     log.parent.mkdir(parents=True, exist_ok=True)
     with (
         log.open("w", buffering=1) as f,  # line buffered, for xcraft log --follow
-        subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace") as proc,
+        process.popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as proc,
     ):
         assert proc.stdout  # noqa: S101
         for line in proc.stdout:
