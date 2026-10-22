@@ -49,7 +49,7 @@ xcraft --install-completion  # optional
 | `xcraft impacts` | Show the pending updates: the upstream packages updated since the release of the packages built with them |
 | `xcraft ack <pkg>... [--dep <upstream>]` | Clear pending updates without a new release |
 | `xcraft repo [<pkg>...] [--output dir]` | Build packages, all by default, and what they need, put them in a repository, and check that everything they require is available |
-| `xcraft shell <pkg>` | Open a shell in the build tree of a package, with its build dependencies installed and its sources prepared, where `rpmbuild -ba SPECS/*.spec` builds it |
+| `xcraft shell <pkg>` | Open a shell in the build tree of a package, with its build dependencies installed and its sources prepared, where `rpmbuild -ba SPECS/<spec>` builds it, without the network like the builds, the exact command shown before the prompt |
 | `xcraft log <pkg> [--step build] [--grep regex] [--last/-n n]` | Show the log of the last build of a package, in `$PAGER` on a terminal |
 | `xcraft log <pkg> -f` | Follow the log of a running build, until it ends |
 | `xcraft graph <pkg> [--dependents] [--upstream] [--flat]` | Show the packages a package is built against as a tree, or the packages built against it; `--upstream` adds the upstream binary packages; `--flat` only lists them, ours in build order |
@@ -90,7 +90,7 @@ packages builds expect, in their locked versions. The image is tagged with a has
 built again when the configuration or the locked versions of its packages change.
 
 **Builds.** Each build runs in a fresh container: `dnf builddep`, then the dynamic `BuildRequires` if any, then
-`rpmbuild`, with stdin from `/dev/null`. It runs against a local repository of what was built here, with a priority
+`rpmbuild`, with stdin from `/dev/null`, and without the network, like koji and mock: only the loopback interface. It runs against a local repository of what was built here, with a priority
 over the other repositories, so a package built locally always wins. A build result is cached in
 `.xcraft/cache/builds/<arch>/<pkg>/<key>`, under its [build key](#build-keys). A build whose log gets larger than 256 MiB,
 like a test suite looping forever, is stopped.
@@ -131,12 +131,13 @@ The defaults are in `xcraft/project.py`; a setting given in `xcraft.toml` replac
 `aarch64`, or in `$XCRAFT_ARCH`, or else the host's, `x86_64_v2` on an x86_64 host. So `xcraft build foo` builds `foo`
 for one architecture only. Another architecture is built under emulation, with podman and qemu-user-static, whose
 registration needs the `C` flag for `sudo` in the containers, which Fedora's has not: `xcraft doctor` checks it, and
-`xcraft doctor --fix` registers it in `/etc/binfmt.d/`. The emulation is fine for the small packages, while the large
-ones are for native builders, which share their builds through the [remote storage](#remote-storage). xcraft solves the
-metadata of the repositories of an emulated architecture natively, in its dnf cache: under emulation, that takes most of
-the time of dnf. Each architecture has its lock, its build environment image, and its builds, in
-`.xcraft/cache/builds/<arch>/`. AlmaLinux rebuilds EPEL for `x86_64_v2` only: the other architectures get Fedora's.
-`xcraft bump` clears the pending updates of all the architectures.
+`xcraft doctor --fix` registers it in `/etc/binfmt.d/`. The emulation is fine for the small packages, but their builds
+keep the network: qemu-user cannot isolate them, while the large ones are for native builders, which share their builds
+through the [remote storage](#remote-storage). xcraft solves the metadata of the repositories of an emulated
+architecture natively, in its dnf cache: under emulation, that takes most of the time of dnf. Each architecture has its
+lock, its build environment image, and its builds, in `.xcraft/cache/builds/<arch>/`. AlmaLinux rebuilds EPEL for
+`x86_64_v2` only: the other architectures get Fedora's. `xcraft bump` clears the pending updates of all the
+architectures.
 
 ## Build keys
 

@@ -54,7 +54,9 @@ if TYPE_CHECKING:
     from xcraft.project import Project
 
 _RECIPE = hashlib.sha256(
-    "".join([REPO_FILE, *((BUILDENV / script).read_text() for script in ("build.sh", "record.py"))]).encode()
+    "".join(
+        [REPO_FILE, *((BUILDENV / script).read_text() for script in ("build.sh", "offline.py", "record.py"))]
+    ).encode()
 ).hexdigest()
 """What makes the builds, besides the image and the packages: a change to it rebuilds them all."""
 
@@ -599,14 +601,26 @@ def _show_failure(project: Project, name: str, error: Exception, *, verbose: boo
 def shell(project: Project, name: str) -> None:
     """Open a shell in the build tree of `name`, with its build dependencies installed and sources prepared.
 
-    rpmbuild works on the build tree there, like in the builds: rpmbuild -ba SPECS/*.spec builds it again.
+    rpmbuild works on the build tree there, like in the builds: rpmbuild -ba SPECS/<spec> builds it again, shown before
+    the prompt. The build tree is the one of the host, in .xcraft/build/, where its files can be edited, and its
+    packages are.
     """
     repo = builds_repo(project, build_keys(project))
-    prepare_tree(project, name)
+    tree = prepare_tree(project, name)
     replace = _image_replacements(project, name)
+    spec = main_spec(project.package_dirs[name]).name
+    # the labels dim, the path bold, the command bold cyan: on a terminal, without NO_COLOR, like xcraft's console
+    rows = [("build tree", f"{tree}, on the host", "bold"), ("to build", f"rpmbuild -ba SPECS/{spec}", "cyan")]
     after = (
-        "echo '%_topdir /build' > ~/.rpmmacros && cd /build"
-        " && echo 'the build tree of the package, prepared: rpmbuild -ba SPECS/*.spec builds it' && exec bash -l"
+        "echo '%_topdir /build' > ~/.rpmmacros"
+        """ && echo 'alias rpmbuild="python3 /xcraft/offline.py rpmbuild"' >> ~/.bashrc && cd /build"""
+        ' && dim= bold= cyan= off= && if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then'
+        " dim=$'\\e[2m' bold=$'\\e[0;1m' cyan=$'\\e[0;1;36m' off=$'\\e[0m'; fi"
+        + "".join(
+            f' && printf "%s%-12s%s%s%s\\n" "$dim" {shlex.quote(label)} "${style}" {shlex.quote(value)} "$off"'
+            for label, value, style in rows
+        )
+        + " && exec bash -l"
     )
     _run_build(project, name, repo, "p", replace=replace, after=after)
 
