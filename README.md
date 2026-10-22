@@ -34,7 +34,7 @@ xcraft --install-completion  # optional
 | `xcraft build <pkg>... --test ID` / `--pre ID` | Test builds, to install on a test host (see [Test builds](#test-builds)) |
 | `xcraft repo <pkg>... --test ID` / `--pre ID` | A repository of new test builds, for test hosts |
 | `xcraft repo <pkg>... --test ID --host h [--upgrade]` | The same, copied to test hosts over ssh, and upgraded there |
-| `xcraft publish [--locked] [--local] [--unsigned] [--dev-key]` | Publish a snapshot of the distribution, as the latest one |
+| `xcraft publish [--locked] [--local] [--unsigned] [--dev-key] [--arch a]` | Publish a snapshot of the distribution, for all the architectures or `--arch`, as the latest one; a `--local` one is of the host's architecture by default |
 | `xcraft iso [--netinstall] [--output f] [-V id] [--locked] [--unsigned]` | Make the installation ISO, from a local snapshot (see [Installation ISO](#installation-iso)) |
 | `xcraft key create` / `xcraft key show [--export]` | The developer's key, which signs the test builds |
 | `xcraft push` | Upload everything the remote storage misses: the source archives and the builds of all packages, then make all the `index.html` pages |
@@ -239,7 +239,7 @@ them, and `xcraft bump` makes a release of them.
 ## Installation ISO
 
 `xcraft iso` makes the installation ISO of XCP-ng, like [create-install-image](https://github.com/xcp-ng/create-install-image)
-does, from the snapshot `xcraft publish --local` makes, in `.xcraft/publish/<arch>/`, with nothing else to install:
+does, from a snapshot like `xcraft publish --local` makes, of its architecture only, with nothing else to install:
 
 - `install.img`, the installer's root filesystem, is installed from the snapshot: its packages, `[iso] installer` in
   `xcraft.toml`, are published with the others. The firmware files no driver names are removed, and the files of
@@ -298,14 +298,17 @@ the name `xcraft.web.garage.localhost`, which resolves to the local host on most
 
 ## Publishing
 
-`xcraft publish` makes a snapshot of the distribution: all our packages, and the upstream ones they need at runtime,
-in the remote storage:
+`xcraft publish` makes a snapshot of the distribution, for all the architectures: all our packages, and the upstream
+ones they need at runtime, in the remote storage, laid out like the repositories of XCP-ng 8.3:
 
 ```
-repos/<release>/<date>[.<n>]/<arch>/os/        our RPMs and the upstream ones, with their repodata
-repos/<release>/<date>[.<n>]/<arch>/source/    their source RPMs
-repos/<release>/latest/<arch>/...              a copy of the latest snapshot
+repos/<release>/<date>[.<n>]/base/<arch>/    our RPMs and the upstream ones, with their repodata, for each architecture
+repos/<release>/<date>[.<n>]/base/Source/    the source RPMs of all of them
+repos/<release>/latest/...                   a copy of the latest snapshot
 ```
+
+- Our packages are built or fetched, but only fetched for the architectures the host emulates: those are built by
+  native builders, which push them. The publish fails when the remote storage misses one of their builds.
 
 - What our packages need at runtime is resolved by dnf, for each of them alone, on an empty system, without weak
   dependencies, and goes in the lock, in `runtime`: a snapshot only changes with the lock, and `xcraft lock --update`
@@ -317,11 +320,15 @@ repos/<release>/latest/<arch>/...              a copy of the latest snapshot
 - The upstream RPMs and source RPMs must be signed with the keys of the repositories, those of the build
   environment, as dnf checks them when installing but not when downloading. The RPMs must also match the sha256 of
   the lock.
-- Each package of the snapshot must install from it alone: a self-contained repository.
+- Each package of the snapshot must install from the packages of its architecture alone: a self-contained repository.
+- Our source RPMs are those of the first architecture: built from the same sources, those of the others differ by
+  their build times only.
 - All snapshots are kept. The storage stores identical files once: our packages are copies of the pushed builds, and
   the upstream ones and the sources of the previous snapshot, so a snapshot only costs what changed.
 
-`xcraft publish --local` only makes the snapshot in `.xcraft/publish/<arch>/`. In CI, after `xcraft push builds`,
+`xcraft publish --local` only makes the snapshot in `.xcraft/publish/`, of one architecture, like the other commands,
+unless `--arch all` is given. A snapshot published to the storage is of all the architectures, unless `--arch` is
+given: it replaces the latest one, whose other architectures would be gone. In CI, after `xcraft push builds`,
 `xcraft publish --locked` fails rather than change the lock.
 
 Only one `xcraft publish` must run at a time on a storage, like in a CI job of its own: Garage has no conditional

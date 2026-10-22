@@ -10,7 +10,7 @@ import typer
 from xcraft import build as builder
 from xcraft import publish as publisher
 from xcraft import remote
-from xcraft.commands import load
+from xcraft.commands import complete_arch, load
 from xcraft.display import console
 from xcraft.signing import dev_signer, release_signer
 
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from xcraft.signing import Signer
 
 
-def publish(
+def publish(  # noqa: PLR0913, PLR0917
     locked: Annotated[
         bool, typer.Option("--locked", help="Fail when publishing would change the lock, for CI.")
     ] = False,
@@ -27,7 +27,7 @@ def publish(
         bool, typer.Option("--local", help="Only make the snapshot locally, in --output, without publishing it.")
     ] = False,
     output: Annotated[
-        Path | None, typer.Option(help="Directory of the local snapshot. .xcraft/publish/<arch>/ by default.")
+        Path | None, typer.Option(help="Directory of the local snapshot. .xcraft/publish/ by default.")
     ] = None,
     unsigned: Annotated[
         bool,
@@ -40,22 +40,40 @@ def publish(
     dev_key: Annotated[
         bool, typer.Option("--dev-key", help="Sign with the developer's key, for a test storage.")
     ] = False,
+    arch: Annotated[
+        str | None,
+        typer.Option(
+            help="RPM architecture to publish, like aarch64, or all. By default, all of them, but for a --local "
+            "snapshot, the one of $XCRAFT_ARCH, or the host's.",
+            show_default=False,
+            autocompletion=lambda incomplete: [
+                a for a in [*complete_arch(incomplete), "all"] if a.startswith(incomplete)
+            ],
+        ),
+    ] = None,
 ) -> None:
-    """Publish a snapshot of the distribution in the remote storage, as the latest one.
+    """Publish a snapshot of the distribution in the remote storage, as the latest one, for all the architectures.
 
     It has all our packages, built or fetched first, and the upstream packages they need at runtime, and the extra
-    ones of xcraft.toml, as locked, and it must be self-contained.
+    ones of xcraft.toml, as locked, and it must be self-contained. Those of the architectures the host emulates are
+    only fetched, built by native builders.
     """
-    project = load(locked=locked)
+    project = load(locked=locked, arch=None if arch == "all" else arch)
+    platforms = project.all_platforms() if arch == "all" or (arch is None and not local) else [project]
+    if arch is None and len(platforms) < len(others := project.all_platforms()):
+        console.print(
+            f"[yellow]warning[/]: only {project.arch} is published, not "
+            f"{', '.join(p.arch for p in others if p.arch != project.arch)}: --arch all publishes them all"
+        )
     if not (local or project.config.remote):
         msg = "no remote storage to publish to: see [remote] in xcraft.toml, or use --local"
         raise typer.BadParameter(msg)
     signer = choose_signer(project, local=local, unsigned=unsigned, dev_key=dev_key)
     with project.lock():
-        dest = (output or project.state / "publish" / project.arch).absolute()
-        keys = snapshot(project, dest, signer=signer, push=not local)
+        dest = (output or project.state / "publish").absolute()
+        built = snapshot(platforms, dest, signer=signer, push=not local)
         if not local and (storage := project.config.remote):
-            publisher.upload_snapshot(project, keys, dest, publisher.snapshot_name(project, storage), signer=signer)
+            publisher.upload_snapshot(built, dest, publisher.snapshot_name(project, storage), signer=signer)
 
 
 def choose_signer(project: Project, *, local: bool, unsigned: bool, dev_key: bool) -> Signer | None:
@@ -81,14 +99,25 @@ def choose_signer(project: Project, *, local: bool, unsigned: bool, dev_key: boo
     return signer
 
 
-def snapshot(project: Project, dest: Path, *, signer: Signer | None, push: bool) -> dict[str, str]:
-    """Build or fetch all our packages, make the snapshot in `dest`, and return the keys of the packages."""
-    results = builder.build(project, sorted(project.packages))
-    if failed := [r.name for r in results if r.status in ("failed", "skipped")]:
-        msg = f"not built: {', '.join(failed)}"
-        raise RuntimeError(msg)
-    keys = builder.build_keys(project)
-    upstream = publisher.resolve_runtime(project, keys)
-    publisher.assemble(project, keys, dest, signer=signer, push=push)
-    console.print(f"[bold green]✓[/] snapshot in {dest}: {len(keys)} packages, {len(upstream)} upstream ones")
-    return keys
+def snapshot(
+    platforms: list[Project], dest: Path, *, signer: Signer | None, push: bool
+) -> list[tuple[Project, dict[str, str]]]:
+    """Make the snapshot of the `platforms` in `dest`, and return them with the keys of their packages.
+
+    Our packages are built or fetched first, but only fetched for the platforms the host emulates.
+    """
+    built, upstream = [], {}
+    for project in platforms:
+        results = builder.build(project, sorted(project.packages), build_missing=project.native)
+        if failed := [r.name for r in results if r.status in ("failed", "skipped")]:
+            msg = f"not built for {project.arch}: {', '.join(failed)}"
+            raise RuntimeError(msg)
+        keys = builder.build_keys(project)
+        upstream[project.arch] = len(publisher.resolve_runtime(project, keys))
+        built.append((project, keys))
+    publisher.assemble(built, dest, signer=signer, push=push)
+    console.print(
+        f"[bold green]✓[/] snapshot in {dest}: "
+        + ", ".join(f"{p.arch}: {len(keys)} packages, {upstream[p.arch]} upstream ones" for p, keys in built)
+    )
+    return built
