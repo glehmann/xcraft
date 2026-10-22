@@ -150,7 +150,7 @@ builds it again as soon as one of its inputs changes. The key is the name of the
 | The build environment image | A hash of the base image, pinned by digest, the platform, `packages` of `xcraft.toml`, the repositories, the RPM macros (`%dist`...), and the locked versions of the image's packages | Any change to these settings, or an update of a package of the image |
 | The platform | The one xcraft works on, see [Architectures](#configuration) | `--arch` |
 | The extra upstream RPMs | The names and URLs of `extra_upstream` | `extra_upstream` |
-| The recipe | The build script, the `.repo` file of the local repository, and the script recording the build roots | A change to how xcraft builds |
+| The recipe | The build script, `xcraft/buildenv/build.sh`, the `.repo` file of the local repository, and the script recording the build roots | A change to how xcraft builds |
 | The package | Its name, and all the files of `specs/<repo>/<pkg>/`, but `origin`: their paths, contents, and whether they are executable. The `sources` manifest covers the archives by their SHA-256 | Any change to the spec, a patch, a source file, or an archive |
 | Its build root | The upstream packages its last build installed besides the image's, as recorded in the lock, with their locked versions | `xcraft lock --update` of one of them, or a build installing other ones |
 | Its test build suffix | `.0.ID.<n>` or `~ID.<n>`, for `--test` and `--pre` only | Each test build |
