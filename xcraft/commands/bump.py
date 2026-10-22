@@ -64,7 +64,7 @@ def _new_archives(project: Project, before: dict[str, Package], after: dict[str,
             digests[url] = cache_source(project.source_cache, work / archive_name(url))
             shutil.rmtree(work)
         # the file of a link, like the sources of kernel-headers, which are the kernel's
-        manifest = (project.specs / name / "sources").resolve()
+        manifest = (project.package_dirs[name] / "sources").resolve()
         entries = read_manifest(manifest) if manifest.exists() else {}
         entries.pop(archive_name(before[name].source0), None)
         write_manifest(manifest, {**entries, archive_name(url): digests[url]})
@@ -77,14 +77,16 @@ def _update_specs(  # noqa: PLR0913
 
     The specs and the sources manifests are written back as they were on errors.
     """
-    specs = {package: main_spec(project.specs / package) for package in names}
+    specs = {package: main_spec(project.package_dirs[package]) for package in names}
     texts = {package: spec.read_text() for package, spec in specs.items()}
     bumped = {
         package: reset_release(set_version(text, version)) if version else bump_release(text)
         for package, text in texts.items()
     }
     manifests = {
-        path: path.read_text() for name in names if (path := (project.specs / name / "sources").resolve()).exists()
+        path: path.read_text()
+        for name in names
+        if (path := (project.package_dirs[name] / "sources").resolve()).exists()
     }
     try:
         for package, spec in specs.items():

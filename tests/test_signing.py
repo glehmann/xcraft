@@ -23,9 +23,9 @@ needs_podman = pytest.mark.skipif(not shutil.which("podman"), reason="needs podm
 @pytest.fixture
 def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     root = tmp_path / "project"
-    (root / "specs").mkdir(parents=True)
+    (root / "specs/base").mkdir(parents=True)
     for name in ("trivial", "with-deps"):
-        shutil.copytree(FIXTURES / name, root / "specs" / name)
+        shutil.copytree(FIXTURES / name, root / "specs/base" / name)
     (root / "xcraft.toml").write_text("")
     subprocess.run(["git", "init", "-q", str(root)], check=True)
     for key, value in (("user.name", "Test User"), ("user.email", "test@example.com")):

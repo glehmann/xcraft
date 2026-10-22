@@ -115,8 +115,7 @@ def hash_dir(path: Path) -> str:
 
 def load_packages(project: Project) -> dict[str, Package]:
     """Return the metadata of all the packages of `project`, by name."""
-    # not the hidden ones, like those of the imports in progress
-    dirs = sorted(p for p in project.specs.iterdir() if p.is_dir() and not p.name.startswith("."))
+    dirs = list(project.package_dirs.values())
     hashes = [(d.name, hash_dir(d)) for d in dirs]
 
     def cache() -> Path:
@@ -125,7 +124,7 @@ def load_packages(project: Project) -> dict[str, Package]:
 
     if not cache().exists():
         build_image(project)  # which may change its tag, when it is new
-        specs = " ".join(f"/specs/{d.name}/{main_spec(d).name}" for d in dirs)
+        specs = " ".join(f"/specs/{main_spec(d).relative_to(project.specs)}" for d in dirs)
         with project.work("specs") as work:
             (work / "parse.py").write_text(_PARSER)
             run(

@@ -93,9 +93,9 @@ REMOTE = (
 @pytest.fixture
 def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, s3: dict[str, str]) -> Path:
     root = tmp_path / "project"
-    (root / "specs").mkdir(parents=True)
+    (root / "specs/base").mkdir(parents=True)
     for name in ("trivial", "with-deps"):
-        shutil.copytree(FIXTURES / name, root / "specs" / name)
+        shutil.copytree(FIXTURES / name, root / "specs/base" / name)
     (root / "xcraft.toml").write_text(REMOTE)
     monkeypatch.setenv("XCRAFT_PROJECT", str(root))
     for name, value in s3.items():
@@ -108,7 +108,7 @@ def test_sources(root: Path, tmp_path: Path) -> None:
     archive.write_text(archive.name)
     cache = Project.find().source_cache
     digest = cache_source(cache, archive)
-    write_manifest(root / "specs/trivial/sources", {archive.name: digest})
+    write_manifest(root / "specs/base/trivial/sources", {archive.name: digest})
 
     code, output = xcraft("push", "sources", "--check")
     assert code == 1
@@ -134,13 +134,13 @@ def test_sources(root: Path, tmp_path: Path) -> None:
 def test_sources_from_source0(root: Path, tmp_path: Path) -> None:
     archive = tmp_path / f"trivial-{secrets.token_hex(4)}.tar.gz"
     archive.write_text(archive.name)
-    write_manifest(root / "specs/trivial/sources", {archive.name: sha256_of(archive)})
-    spec = root / "specs/trivial/trivial.spec"
+    write_manifest(root / "specs/base/trivial/sources", {archive.name: sha256_of(archive)})
+    spec = root / "specs/base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace("BuildArch: noarch", f"BuildArch: noarch\nSource0: file://{archive}"))
     assert xcraft("fetch", "sources", "trivial") == (0, "all the source archives are in the source cache\n")
     assert (Project.find().source_cache / sha256_of(archive) / archive.name).read_text() == archive.name
     # checked too
-    write_manifest(root / "specs/trivial/sources", {archive.name: "0" * 64})
+    write_manifest(root / "specs/base/trivial/sources", {archive.name: "0" * 64})
     code, output = xcraft("fetch", "sources", "trivial")
     assert code == 1
     assert f"{archive.name} from file://{archive} does not match the sha256 of the manifest" in output
@@ -153,7 +153,7 @@ def test_sources_from_source0(root: Path, tmp_path: Path) -> None:
 
 def test_builds_shared_by_checkouts(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # a key of its own, not to find the builds of the other tests in the storage
-    spec = root / "specs/trivial/trivial.spec"
+    spec = root / "specs/base/trivial/trivial.spec"
     spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
     assert xcraft("build", "trivial")[0] == 0
     assert xcraft("push", "builds", "trivial")[0] == 0
@@ -170,11 +170,13 @@ def test_builds_shared_by_checkouts(root: Path, tmp_path: Path, monkeypatch: pyt
 
 def test_push_everything(root: Path, tmp_path: Path) -> None:
     # keys and an archive of its own, not to find those of the other tests in the storage
-    spec = root / "specs/trivial/trivial.spec"
+    spec = root / "specs/base/trivial/trivial.spec"
     spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
     archive = tmp_path / f"trivial-{secrets.token_hex(4)}.tar.gz"
     archive.write_text(archive.name)
-    write_manifest(root / "specs/trivial/sources", {archive.name: cache_source(Project.find().source_cache, archive)})
+    write_manifest(
+        root / "specs/base/trivial/sources", {archive.name: cache_source(Project.find().source_cache, archive)}
+    )
     assert xcraft("build", "trivial")[0] == 0
     code, output = xcraft("push")
     # all that can be pushed, and then what could not
@@ -230,7 +232,7 @@ def test_unavailable_remote_storage(root: Path) -> None:
 def test_push_needs_the_credentials(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AWS_SECRET_ACCESS_KEY")
     # not the build the other tests pushed: the same key everywhere
-    spec = root / "specs/trivial/trivial.spec"
+    spec = root / "specs/base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace('echo "hello"', 'echo "no credentials"'))
     assert xcraft("build", "trivial")[0] == 0
     code, output = xcraft("push", "builds", "trivial")
@@ -324,7 +326,7 @@ def test_signed_publish(root: Path) -> None:
 def test_publish_rebuilt_package(root: Path, tmp_path: Path) -> None:
     """A rebuild keeping its version-release is published, not the previous build of the storage."""
     assert xcraft("publish", "--unsigned")[0] == 0
-    spec = root / "specs/trivial/trivial.spec"
+    spec = root / "specs/base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace('echo "hello"', 'echo "hello, rebuilt"'))
     code, output = xcraft("publish", "--unsigned")
     assert code == 0, output

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from xcraft.importer import git
+from xcraft.sources import archive_name
 
 if TYPE_CHECKING:
     from xcraft.specs import Package
@@ -37,13 +38,11 @@ def repo_name(repo: Path) -> str:
     return url.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1].removesuffix(".git")
 
 
-def guess_package(name: str, packages: dict[str, Package], specs: Path) -> str | None:
+def guess_package(name: str, packages: dict[str, Package]) -> str | None:
     """Return the package of the project `name`: same directory or spec name, or a Source0 named after it."""
     for package, metadata in sorted(packages.items()):
-        spec = next(specs.joinpath(package).glob("*.spec")).read_text()
-        source0 = re.search(r"^Source0?\s*:\s*(\S+)", spec, re.MULTILINE)
-        if name in (package, metadata.binaries[0].name if metadata.binaries else None) or (
-            source0 and re.fullmatch(rf"{re.escape(name)}-[\d%].*", source0.group(1).rsplit("/", 1)[-1])
+        if name in (package, metadata.binaries[0].name if metadata.binaries else None) or re.fullmatch(
+            rf"{re.escape(name)}-\d.*", archive_name(metadata.source0)
         ):
             return package
     return None

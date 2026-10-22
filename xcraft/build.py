@@ -125,7 +125,7 @@ def build_keys(project: Project, autorev: dict[str, str] | None = None) -> dict[
 
     def inputs(name: str) -> str:
         buildroot = [f"{upstream}={lock.packages[upstream].evr}" for upstream in lock.buildroots.get(name, [])]
-        return json.dumps([name, hash_dir(project.specs / name), (autorev or {}).get(name), buildroot])
+        return json.dumps([name, hash_dir(project.package_dirs[name]), (autorev or {}).get(name), buildroot])
 
     keys: dict[str, str] = {}
     for component in components(deps):  # the dependencies first
@@ -250,7 +250,7 @@ def _fetch_source(project: Project, name: str, filename: str, digest: str) -> bo
 
 def fetch_sources(project: Project, name: str) -> list[str]:
     """Put the archives of `name` in the source cache, downloaded when missing, and return those found nowhere."""
-    manifest = project.specs / name / "sources"
+    manifest = project.package_dirs[name] / "sources"
     return [
         filename
         for filename, digest in (read_manifest(manifest).items() if manifest.exists() else [])
@@ -265,7 +265,7 @@ def prepare_tree(project: Project, name: str) -> Path:
     The main spec is in SPECS/, everything else in SOURCES/, with the archives
     from the source cache, downloaded when missing (see fetch_sources).
     """
-    pkg_dir = project.specs / name
+    pkg_dir = project.package_dirs[name]
     spec = main_spec(pkg_dir)
     tree = project.state / "build" / name
     shutil.rmtree(tree, ignore_errors=True)
@@ -306,7 +306,7 @@ def _run_build(  # noqa: PLR0913
     `log`, or to an interactive terminal without log.
     """
     script = _BUILD_SCRIPT.format(
-        spec=main_spec(project.specs / name).name,
+        spec=main_spec(project.package_dirs[name]).name,
         stage=rpmbuild_stage,
         then=after,
         lock=DNF_LOCK,
@@ -443,7 +443,7 @@ def _build_one(project: Project, name: str, repo: LocalRepo, *, status: str | No
     """
     if error := project.packages[name].error:
         raise BuildError(error)
-    staged = hash_dir(project.specs / name)
+    staged = hash_dir(project.package_dirs[name])
     replace = _image_replacements(project, name)
     tree = prepare_tree(project, name)
     log = project.log(name)
@@ -465,8 +465,8 @@ def _build_one(project: Project, name: str, repo: LocalRepo, *, status: str | No
     finally:
         pid_file.unlink()
     _record_build_root(project, name, tree, test=name in autorev)
-    if hash_dir(project.specs / name) != staged:
-        msg = f"specs/{name} changed during the build, build it again"
+    if hash_dir(project.package_dirs[name]) != staged:
+        msg = f"{project.package_dirs[name].relative_to(project.root)} changed during the build, build it again"
         raise BuildError(msg)
     # test builds are signed with the developer's key, if any
     if name in autorev and (signer := dev_signer(project)):

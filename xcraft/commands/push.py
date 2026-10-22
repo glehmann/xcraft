@@ -46,7 +46,7 @@ def sources(
         {
             (filename, digest)
             for name in packages or sorted(project.packages)
-            if (manifest := project.specs / name / "sources").exists()
+            if (manifest := project.package_dirs[name] / "sources").exists()
             for filename, digest in read_manifest(manifest).items()
         }
     )

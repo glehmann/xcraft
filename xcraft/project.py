@@ -192,8 +192,19 @@ class Project:
 
     @property
     def specs(self) -> Path:
-        """Directory with one subdirectory per package."""
+        """Directory with one subdirectory per repository, like ``base``, with one subdirectory per package."""
         return self.root / "specs"
+
+    @cached_property
+    def package_dirs(self) -> dict[str, Path]:
+        """The directory of each package, by name, but the hidden ones, like those of the imports in progress."""
+        dirs: dict[str, Path] = {}
+        for path in sorted(self.specs.glob("[!.]*/[!.]*/")):
+            if path.name in dirs:
+                msg = f"{path.name} is in two repositories: {dirs[path.name].parent.name} and {path.parent.name}"
+                raise RuntimeError(msg)
+            dirs[path.name] = path
+        return dirs
 
     @property
     def id(self) -> str:
