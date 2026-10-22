@@ -144,10 +144,10 @@ signed with the release key of `xcraft.toml`, possibly in an HSM through gpg, or
 
 ```
 xcraft key show                             # the developer's key
-xcraft publish --local                      # in .xcraft/publish/x86_64_v2/, signed with the developer's key
-ls .xcraft/publish/x86_64_v2/               # os/, source/, and RPM-GPG-KEY, the public key
-rpm -qpi .xcraft/publish/x86_64_v2/os/xen-4*.rpm | grep Signature     # ours: the developer's key
-rpm -qpi .xcraft/publish/x86_64_v2/os/glibc-2*.rpm | grep Signature   # upstream: AlmaLinux's, as is
+xcraft publish --local                      # in .xcraft/publish/, signed with the developer's key
+ls .xcraft/publish/ .xcraft/publish/base/   # base/<arch>/, base/Source/, and RPM-GPG-KEY, the public key
+rpm -qpi .xcraft/publish/base/x86_64_v2/xen-4*.rpm | grep Signature     # ours: the developer's key
+rpm -qpi .xcraft/publish/base/x86_64_v2/glibc-2*.rpm | grep Signature   # upstream: AlmaLinux's, as is
 xcraft publish --dev-key                    # to the storage, as the latest snapshot
 ```
 

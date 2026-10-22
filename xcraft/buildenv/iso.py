@@ -1,10 +1,10 @@
 """Make the tree of the installation ISO from a snapshot of the distribution, like XCP-ng's create-install-image.
 
-Run as root in the build environment, with the tools making the ISO installed: ``iso.py <config>``. The config is
-a JSON object of ``snapshot``, the directory of the snapshot, ``templates``, the files of the ISO and of install.img,
-``tree``, the directory to make, ``installer`` and ``packages`` (see xcraft.project.Iso), ``netinstall`` and
-``signed``. The tree, with ``info.json`` next to it, the version and volume id of the ISO, gets the owner of the
-config, even when it fails.
+Run as root in the build environment, with the tools making the ISO installed: ``iso.py <config>``. The config is a
+JSON object of ``snapshot``, the binaries of the snapshot for the architecture, ``templates``, the files of the ISO
+and of install.img, ``tree``, the directory to make, ``installer`` and ``packages`` (see xcraft.project.Iso),
+``netinstall`` and ``signed``. The tree, with ``info.json`` next to it, the version and volume id of the ISO, gets
+the owner of the config, even when it fails.
 """
 
 import atexit
@@ -39,7 +39,7 @@ def resolver(packages: list[str] | None = None) -> dnf.Base:
     base.conf.read()
     base.conf.installroot = tempfile.mkdtemp()
     base.conf.install_weak_deps = False
-    base.repos.add_new_repo("snapshot", base.conf, baseurl=[f"file://{snapshot}/os"])
+    base.repos.add_new_repo("snapshot", base.conf, baseurl=[f"file://{snapshot}"])
     base.fill_sack(load_system_repo=False)
     for name in packages or []:
         base.install(name)
@@ -48,7 +48,7 @@ def resolver(packages: list[str] | None = None) -> dnf.Base:
     return base
 
 
-rpms = {p.name: snapshot / "os" / p.location for p in resolver().sack.query().available().latest()}
+rpms = {p.name: snapshot / p.location for p in resolver().sack.query().available().latest()}
 
 
 def extract(package: str, *patterns: str) -> Path:
@@ -92,7 +92,7 @@ def install_img(dest: Path) -> None:
     root = Path(tempfile.mkdtemp())
     sh(
         "dnf", "-q", "-y", f"--installroot={root}", "--disableplugin=*", "--disablerepo=*",
-        f"--repofrompath=snapshot,{snapshot}/os", f"--releasever={dnf.rpm.detect_releasever('/')}",
+        f"--repofrompath=snapshot,{snapshot}", f"--releasever={dnf.rpm.detect_releasever('/')}",
         # the packages are checked when the snapshot is made
         "--setopt=snapshot.gpgcheck=0", "--setopt=install_weak_deps=False", "--setopt=tsflags=nodocs",
         "install", *config["installer"],
@@ -151,7 +151,7 @@ def repository(branding: dict[str, str]) -> None:
     packages = tree / "Packages"
     packages.mkdir()
     for p in resolver(config["packages"]).transaction.install_set:
-        shutil.copy2(snapshot / "os" / p.location, packages)
+        shutil.copy2(snapshot / p.location, packages)
     # with gzip: the installer does not read the zstd of newer createrepo_c
     sh("createrepo_c", "-q", "--compatibility", tree)
 

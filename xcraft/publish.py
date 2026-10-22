@@ -1,10 +1,10 @@
 """Publishing: snapshots of the distribution, made of our builds and the upstream packages they need.
 
-A snapshot is a self-contained repository, published as
-``repos/<release>/<date>[.<n>]/<arch>/`` in the remote storage, and copied as
-``repos/<release>/latest/<arch>/``. All snapshots are kept: the storage stores
-identical files once, and the files already in the storage are copied there
-rather than uploaded.
+A snapshot covers all the architectures, like the repositories of XCP-ng 8.3: its repository ``base/`` has the
+binaries of each architecture, self-contained, in ``base/<arch>/``, and the sources of all of them in
+``base/Source/``. It is published as ``repos/<release>/<date>[.<n>]/`` in the remote storage, and copied as
+``repos/<release>/latest/``. All snapshots are kept: the storage stores identical files once, and the files already
+in the storage are copied there rather than uploaded.
 """
 
 from __future__ import annotations
@@ -34,6 +34,8 @@ if TYPE_CHECKING:
 
 KEY_FILE = "RPM-GPG-KEY"
 """The public key of the signed snapshots, in them."""
+REPO = "base"
+"""The repository of our packages, and of the upstream ones they need, in the snapshots."""
 
 
 def resolve_runtime(project: Project, keys: dict[str, str]) -> list[str]:
@@ -87,7 +89,7 @@ def _download(
             with contextlib.suppress(remote.RemoteError):
                 for f in missing:
                     on_line(f)
-                    path = f"{_snapshot_path(project, 'latest')}/{'source' if source else 'os'}/{f}"
+                    path = f"{_snapshot_path(project, 'latest')}/{REPO}/{'Source' if source else project.arch}/{f}"
                     remote.download(storage, path, work / f)
         if left := sorted({nevra for f, nevra in missing.items() if not (work / f).exists()}):
             run(
@@ -188,20 +190,34 @@ def _signed_build(project: Project, signer: Signer, name: str, key: str, *, push
     return signed
 
 
-def assemble(project: Project, keys: dict[str, str], dest: Path, *, signer: Signer | None, push: bool = False) -> None:
-    """Make `dest` the repositories of a snapshot, os/ and source/, and check each binary can be installed alone.
+def assemble(platforms: list[tuple[Project, dict[str, str]]], dest: Path, *, signer: Signer | None, push: bool) -> None:
+    """Make `dest` a snapshot of the `platforms`, with the builds of our packages with their keys.
 
-    It has the builds of our packages with `keys`.
-
-    With a `signer`, our packages and the repositories' metadata are signed, and the public key is in `dest`.
+    Each binary must be installable alone, from the binaries of its architecture. Our source packages are those of
+    the first platform: those of the others, built from the same sources, differ by their build times. With a
+    `signer`, our packages and the repositories' metadata are signed, and the public key is in `dest`.
     """
+    fresh_dir(platforms[0][0], dest)
+    sources = LocalRepo(platforms[0][0], dest / REPO / "Source")
+    sources.reset(extra_upstream=False)
+    for project, keys in platforms:
+        _assemble_arch(project, keys, dest, sources, signer=signer, push=push)
+    sources.index()
+    if signer:
+        signer.sign_file(sources.path / "repodata/repomd.xml")
+        (dest / KEY_FILE).write_text(signer.public_key())
+
+
+def _assemble_arch(  # noqa: PLR0913
+    project: Project, keys: dict[str, str], dest: Path, sources: LocalRepo, *, signer: Signer | None, push: bool
+) -> None:
+    """Make the repository of the binaries of the platform of `project` in `dest`, adding their sources to `sources`."""
     lock = load_lock(project)
-    fresh_dir(project, dest)
-    binaries, sources = LocalRepo(project, dest / "os"), LocalRepo(project, dest / "source")
-    for repo in (binaries, sources):
-        repo.reset(extra_upstream=False)
+    binaries = LocalRepo(project, dest / REPO / project.arch)
+    binaries.reset(extra_upstream=False)
+    arch, source = f"{REPO}/{project.arch}", f"{REPO}/Source"
     ours = []
-    with activity("signing our packages" if signer else "getting our packages") as on_line:
+    with activity(f"signing our packages for {project.arch}" if signer else "getting our packages") as on_line:
         for name in sorted(keys):
             on_line(name)
             build = (
@@ -210,28 +226,26 @@ def assemble(project: Project, keys: dict[str, str], dest: Path, *, signer: Sign
                 else cached_build(project, name, keys[name])
             )
             binaries.add(build)
-            ours += [f"os/{rpm.name}" for rpm in (build / "RPMS").rglob("*.rpm")]
+            ours += [f"{arch}/{rpm.name}" for rpm in (build / "RPMS").rglob("*.rpm")]
             for srpm in (build / "SRPMS").glob("*.src.rpm"):
-                link(srpm, sources.path / srpm.name)
-                ours.append(f"source/{srpm.name}")
+                if not (sources.path / srpm.name).exists():
+                    link(srpm, sources.path / srpm.name)
+                    ours.append(f"{source}/{srpm.name}")
     if signer:
         check_signatures(project, dest, ours, what="packages of ours", public_key=signer.public_key())
-    with activity("getting the upstream packages") as on_line:
-        upstream = [f"os/{rpm.name}" for rpm in _upstream_rpms(project, lock.runtime, on_line)]
+    with activity(f"getting the upstream packages for {project.arch}") as on_line:
+        upstream = [f"{arch}/{rpm.name}" for rpm in _upstream_rpms(project, lock.runtime, on_line)]
         for rpm in upstream:
             link(project.state / "cache/rpms" / Path(rpm).name, dest / rpm)
-    with activity("getting the sources of the upstream packages") as on_line:
+    with activity(f"getting the sources of the upstream packages for {project.arch}") as on_line:
         for srpm in _upstream_srpms(project, lock.runtime, on_line):
-            if not (sources.path / srpm.name).exists():  # the source of several binaries
+            if not (sources.path / srpm.name).exists():  # the source of several binaries, or architectures
                 link(srpm, sources.path / srpm.name)
-                upstream.append(f"source/{srpm.name}")
+                upstream.append(f"{source}/{srpm.name}")
     check_signatures(project, dest, upstream, what="upstream packages")
     binaries.index()
-    sources.index()
     if signer:
-        for repo in (binaries, sources):
-            signer.sign_file(repo.path / "repodata/repomd.xml")
-        (dest / KEY_FILE).write_text(signer.public_key())
+        signer.sign_file(binaries.path / "repodata/repomd.xml")
     _check_installable(project, binaries.path)
 
 
@@ -254,15 +268,15 @@ def _check_installable(project: Project, repo: Path) -> None:
 
 
 def _snapshot_path(project: Project, name: str) -> str:
-    """Return the path of a snapshot in the storage, with its os/ and source/ repositories."""
-    return f"repos/{project.config.publish.release}/{name}/{project.arch}"
+    """Return the path of a snapshot in the storage, with its repositories."""
+    return f"repos/{project.config.publish.release}/{name}"
 
 
 def snapshot_name(project: Project, storage: Remote) -> str:
-    """Return the name of a new snapshot: today's date, with the first suffix not used for this architecture."""
+    """Return the name of a new snapshot: today's date, with the first suffix not used."""
     day = datetime.now(UTC).date().isoformat()
     for name in (day, *(f"{day}.{n}" for n in range(2, 1000))):
-        if not remote.exists(storage, f"{_snapshot_path(project, name)}/os/repodata/repomd.xml"):
+        if not remote.exists(storage, f"{_snapshot_path(project, name)}/{REPO}/Source/repodata/repomd.xml"):
             return name
     msg = f"too many snapshots on {day}"
     raise BuildError(msg)
@@ -274,11 +288,15 @@ def _delete_stale(storage: Remote, prefix: str, keep: set[str]) -> None:
     remote.delete(storage, [p for p in stale if Path(p).name != remote.INDEX])
 
 
-def upload_snapshot(project: Project, keys: dict[str, str], src: Path, name: str, *, signer: Signer | None) -> None:
-    """Upload the snapshot in `src` as `name`, and make it the latest one.
+def upload_snapshot(
+    platforms: list[tuple[Project, dict[str, str]]], src: Path, name: str, *, signer: Signer | None
+) -> None:
+    """Upload the snapshot in `src` of the `platforms` as `name`, and make it the latest one.
 
-    The packages already in the storage, in the builds with `keys` or the latest snapshot, are copied there.
+    The packages already in the storage, in the latest snapshot or the builds with the keys of the platforms, are
+    copied there.
     """
+    project = platforms[0][0]
     storage = project.config.remote
     if not storage:
         msg = "no remote storage: see [remote] in xcraft.toml"
@@ -290,12 +308,13 @@ def upload_snapshot(project: Project, keys: dict[str, str], src: Path, name: str
     stored = {
         f: f"{latest}/{f}" for f, digest in remote.read_manifest(storage, latest).items() if manifest.get(f) == digest
     }
-    for package, key in keys.items():
-        tree = _signed_path(project, signer, package, key) if signer else build_path(project, package, key)
-        for path, digest in remote.read_manifest(storage, tree).items():
-            repo = {"RPMS": "os", "SRPMS": "source"}.get(path.split("/")[0])
-            if repo and manifest.get(f := f"{repo}/{Path(path).name}") == digest:
-                stored[f] = f"{tree}/{path}"
+    for platform, keys in platforms:
+        for package, key in keys.items():
+            tree = _signed_path(platform, signer, package, key) if signer else build_path(platform, package, key)
+            for path, digest in remote.read_manifest(storage, tree).items():
+                repo = {"RPMS": f"{REPO}/{platform.arch}", "SRPMS": f"{REPO}/Source"}.get(path.split("/")[0])
+                if repo and manifest.get(f := f"{repo}/{Path(path).name}") == digest:
+                    stored[f] = f"{tree}/{path}"
     # the packages before the metadata listing them, and repomd.xml with its signature, as close as can be
     last = [f for f in files if f.endswith(("/repomd.xml", "/repomd.xml.asc"))]
     order = [f for f in files if f.endswith(".rpm")] + [f for f in files if not f.endswith(".rpm") and f not in last]
@@ -316,6 +335,6 @@ def upload_snapshot(project: Project, keys: dict[str, str], src: Path, name: str
         remote.write_manifest(storage, latest, manifest)
         _delete_stale(storage, latest, keep)
         on_line("the pages of the directories")
-        signed = [f"signed/{signer.key}/{project.arch}/"] if signer else []
+        signed = [f"signed/{signer.key}/{platform.arch}/" for platform, _ in platforms] if signer else []
         remote.update_pages(storage, [f"{snapshot}/", f"{latest}/", *signed])
     console.print(f"[bold green]✓[/] published {snapshot}, and as {latest}")

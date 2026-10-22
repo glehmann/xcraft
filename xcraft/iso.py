@@ -45,7 +45,10 @@ def make_iso(  # noqa: PLR0913
     volid: str | None,
     signer: Signer | None,
 ) -> Path:
-    """Make the ISO of `snapshot`, as `output`, or in .xcraft/iso/ by default, and return its path."""
+    """Make the ISO of `snapshot`, its binaries for the architecture, as `output`, or in .xcraft/iso/ by default.
+
+    Return the path of the ISO.
+    """
     iso = project.config.iso
     with project.work("iso") as work:
         (work / "config.json").write_text(

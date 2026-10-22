@@ -535,12 +535,14 @@ def build(  # noqa: PLR0913
     verbose: bool = False,
     autorev: dict[str, str] | None = None,
     fetch: bool = True,
+    build_missing: bool = True,
 ) -> list[Result]:
     """Build `targets` and, unless `with_deps` is false, what they need, skipping what is cached.
 
     `autorev` has the release suffixes of the test builds, by package. Without
     `fetch`, what is not cached locally is built, even when the remote storage
-    has it.
+    has it. Without `build_missing`, what is neither cached nor in the remote
+    storage fails, rather than being built.
     """
     autorev = autorev or {}
     plan = build_order(project.deps, targets, with_deps=with_deps)
@@ -553,7 +555,9 @@ def build(  # noqa: PLR0913
     repo = builds_repo(project, keys)
     _queue_file(project).parent.mkdir(parents=True, exist_ok=True)
     try:
-        return _build_all(project, plan, repo, verbose=verbose, autorev=autorev, fetch=fetch)
+        return _build_all(
+            project, plan, repo, verbose=verbose, autorev=autorev, fetch=fetch, build_missing=build_missing
+        )
     finally:
         _queue_file(project).unlink(missing_ok=True)
 
@@ -566,6 +570,7 @@ def _build_all(  # noqa: PLR0913
     verbose: bool,
     autorev: dict[str, str],
     fetch: bool,
+    build_missing: bool,
 ) -> list[Result]:
     results: dict[str, Result] = {}
     use_remote = fetch and project.config.remote is not None
@@ -596,19 +601,27 @@ def _build_all(  # noqa: PLR0913
             continue
         start = time.monotonic()
         try:
+            if not build_missing:
+                msg = f"not in the remote storage, for {project.arch}"
+                raise BuildError(msg)
             status = None if verbose else f"[{i}/{len(plan)}] building {name}{_estimate(project, name)}"
             _build_one(project, name, repo, status=status, autorev=autorev)
         except (OSError, RuntimeError) as e:
             results[name] = Result(name, "failed")
-            console.print(f"[bold red]✗[/] {name}: {escape(str(e))}")
-            if isinstance(e, ContainerError) and not verbose:
-                for line in log_step(read_tail(project.log(name)))[-40:]:
-                    print_log_line(line)
-                console.print(f"[dim]full log: xcraft log {name}[/]")
+            _show_failure(project, name, e, verbose=verbose)
             continue
         results[name] = Result(name, "built")
         console.print(f"[bold green]✓[/] {name} [green]built[/] in {duration(time.monotonic() - start)}")
     return list(results.values())
+
+
+def _show_failure(project: Project, name: str, error: Exception, *, verbose: bool) -> None:
+    """Show why the build of `name` failed, with the end of its log when it failed in the build environment."""
+    console.print(f"[bold red]✗[/] {name}: {escape(str(error))}")
+    if isinstance(error, ContainerError) and not verbose:
+        for line in log_step(read_tail(project.log(name)))[-40:]:
+            print_log_line(line)
+        console.print(f"[dim]full log: xcraft log {name}[/]")
 
 
 def shell(project: Project, name: str) -> None:

@@ -82,7 +82,7 @@ def test_clean_keeps_sources_and_current_builds(project: Project) -> None:
     assert {"build/foo/SPECS/foo.spec", "cache/builds/x86_64_v2/foo/old/RPMS/foo.rpm"} <= set(files(state))
     # what the local repository, the snapshot and the repositories of xcraft repo still link
     rpm = state / "cache/builds/x86_64_v2/bar/current/RPMS/bar.rpm"
-    for link in (state / "repo/bar.rpm", state / "publish/x86_64_v2/os/bar.rpm", project.root / "repo/bar.rpm"):
+    for link in (state / "repo/bar.rpm", state / "publish/base/x86_64_v2/bar.rpm", project.root / "repo/bar.rpm"):
         link.parent.mkdir(parents=True, exist_ok=True)
         link.hardlink_to(rpm)
     assert repos_disk_usage(project) == 0
