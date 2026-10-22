@@ -6,12 +6,16 @@
 #   autorev: the suffix of the release of a test build, or nothing
 #   replace: the upstream packages of the image to replace by ours, or nothing
 # It installs the build dependencies, including the dynamic ones, then runs rpmbuild, with stdin from /dev/null like
-# koji and mock, so that interactive steps of a build don't wait forever.
+# koji and mock, so that interactive steps of a build don't wait forever, and without the network, like them too: the
+# build only uses what it is given.
 # shellcheck shell=bash disable=SC2086 # $lock and $replace are lists of words
 : "${spec:?}" "${stage:?}" "${repo:?}" "${lock:?}" "${autorev?}" "${replace?}"
 set -euo pipefail
 export CCACHE_DIR=/ccache PATH=/usr/lib64/ccache:$PATH
 spec=/build/SPECS/$spec
+offline() {
+    python3 /xcraft/offline.py "$@"
+}
 defines=(-D "_topdir /build")
 if [ -n "$autorev" ]; then
     defines+=(-D "autorev $autorev")
@@ -26,7 +30,7 @@ time {
     $lock dnf -y builddep "${defines[@]}" "$spec"
     if grep -q '^%generate_buildrequires' "$spec"; then
         # rpmbuild -br exits with 11 while some dynamic BuildRequires are missing
-        while rc=0; rpmbuild -br "${defines[@]}" "$spec" </dev/null || rc=$?; [ $rc -eq 11 ]; do
+        while rc=0; offline rpmbuild -br "${defines[@]}" "$spec" </dev/null || rc=$?; [ $rc -eq 11 ]; do
             $lock dnf -y builddep /build/SRPMS/*.buildreqs.nosrc.rpm
             rm /build/SRPMS/*.buildreqs.nosrc.rpm
         done
@@ -41,5 +45,5 @@ time {
         . "$profile"
     done
     set -eu -o pipefail
-    rpmbuild -b"$stage" "${defines[@]}" "$spec" </dev/null
+    offline rpmbuild -b"$stage" "${defines[@]}" "$spec" </dev/null
 }

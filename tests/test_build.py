@@ -116,6 +116,26 @@ def write_spec(root: Path, name: str, requires: str = "", files: str = "/usr/sha
     )
 
 
+def test_build_without_network(root: Path) -> None:
+    write_spec(root, "offline")
+    spec = root / "specs/base/offline/offline.spec"
+    check = (
+        "import socket\n"
+        "server = socket.create_server(('127.0.0.1', 0))\n"
+        "socket.create_connection(server.getsockname())\n"
+        "try:\n"
+        "    socket.create_connection(('1.1.1.1', 443), timeout=5)\n"
+        "except OSError:\n"
+        "    print('no network')\n"
+        "else:\n"
+        "    raise SystemExit('network')\n"
+    )
+    spec.write_text(spec.read_text().replace("%install\n", f"%build\npython3 - <<'EOF'\n{check}EOF\n%install\n"))
+    code, output = xcraft("build", "offline")
+    assert code == 0, output
+    assert "no network" in (root / ".xcraft/logs/offline.log").read_text()  # but its loopback interface
+
+
 def test_build_root_unexplained_by_dependencies(root: Path) -> None:
     # xcraft does not know which files our packages provide before they are built
     write_spec(root, "tool", files="/usr/bin/xcraft-test-tool")
