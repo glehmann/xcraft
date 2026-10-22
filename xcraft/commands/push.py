@@ -7,7 +7,7 @@ from typing import Annotated
 import typer
 
 from xcraft import build as builder
-from xcraft import remote
+from xcraft import ccache, remote
 from xcraft.commands import Arch, Packages, load, remote_storage
 from xcraft.display import activity, console
 from xcraft.project import Project
@@ -109,6 +109,20 @@ def _push_builds(packages: list[str] | None, arch: str | None) -> list[str]:
             remote.update_pages(storage, [f"{builder.build_path(project, name, keys[name])}/" for name in pushed])
     console.print(f"{len(pushed)} pushed, {len(present)} already in the remote storage")
     return not_built
+
+
+@app.command("ccache")
+def caches(packages: Packages = None, arch: Arch = None) -> None:
+    """Upload the compiler caches of the given packages, all by default, replacing those of the remote storage, for CI.
+
+    They are not uploaded by xcraft push without a command: they are large, and change with each build.
+    """
+    project = load(packages, arch=arch)
+    storage = remote_storage(project)
+    pushed = [name for name in packages or sorted(project.packages) if ccache.push(project, storage, name)]
+    for name in pushed:
+        console.print(f"[green]↑[/] {name}")
+    console.print(f"{len(pushed)} pushed")
 
 
 @app.command()
