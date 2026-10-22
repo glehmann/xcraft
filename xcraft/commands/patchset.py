@@ -31,7 +31,7 @@ def patchset(
     project = load()
     packages = project.packages
     name = repo_name(repo)
-    if not (package := package or guess_package(name, packages, project.specs)):
+    if not (package := package or guess_package(name, packages)):
         msg = f"no package matches the repository {name}, give it with --package"
         raise typer.BadParameter(msg)
     if package not in packages or not packages[package].binaries:
@@ -40,7 +40,9 @@ def patchset(
     version = packages[package].binaries[0].evr.split(":")[-1].rsplit("-", 1)[0]
     base = base or guess_base(repo, version)
     with project.lock():
-        result = update_patchset(project.specs / package, main_spec(project.specs / package), repo, base, first)
+        result = update_patchset(
+            project.package_dirs[package], main_spec(project.package_dirs[package]), repo, base, first
+        )
     console.print(
         f"[bold]{package}[/]: patchset from {escape(base)}, {len(result.added)} added, {len(result.removed)} removed"
     )

@@ -58,7 +58,7 @@ xcraft --install-completion  # optional
 | `xcraft bump <pkg> --version v [-m message]` | Update a package to a new version, with the archive of its `Source0`, and the packages of the same version; the changelog entry is `Update to <v>` by default |
 | `xcraft clean [<pkg>...] [--builds] [--ccache]` | Remove the build trees and outdated builds, and optionally all builds and compiler caches, of the given packages or all; the source archives are kept |
 | `xcraft patchset [--package p] [--base ref] [--first n]` | Update the patches of a package with the commits of the current git branch, from the developer's repository |
-| `xcraft import <pkg>... [--branch b] [--url u]` | Copy packages from their packaging repositories |
+| `xcraft import <pkg>... [--branch b] [--url u] [--repo r]` | Copy packages from their packaging repositories, new ones into `specs/base/`, or `specs/<r>/` |
 | `xcraft import --all` | Re-import all packages from where they were imported |
 | `xcraft --trace <command>` | Show stack traces on errors |
 
@@ -67,10 +67,12 @@ xcraft --install-completion  # optional
 **Project.** xcraft works on the specs that come with its code: the project is the checkout of xcraft containing
 the code run, wherever the command is run from. `XCRAFT_PROJECT` can point to another one, like in the tests.
 
-**Packages.** Each `specs/<pkg>/` directory holds a spec and its sources, except the source archives: they are listed
-with their SHA-256 in `specs/<pkg>/sources`, and stored in `.xcraft/cache/sources/<sha256>/<filename>`.
-`xcraft import` fills a package directory from a packaging repository (by default
-`https://github.com/xcp-ng-rpms/<pkg>`, on `master`), and records where it comes from in `specs/<pkg>/origin`. It
+**Packages.** The packages are grouped by the repository they are published in: `specs/<repo>/<pkg>/`, like
+`specs/base/xen/`. Their names are unique across the repositories. Each package directory holds a spec and its
+sources, except the source archives: they are listed with their SHA-256 in `specs/<repo>/<pkg>/sources`, and stored in
+`.xcraft/cache/sources/<sha256>/<filename>`. `xcraft import` fills a package directory from a packaging repository (by
+default `https://github.com/xcp-ng-rpms/<pkg>`, on `master`), in `specs/base/` for a new package, or another
+repository with `--repo`, and records where it comes from in `<pkg>/origin`. It
 takes the archives out of git LFS for repositories with the `SPECS/` and `SOURCES/` layout, and downloads them from
 the AlmaLinux lookaside cache for dist-git repositories. With `--url` ending with `.src.rpm`, it imports a source
 RPM instead, for packages only published this way, like CentOS 7's. The spec of a package is `<pkg>.spec`, or its
@@ -136,7 +138,7 @@ builds it again as soon as one of its inputs changes. The key is the name of the
 | The platform | `linux/amd64/v2` by default | `platform` |
 | The extra upstream RPMs | The names and URLs of `extra_upstream` | `extra_upstream` |
 | The recipe | The build script, the `.repo` file of the local repository, and the script recording the build roots | A change to how xcraft builds |
-| The package | Its name, and all the files of `specs/<pkg>/`, but `origin`: their paths, contents, and whether they are executable. The `sources` manifest covers the archives by their SHA-256 | Any change to the spec, a patch, a source file, or an archive |
+| The package | Its name, and all the files of `specs/<repo>/<pkg>/`, but `origin`: their paths, contents, and whether they are executable. The `sources` manifest covers the archives by their SHA-256 | Any change to the spec, a patch, a source file, or an archive |
 | Its build root | The upstream packages its last build installed besides the image's, as recorded in the lock, with their locked versions | `xcraft lock --update` of one of them, or a build installing other ones |
 | Its test build suffix | `.0.ID.<n>` or `~ID.<n>`, for `--test` and `--pre` only | Each test build |
 | Its dependencies | The keys of the packages of ours its build installs (see [Dependencies](#dependencies)), like `kernel-headers`, in all the build roots | Any change to one of them, recursively |
@@ -145,7 +147,7 @@ The first four are common to all the packages: changing one of them rebuilds eve
 other, a cycle, share the hash of them all, from which each one gets its own key.
 
 **What it does not cover.** The path of the checkout, the machine, the user and the time; `origin`, and the files out of
-`specs/<pkg>/`, but those above; the SHA-256 and architecture of the upstream packages, only their versions. So the
+`specs/<repo>/<pkg>/`, but those above; the SHA-256 and architecture of the upstream packages, only their versions. So the
 same commit gives the same keys everywhere: a build pushed by CI, or by a colleague, is fetched by any checkout instead
 of being built again. The local repository of the builds gets its own name in each checkout, `xcraft-<project id>`,
 for its own metadata in the dnf cache the containers share, but the recipe the key covers has a placeholder instead.

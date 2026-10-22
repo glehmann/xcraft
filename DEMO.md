@@ -19,7 +19,7 @@ xcraft key show                  # or xcraft key create: the developer's key, fo
 
 One tool, and one repository, to build the whole XCP-ng distribution:
 
-- **The packages are in the repository**: each `specs/<pkg>/` has the spec, its patches and small sources, imported
+- **The packages are in the repository**: each `specs/base/<pkg>/` has the spec, its patches and small sources, imported
   from the xcp-ng-rpms repositories. The source archives are not in git: they are listed with their sha256, and
   shared through a remote storage.
 - **A reproducible build environment**: a podman container made only of AlmaLinux 10 and EPEL packages, from a base
@@ -33,8 +33,8 @@ One tool, and one repository, to build the whole XCP-ng distribution:
 
 ```
 xcraft --help
-ls specs/ && ls specs/xen/
-cat specs/xen/sources            # archives listed by sha256, not stored in git
+ls specs/base/ && ls specs/base/xen/
+cat specs/base/xen/sources            # archives listed by sha256, not stored in git
 cat xcraft.toml                  # the settings, defaults in xcraft/project.py
 grep -A8 '^"biosdevname" = \[' locks/x86_64_v2.toml    # the upstream packages its build installs
 grep '^"pciutils-devel" = ' locks/x86_64_v2.toml        # their version, the same for the whole tree
@@ -70,7 +70,7 @@ xcraft build xcp-ng-release                 # again: everything cached
 xcraft bump branding-xcp-ng -m "just a demo"
 xcraft build --dry-run                      # branding-xcp-ng and the packages built against it
 xcraft build xcp-ng-release                 # only what xcp-ng-release needs
-jj restore specs/branding-xcp-ng            # back to the cached builds
+jj restore specs/base/branding-xcp-ng            # back to the cached builds
 ```
 
 ## 6. Shared builds through remote storage
@@ -92,7 +92,7 @@ The storage, read publicly over http, with a page for each directory:
   `RPMS/`, `SRPMS/`, `build.log`, and `manifest.json`, the checksums of its files
 - <http://xcraft.web.garage.localhost:3902/builds/x86_64_v2/kernel/>: pushed before the demo
 - <http://xcraft.web.garage.localhost:3902/sources/b7564fd218cc4479f7f0106d341e096f78907b47865aeeff702c807df1927c01/>:
-  the archive of `specs/python-bitarray/sources`, by its sha256
+  the archive of `specs/base/python-bitarray/sources`, by its sha256
 
 ## 7. Inspecting and debugging a build
 
@@ -123,16 +123,16 @@ With a test host: `--host root@testhost --upgrade`.
 xcraft lock
 xcraft impacts
 xcraft bump python-bitarray -m "Rebuild"    # or: xcraft ack python-bitarray
-jj restore specs/python-bitarray            # not to rebuild sm and xapi for step 10
+jj restore specs/base/python-bitarray            # not to rebuild sm and xapi for step 10
 ```
 
 A new upstream version, with the archive downloaded from the `Source0` of the spec:
 
 ```
 xcraft bump xcp-ng-xapi-plugins --version 1.16.0       # changelog entry: Update to 1.16.0
-jj diff --git specs/xcp-ng-xapi-plugins     # Version, Release, changelog, and the new archive in sources
+jj diff --git specs/base/xcp-ng-xapi-plugins     # Version, Release, changelog, and the new archive in sources
 xcraft build xcp-ng-xapi-plugins            # ~3s, with its patches on the new version
-jj restore specs/xcp-ng-xapi-plugins
+jj restore specs/base/xcp-ng-xapi-plugins
 ```
 
 `kernel` and `kernel-headers` are of the same archive: `same_version` in `xcraft.toml` updates them together.

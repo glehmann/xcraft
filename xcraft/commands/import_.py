@@ -22,16 +22,22 @@ def import_(
         str | None,
         typer.Option(help="Packaging repository, or source RPM. Defaults to the previous import's, or xcp-ng-rpms'."),
     ] = None,
+    repo: Annotated[
+        str, typer.Option(help="Repository of the new packages, as their directory in specs/. Others stay in theirs.")
+    ] = "base",
     all_: All = False,
 ) -> None:
-    """Copy packages from their packaging repositories into specs/. --all re-imports the packages imported before."""
+    """Copy packages from their packaging repositories into specs/<repo>/.
+
+    --all re-imports the packages imported before.
+    """
     project = Project.find()
     if all_:
-        packages = sorted(p.parent.name for p in project.specs.glob("*/origin") if not p.parent.name.startswith("."))
+        packages = sorted(name for name, path in project.package_dirs.items() if (path / "origin").exists())
     if not packages:
         msg = "no package given"
         raise typer.BadParameter(msg)
-    if bad := [name for name in packages if not re.fullmatch(r"[A-Za-z0-9][\w.+-]*", name)]:
+    if bad := [name for name in [*packages, repo] if not re.fullmatch(r"[A-Za-z0-9][\w.+-]*", name)]:
         msg = f"not package names: {', '.join(map(repr, bad))}"
         raise typer.BadParameter(msg)
     if url and len(packages) > 1:
@@ -39,7 +45,7 @@ def import_(
         raise typer.BadParameter(msg)
     with project.lock():
         for i, name in enumerate(packages, 1):
-            pkg_dir = project.specs / name
+            pkg_dir = project.package_dirs.get(name, project.specs / repo / name)
             origin_url, origin_branch, _ = read_origin(pkg_dir) or (DEFAULT_URL.format(name=name), "master", "")
             # the previous branch, of the previous repository only
             pkg_branch = branch or (origin_branch if not url or url == origin_url else "master")

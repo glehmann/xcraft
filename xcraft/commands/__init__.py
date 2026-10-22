@@ -13,8 +13,7 @@ from xcraft.project import Project, Remote
 def complete_package(incomplete: str) -> list[str]:
     """Return the packages starting with `incomplete`, for the shell completion."""
     try:
-        specs = Project.find().specs
-        return sorted(p.name for p in specs.iterdir() if p.name.startswith(incomplete) and not p.name.startswith("."))
+        return sorted(name for name in Project.find().package_dirs if name.startswith(incomplete))
     except (RuntimeError, OSError):
         return []
 

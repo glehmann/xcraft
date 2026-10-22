@@ -127,8 +127,6 @@ def test_guesses(repo: Path, pkg: Path) -> None:
     with pytest.raises(PatchsetError, match="give the base of the patchset with --base"):
         guess_base(repo, "2.0")
     binary = Binary(name="foo-tools", evr="1.0-1", arch="noarch", provides=[], requires=[])
-    packages = {"bar": Package(name="bar", binaries=[binary])}
-    (pkg.parent / "bar").mkdir()
-    (pkg.parent / "bar/bar.spec").write_text(SPEC)  # Source0: foo-1.0.tar.gz
-    assert guess_package("foo", packages, pkg.parent) == "bar"
-    assert guess_package("baz", packages, pkg.parent) is None
+    packages = {"bar": Package(name="bar", binaries=[binary], source0="https://example.com/v1.0/foo-1.0.tar.gz")}
+    assert guess_package("foo", packages) == "bar"
+    assert guess_package("baz", packages) is None

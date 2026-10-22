@@ -30,7 +30,7 @@ def files(path: Path) -> list[str]:
 
 
 def test_stage_like_a_packaging_repository(project: Project, tmp_path: Path) -> None:
-    pkg = project.specs / "foo"
+    pkg = project.specs / "base/foo"
     (pkg / "sub").mkdir(parents=True)
     for name in ("foo.spec", "foo-helper.spec", "fix.patch", "sub/conf", "origin"):
         (pkg / name).write_text(name)
@@ -143,10 +143,19 @@ def test_fresh_dir_only_empties_what_xcraft_made(project: Project, tmp_path: Pat
     fresh_dir(project, old)  # a repository from before the marker
 
 
+def test_package_dirs(project: Project) -> None:
+    for path in ("base/foo", "base/.foo.import", "xostor/bar"):
+        (project.specs / path).mkdir(parents=True)
+    assert project.package_dirs == {"bar": project.specs / "xostor/bar", "foo": project.specs / "base/foo"}
+    (project.specs / "xostor/foo").mkdir()
+    with pytest.raises(RuntimeError, match="foo is in two repositories: base and xostor"):
+        _ = Project(project.root, project.config).package_dirs
+
+
 def test_keys_of_cycles(project: Project) -> None:
     for name in ("a", "b", "0foo"):
-        (project.specs / name).mkdir(parents=True)
-        (project.specs / name / f"{name}.spec").write_text(name)
+        (project.specs / "base" / name).mkdir(parents=True)
+        (project.specs / "base" / name / f"{name}.spec").write_text(name)
     project.deps = {"a": {"b"}, "b": {"a"}}
     keys = build_keys(project)
     # not the order the cycle is reached in: from a package depending on b, first in name order
@@ -154,7 +163,7 @@ def test_keys_of_cycles(project: Project) -> None:
     more = build_keys(project)
     assert (more["a"], more["b"]) == (keys["a"], keys["b"])
     assert keys["a"] != keys["b"]
-    (project.specs / "b/b.spec").write_text("b changed")
+    (project.specs / "base/b/b.spec").write_text("b changed")
     project.deps = {"a": {"b"}, "b": {"a"}}
     assert build_keys(project)["a"] != keys["a"]
 
