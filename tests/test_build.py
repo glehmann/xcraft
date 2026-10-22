@@ -434,3 +434,9 @@ def test_impacts_and_bump(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "trivial: 1.0-1 -> 1.0-2\n",
     )
     assert load_lock(Project.find()).pending == {}
+
+
+def test_failed_step_shows_its_log(root: Path) -> None:
+    # like in CI, where the log is out of reach
+    with pytest.raises(container.ContainerError, match=r"_failing\.log, which ends with:\n  first\n  boom$"):
+        container.run(Project.find(), "failing", "echo first; echo boom; false")

@@ -10,6 +10,8 @@ COPY versionlock.list /etc/dnf/plugins/
 RUN echo keepcache=1 >> /etc/dnf/dnf.conf \
     && dnf -y install python3-dnf-plugin-versionlock && dnf -y distro-sync \
     && dnf -y --setopt=install_weak_deps=False install ${PACKAGES} && dnf clean all
-RUN useradd -u 1000 builder && echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
+# without the account check of PAM, whose helper cannot read /etc/shadow in some rootless containers, like in CI
+RUN useradd -u 1000 builder \
+    && printf 'builder ALL=(ALL) NOPASSWD: ALL\nDefaults:builder !pam_acct_mgmt\n' > /etc/sudoers.d/builder
 USER builder
 WORKDIR /home/builder
