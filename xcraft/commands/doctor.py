@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 from typing import Annotated
 
 import typer
 
-from xcraft import host, remote
+from xcraft import host, process, remote
 from xcraft.display import console
 from xcraft.project import Project
 
@@ -24,12 +23,8 @@ def _tool(name: str, needed: str, *, required: bool = False) -> tuple[str, str]:
 
 def _checks(project: Project) -> list[tuple[str, str]]:
     """Return the checks of the host, as their state, ok, warning or error, and what they found."""
-    podman = subprocess.run(
-        ["podman", "info", "--format", "{{.Version.Version}} {{.Host.Security.Rootless}}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    ) if shutil.which("podman") else None  # fmt: skip
+    info = ["podman", "info", "--format", "{{.Version.Version}} {{.Host.Security.Rootless}}"]
+    podman = process.run(info, check=False, capture=True) if shutil.which("podman") else None
     if podman and podman.returncode == 0 and podman.stdout.split()[1:] == ["true"]:
         checks = [("ok", f"podman {podman.stdout.split()[0]}, rootless")]
     else:

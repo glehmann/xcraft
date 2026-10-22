@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 import socket
 import subprocess
 import sys
 from typing import Annotated
 
 import typer
+from rich.logging import RichHandler
 
+from xcraft import process
 from xcraft.commands import (
     ack,
     build,
@@ -60,14 +63,22 @@ app.add_typer(key.app, name="key", rich_help_panel="Publishing")
 
 
 @app.callback()
-def options(trace: Annotated[bool, typer.Option("--trace", help="Show stack traces on errors.")] = False) -> None:
+def options(
+    trace: Annotated[bool, typer.Option("--trace", help="Show stack traces on errors.")] = False,
+    debug: Annotated[bool, typer.Option("--debug", help="Show the commands xcraft runs.")] = False,
+) -> None:
     """Build the XCP-ng distribution."""
-    # --trace is handled in main(), it is declared here for --help
+    # --trace and --debug are handled in main(), they are declared here for --help
 
 
 def main() -> None:
     """Run the command line, showing errors without a stack trace unless --trace is given."""
     socket.setdefaulttimeout(60)  # the downloads, from servers not answering anymore: boto3 has its own
+    if "--debug" in sys.argv:
+        # above the progress of the activities, like the other messages
+        handler = RichHandler(console=console, show_time=False, show_level=False, show_path=False, markup=False)
+        process.log.addHandler(handler)
+        process.log.setLevel(logging.DEBUG)
     try:
         app()
     except KeyboardInterrupt:

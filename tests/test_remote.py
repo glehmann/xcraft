@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import secrets
 import shutil
@@ -108,7 +109,7 @@ def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, s3: dict[str, str]) ->
     return root
 
 
-def test_sources(root: Path, tmp_path: Path) -> None:
+def test_sources(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     archive = tmp_path / f"trivial-{secrets.token_hex(4)}.tar.gz"
     archive.write_text(archive.name)
     cache = Project.find().source_cache
@@ -118,14 +119,22 @@ def test_sources(root: Path, tmp_path: Path) -> None:
     code, output = xcraft("push", "sources", "--check")
     assert code == 1
     assert f"✗ {archive.name} is not in the remote storage" in output
-    assert xcraft("push", "sources")[1].endswith("1 pushed, 0 already in the remote storage\n")
+    with caplog.at_level(logging.DEBUG, logger="xcraft"):  # what xcraft --debug shows
+        assert xcraft("push", "sources")[1].endswith("1 pushed, 0 already in the remote storage\n")
+    assert (
+        f"uploading {cache / digest / archive.name} to s3://xcraft/sources/{digest}/{archive.name}" in caplog.messages
+    )
     assert xcraft("push", "sources", "--check") == (0, "1 archives in the remote storage, 0 missing\n")
 
     # a fresh checkout downloads it
     shutil.rmtree(cache)
     assert (prepare_tree(Project.find(), "trivial") / "SOURCES" / archive.name).read_text() == archive.name
     shutil.rmtree(cache)
-    assert xcraft("fetch", "sources") == (0, "all the source archives are in the source cache\n")
+    with caplog.at_level(logging.DEBUG, logger="xcraft"):
+        assert xcraft("fetch", "sources") == (0, "all the source archives are in the source cache\n")
+    assert any(
+        m.startswith(f"downloading http://xcraft.web.garage.localhost:13902/sources/{digest}/") for m in caplog.messages
+    )
     assert (cache / digest / archive.name).read_text() == archive.name
     # and checks it
     shutil.rmtree(cache)

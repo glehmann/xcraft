@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import shlex
-import subprocess
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
 from xcraft import build as builder
+from xcraft import process
 from xcraft.commands import Arch, Packages, Pre, Test, load, test_kind
 from xcraft.display import activity, console
 from xcraft.signing import check_signatures, dev_signer
@@ -32,16 +32,9 @@ def _copy_to_host(host: str, output: Path, ident: str, binaries: list[str], *, u
     """Copy the repository of test builds in `output` to `host`, with its .repo file, and maybe upgrade `binaries`."""
     remote = f"{REMOTE}/{ident}"
     with activity(f"copying the repository to {host}"):
-        subprocess.run(["ssh", host, f"mkdir -p {remote}"], check=True, capture_output=True, text=True)
-        subprocess.run(
-            ["rsync", "-a", "--delete", f"{output}/", f"{host}:{remote}/"], check=True, capture_output=True, text=True
-        )
-        subprocess.run(
-            ["ssh", host, f"install -m 644 {remote}/xcraft-{ident}.repo /etc/yum.repos.d/"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        process.run(["ssh", host, f"mkdir -p {remote}"], capture=True)
+        process.run(["rsync", "-a", "--delete", f"{output}/", f"{host}:{remote}/"], capture=True)
+        process.run(["ssh", host, f"install -m 644 {remote}/xcraft-{ident}.repo /etc/yum.repos.d/"], capture=True)
     console.print(f"[bold green]✓[/] repository on {host}, in {remote}")
     if upgrade:
         # only those installed: dnf upgrade fails on the others
@@ -49,7 +42,7 @@ def _copy_to_host(host: str, output: Path, ident: str, binaries: list[str], *, u
             f"names=$(rpm -q --qf '%{{NAME}}\\n' {shlex.join(binaries)} | grep -v ' ' || true)\n"
             'if [ -n "$names" ]; then dnf -y upgrade --refresh $names; else echo "none of them is installed"; fi\n'
         )
-        subprocess.run(["ssh", host, script], check=True)
+        process.run(["ssh", host, script])
 
 
 def repo(  # noqa: PLR0913, PLR0917

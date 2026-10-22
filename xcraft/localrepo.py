@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import shutil
-import urllib.request
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from xcraft import process
 from xcraft.container import run
 from xcraft.display import activity, download_progress
 
@@ -88,7 +88,7 @@ class LocalRepo:
             if not rpm.exists():
                 tmp = rpm.with_suffix(".part")
                 with activity(f"downloading {rpm.name}") as on_line:
-                    urllib.request.urlretrieve(url, tmp, reporthook=download_progress(on_line))  # noqa: S310
+                    process.download(url, tmp, download_progress(on_line))
                 tmp.rename(rpm)
             link(rpm, self.path / rpm.name)
 

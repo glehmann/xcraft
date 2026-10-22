@@ -25,7 +25,9 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 from urllib.parse import quote, urlparse
 
+from xcraft import process
 from xcraft.display import download_progress
+from xcraft.process import log
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
@@ -44,6 +46,10 @@ def _url(storage: Remote, path: str) -> str:
     return f"{storage.url.rstrip('/')}/{path}"
 
 
+def _s3_url(storage: Remote, path: str) -> str:
+    return f"s3://{storage.bucket}/{path}"
+
+
 def on_this_machine(storage: Remote) -> bool:
     """Return whether the storage is on this machine, like local-s3.sh's: its URLs resolve to loopback addresses."""
 
@@ -59,6 +65,7 @@ def on_this_machine(storage: Remote) -> bool:
 
 def exists(storage: Remote, path: str) -> bool:
     """Return whether the shared storage has `path`."""
+    log.debug("checking %s", _url(storage, path))
     try:
         with urllib.request.urlopen(urllib.request.Request(_url(storage, path), method="HEAD")):  # noqa: S310
             return True
@@ -71,7 +78,7 @@ def download(storage: Remote, path: str, dest: Path, on_line: Callable[[str], No
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_name(f"{dest.name}.part")
     try:
-        urllib.request.urlretrieve(_url(storage, path), part, reporthook=download_progress(on_line))  # noqa: S310
+        process.download(_url(storage, path), part, download_progress(on_line))
     except OSError as e:
         part.unlink(missing_ok=True)
         return _absent_or_raise(storage, path, e)
@@ -114,18 +121,21 @@ def _writing(storage: Remote, action: str) -> Generator[S3Client]:
 
 def upload(storage: Remote, path: str, file: Path) -> None:
     """Upload `file` as `path`, with the S3 credentials of the environment."""
+    log.debug("uploading %s to %s", file, _s3_url(storage, path))
     with _writing(storage, f"upload {path}") as s3:
         s3.upload_file(str(file), storage.bucket, path)
 
 
 def copy(storage: Remote, src: str, dest: str) -> None:
     """Copy `src` to `dest` in the storage, without transferring it."""
+    log.debug("copying %s to %s", _s3_url(storage, src), _s3_url(storage, dest))
     with _writing(storage, f"copy {src} to {dest}") as s3:
         s3.copy_object(Bucket=storage.bucket, Key=dest, CopySource={"Bucket": storage.bucket, "Key": src})
 
 
 def listing(storage: Remote, prefix: str) -> list[str]:
     """Return the paths under `prefix`, with the S3 credentials, as the public reads cannot list."""
+    log.debug("listing %s", _s3_url(storage, prefix))
     with _writing(storage, f"list {prefix}") as s3:
         pages = s3.get_paginator("list_objects_v2").paginate(Bucket=storage.bucket, Prefix=prefix)
         return [o["Key"] for page in pages for o in page.get("Contents", [])]
@@ -133,6 +143,8 @@ def listing(storage: Remote, prefix: str) -> list[str]:
 
 def delete(storage: Remote, paths: list[str]) -> None:
     """Delete `paths` from the storage."""
+    for path in paths:
+        log.debug("deleting %s", _s3_url(storage, path))
     with _writing(storage, f"delete {len(paths)} files") as s3:
         for i in range(0, len(paths), 1000):  # the most S3 deletes at once
             s3.delete_objects(Bucket=storage.bucket, Delete={"Objects": [{"Key": p} for p in paths[i : i + 1000]]})
@@ -187,6 +199,7 @@ def read_manifest(storage: Remote, prefix: str) -> dict[str, str]:
 
 def write_manifest(storage: Remote, prefix: str, manifest: dict[str, str]) -> None:
     """Write the manifest of the tree `prefix`, which completes it."""
+    log.debug("writing %s", _s3_url(storage, f"{prefix}/{MANIFEST}"))
     with _writing(storage, f"write {prefix}/{MANIFEST}") as s3:
         s3.put_object(
             Bucket=storage.bucket,
@@ -207,6 +220,7 @@ _Dirs = dict[str, tuple[int, dt.datetime | None]]
 
 def _objects(s3: S3Client, bucket: str, prefix: str, *, below: bool) -> tuple[set[str], dict[str, _Entry]]:
     """Return the subdirectories and files of `prefix`, or with `below`, all the files below it, but the pages."""
+    log.debug("listing s3://%s/%s", bucket, prefix)
     paginator = s3.get_paginator("list_objects_v2")
     pages = (
         paginator.paginate(Bucket=bucket, Prefix=prefix)
@@ -250,6 +264,7 @@ def _total(dirs: _Dirs, files: dict[str, _Entry]) -> tuple[int, dt.datetime | No
 
 def _stored_total(s3: S3Client, bucket: str, prefix: str) -> tuple[int, dt.datetime | None]:
     """Return the size of all that is below `prefix`, and the date of its newest file, which its page keeps."""
+    log.debug("checking s3://%s/%s%s", bucket, prefix, INDEX)
     try:
         metadata = s3.head_object(Bucket=bucket, Key=prefix + INDEX)["Metadata"]
     except s3.exceptions.ClientError:  # no page yet
@@ -321,6 +336,7 @@ def update_pages(storage: Remote, prefixes: list[str]) -> int:
             )
         for prefix, (dirs, files) in pages.items():
             size, newest = _total(dirs, files)
+            log.debug("writing %s", _s3_url(storage, prefix + INDEX))
             s3.put_object(
                 Bucket=storage.bucket,
                 Key=prefix + INDEX,

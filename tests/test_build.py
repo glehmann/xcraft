@@ -6,6 +6,7 @@ import hashlib
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -393,6 +394,9 @@ def test_doctor(root: Path) -> None:
     assert code == 0, output
     assert output.startswith("✓ podman ")
     assert "✓ git: " in output
+    # with the commands it runs
+    cmd = [sys.executable, "-m", "xcraft", "--debug", "doctor"]
+    assert "running podman info --format" in subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
 
 
 def test_graph(root: Path) -> None:

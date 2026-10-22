@@ -19,7 +19,6 @@ import re
 import shlex
 import shutil
 import time
-import urllib.request
 from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -27,7 +26,7 @@ from typing import TYPE_CHECKING
 from rich.markup import escape
 from rich.text import Text
 
-from xcraft import ccache, remote
+from xcraft import ccache, process, remote
 from xcraft.container import BUILDENV, DNF_LOCK, ContainerError, build_image, image_tag, run, run_container
 from xcraft.display import (
     activity,
@@ -205,7 +204,7 @@ def _fetch_source(project: Project, name: str, filename: str, digest: str) -> bo
             error = e
         if not origin and "://" in source0 and archive_name(source0) == filename:
             try:
-                urllib.request.urlretrieve(source0, part, reporthook=download_progress(on_line))  # noqa: S310
+                process.download(source0, part, download_progress(on_line))
                 origin = source0
             except OSError as e:
                 error = e
