@@ -71,7 +71,7 @@ def publish(  # noqa: PLR0913, PLR0917
     signer = choose_signer(project, local=local, unsigned=unsigned, dev_key=dev_key)
     with project.lock():
         dest = (output or project.state / "publish").absolute()
-        built = snapshot(platforms, dest, signer=signer, push=not local)
+        built = snapshot(platforms, dest, signer=signer, push=not local, build=project.config.publish.build)
         if not local and (storage := project.config.remote):
             publisher.upload_snapshot(built, dest, publisher.snapshot_name(project, storage), signer=signer)
 
@@ -100,11 +100,12 @@ def choose_signer(project: Project, *, local: bool, unsigned: bool, dev_key: boo
 
 
 def snapshot(
-    platforms: list[Project], dest: Path, *, signer: Signer | None, push: bool
+    platforms: list[Project], dest: Path, *, signer: Signer | None, push: bool, build: bool
 ) -> list[tuple[Project, dict[str, str]]]:
     """Make the snapshot of the `platforms` in `dest`, and return them with the keys of their packages.
 
-    Our packages are built or fetched first, but only fetched for the platforms the host emulates.
+    Our packages are built or fetched first, but only fetched for the platforms the host emulates. With `build`, the
+    snapshot has the build repository too.
     """
     built, upstream = [], {}
     for project in platforms:
@@ -113,11 +114,13 @@ def snapshot(
             msg = f"not built for {project.arch}: {', '.join(failed)}"
             raise RuntimeError(msg)
         keys = builder.build_keys(project)
-        upstream[project.arch] = len(publisher.resolve_runtime(project, keys))
+        upstream[project.arch] = f"{len(publisher.resolve_runtime(project, keys))} upstream ones" + (
+            f", and {len(publisher.build_dependencies(project))} to build them" if build else ""
+        )
         built.append((project, keys))
-    publisher.assemble(built, dest, signer=signer, push=push)
+    publisher.assemble(built, dest, signer=signer, push=push, build=build)
     console.print(
         f"[bold green]✓[/] snapshot in {dest}: "
-        + ", ".join(f"{p.arch}: {len(keys)} packages, {upstream[p.arch]} upstream ones" for p, keys in built)
+        + ", ".join(f"{p.arch}: {len(keys)} packages, {upstream[p.arch]}" for p, keys in built)
     )
     return built

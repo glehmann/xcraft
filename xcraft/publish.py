@@ -36,6 +36,8 @@ KEY_FILE = "RPM-GPG-KEY"
 """The public key of the signed snapshots, in them."""
 REPO = "base"
 """The repository of our packages, and of the upstream ones they need, in the snapshots."""
+BUILD = "build"
+"""The repository of the upstream packages the builds of ours need, which the base one does not have."""
 
 
 def resolve_runtime(project: Project, keys: dict[str, str]) -> list[str]:
@@ -89,8 +91,10 @@ def _download(
             with contextlib.suppress(remote.RemoteError):
                 for f in missing:
                     on_line(f)
-                    path = f"{_snapshot_path(project, 'latest')}/{REPO}/{'Source' if source else project.arch}/{f}"
-                    remote.download(storage, path, work / f)
+                    for repo in (REPO, BUILD):  # where it is, if anywhere
+                        path = f"{_snapshot_path(project, 'latest')}/{repo}/{'Source' if source else project.arch}/{f}"
+                        if remote.download(storage, path, work / f):
+                            break
         if left := sorted({nevra for f, nevra in missing.items() if not (work / f).exists()}):
             run(
                 project,
@@ -190,21 +194,31 @@ def _signed_build(project: Project, signer: Signer, name: str, key: str, *, push
     return signed
 
 
-def assemble(platforms: list[tuple[Project, dict[str, str]]], dest: Path, *, signer: Signer | None, push: bool) -> None:
+def assemble(
+    platforms: list[tuple[Project, dict[str, str]]], dest: Path, *, signer: Signer | None, push: bool, build: bool
+) -> None:
     """Make `dest` a snapshot of the `platforms`, with the builds of our packages with their keys.
 
     Each binary must be installable alone, from the binaries of its architecture. Our source packages are those of
-    the first platform: those of the others, built from the same sources, differ by their build times. With a
+    the first platform: those of the others, built from the same sources, differ by their build times. With `build`,
+    the snapshot has the build repository too, whose binaries are installable from it and the base one. With a
     `signer`, our packages and the repositories' metadata are signed, and the public key is in `dest`.
     """
     fresh_dir(platforms[0][0], dest)
-    sources = LocalRepo(platforms[0][0], dest / REPO / "Source")
-    sources.reset(extra_upstream=False)
+    sources = {
+        repo: LocalRepo(platforms[0][0], dest / repo / "Source") for repo in (REPO, BUILD) if build or repo == REPO
+    }
+    for repo in sources.values():
+        repo.reset(extra_upstream=False)
     for project, keys in platforms:
-        _assemble_arch(project, keys, dest, sources, signer=signer, push=push)
-    sources.index()
+        _assemble_arch(project, keys, dest, sources[REPO], signer=signer, push=push)
+        if build:
+            _assemble_build(project, dest, sources[BUILD], signer=signer)
+    for repo in sources.values():
+        repo.index()
+        if signer:
+            signer.sign_file(repo.path / "repodata/repomd.xml")
     if signer:
-        signer.sign_file(sources.path / "repodata/repomd.xml")
         (dest / KEY_FILE).write_text(signer.public_key())
 
 
@@ -212,7 +226,6 @@ def _assemble_arch(  # noqa: PLR0913
     project: Project, keys: dict[str, str], dest: Path, sources: LocalRepo, *, signer: Signer | None, push: bool
 ) -> None:
     """Make the repository of the binaries of the platform of `project` in `dest`, adding their sources to `sources`."""
-    lock = load_lock(project)
     binaries = LocalRepo(project, dest / REPO / project.arch)
     binaries.reset(extra_upstream=False)
     arch, source = f"{REPO}/{project.arch}", f"{REPO}/Source"
@@ -233,31 +246,62 @@ def _assemble_arch(  # noqa: PLR0913
                     ours.append(f"{source}/{srpm.name}")
     if signer:
         check_signatures(project, dest, ours, what="packages of ours", public_key=signer.public_key())
-    with activity(f"getting the upstream packages for {project.arch}") as on_line:
-        upstream = [f"{arch}/{rpm.name}" for rpm in _upstream_rpms(project, lock.runtime, on_line)]
-        for rpm in upstream:
-            link(project.state / "cache/rpms" / Path(rpm).name, dest / rpm)
-    with activity(f"getting the sources of the upstream packages for {project.arch}") as on_line:
-        for srpm in _upstream_srpms(project, lock.runtime, on_line):
-            if not (sources.path / srpm.name).exists():  # the source of several binaries, or architectures
-                link(srpm, sources.path / srpm.name)
-                upstream.append(f"{source}/{srpm.name}")
-    check_signatures(project, dest, upstream, what="upstream packages")
+    _add_upstream(project, load_lock(project).runtime, dest, binaries, sources)
     binaries.index()
     if signer:
         signer.sign_file(binaries.path / "repodata/repomd.xml")
-    _check_installable(project, binaries.path)
+    _check_installable(project, [binaries.path])
 
 
-def _check_installable(project: Project, repo: Path) -> None:
-    """Check each package of the repository `repo` can be installed from it alone."""
+def build_dependencies(project: Project) -> list[str]:
+    """Return the upstream packages the builds of ours need, but those of the base repository.
+
+    Those are the packages of the image of the build environment and of the build roots, but the upstream ones ours
+    replace, like kernel-headers.
+    """
+    lock = load_lock(project)
+    ours = {binary.name for package in project.packages.values() for binary in package.binaries}
+    return sorted(
+        {*lock.image, *(name for names in lock.buildroots.values() for name in names)} - ours - {*lock.runtime}
+    )
+
+
+def _assemble_build(project: Project, dest: Path, sources: LocalRepo, *, signer: Signer | None) -> None:
+    """Make the build repository of the platform of `project` in `dest`, adding the sources to `sources`."""
+    binaries = LocalRepo(project, dest / BUILD / project.arch)
+    binaries.reset(extra_upstream=False)
+    _add_upstream(project, build_dependencies(project), dest, binaries, sources)
+    binaries.index()
+    if signer:
+        signer.sign_file(binaries.path / "repodata/repomd.xml")
+    _check_installable(project, [dest / REPO / project.arch, binaries.path])
+
+
+def _add_upstream(project: Project, names: list[str], dest: Path, binaries: LocalRepo, sources: LocalRepo) -> None:
+    """Add the upstream packages `names` to `binaries`, and their sources to `sources`, checking their signatures."""
+    with activity(f"getting the upstream packages for {binaries.path.relative_to(dest)}") as on_line:
+        rpms = _upstream_rpms(project, names, on_line)
+        for rpm in rpms:
+            link(rpm, binaries.path / rpm.name)
+    added = [(binaries.path / rpm.name).relative_to(dest).as_posix() for rpm in rpms]
+    with activity(f"getting their sources, for {sources.path.relative_to(dest)}") as on_line:
+        for srpm in _upstream_srpms(project, names, on_line):
+            if not (sources.path / srpm.name).exists():  # the source of several binaries, or architectures
+                link(srpm, sources.path / srpm.name)
+                added.append((sources.path / srpm.name).relative_to(dest).as_posix())
+    check_signatures(project, dest, added, what="upstream packages")
+
+
+def _check_installable(project: Project, repos: list[Path]) -> None:
+    """Check each package of the last repository of `repos` can be installed from them alone."""
     with project.work("snapshot") as work:
         run(
             project,
             "snapshot",
-            f"{DNF_LOCK} python3 /xcraft/installable.py /snapshot /work/errors.json",
-            volumes=[f"{repo}:/snapshot:ro", f"{work}:/work"],
-            show="checking that the snapshot is self-contained",
+            f"{DNF_LOCK} python3 /xcraft/installable.py /work/errors.json "
+            + " ".join(f"/repos/{i}" for i in range(len(repos))),
+            volumes=[*(f"{repo}:/repos/{i}:ro" for i, repo in enumerate(repos)), f"{work}:/work"],
+            show=f"checking that {repos[-1].parent.name}/{repos[-1].name} is self-contained",
         )
         errors = json.loads((work / "errors.json").read_text())
     if errors:
