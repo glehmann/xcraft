@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from xcraft import host, process
-from xcraft.display import activity
+from xcraft.display import activity, read_tail
 from xcraft.lock import Lock, Locked, load_lock, save_lock
 from xcraft.project import ProjectLockedError
 
@@ -41,6 +41,11 @@ DNF_LOCK = "sudo flock /var/cache/dnf/.xcraft.lock"
 
 class ContainerError(RuntimeError):
     """Raised when a command fails in the build environment."""
+
+
+def _tail(log: Path) -> str:
+    """Return the end of the `log` of a failed step, to show with its error: in CI, the log is out of reach."""
+    return ", which ends with:" + "".join(f"\n  {line}" for line in read_tail(log, 2**14)[-15:]) if log.exists() else ""
 
 
 def _image_files(project: Project, lock: Lock) -> dict[str, str]:
@@ -139,7 +144,7 @@ def _podman_build(  # noqa: PLR0913
         log = project.state / f"logs/_{step}.log"
         with activity(f"building {show}") as on_line:
             if _run_logged(cmd, log, on_line, None):
-                msg = f"{show} cannot be built, see {log}"
+                msg = f"{show} cannot be built, see {log}{_tail(log)}"
                 raise ContainerError(msg)
 
 
@@ -213,17 +218,22 @@ def run(  # noqa: PLR0913
     `show` is shown while it runs, with the last line of the log, or the lines
     are given to `on_line`. See run_container() for the rest.
     """
+    log = project.state / f"logs/_{step}.log"
     with activity(show) if show else nullcontext(on_line) as progress:
-        run_container(
-            project,
-            script,
-            container=f"xcraft-{step}-{os.getpid()}",
-            volumes=volumes,
-            network=network,
-            log=project.state / f"logs/_{step}.log",
-            on_line=progress,
-            image=image,
-        )
+        try:
+            run_container(
+                project,
+                script,
+                container=f"xcraft-{step}-{os.getpid()}",
+                volumes=volumes,
+                network=network,
+                log=log,
+                on_line=progress,
+                image=image,
+            )
+        except ContainerError as e:
+            msg = f"{e}{_tail(log)}"
+            raise ContainerError(msg) from None
 
 
 _SIGN_PACKAGES = ["rpm-sign", "gnupg2"]
