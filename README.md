@@ -59,6 +59,7 @@ xcraft --install-completion  # optional
 | `xcraft clean [<pkg>...] [--builds] [--ccache]` | Remove the build trees and outdated builds, and optionally all builds and compiler caches, of the given packages or all; the source archives are kept |
 | `xcraft patchset [--package p] [--base ref] [--first n]` | Update the patches of a package with the commits of the current git branch, from the developer's repository |
 | `xcraft import <pkg>... [--branch b] [--url u] [--repo r]` | Copy packages from their packaging repositories, new ones into `specs/base/`, or `specs/<r>/` |
+| `xcraft doctor [--fix]` | Check that the host has what xcraft needs, and with `--fix`, configure the emulation of the other architectures, with sudo, after showing the commands and asking |
 | `xcraft import --all` | Re-import all packages from where they were imported |
 | `xcraft --trace <command>` | Show stack traces on errors |
 
@@ -126,12 +127,14 @@ The defaults are in `xcraft/project.py`; a setting given in `xcraft.toml` replac
 
 **Architectures.** xcraft works on one platform at a time: the one of the RPM architecture given with `--arch`, like
 `aarch64`, or in `$XCRAFT_ARCH`, or else the host's, `x86_64_v2` on an x86_64 host. So `xcraft build foo` builds `foo`
-for one architecture only. Another architecture is built under emulation, with podman and qemu-user-static: fine for the
-small packages, while the large ones are for native builders, which share their builds through the [remote
-storage](#remote-storage). xcraft solves the metadata of the repositories of an emulated architecture natively, in its
-dnf cache: under emulation, that takes most of the time of dnf. Each architecture has its lock, its build environment
-image, and its builds, in `.xcraft/cache/builds/<arch>/`. AlmaLinux rebuilds EPEL for `x86_64_v2` only: the other
-architectures get Fedora's. `xcraft bump` clears the pending updates of all the architectures.
+for one architecture only. Another architecture is built under emulation, with podman and qemu-user-static, whose
+registration needs the `C` flag for `sudo` in the containers, which Fedora's has not: `xcraft doctor` checks it, and
+`xcraft doctor --fix` registers it in `/etc/binfmt.d/`. The emulation is fine for the small packages, while the large
+ones are for native builders, which share their builds through the [remote storage](#remote-storage). xcraft solves the
+metadata of the repositories of an emulated architecture natively, in its dnf cache: under emulation, that takes most of
+the time of dnf. Each architecture has its lock, its build environment image, and its builds, in
+`.xcraft/cache/builds/<arch>/`. AlmaLinux rebuilds EPEL for `x86_64_v2` only: the other architectures get Fedora's.
+`xcraft bump` clears the pending updates of all the architectures.
 
 ## Build keys
 

@@ -20,6 +20,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from xcraft import host
 from xcraft.display import activity
 from xcraft.lock import Lock, Locked, load_lock, save_lock
 from xcraft.project import ProjectLockedError
@@ -86,6 +87,8 @@ def build_image(project: Project) -> str:
     The packages of a new image are added to the lock, and when that changes
     its definition, the image is built again, with them locked.
     """
+    if not project.native and (problem := host.emulation_problem(project.arch)):
+        raise ContainerError(problem)
     tag, _, _ = _image(project)
     if _exists(tag) and load_lock(project).image:
         return tag

@@ -368,6 +368,13 @@ def test_lock(root: Path) -> None:
     assert "zlib-ng-compat-devel" in load_lock(Project.find()).buildroots["trivial"]
 
 
+def test_doctor(root: Path) -> None:
+    code, output = xcraft("doctor")
+    assert code == 0, output
+    assert output.startswith("✓ podman ")
+    assert "✓ git: " in output
+
+
 def test_graph(root: Path) -> None:
     assert xcraft("graph", "with-deps") == (0, "with-deps\n└── trivial\n")
     assert xcraft("graph", "with-deps", "--flat") == (0, "trivial\nwith-deps\n")
