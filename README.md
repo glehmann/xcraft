@@ -112,6 +112,8 @@ base_image = "ghcr.io/almalinux/10-base:10.2@sha256:..."   # image the build env
 platforms = ["linux/amd64/v2", "linux/arm64"]   # the platforms of the builds, one at a time
 packages = ["rpm-build", "gcc", ...]   # installed in the build environment
 same_version = [["kernel", "kernel-headers"]]   # updated together by xcraft bump --version
+[ccache_size]                          # the maximum size of the compiler cache of packages, 5G by default
+kernel = "20G"
 [macros]                               # RPM macros of the build environment
 dist = "%{?autorev}.xcpng8.99"
 [repos.baseos]                         # the only repositories of the build environment, {arch} being its RPM arch

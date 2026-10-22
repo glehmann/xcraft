@@ -177,6 +177,8 @@ class Config(BaseModel):
     remote: Remote | None = None
     """Where the source archives and the builds are shared, if anywhere."""
     publish: Publish = Publish()
+    ccache_size: dict[str, str] = {"kernel": "20G"}
+    """The maximum size of the compiler cache of packages, by name, like 20G: ccache's default, 5G, for the others."""
     same_version: list[list[str]] = []
     """Groups of packages with the same version, like kernel and kernel-headers: bump --version updates them all."""
     iso: Iso = Iso()
