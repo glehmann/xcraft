@@ -52,7 +52,7 @@ def publish(
         raise typer.BadParameter(msg)
     signer = choose_signer(project, local=local, unsigned=unsigned, dev_key=dev_key)
     with project.lock():
-        dest = (output or project.state / "publish" / project.config.arch).absolute()
+        dest = (output or project.state / "publish" / project.arch).absolute()
         keys = snapshot(project, dest, signer=signer, push=not local)
         if not local and (storage := project.config.remote):
             publisher.upload_snapshot(project, keys, dest, publisher.snapshot_name(project, storage), signer=signer)

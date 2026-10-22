@@ -45,10 +45,10 @@ class ContainerError(RuntimeError):
 def _image_files(project: Project, lock: Lock) -> dict[str, str]:
     config = project.config
     repos = "".join(
-        f"[{name}]\nname={name}\nbaseurl={repo.baseurl.format(arch=config.arch)}\n"
+        f"[{name}]\nname={name}\nbaseurl={repo.baseurl.format(arch=project.arch)}\n"
         + (f"gpgcheck=1\ngpgkey={repo.gpgkey}\n" if repo.gpgkey else "gpgcheck=0\n")
         + (f"includepkgs={' '.join(repo.includepkgs)}\n" if repo.includepkgs else "")
-        for name, repo in config.repos.items()
+        for name, repo in project.repos.items()
     )
     return {
         "Containerfile": (BUILDENV / "Containerfile").read_text(),
@@ -67,7 +67,7 @@ def _image(project: Project) -> tuple[str, dict[str, str], dict[str, str]]:
     config = project.config
     args = {"BASE_IMAGE": config.base_image, "PACKAGES": " ".join(config.packages)}
     files = _image_files(project, load_lock(project))
-    digest = hashlib.sha256(json.dumps([config.platform, args, files], sort_keys=True).encode()).hexdigest()
+    digest = hashlib.sha256(json.dumps([project.platform, args, files], sort_keys=True).encode()).hexdigest()
     return f"localhost/xcraft-build:{digest}", args, files
 
 
@@ -120,16 +120,55 @@ def _podman_build(  # noqa: PLR0913
     project: Project, step: str, tag: str, files: dict[str, str], args: dict[str, str], *, show: str
 ) -> None:
     """Build `show`, the image `tag`, from `files` and the build `args`, logged in .xcraft/logs/_<step>.log."""
+    _warm_dnf_cache(project)
     with project.work(step) as context:
         for name, content in files.items():
             (context / name).write_text(content)
         build_args = [arg for name, value in args.items() for arg in ("--build-arg", f"{name}={value}")]
-        cmd = ["podman", "build", "--platform", project.config.platform, *build_args, "--tag", tag, str(context)]
+        # the metadata of the dnf cache, which the containers solved, slow to solve again under emulation, in an
+        # overlay, in which the build changes nothing
+        if subprocess.run(["podman", "volume", "exists", volume := _dnf_cache(project)], check=False).returncode:
+            subprocess.run(["podman", "volume", "create", volume], check=True, capture_output=True)
+        inspect = ["podman", "volume", "inspect", "--format", "{{.Mountpoint}}", volume]
+        cache = subprocess.run(inspect, check=True, capture_output=True, text=True).stdout.strip()
+        cmd = ["podman", "build", "--platform", project.platform, "--volume", f"{cache}:/var/cache/dnf:O", *build_args]
+        cmd += ["--tag", tag, str(context)]
         log = project.state / f"logs/_{step}.log"
         with activity(f"building {show}") as on_line:
             if _run_logged(cmd, log, on_line, None):
                 msg = f"{show} cannot be built, see {log}"
                 raise ContainerError(msg)
+
+
+def _dnf_cache(project: Project) -> str:
+    """Return the volume of the dnf cache, which the containers of the platform share."""
+    return "xcraft-dnf-" + re.sub(r"[^a-z0-9]+", "-", project.platform)
+
+
+_warmed: set[tuple[Path, str]] = set()
+
+
+def _warm_dnf_cache(project: Project) -> None:
+    """Solve the metadata of the repositories of an emulated platform in its dnf cache, natively, once.
+
+    Under emulation, dnf spends most of its time solving them: 27 minutes for aarch64 on an x86_64 host, rather than
+    20 seconds. Nothing is done without a native platform, to do it on.
+    """
+    native = next((p for p in project.all_platforms() if p.native), None)
+    if project.native or not native or (project.root, project.platform) in _warmed:
+        return
+    _warmed.add((project.root, project.platform))
+    cache = "/var/cache/dnf-emulated"
+    with project.work("warm") as work:
+        (work / "upstream.repo").write_text(_image_files(project, load_lock(project))["upstream.repo"])
+        run(
+            native,
+            "warm",
+            f"sudo flock {cache}/.xcraft.lock dnf -q makecache --forcearch={project.arch} --setopt=reposdir=/work"
+            f" --setopt=cachedir={cache} --setopt=system_cachedir={cache}",
+            volumes=[f"{_dnf_cache(project)}:{cache}", f"{work}:/work:ro"],
+            show=f"solving the metadata of the repositories of {project.arch}",
+        )
 
 
 def image_packages(project: Project, image: str) -> dict[str, Locked]:
@@ -224,16 +263,16 @@ def run_container(  # noqa: PLR0913
     log. The container is stopped when interrupted, or when its log gets larger
     than MAX_LOG_SIZE.
     """
+    _warm_dnf_cache(project)
     image = image or build_image(project)
     versionlock = project.state / "tmp" / f"versionlock-{os.getpid()}.list"
     versionlock.parent.mkdir(parents=True, exist_ok=True)
     versionlock.write_text(load_lock(project).versionlock())
     volumes = [*volumes, f"{BUILDENV}:/xcraft:ro", f"{versionlock}:/etc/dnf/plugins/versionlock.list:ro"]
-    config = project.config
-    cache = "xcraft-dnf-" + re.sub(r"[^a-z0-9]+", "-", config.platform)
+    cache = _dnf_cache(project)
     cmd = [
         # replacing a container of a killed xcraft
-        "podman", "run", "--rm", "--replace", "--name", container, "--platform", config.platform,
+        "podman", "run", "--rm", "--replace", "--name", container, "--platform", project.platform,
         "--userns=keep-id:uid=1000,gid=1000", "--security-opt", "label=disable",
         *([] if network else ["--network", "none"]), *(["--interactive", "--tty"] if log is None else []),
         *(arg for volume in [f"{cache}:/var/cache/dnf", *volumes] for arg in ("--volume", volume)),

@@ -7,13 +7,13 @@ from typing import Annotated
 
 import typer
 
-from xcraft.commands import load
+from xcraft.commands import Arch, load
 from xcraft.commands.publish import choose_signer, snapshot
 from xcraft.display import console
 from xcraft.iso import make_iso
 
 
-def iso(
+def iso(  # noqa: PLR0913, PLR0917
     netinstall: Annotated[
         bool, typer.Option("--netinstall", help="Without the packages, installed from a repository on the network.")
     ] = False,
@@ -32,16 +32,17 @@ def iso(
             "xcraft.toml by default, or with the developer's key.",
         ),
     ] = False,
+    arch: Arch = None,
 ) -> None:
     """Make the installation ISO, from a local snapshot of the distribution, as xcraft publish --local makes it.
 
     The installer's root filesystem, install.img, comes from the snapshot, which has its packages, and so does the
     repository of the ISO, with xcp-ng-deps and what it needs.
     """
-    project = load(locked=locked)
+    project = load(locked=locked, arch=arch)
     signer = choose_signer(project, local=True, unsigned=unsigned, dev_key=False)
     with project.lock():
-        dest = (project.state / "publish" / project.config.arch).absolute()
+        dest = (project.state / "publish" / project.arch).absolute()
         snapshot(project, dest, signer=signer, push=False)
         path = make_iso(project, dest, output, netinstall=netinstall, volid=volid, signer=signer)
     console.print(f"[bold green]✓[/] {path}")

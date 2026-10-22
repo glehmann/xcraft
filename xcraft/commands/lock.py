@@ -6,6 +6,7 @@ from typing import Annotated
 
 import typer
 
+from xcraft.commands import Arch
 from xcraft.container import latest_versions
 from xcraft.display import console
 from xcraft.lock import load_lock, lock_path, save_lock
@@ -18,12 +19,13 @@ def lock(
         typer.Argument(help="Upstream packages to update, binary or source names. All by default.", show_default=False),
     ] = None,
     update: Annotated[bool, typer.Option("--update", help="Update locked packages to their latest versions.")] = False,
+    arch: Arch = None,
 ) -> None:
     """Show the lock of upstream packages, or update it."""
     if packages and not update:
         msg = "packages to update need --update"
         raise typer.BadParameter(msg)
-    project = Project.find()
+    project = Project.find(arch)
     if not update:
         current = load_lock(project)
         console.print(

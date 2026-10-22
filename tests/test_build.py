@@ -15,7 +15,7 @@ from typer.testing import CliRunner
 
 from xcraft import container
 from xcraft.__main__ import app
-from xcraft.lock import load_lock, save_lock
+from xcraft.lock import Lock, load_lock, save_lock
 from xcraft.project import Project
 from xcraft.sources import write_manifest
 
@@ -68,7 +68,7 @@ def test_build_uses_local_builds_and_cache(root: Path) -> None:
     code, output = xcraft("build", "with-deps")
     assert code == 0
     assert output.splitlines() == ["· trivial cached", "· with-deps cached", "2 cached"]
-    assert list((root / ".xcraft/cache/builds/with-deps").glob("*/RPMS/noarch/with-deps-1.0-*.noarch.rpm"))
+    assert list((root / ".xcraft/cache/builds/x86_64_v2/with-deps").glob("*/RPMS/noarch/with-deps-1.0-*.noarch.rpm"))
 
     # a change in trivial changes the key of with-deps too
     spec = root / "specs/base/trivial/trivial.spec"
@@ -221,7 +221,7 @@ def test_build_back_to_a_cached_key(root: Path) -> None:
     assert code == 0, output
     assert results(output) == [results(output)[0], "1 built"]
     assert states() == {"trivial": "built", "with-deps": "missing"}
-    assert not list((root / ".xcraft/cache/builds/trivial").glob(".*"))
+    assert not list((root / ".xcraft/cache/builds/x86_64_v2/trivial").glob(".*"))
 
 
 def test_failed_build_skips_dependents(root: Path) -> None:
@@ -285,6 +285,11 @@ def test_bump(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert code == 0, output
     assert " Me <me@example.com> - 1.0-3\n-\n\n" in (root / "specs/base/trivial/trivial.spec").read_text()
     assert xcraft("build", "trivial")[0] == 0
+    # with --dep, from the pending updates of all the platforms, cleared on all of them
+    arm = Project.find("aarch64")
+    save_lock(arm, Lock(pending={"trivial": {"zlib": "1.2-1"}}))
+    assert xcraft("bump", "--dep", "zlib")[1] == "trivial: 1.0-3 -> 1.0-4\n"
+    assert load_lock(arm).pending == {}
 
 
 def test_bump_version(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:

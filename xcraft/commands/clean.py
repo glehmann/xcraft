@@ -8,7 +8,7 @@ import typer
 
 from xcraft import build as builder
 from xcraft import clean as cleaner
-from xcraft.commands import Packages, load
+from xcraft.commands import Arch, Packages, load
 from xcraft.display import activity, console
 
 
@@ -20,12 +20,13 @@ def clean(
     packages: Packages = None,
     builds: Annotated[bool, typer.Option("--builds", help="Also remove the builds of the current packages.")] = False,
     ccache: Annotated[bool, typer.Option("--ccache", help="Also remove the compiler caches.")] = False,
+    arch: Arch = None,
 ) -> None:
     """Remove the build trees and outdated builds, of the given packages only, or of all with what they share.
 
     The source archives are always kept.
     """
-    project = load(packages)
+    project = load(packages, arch=arch)
     keys = builder.build_keys(project)
     with project.lock(), activity("cleaning"):
         freed = cleaner.clean(project, keys, packages or None, all_builds=builds, ccache=ccache)

@@ -10,7 +10,7 @@ from typing import Annotated
 import typer
 
 from xcraft import build as builder
-from xcraft.commands import Packages, Pre, Test, load, test_kind
+from xcraft.commands import Arch, Packages, Pre, Test, load, test_kind
 from xcraft.display import activity, console
 from xcraft.signing import check_signatures, dev_signer
 
@@ -79,6 +79,7 @@ def repo(  # noqa: PLR0913, PLR0917
     upgrade: Annotated[
         bool, typer.Option("--upgrade", help="Also upgrade, on the hosts, the test packages they have installed.")
     ] = False,
+    arch: Arch = None,
 ) -> None:
     """Build the given packages, all by default, and what they need, put them in a repository, and check them.
 
@@ -95,7 +96,7 @@ def repo(  # noqa: PLR0913, PLR0917
     if hosts and baseurl:
         msg = f"with --host, the hosts find the repository in {REMOTE}/<ID>: no --baseurl"
         raise typer.BadParameter(msg)
-    project = load(packages)
+    project = load(packages, arch=arch)
     names = list(packages or sorted(project.packages))
     with project.lock():
         autorev = builder.next_test_suffixes(project, names, *kind) if kind else {}

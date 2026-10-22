@@ -120,7 +120,7 @@ def load_packages(project: Project) -> dict[str, Package]:
 
     def cache() -> Path:
         key = hashlib.sha256(json.dumps([_PARSER, image_tag(project), *hashes]).encode()).hexdigest()
-        return project.state / "cache/specs" / f"{key}.json"
+        return project.state / "cache/specs" / project.arch / f"{key}.json"
 
     if not cache().exists():
         build_image(project)  # which may change its tag, when it is new

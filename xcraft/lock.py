@@ -103,7 +103,7 @@ class Lock(BaseModel):
 
 def lock_path(project: Project) -> Path:
     """Return the lock file of the project's architecture."""
-    return project.root / "locks" / f"{project.config.arch}.toml"
+    return project.root / "locks" / f"{project.arch}.toml"
 
 
 def load_lock(project: Project) -> Lock:

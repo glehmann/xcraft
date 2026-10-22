@@ -91,7 +91,7 @@ built again when the configuration or the locked versions of its packages change
 **Builds.** Each build runs in a fresh container: `dnf builddep`, then the dynamic `BuildRequires` if any, then
 `rpmbuild`, with stdin from `/dev/null`. It runs against a local repository of what was built here, with a priority
 over the other repositories, so a package built locally always wins. A build result is cached in
-`.xcraft/cache/builds/<pkg>/<key>`, under its [build key](#build-keys). A build whose log gets larger than 256 MiB,
+`.xcraft/cache/builds/<arch>/<pkg>/<key>`, under its [build key](#build-keys). A build whose log gets larger than 256 MiB,
 like a test suite looping forever, is stopped.
 
 **Locking.** The commands changing the project (`build`, `repo`, `shell`, `import`, `bump`, `clean`) cannot run at the
@@ -108,7 +108,7 @@ replaces the old one in `sources`. The packages of the same archive, listed toge
 
 ```toml
 base_image = "ghcr.io/almalinux/10-base:10.2@sha256:..."   # image the build environment is made from
-platform = "linux/amd64/v2"
+platforms = ["linux/amd64/v2", "linux/arm64"]   # the platforms of the builds, one at a time
 packages = ["rpm-build", "gcc", ...]   # installed in the build environment
 same_version = [["kernel", "kernel-headers"]]   # updated together by xcraft bump --version
 [macros]                               # RPM macros of the build environment
@@ -117,25 +117,35 @@ dist = "%{?autorev}.xcpng8.99"
 baseurl = "https://repo.almalinux.org/almalinux/10/BaseOS/{arch}/os/"
 gpgkey = "file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-10"
 includepkgs = ["foo"]                  # optional: the only packages taken from this repository
+arches = ["x86_64_v2"]                 # optional: the only architectures it is for, like AlmaLinux's EPEL
 [extra_upstream]                       # RPMs not available in these repositories, by URL
 foo = "https://.../foo-1.0-1.noarch.rpm"
 ```
 
 The defaults are in `xcraft/project.py`; a setting given in `xcraft.toml` replaces its default, `repos` included.
 
+**Architectures.** xcraft works on one platform at a time: the one of the RPM architecture given with `--arch`, like
+`aarch64`, or in `$XCRAFT_ARCH`, or else the host's, `x86_64_v2` on an x86_64 host. So `xcraft build foo` builds `foo`
+for one architecture only. Another architecture is built under emulation, with podman and qemu-user-static: fine for the
+small packages, while the large ones are for native builders, which share their builds through the [remote
+storage](#remote-storage). xcraft solves the metadata of the repositories of an emulated architecture natively, in its
+dnf cache: under emulation, that takes most of the time of dnf. Each architecture has its lock, its build environment
+image, and its builds, in `.xcraft/cache/builds/<arch>/`. AlmaLinux rebuilds EPEL for `x86_64_v2` only: the other
+architectures get Fedora's. `xcraft bump` clears the pending updates of all the architectures.
+
 ## Build keys
 
 Each build of a package has a **key**: a SHA-256 of everything that goes into it. xcraft never builds a package whose
 build with the same key it already has, locally or in the [remote storage](#remote-storage), unless `--no-fetch`; it
 builds it again as soon as one of its inputs changes. The key is the name of the build in
-`.xcraft/cache/builds/<pkg>/<key>/`, and in the storage, `builds/<arch>/<pkg>/<key>/`.
+`.xcraft/cache/builds/<arch>/<pkg>/<key>/`, and in the storage, `builds/<arch>/<pkg>/<key>/`.
 
 **What it covers.** The key of a package is made of:
 
 | Part | What it is | Changed by |
 |---|---|---|
 | The build environment image | A hash of the base image, pinned by digest, the platform, `packages` of `xcraft.toml`, the repositories, the RPM macros (`%dist`...), and the locked versions of the image's packages | Any change to these settings, or an update of a package of the image |
-| The platform | `linux/amd64/v2` by default | `platform` |
+| The platform | The one xcraft works on, see [Architectures](#configuration) | `--arch` |
 | The extra upstream RPMs | The names and URLs of `extra_upstream` | `extra_upstream` |
 | The recipe | The build script, the `.repo` file of the local repository, and the script recording the build roots | A change to how xcraft builds |
 | The package | Its name, and all the files of `specs/<repo>/<pkg>/`, but `origin`: their paths, contents, and whether they are executable. The `sources` manifest covers the archives by their SHA-256 | Any change to the spec, a patch, a source file, or an archive |

@@ -38,9 +38,9 @@ def clean(
 ) -> int:
     """Remove what xcraft can regenerate, and return how many bytes that freed.
 
-    That is the build trees, the outdated builds, all of them with `all_builds`,
-    and the compiler caches with `ccache`, of the packages `names`, or of all of
-    them with what they share. The source cache is kept.
+    That is the build trees, the outdated builds of the platform, all of them
+    with `all_builds`, and the compiler caches with `ccache`, of the packages
+    `names`, or of all of them with what they share. The source cache is kept.
 
     The local repository and snapshot, made again when needed, are removed in
     both cases: they have hard links to the files of the builds, which would
@@ -48,12 +48,14 @@ def clean(
     """
     state = project.state
     before = _disk_usage(state)
-    builds = state / "cache/builds"
+    builds = state / "cache/builds" / project.arch
     paths = [state / "repo", state / "publish"]
     if names is None:
         paths += [state / "build", state / "tmp", state / "cache/extra"]
         # keep the metadata of the current specs, the latest
-        paths += sorted((state / "cache/specs").glob("*.json"), key=lambda path: path.stat().st_mtime)[:-1]
+        paths += sorted((state / "cache/specs" / project.arch).glob("*.json"), key=lambda path: path.stat().st_mtime)[
+            :-1
+        ]
         packages = list(builds.glob("*"))
     else:
         paths += [state / "build" / name for name in names]

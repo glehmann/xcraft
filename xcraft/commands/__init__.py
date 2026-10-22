@@ -25,12 +25,30 @@ OnePackage = Annotated[str, typer.Argument(help="Package.", show_default=False, 
 All = Annotated[bool, typer.Option("--all", help="All packages.")]
 
 
-def load(names: list[str] | None = None, *, locked: bool = False) -> Project:
+def complete_arch(incomplete: str) -> list[str]:
+    """Return the architectures of the project starting with `incomplete`, for the shell completion."""
+    try:
+        return [p.arch for p in Project.find().all_platforms() if p.arch.startswith(incomplete)]
+    except (RuntimeError, OSError):
+        return []
+
+
+Arch = Annotated[
+    str | None,
+    typer.Option(
+        help="RPM architecture to work on, like aarch64. $XCRAFT_ARCH, or the host's, by default.",
+        show_default=False,
+        autocompletion=complete_arch,
+    ),
+]
+
+
+def load(names: list[str] | None = None, *, locked: bool = False, arch: str | None = None) -> Project:
     """Return the project, with its packages and their build dependencies, checking `names` are packages.
 
     With `locked`, the lock cannot change, even to build the build environment image.
     """
-    project = Project.find()
+    project = Project.find(arch)
     project.frozen = locked
     if unknown := sorted(set(names or []) - project.packages.keys()):
         msg = f"unknown package(s): {', '.join(unknown)}"
