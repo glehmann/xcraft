@@ -524,8 +524,9 @@ ones included, against the local repository and the build environment's ones: it
 make install    # the dependencies, with the dev ones, and the pre-commit hooks
 make check      # ruff, ruff format, ty, typos and zizmor, like the GitHub workflows, without changing anything
 make fix        # ruff's fixes, like the order of the imports, the formatting, and the typos
-make test       # pytest; the build tests need podman, and the network the first time, to build the image
+make test       # pytest, in parallel; the build tests need podman, and the network the first time, for the image
 ```
 
 Each check also runs alone, by the id of its hook in `.pre-commit-config.yaml`, like `make ty`. The workflows also
-run for the pull requests of forks.
+run for the pull requests of forks. The tests run in parallel with pytest-xdist, each worker with its own Garage
+server for the tests of the remote storage: `pytest -n0` runs them in one process, like to debug one with `--pdb`.
