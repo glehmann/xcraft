@@ -23,7 +23,8 @@ from xcraft.build import BuildError, build_path, builds_repo, cached_build
 from xcraft.container import DNF_LOCK, run
 from xcraft.display import activity, console
 from xcraft.localrepo import OUTPUT_MARKER, LocalRepo, fresh_dir, link
-from xcraft.lock import Lock, Locked, load_lock, save_lock
+from xcraft.lock import Locked, load_lock, save_lock
+from xcraft.resolution import lock_installed, resolve, resolve_image
 from xcraft.signing import Signer, check_signatures
 from xcraft.sources import sha256_of
 
@@ -42,13 +43,12 @@ BUILD = "build"
 
 def resolve_runtime(project: Project, keys: dict[str, str]) -> list[str]:
     """Add to the lock the upstream packages our builds need, the extra ones and the installer's, and return them."""
-    lock = load_lock(project)
     repo = builds_repo(project, keys)
     with project.work("runtime") as work:
         (work / "input.json").write_text(
             json.dumps(
                 {
-                    "locked": {name: [p.evr, p.arch] for name, p in lock.packages.items()},
+                    "locked": {name: [p.evr, p.arch] for name, p in resolve_image(project).packages.items()},
                     "extra": project.config.publish.extra,
                     "installer": project.config.iso.installer,
                 }
@@ -68,10 +68,11 @@ def resolve_runtime(project: Project, keys: dict[str, str]) -> list[str]:
         msg = f"cannot install: {', '.join(sorted(output['errors']))}"
         raise BuildError(msg)
     needed = {name: Locked.model_validate(p) for name, p in output["packages"].items()}
-    lock.merge(needed)
-    lock.runtime = sorted(needed)
+    lock_installed(project, needed)
+    lock = load_lock(project)
+    lock.runtime[project.arch] = sorted(needed)
     save_lock(project, lock)
-    return lock.runtime
+    return lock.runtime[project.arch]
 
 
 def _download(
@@ -113,17 +114,17 @@ def _download(
     return cache
 
 
-def _nevra(lock: Lock, name: str) -> str:
-    return f"{name}-{lock.packages[name].evr}.{lock.packages[name].arch}"
+def _nevra(packages: dict[str, Locked], name: str) -> str:
+    return f"{name}-{packages[name].evr}.{packages[name].arch}"
 
 
 def _upstream_rpms(project: Project, names: list[str], on_line: Callable[[str], None]) -> list[Path]:
     """Return the RPMs of locked upstream packages: from the cache, the latest snapshot, or the repositories."""
-    lock = load_lock(project)
-    rpms = {name: f"{name}-{lock.packages[name].evr.split(':')[-1]}.{lock.packages[name].arch}.rpm" for name in names}
-    cache = _download(project, {rpms[name]: _nevra(lock, name) for name in names}, on_line, source=False, volumes=[])
+    locked = resolve_image(project).packages
+    rpms = {name: f"{name}-{locked[name].evr.split(':')[-1]}.{locked[name].arch}.rpm" for name in names}
+    cache = _download(project, {rpms[name]: _nevra(locked, name) for name in names}, on_line, source=False, volumes=[])
     for name in names:
-        if sha256_of(cache / rpms[name]) != lock.packages[name].sha256:
+        if sha256_of(cache / rpms[name]) != locked[name].sha256:
             (cache / rpms[name]).unlink()
             msg = f"{rpms[name]} does not match the sha256 of the lock"
             raise BuildError(msg)
@@ -137,8 +138,8 @@ def _upstream_srpms(project: Project, names: list[str], on_line: Callable[[str],
     """
     if not names:  # dnf repoquery would list everything
         return []
-    lock = load_lock(project)
-    nevras = {name: _nevra(lock, name) for name in names}
+    locked = resolve_image(project).packages
+    nevras = {name: _nevra(locked, name) for name in names}
     with project.work("srpms") as work:
         # only for these downloads, not to change the build environment
         (work / "sources.repo").write_text(
@@ -246,7 +247,7 @@ def _assemble_arch(  # noqa: PLR0913
                     ours.append(f"{source}/{srpm.name}")
     if signer:
         check_signatures(project, dest, ours, what="packages of ours", public_key=signer.public_key())
-    _add_upstream(project, load_lock(project).runtime, dest, binaries, sources)
+    _add_upstream(project, load_lock(project).runtime.get(project.arch, []), dest, binaries, sources)
     binaries.index()
     if signer:
         signer.sign_file(binaries.path / "repodata/repomd.xml")
@@ -259,11 +260,9 @@ def build_dependencies(project: Project) -> list[str]:
     Those are the packages of the image of the build environment and of the build roots, but the upstream ones ours
     replace, like kernel-headers.
     """
-    lock = load_lock(project)
+    resolved, runtime = resolve(project), load_lock(project).runtime.get(project.arch, [])
     ours = {binary.name for package in project.packages.values() for binary in package.binaries}
-    return sorted(
-        {*lock.image, *(name for names in lock.buildroots.values() for name in names)} - ours - {*lock.runtime}
-    )
+    return sorted({*resolved.image, *(n for names in resolved.buildroots.values() for n in names)} - ours - {*runtime})
 
 
 def _assemble_build(project: Project, dest: Path, sources: LocalRepo, *, signer: Signer | None) -> None:

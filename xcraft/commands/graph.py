@@ -10,7 +10,7 @@ from rich.tree import Tree
 from xcraft.commands import Arch, complete_package, load
 from xcraft.display import console
 from xcraft.graph import build_order, reachable, upstream_deps
-from xcraft.lock import load_lock
+from xcraft.resolution import resolve_image
 from xcraft.upstream import upstream_requires
 
 if TYPE_CHECKING:
@@ -65,7 +65,7 @@ def graph(
     upstream = upstream or package not in packages
     edges = {name: set(names) for name, names in deps.items()}
     if upstream:
-        if package not in packages and package not in load_lock(project).packages:
+        if package not in packages and package not in resolve_image(project).packages:
             msg = f"unknown package: {package}"
             raise typer.BadParameter(msg)
         for name, names in upstream_deps(packages, upstream_requires(project)).items():

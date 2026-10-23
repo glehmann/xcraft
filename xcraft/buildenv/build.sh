@@ -36,8 +36,10 @@ time {
         done
         [ $rc -eq 0 ]
         rm -f /build/SRPMS/*.buildreqs.nosrc.rpm
+        # all the BuildRequires, the dynamic ones included, which xcraft records: rpmbuild -br wrote the source package
+        rpm -qp --requires /build/SRPMS/*.src.rpm >/build/buildrequires.txt
     fi
-    $lock python3 /xcraft/record.py /build/buildroot.json
+    $lock python3 /xcraft/record.py /build/buildroot.json /build/buildrequires.txt
     # like mock's login shell, for the environment of build dependencies, like opam's, which are not written for set -eu
     set +eu +o pipefail
     for profile in /etc/profile.d/*.sh; do

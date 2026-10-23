@@ -52,6 +52,8 @@ class Repo(BaseModel):
 Platform = Literal["linux/amd64/v2", "linux/amd64", "linux/arm64"]
 ARCHES: dict[Platform, str] = {"linux/amd64/v2": "x86_64_v2", "linux/amd64": "x86_64", "linux/arm64": "aarch64"}
 """The RPM architecture of each platform."""
+_HOST: dict[str, Platform] = {"x86_64": "linux/amd64", "aarch64": "linux/arm64"}
+"""The platform of each machine, for a host running none of the project's."""
 
 
 class Remote(BaseModel):
@@ -204,9 +206,18 @@ class Project:
         """Whether the host runs the platform, like x86_64_v2 on x86_64, rather than emulating it."""
         return self.arch.startswith(os.uname().machine)
 
+    @property
+    def first(self) -> str:
+        """The RPM architecture of the first platform of the configuration, whose findings are shared in the lock."""
+        return ARCHES[self.config.platforms[0]]
+
     def all_platforms(self) -> list[Project]:
         """Return the project on each platform of the configuration."""
         return [replace(self, platform=platform) for platform in self.config.platforms]
+
+    def on_host(self) -> Project:
+        """Return the project on a platform the host runs natively: one of the configuration's, or else the host's."""
+        return next((p for p in self.all_platforms() if p.native), replace(self, platform=_HOST[os.uname().machine]))
 
     @property
     def repos(self) -> dict[str, Repo]:
@@ -240,19 +251,42 @@ class Project:
         return self.state / "cache/sources"
 
     @cached_property
-    def packages(self) -> dict[str, Package]:
-        """The packages, by name, from their specs."""
+    def parsed(self) -> dict[str, Package]:
+        """The packages, by name, from their specs, as parsed for the platform."""
         from xcraft.specs import load_packages  # noqa: PLC0415, which needs the project
 
         return load_packages(self)
 
     @cached_property
+    def packages(self) -> dict[str, Package]:
+        """The packages, by name, from their specs, with what their builds found in the lock: the requirements and
+        capabilities rpm generated for their binary packages, and their dynamic BuildRequires.
+        """  # noqa: D205
+        from xcraft.lock import load_lock  # noqa: PLC0415
+
+        lock = load_lock(self)
+        requires, provides = lock.requires.of(self.arch), lock.provides.of(self.arch)
+        buildrequires = lock.buildrequires.of(self.arch)
+        packages = {name: package.model_copy(deep=True) for name, package in self.parsed.items()}
+        for name, package in packages.items():
+            package.buildrequires.extend(buildrequires.get(name, []))
+            for binary in package.binaries:
+                binary.requires.extend(requires.get(binary.name, []))
+                binary.provides.extend(provides.get(binary.name, []))
+        return packages
+
+    @cached_property
     def deps(self) -> dict[str, set[str]]:
         """The build dependencies of each package: the packages to build before it."""
         from xcraft.graph import build_deps  # noqa: PLC0415, which needs the project
-        from xcraft.lock import load_lock  # noqa: PLC0415
+        from xcraft.resolution import resolve_image  # noqa: PLC0415
 
-        return build_deps(self.packages, load_lock(self).image)
+        return build_deps(self.packages, resolve_image(self).image)
+
+    def refresh(self) -> None:
+        """Forget the packages and their dependencies, after a change of the lock."""
+        for name in ("packages", "deps"):
+            self.__dict__.pop(name, None)
 
     def log(self, package: str) -> Path:
         """Return the log of the last build of `package`."""

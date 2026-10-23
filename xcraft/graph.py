@@ -5,6 +5,8 @@ from __future__ import annotations
 from graphlib import CycleError, TopologicalSorter
 from typing import TYPE_CHECKING
 
+from xcraft.specs import dep_name
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -25,11 +27,11 @@ def build_root_binaries(packages: dict[str, Package]) -> dict[str, list[Binary]]
     providers: dict[str, list[Binary]] = {}
     for package in packages.values():
         for binary in package.binaries:
-            for capability in [binary.name, *binary.provides]:
+            for capability in {binary.name, *map(dep_name, binary.provides)}:
                 providers.setdefault(capability, []).append(binary)
 
     def binaries_providing(capabilities: Iterable[str]) -> list[Binary]:
-        return [provider for capability in capabilities for provider in providers.get(capability, ())]
+        return [provider for capability in capabilities for provider in providers.get(dep_name(capability), ())]
 
     result = {}
     for package in packages.values():

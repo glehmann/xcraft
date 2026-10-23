@@ -1,8 +1,9 @@
 """Package metadata, extracted from the specs by rpm in the build environment.
 
 All the specs are parsed in a single container, so that macros are expanded
-and conditionals evaluated exactly as in a build. The result is cached until a
-package directory or the build environment image changes.
+and conditionals evaluated as in a build: natively, in the build environment of
+the host, for the target architecture, like rpmbuild --target. The result is
+cached until a package directory or the build environment image changes.
 """
 
 from __future__ import annotations
@@ -21,15 +22,29 @@ if TYPE_CHECKING:
 
     from xcraft.project import Project
 
+
+def dep_name(dep: str) -> str:
+    """Return the capability of a dependency, like ``foo`` for ``foo >= 1.0``, or a rich one whole."""
+    return dep if dep.startswith("(") else dep.split(" ", 1)[0]
+
+
 # Run by the build environment's python, with the rpm bindings.
 _PARSER = """
 import json, pathlib, rpm, subprocess, sys
 
-out, *spec_files = sys.argv[1:]
+out, target, *spec_files = sys.argv[1:]
 result = {}
+
+
+def deps(h, tag):
+    # like "foo >= 1:2-3", or a rich one, like "(a if b)"
+    return [d.DNEVR()[2:] for d in rpm.ds(h, tag) if not d.N().startswith("rpmlib(")]
+
+
 for spec_file in spec_files:
     pkg_dir = pathlib.Path(spec_file).parent
-    rpm.reloadConfig()
+    # for the target architecture, like rpmbuild --target
+    rpm.reloadConfig(target)
     rpm.addMacro("_sourcedir", str(pkg_dir))
     rpm.addMacro("_specdir", str(pkg_dir))
     try:
@@ -46,12 +61,13 @@ for spec_file in spec_files:
                 "name": h[rpm.RPMTAG_NAME],
                 "evr": h[rpm.RPMTAG_EVR],
                 "arch": h[rpm.RPMTAG_ARCH],
-                "provides": h[rpm.RPMTAG_PROVIDENAME],
-                "requires": h[rpm.RPMTAG_REQUIRENAME],
+                "provides": deps(h, rpm.RPMTAG_PROVIDENAME),
+                "requires": deps(h, rpm.RPMTAG_REQUIRENAME),
+                "recommends": deps(h, rpm.RPMTAG_RECOMMENDNAME),
             }
             for h in (p.header for p in spec.packages)
         ],
-        "buildrequires": [r for r in spec.sourceHeader[rpm.RPMTAG_REQUIRENAME] if not r.startswith("rpmlib(")],
+        "buildrequires": deps(spec.sourceHeader, rpm.RPMTAG_REQUIRENAME),
         "dist": rpm.expandMacro("%{?dist}"),
         # sources are of type 1, patches 2
         "source0": next((source for source, n, kind in spec.sources if kind == 1 and n == 0), ""),
@@ -68,7 +84,9 @@ class Binary(BaseModel):
     evr: str
     arch: str
     provides: list[str]
+    """Its capabilities, with their versions, like ``foo = 1:2-3``."""
     requires: list[str]
+    recommends: list[str] = []
 
 
 class Package(BaseModel):
@@ -116,31 +134,41 @@ def hash_dir(path: Path) -> str:
     return h.hexdigest()
 
 
+def target(arch: str) -> str:
+    """Return the rpm target of an RPM architecture: our packages are built for x86_64 on x86_64_v2."""
+    return f"{arch.removesuffix('_v2')}-linux"
+
+
 def load_packages(project: Project) -> dict[str, Package]:
-    """Return the metadata of all the packages of `project`, by name."""
+    """Return the metadata of all the packages of `project`, by name, for its architecture."""
     dirs = list(project.package_dirs.values())
     hashes = [(d.name, hash_dir(d)) for d in dirs]
-
-    def cache() -> Path:
-        key = hashlib.sha256(json.dumps([_PARSER, image_tag(project), *hashes]).encode()).hexdigest()
-        return project.state / "cache/specs" / project.arch / f"{key}.json"
-
-    if not cache().exists():
-        build_image(project)  # which may change its tag, when it is new
+    native = project.on_host()
+    cache = (
+        project.state
+        / "cache/specs"
+        / project.arch
+        / (
+            hashlib.sha256(json.dumps([_PARSER, image_tag(native), target(project.arch), *hashes]).encode()).hexdigest()
+            + ".json"
+        )
+    )
+    if not cache.exists():
+        build_image(native)
         specs = " ".join(f"/project/{main_spec(d).relative_to(project.root)}" for d in dirs)
         with project.work("specs") as work:
             (work / "parse.py").write_text(_PARSER)
             run(
-                project,
+                native,
                 "specs",
-                f"python3 /work/parse.py /work/specs.json {specs}",
+                f"python3 /work/parse.py /work/specs.json {target(project.arch)} {specs}",
                 volumes=[f"{project.root}:/project:ro", f"{work}:/work"],
                 show="parsing the specs",
                 network=False,
             )
-            cache().parent.mkdir(parents=True, exist_ok=True)
-            (work / "specs.json").rename(cache())
-    packages = _Packages.validate_json(cache().read_bytes())
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            (work / "specs.json").rename(cache)
+    packages = _Packages.validate_json(cache.read_bytes())
     for name, package in packages.items():
         package.name = name
     return packages

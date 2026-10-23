@@ -14,11 +14,12 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from tests import ARCH, PROJECT, TOML
+from tests import ARCH, TOML, copy_project
 from xcraft import container
 from xcraft.__main__ import app
-from xcraft.lock import Lock, load_lock, save_lock
+from xcraft.lock import Recorded, load_lock, save_lock
 from xcraft.project import Project
+from xcraft.resolution import resolve
 from xcraft.sources import write_manifest
 
 runner = CliRunner()
@@ -31,7 +32,7 @@ pytestmark = pytest.mark.skipif(not shutil.which("podman"), reason="needs podman
 @pytest.fixture
 def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "project"
-    shutil.copytree(PROJECT, root)
+    copy_project(root)
     monkeypatch.setenv("XCRAFT_PROJECT", str(root))
     return root
 
@@ -134,20 +135,24 @@ def test_build_without_network(root: Path) -> None:
     assert "no network" in (root / ".xcraft/logs/offline.log").read_text()  # but its loopback interface
 
 
-def test_build_root_unexplained_by_dependencies(root: Path) -> None:
+def test_build_root_of_files_of_ours(root: Path) -> None:
     # xcraft does not know which files our packages provide before they are built
     write_spec(root, "tool", files="/usr/bin/xcraft-test-tool")
     write_spec(root, "tool-user", "/usr/bin/xcraft-test-tool")
-    assert xcraft("build", "tool")[0] == 0
     code, output = xcraft("build", "tool-user")
     assert code == 1
-    assert "installed our tool (tool), missing from its dependencies" in output
+    assert "its build root cannot be resolved: nothing provides /usr/bin/xcraft-test-tool" in output
+    # then the build of tool records it
+    assert xcraft("build", "tool")[0] == 0
+    code, output = xcraft("build", "tool-user")
+    assert code == 0, output
+    assert load_lock(Project.find()).provides.shared == {"tool": ["/usr/bin/xcraft-test-tool"]}
     # upstream's bc, instead of ours, never built since nothing is known to need it
     write_spec(root, "bc")
     write_spec(root, "bc-user", "/usr/bin/bc")
     code, output = xcraft("build", "bc-user")
     assert code == 1
-    assert "installed the upstream bc (ours from bc)" in output
+    assert "its build root has the upstream bc (ours from bc)" in output
 
 
 def test_image_packages_replaced_by_ours(root: Path) -> None:
@@ -172,19 +177,20 @@ def test_test_and_pre_builds(root: Path) -> None:
     assert rpms("trivial", "--test", "fix1") == ["trivial-1.0-1.0.fix1.1.xcpng8.99.noarch.rpm"]
     assert rpms("trivial", "--test", "fix1") == ["trivial-1.0-1.0.fix1.2.xcpng8.99.noarch.rpm"]
     assert rpms("trivial", "--pre", "fix1") == ["trivial-1.0-1~fix1.1.xcpng8.99.noarch.rpm"]
-    # the test builds are not the normal one, and do not change its build root
+    # the test builds are not the normal one
     assert states() == {"trivial": "missing", "with-deps": "missing"}
-    assert "trivial" not in load_lock(Project.find()).buildroots
     assert xcraft("build", "trivial", "--test", "fix-1")[0] == 2
 
     def tests() -> str:
-        return " ".join(xcraft("status", "trivial")[1].splitlines()[1].split()[3:])
+        # without their ages, "just now" or "1m ago" on a busy machine
+        line = " ".join(xcraft("status", "trivial")[1].splitlines()[1].split()[3:])
+        return re.sub(r"(just now|\d+m ago)", "<age>", line)
 
     # the latest of each ID, the newest first
-    assert tests() == "fix1.1 (pre, just now), fix1.2 (test, just now)"
+    assert tests() == "fix1.1 (pre, <age>), fix1.2 (test, <age>)"
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace('echo "hello"', 'echo "hello again"'))
-    assert tests() == "fix1.1 (pre, just now, outdated), fix1.2 (test, just now, outdated)"
+    assert tests() == "fix1.1 (pre, <age>, outdated), fix1.2 (test, <age>, outdated)"
 
 
 def test_repo_of_test_builds(root: Path) -> None:
@@ -231,9 +237,9 @@ def test_dnf_lock_is_shared_by_containers(root: Path) -> None:
 
 def test_build_back_to_a_cached_key(root: Path) -> None:
     assert xcraft("build", "trivial")[0] == 0
-    # a build root its build does not get: missing, and built again, back to the key of the first build
+    # dynamic BuildRequires its build does not find: missing, and built again, back to the key of the first build
     lock = load_lock(Project.find())
-    lock.buildroots["trivial"] = ["bash"]
+    lock.buildrequires.shared["trivial"] = ["zlib-ng-compat-devel"]
     save_lock(Project.find(), lock)
     code, output = xcraft("build", "trivial")
     assert code == 0, output
@@ -303,11 +309,12 @@ def test_bump(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert code == 0, output
     assert " Me <me@example.com> - 1.0-3\n-\n\n" in (root / "base/trivial/trivial.spec").read_text()
     assert xcraft("build", "trivial")[0] == 0
-    # with --dep, from the pending updates of all the platforms, cleared on all of them
-    other = next(p for p in Project.find().all_platforms() if p.arch != ARCH)
-    save_lock(other, Lock(pending={"trivial": {"zlib": "1.2-1"}}))
-    assert xcraft("bump", "--dep", "zlib")[1] == "trivial: 1.0-3 -> 1.0-4\n"
-    assert load_lock(other).pending == {}
+    # with --dep, from the pending updates, by source package
+    lock = load_lock(Project.find())
+    lock.pending = {"trivial": {"zlib-ng": "1.2-1"}}
+    save_lock(Project.find(), lock)
+    assert xcraft("bump", "--dep", "zlib-ng")[1] == "trivial: 1.0-3 -> 1.0-4\n"
+    assert load_lock(Project.find()).pending == {}
 
 
 def test_bump_version(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -358,48 +365,45 @@ def test_runaway_log_stops_the_build(root: Path, monkeypatch: pytest.MonkeyPatch
 def test_lock(root: Path) -> None:
     assert xcraft("build", "trivial")[0] == 0
     lock = load_lock(Project.find())
-    assert "rpm-build" in lock.image
-    assert lock.buildroots == {"trivial": []}
+    assert "rpm" in lock.sources  # of the image
+    assert (lock.requires, lock.buildrequires) == (Recorded(), Recorded())
 
+    # a BuildRequires of a source package not locked yet
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(spec.read_text().replace("BuildArch: noarch", "BuildArch: noarch\nBuildRequires: lzo-devel"))
+    code, output = xcraft("build", "trivial", "--locked")
+    assert code == 1
+    assert re.search(r"upstream packages not locked, which --locked forbids: .*\blzo\b", output), output
+    assert "lzo" not in load_lock(Project.find()).sources
+    assert xcraft("build", "trivial")[0] == 0
+    assert "lzo" in load_lock(Project.find()).sources
+    assert xcraft("build", "trivial", "--locked") == (0, "· trivial cached\n1 cached\n")
+    assert xcraft("lock", "--update", "lzo-devel")[1] == "0 updated\n"
+    assert xcraft("lock", "--outdated", "lzo") == (0, "up to date\n")
+
+
+def test_recorded(root: Path) -> None:
+    # a requirement rpm generates, of a script, and dynamic BuildRequires
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(
-        spec.read_text().replace("BuildArch: noarch", "BuildArch: noarch\nBuildRequires: zlib-ng-compat-devel")
-    )
+        spec.read_text()
+        .replace("%prep", "%generate_buildrequires\necho zlib-ng-compat-devel\n\n%prep")
+        .replace('echo "hello" > hello.txt', 'printf "#!/usr/bin/tclsh\\nputs hello\\n" > hello.tcl')
+        .replace("cp %{name}-%{version}/hello.txt %{buildroot}/usr/share/%{name}/",
+                 "install -m 755 %{name}-%{version}/hello.tcl %{buildroot}/usr/share/%{name}/")
+        .replace("/usr/share/%{name}/hello.txt", "/usr/share/%{name}/hello.tcl")
+    )  # fmt: skip
     code, output = xcraft("build", "trivial", "--locked")
     assert code == 1
-    assert "the lock would change, which --locked forbids: " in output
-    assert "+buildroots.trivial zlib-ng-compat-devel, " in output
-    assert "zlib-ng-compat-devel" not in load_lock(Project.find()).packages
-
-    assert xcraft("build", "trivial")[0] == 0
+    assert "+buildrequires.trivial zlib-ng-compat-devel" in output
+    code, output = xcraft("build", "with-deps")
+    assert code == 0, output
     lock = load_lock(Project.find())
-    assert lock.packages["zlib-ng-compat-devel"].source == "zlib-ng"
-    assert "zlib-ng-compat-devel" in lock.buildroots["trivial"]
-    assert xcraft("build", "trivial", "--locked") == (0, "· trivial cached\n1 cached\n")
-    assert f"0 updated\nxcraft.{ARCH}.lock: " in xcraft("lock", "--update", "zlib-ng")[1]
-    assert xcraft("lock", "--outdated", "zlib-ng") == (0, "up to date\n")
-    # the versions of the architecture, for an update with those of the others
-    available = root / "available.json"
-    assert xcraft("lock", "zlib-ng", "--available", str(available))[1].endswith(
-        f": the available versions of 2 packages of {ARCH}\n"
-    )
-    assert xcraft("lock", "--outdated", "zlib-ng", "--available", str(available)) == (0, "up to date\n")
-    # an update, which --outdated shows only, and fails for
-    lock = load_lock(Project.find())
-    lock.packages["zlib-ng-compat-devel"].evr = "1.0-1.el10"
-    save_lock(Project.find(), lock)
-    code, output = xcraft("lock", "--outdated", "zlib-ng")
-    assert (code, output.startswith("zlib-ng-compat-devel 1.0-1.el10 -> ")) == (1, True), output
-    assert output.endswith("1 to update: xcraft lock --update updates them\n")
-    assert load_lock(Project.find()).packages["zlib-ng-compat-devel"].evr == "1.0-1.el10"
-    assert xcraft("lock", "--update", "zlib-ng")[1].startswith("zlib-ng-compat-devel 1.0-1.el10 -> ")
-
-    # a build root of locked packages, but not the one of the lock
-    spec.write_text(spec.read_text().replace("BuildRequires: zlib-ng-compat-devel\n", ""))
-    code, output = xcraft("build", "trivial", "--locked")
-    assert code == 1
-    assert "-buildroots.trivial zlib-ng-compat-devel" in output
-    assert "zlib-ng-compat-devel" in load_lock(Project.find()).buildroots["trivial"]
+    assert lock.buildrequires.shared == {"trivial": ["zlib-ng-compat-devel"]}
+    # which with-deps gets through trivial, its build root checked
+    assert lock.requires.shared == {"trivial": ["tcl"]}
+    assert "tcl" in resolve(Project.find()).buildroots["with-deps"]
+    assert xcraft("build", "with-deps", "--locked")[0] == 0
 
 
 def test_doctor(root: Path) -> None:
@@ -421,30 +425,28 @@ def test_graph(root: Path) -> None:
 
 def test_impacts_and_bump(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spec = root / "base/trivial/trivial.spec"
-    spec.write_text(
-        spec.read_text().replace("BuildArch: noarch", "BuildArch: noarch\nBuildRequires: zlib-ng-compat-devel")
-    )
+    spec.write_text(spec.read_text().replace("BuildArch: noarch", "BuildArch: noarch\nBuildRequires: lzo-devel"))
     assert xcraft("build", "with-deps")[0] == 0
     assert xcraft("impacts") == (0, "nothing pending\n")
     # through trivial, with-deps is built against the upstream package
-    assert xcraft("graph", "zlib-ng-compat-devel", "--dependents", "--flat") == (0, "trivial\nwith-deps\n")
-    assert "└── zlib-ng-compat-devel\n" in xcraft("graph", "trivial", "--upstream")[1]
+    assert xcraft("graph", "lzo-devel", "--dependents", "--flat") == (0, "trivial\nwith-deps\n")
+    assert "└── lzo-devel\n" in xcraft("graph", "trivial", "--upstream")[1]
 
-    # as if zlib-ng-compat-devel had been updated since trivial was built
+    # as if lzo had been updated since trivial was built
     lock = load_lock(Project.find())
-    lock.note_updates({"zlib-ng-compat-devel": "0:1.0-1"})
+    lock.note_updates({"lzo": "1.0-1"}, {"trivial": {"lzo"}})
     save_lock(Project.find(), lock)
     code, output = xcraft("impacts")
     assert code == 0, output
     # by source package, and built with the current lock
-    assert re.search(r"^ zlib-ng +0:1\.0-1 +\S+ +✓ trivial", output, re.MULTILINE), output
-    now = load_lock(Project.find()).packages["zlib-ng-compat-devel"].evr
-    assert xcraft("impacts", "--markdown")[1].endswith(f"| zlib-ng | 0:1.0-1 | {now} | ✓ trivial |\n")
+    assert re.search(r"^ lzo +1\.0-1 +\S+ +✓ trivial", output, re.MULTILINE), output
+    now = load_lock(Project.find()).sources["lzo"]
+    assert xcraft("impacts", "--markdown")[1].endswith(f"| lzo | 1.0-1 | {now} | ✓ trivial |\n")
 
     gitconfig = root / "gitconfig"
     gitconfig.write_text("[user]\n\tname = Me\n\temail = me@example.com\n")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(gitconfig))
-    assert xcraft("bump", "--dep", "zlib-ng", "-m", "Rebuild for zlib-ng") == (
+    assert xcraft("bump", "--dep", "lzo", "-m", "Rebuild for lzo") == (
         0,
         "trivial: 1.0-1 -> 1.0-2\n",
     )

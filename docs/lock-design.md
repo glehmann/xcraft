@@ -1,6 +1,6 @@
 # Design: one lock, computed from one architecture
 
-Status: proposal, for review.
+Status: the first step implemented (see *Size of the change*).
 
 ## Build roots
 
@@ -85,18 +85,20 @@ builds, in the lock, which becomes one for all the architectures.
   requires, as `BuildRequires` or `Requires`, with their versions. Only those: all of them would be thousands, and
   change on rebuilds, like `ocaml(Stdlib) = <hash>`. They go into the repository of our binary packages, so that
   `BuildRequires: pkgconfig(xenctrl)` resolves to `xen-devel`: an edge alone, in `[requires]`, would not make the
-  synthetic `xen-devel` provide it. Builds record them from the packages they made, and keep all their provides with
-  their result in the cache and the remote storage, for a spec requiring one of them later, without a new build.
+  synthetic `xen-devel` provide it. The files of ours a spec requires too, which the metadata from the specs does not
+  have. Builds record them from the packages they made, which the cache keeps: a spec requiring one of them later gets
+  them recorded from there, without a new build.
 - **`[buildrequires]`**, for each source package of ours with `%generate_buildrequires`, the packages its dynamic
   `BuildRequires` resolve to, by name. rpm only knows them by running the spec's script, in a build, like `xcraft build`
   does today with `rpmbuild -br`. Builds record them, from the source packages `rpmbuild -br` makes with them.
 - **`[requires.<arch>]`, `[provides.<arch>]` and `[buildrequires.<arch>]`**, the entries of an architecture that differ
   from the shared ones. An entry there replaces the shared entry of the same package on that architecture, rather than
-  adding to it, so that it can also have less, or nothing, with an empty list. A build records its findings in the
-  shared table when it has no entry for the package yet, or has the same one, and in the table of its architecture
-  otherwise; one finding the shared entry again removes the entry of its architecture. When the shared entry changes,
-  from the build of another architecture, the architectures without an entry of theirs get it, and their next builds
-  check it, like any finding. No package is named after an architecture, which these tables are named after.
+  adding to it, so that it can also have less, or nothing, with an empty list. A build of the first architecture of
+  the configuration records its findings in the shared table, and so does a build of another one when it has no entry
+  for the package yet; otherwise, those of another architecture go in its table when they differ from the shared
+  entry, and finding the shared entry again removes the entry of its architecture. When the shared entry changes, the
+  architectures without an entry of theirs get it, and their next builds check it, like any finding. No package is
+  named after an architecture, which these tables are named after.
 - **No checksums of the binary packages:** the repositories sign them, and dnf checks it (`gpgkey` of the repositories).
 - **No build roots:** they are computed.
 
@@ -224,7 +226,9 @@ dynamic `BuildRequires`. Its key is right after its build, which records it, and
   and macros, but they have to be checked against real aarch64 builds: the checked builds there do it, each time.
 - **Unresolved requirements.** The measurements found 7 requirements of our opentelemetry packages with no provider,
   like `python3.12dist(requests)`. They have to be fixed first: the resolution fails on them.
-- **Size of the change.** `lock.py`, the keys, `impacts`, the build environment, and the tests of all of them. It can
-  land in steps: the lock format, the native parsing and the computation first, with the check of what builds install,
-  which replaces today's `_check_build_root`; the check of what they make and the restricted repository of our builds
-  next, with the recording of the dynamic `BuildRequires` before installing them.
+- **Size of the change.** `lock.py`, the keys, `impacts`, the build environment, and the tests of all of them. It
+  lands in steps: the lock format, the native parsing and the computation first, with the check of what builds install,
+  which replaces today's `_check_build_root`, done; the check of what they make and the restricted repository of our
+  builds next, with the recording of the dynamic `BuildRequires` before installing them. Meanwhile, the resolution
+  already restricts the packages of ours of a build root to those of its dependencies, and the check catches a build
+  installing others.
