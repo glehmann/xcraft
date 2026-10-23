@@ -124,14 +124,14 @@ def load_packages(project: Project) -> dict[str, Package]:
 
     if not cache().exists():
         build_image(project)  # which may change its tag, when it is new
-        specs = " ".join(f"/specs/{main_spec(d).relative_to(project.specs)}" for d in dirs)
+        specs = " ".join(f"/project/{main_spec(d).relative_to(project.root)}" for d in dirs)
         with project.work("specs") as work:
             (work / "parse.py").write_text(_PARSER)
             run(
                 project,
                 "specs",
                 f"python3 /work/parse.py /work/specs.json {specs}",
-                volumes=[f"{project.specs}:/specs:ro", f"{work}:/work"],
+                volumes=[f"{project.root}:/project:ro", f"{work}:/work"],
                 show="parsing the specs",
                 network=False,
             )

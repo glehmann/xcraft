@@ -5,11 +5,13 @@ A tour of the main features, with packages fast to build.
 ## Before the demo
 
 Everything is built first, ~1h30, `kernel` alone ~15 minutes, and shared like CI does. The steps rebuild only small
-packages, after cleaning them.
+packages, after cleaning them. They run in xcp-ng-dist, next to xcraft, with the xcraft it pins.
 
 ```
-./local-s3.sh up                 # the local remote storage
-./local-s3.sh env | source       # its credentials, to push; in bash: eval "$(./local-s3.sh env)"
+cd ../xcp-ng-dist
+uv sync && source .venv/bin/activate.fish     # xcraft, in the version xcp-ng-dist pins; in bash: .venv/bin/activate
+../xcraft/local-s3.sh up         # the local remote storage
+../xcraft/local-s3.sh env | source  # its credentials, to push; in bash: eval "$(../xcraft/local-s3.sh env)"
 xcraft doctor                    # what the host needs: --fix for the emulation of aarch64
 xcraft build
 xcraft push                      # the builds and the sources, like CI
@@ -19,9 +21,9 @@ xcraft build libempserver --arch aarch64     # for step 10: the aarch64 image an
 
 ## 1. What it is
 
-One tool, and one repository, to build the whole XCP-ng distribution:
+One tool, xcraft, and one repository, xcp-ng-dist, to build the whole XCP-ng distribution:
 
-- **The packages are in the repository**: each `specs/base/<pkg>/` has the spec, its patches and small sources, imported
+- **The packages are in the repository**: each `base/<pkg>/` has the spec, its patches and small sources, imported
   from the xcp-ng-rpms repositories. The source archives are not in git: they are listed with their sha256, and
   shared through a remote storage.
 - **A reproducible build environment**: a podman container made only of AlmaLinux 10 and EPEL packages, from a base
@@ -36,11 +38,11 @@ One tool, and one repository, to build the whole XCP-ng distribution:
 ```
 xcraft --help                    # the commands, by what they are about
 xcraft doctor                    # what xcraft needs on the host, and how to get what it misses
-ls specs/ specs/base/ && ls specs/base/xen/     # the packages, by the repository they are published in
-cat specs/base/xen/sources            # archives listed by sha256, not stored in git
-cat xcraft.toml                  # the settings, defaults in xcraft/project.py
-grep -A8 '^"biosdevname" = \[' locks/x86_64_v2.toml    # the upstream packages its build installs
-grep '^"pciutils-devel" = ' locks/x86_64_v2.toml        # their version, the same for the whole tree
+ls base/ && ls base/xen/         # the packages, by the repository they are published in
+cat base/xen/sources             # archives listed by sha256, not stored in git
+cat xcraft.toml                  # the settings: the build environment, the remote storage...
+grep -A8 '^"biosdevname" = \[' xcraft.x86_64_v2.lock  # the upstream packages its build installs
+grep '^"pciutils-devel" = ' xcraft.x86_64_v2.lock      # their version, the same for the whole tree
 ```
 
 ## 2. Status at a glance
@@ -73,7 +75,7 @@ xcraft build xcp-ng-release                 # again: everything cached
 xcraft bump branding-xcp-ng -m "just a demo"
 xcraft build --dry-run                      # branding-xcp-ng and the packages built against it
 xcraft build xcp-ng-release                 # only what xcp-ng-release needs
-git restore specs/base/branding-xcp-ng      # back to the cached builds
+git restore base/branding-xcp-ng            # back to the cached builds
 ```
 
 ## 6. Shared builds through remote storage
@@ -102,7 +104,7 @@ The storage, read publicly over http, with a page for each directory:
   `RPMS/`, `SRPMS/`, `build.log`, and `manifest.json`, the checksums of its files
 - <http://xcraft.web.garage.localhost:3902/builds/x86_64_v2/kernel/>: pushed before the demo
 - <http://xcraft.web.garage.localhost:3902/sources/b7564fd218cc4479f7f0106d341e096f78907b47865aeeff702c807df1927c01/>:
-  the archive of `specs/base/python-bitarray/sources`, by its sha256
+  the archive of `base/python-bitarray/sources`, by its sha256
 
 ## 7. Inspecting and debugging a build
 
@@ -137,16 +139,16 @@ With a test host: `--host root@testhost --upgrade`.
 xcraft lock
 xcraft impacts
 xcraft bump python-bitarray -m "Rebuild"    # or: xcraft ack python-bitarray
-git restore specs/base/python-bitarray      # not to rebuild sm and xapi for step 11
+git restore base/python-bitarray            # not to rebuild sm and xapi for step 11
 ```
 
 A new upstream version, with the archive downloaded from the `Source0` of the spec:
 
 ```
 xcraft bump xcp-ng-xapi-plugins --version 1.16.0       # changelog entry: Update to 1.16.0
-git diff specs/base/xcp-ng-xapi-plugins     # Version, Release, changelog, and the new archive in sources
+git diff base/xcp-ng-xapi-plugins           # Version, Release, changelog, and the new archive in sources
 xcraft build xcp-ng-xapi-plugins            # ~3s, with its patches on the new version
-git restore specs/base/xcp-ng-xapi-plugins
+git restore base/xcp-ng-xapi-plugins
 ```
 
 `kernel` and `kernel-headers` are of the same archive: `same_version` in `xcraft.toml` updates them together.

@@ -68,6 +68,9 @@ def publish(  # noqa: PLR0913, PLR0917
     if not (local or project.config.remote):
         msg = "no remote storage to publish to: see [remote] in xcraft.toml, or use --local"
         raise typer.BadParameter(msg)
+    if not project.config.publish.release:
+        msg = "no release to publish: see [publish] in xcraft.toml"
+        raise typer.BadParameter(msg)
     signer = choose_signer(project, local=local, unsigned=unsigned, dev_key=dev_key)
     with project.lock():
         dest = (output or project.state / "publish").absolute()

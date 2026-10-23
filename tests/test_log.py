@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 from typer.testing import CliRunner
 
+from tests import TOML
 from xcraft.__main__ import app
 from xcraft.display import diagnostics, read_tail
 
@@ -30,7 +31,7 @@ make: *** [all] Error 1
 
 @pytest.fixture
 def log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    (tmp_path / "xcraft.toml").write_text("")
+    (tmp_path / "xcraft.toml").write_text(TOML)
     (tmp_path / ".xcraft/logs").mkdir(parents=True)
     (tmp_path / ".xcraft/build").mkdir()
     monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path))

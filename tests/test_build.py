@@ -14,13 +14,13 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from tests import PROJECT, TOML
 from xcraft import container
 from xcraft.__main__ import app
 from xcraft.lock import Lock, load_lock, save_lock
 from xcraft.project import Project
 from xcraft.sources import write_manifest
 
-FIXTURES = Path(__file__).parent / "fixtures"
 runner = CliRunner()
 
 
@@ -31,10 +31,7 @@ pytestmark = pytest.mark.skipif(not shutil.which("podman"), reason="needs podman
 @pytest.fixture
 def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "project"
-    (root / "specs/base").mkdir(parents=True)
-    for name in ("trivial", "with-deps"):
-        shutil.copytree(FIXTURES / name, root / "specs/base" / name)
-    (root / "xcraft.toml").write_text("")
+    shutil.copytree(PROJECT, root)
     monkeypatch.setenv("XCRAFT_PROJECT", str(root))
     return root
 
@@ -72,7 +69,7 @@ def test_build_uses_local_builds_and_cache(root: Path) -> None:
     assert list((root / ".xcraft/cache/builds/x86_64_v2/with-deps").glob("*/RPMS/noarch/with-deps-1.0-*.noarch.rpm"))
 
     # a change in trivial changes the key of with-deps too
-    spec = root / "specs/base/trivial/trivial.spec"
+    spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace('echo "hello"', 'echo "hello again"'))
     assert states() == {"trivial": "outdated", "with-deps": "outdated"}
     code, output = xcraft("build", "with-deps")
@@ -92,7 +89,7 @@ def test_build_all_by_default(root: Path) -> None:
 
 
 def test_spec_changed_during_build_is_not_cached(root: Path) -> None:
-    spec = root / "specs/base/trivial/trivial.spec"
+    spec = root / "base/trivial/trivial.spec"
 
     def change() -> None:
         while not (root / ".xcraft/build/trivial.pid").exists():
@@ -102,14 +99,14 @@ def test_spec_changed_during_build_is_not_cached(root: Path) -> None:
     threading.Thread(target=change, daemon=True).start()
     code, output = xcraft("build", "trivial")
     assert code == 1
-    assert "specs/base/trivial changed during the build, build it again" in output
+    assert "base/trivial changed during the build, build it again" in output
     assert states() == {"trivial": "missing", "with-deps": "missing"}
 
 
 def write_spec(root: Path, name: str, requires: str = "", files: str = "/usr/share/doc/%{name}") -> None:
     """Write a minimal noarch package installing `files`, with the BuildRequires `requires`."""
-    (root / "specs/base" / name).mkdir()
-    (root / "specs/base" / name / f"{name}.spec").write_text(
+    (root / "base" / name).mkdir()
+    (root / "base" / name / f"{name}.spec").write_text(
         f"Name: {name}\nVersion: 1.0\nRelease: 1\nSummary: test\nLicense: MIT\nBuildArch: noarch\n"
         + (f"BuildRequires: {requires}\n" if requires else "")
         + f"%description\ntest\n%install\nmkdir -p %{{buildroot}}{files.rsplit('/', 1)[0]}\n"
@@ -119,7 +116,7 @@ def write_spec(root: Path, name: str, requires: str = "", files: str = "/usr/sha
 
 def test_build_without_network(root: Path) -> None:
     write_spec(root, "offline")
-    spec = root / "specs/base/offline/offline.spec"
+    spec = root / "base/offline/offline.spec"
     check = (
         "import socket\n"
         "server = socket.create_server(('127.0.0.1', 0))\n"
@@ -185,7 +182,7 @@ def test_test_and_pre_builds(root: Path) -> None:
 
     # the latest of each ID, the newest first
     assert tests() == "fix1.1 (pre, just now), fix1.2 (test, just now)"
-    spec = root / "specs/base/trivial/trivial.spec"
+    spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace('echo "hello"', 'echo "hello again"'))
     assert tests() == "fix1.1 (pre, just now, outdated), fix1.2 (test, just now, outdated)"
 
@@ -246,7 +243,7 @@ def test_build_back_to_a_cached_key(root: Path) -> None:
 
 
 def test_failed_build_skips_dependents(root: Path) -> None:
-    spec = root / "specs/base/trivial/trivial.spec"
+    spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace('echo "hello"', 'echo "build failure"; exit 3'))
     code, output = xcraft("build", "with-deps")
     assert code == 1
@@ -260,9 +257,9 @@ def test_failed_build_skips_dependents(root: Path) -> None:
 
 
 def test_missing_archive_and_spec_error(root: Path) -> None:
-    write_manifest(root / "specs/base/trivial/sources", {"trivial-1.0.tar.gz": "0" * 64})
-    (root / "specs/base/broken").mkdir()
-    (root / "specs/base/broken/broken.spec").write_text("Name: broken\n%if\n")
+    write_manifest(root / "base/trivial/sources", {"trivial-1.0.tar.gz": "0" * 64})
+    (root / "base/broken").mkdir()
+    (root / "base/broken/broken.spec").write_text("Name: broken\n%if\n")
     code, output = xcraft("build", "trivial", "broken")
     assert code == 1
     assert "trivial-1.0.tar.gz is not in the source cache, run: xcraft import trivial" in output
@@ -282,7 +279,7 @@ def test_repo_checks_dependencies(root: Path) -> None:
     code, output = xcraft("repo", "with-deps")
     assert code == 0, output
 
-    spec = root / "specs/base/trivial/trivial.spec"
+    spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace("BuildArch: noarch", "BuildArch: noarch\nRequires: no-such-package"))
     code, output = xcraft("repo", "trivial", "--output", str(root / "out"))
     assert code == 1
@@ -297,14 +294,14 @@ def test_bump(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     code, output = xcraft("bump", "trivial", "-m", "Rebuild")
     assert code == 0, output
     assert output == "trivial: 1.0-1 -> 1.0-2\n"
-    spec = (root / "specs/base/trivial/trivial.spec").read_text()
+    spec = (root / "base/trivial/trivial.spec").read_text()
     assert "Release: 2%{?dist}\n" in spec
     assert "%changelog\n* " in spec
     assert " Me <me@example.com> - 1.0-2\n- Rebuild\n\n* Mon Jul 10 2026 Test User" in spec
     # without a message, an empty item to fill in, which rpm accepts
     code, output = xcraft("bump", "trivial")
     assert code == 0, output
-    assert " Me <me@example.com> - 1.0-3\n-\n\n" in (root / "specs/base/trivial/trivial.spec").read_text()
+    assert " Me <me@example.com> - 1.0-3\n-\n\n" in (root / "base/trivial/trivial.spec").read_text()
     assert xcraft("build", "trivial")[0] == 0
     # with --dep, from the pending updates of all the platforms, cleared on all of them
     arm = Project.find("aarch64")
@@ -320,36 +317,36 @@ def test_bump_version(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     archives = root / "archives"
     archives.mkdir()
     (archives / "trivial-2.0.tar.gz").write_bytes(b"new")
-    spec = root / "specs/base/trivial/trivial.spec"
+    spec = root / "base/trivial/trivial.spec"
     source = f"Source0: file://{archives}/trivial-%{{version}}.tar.gz\n"
     spec.write_text(spec.read_text().replace("License: MIT\n", f"License: MIT\n{source}"))
-    (root / "specs/base/trivial/sources").write_text(f"{'0' * 64}  trivial-1.0.tar.gz\n")
+    (root / "base/trivial/sources").write_text(f"{'0' * 64}  trivial-1.0.tar.gz\n")
     # another package of the same archive, through a link
-    twin = root / "specs/base/twin"
+    twin = root / "base/twin"
     twin.mkdir()
     (twin / "twin.spec").write_text(spec.read_text().replace("Name: trivial", "Name: twin"))
     (twin / "sources").symlink_to("../trivial/sources")
-    (root / "xcraft.toml").write_text('same_version = [["trivial", "twin"]]\n')
+    (root / "xcraft.toml").write_text(f'same_version = [["trivial", "twin"]]\n{TOML}')
     code, output = xcraft("bump", "twin", "--version", "2.0")
     assert code == 0, output
     assert "trivial: 1.0-1 -> 2.0-1\ntwin: 1.0-1 -> 2.0-1\n" in output
     assert "Version: 2.0\nRelease: 1%{?dist}\n" in spec.read_text()
     assert " Me <me@example.com> - 2.0-1\n- Update to 2.0\n" in (twin / "twin.spec").read_text()
     digest = hashlib.sha256(b"new").hexdigest()
-    assert (root / "specs/base/trivial/sources").read_text() == f"{digest}  trivial-2.0.tar.gz\n"
+    assert (root / "base/trivial/sources").read_text() == f"{digest}  trivial-2.0.tar.gz\n"
     assert (twin / "sources").is_symlink()
     assert (root / ".xcraft/cache/sources" / digest / "trivial-2.0.tar.gz").read_bytes() == b"new"
     # without a URL to download the archive from, nothing changes
-    before = (root / "specs/base/with-deps/with-deps.spec").read_text()
+    before = (root / "base/with-deps/with-deps.spec").read_text()
     code, output = xcraft("bump", "with-deps", "--version", "2.0", "-m", "Update")
     assert code == 1
     assert "the Source0 of with-deps is not a URL" in output
-    assert (root / "specs/base/with-deps/with-deps.spec").read_text() == before
+    assert (root / "base/with-deps/with-deps.spec").read_text() == before
 
 
 def test_runaway_log_stops_the_build(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(container, "MAX_LOG_SIZE", 2**20)
-    spec = root / "specs/base/trivial/trivial.spec"
+    spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace('echo "hello" > hello.txt', "yes looping"))
     code, output = xcraft("build", "trivial")
     assert code == 1
@@ -364,7 +361,7 @@ def test_lock(root: Path) -> None:
     assert "rpm-build" in lock.image
     assert lock.buildroots == {"trivial": []}
 
-    spec = root / "specs/base/trivial/trivial.spec"
+    spec = root / "base/trivial/trivial.spec"
     spec.write_text(
         spec.read_text().replace("BuildArch: noarch", "BuildArch: noarch\nBuildRequires: zlib-ng-compat-devel")
     )
@@ -407,7 +404,7 @@ def test_graph(root: Path) -> None:
 
 
 def test_impacts_and_bump(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    spec = root / "specs/base/trivial/trivial.spec"
+    spec = root / "base/trivial/trivial.spec"
     spec.write_text(
         spec.read_text().replace("BuildArch: noarch", "BuildArch: noarch\nBuildRequires: zlib-ng-compat-devel")
     )

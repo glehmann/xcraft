@@ -1,4 +1,0 @@
-<collect>
-<command label="message_cli_diag">/usr/sbin/message-cli diag</command>
-<command label="message_cli_tail">/usr/sbin/message-cli tail</command>
-</collect>

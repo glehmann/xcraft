@@ -1,4 +1,4 @@
-"""Import packages from their packaging git repositories into ``specs/``.
+"""Import packages from their packaging git repositories into the project.
 
 Two layouts of packaging repositories are supported:
 

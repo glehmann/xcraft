@@ -9,12 +9,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from tests import TOML, config
 from xcraft.build import BuildError, build_keys, prepare_tree, previous_duration, queued
 from xcraft.clean import clean, repos_disk_usage
 from xcraft.commands import complete_arch
 from xcraft.localrepo import RepoError, fresh_dir
 from xcraft.lock import Lock, save_lock
-from xcraft.project import Config, Project, ProjectLockedError
+from xcraft.project import Project, ProjectLockedError
 from xcraft.publish import build_dependencies
 from xcraft.sources import cache_source, write_manifest
 from xcraft.specs import Binary, Package, hash_dir, main_spec
@@ -25,8 +26,8 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def project(tmp_path: Path) -> Project:
-    (tmp_path / "xcraft.toml").write_text("")
-    return Project(tmp_path, Config())
+    (tmp_path / "xcraft.toml").write_text(TOML)
+    return Project(tmp_path, config())
 
 
 def files(path: Path) -> list[str]:
@@ -34,7 +35,7 @@ def files(path: Path) -> list[str]:
 
 
 def test_stage_like_a_packaging_repository(project: Project, tmp_path: Path) -> None:
-    pkg = project.specs / "base/foo"
+    pkg = project.root / "base/foo"
     (pkg / "sub").mkdir(parents=True)
     for name in ("foo.spec", "foo-helper.spec", "fix.patch", "sub/conf", "origin"):
         (pkg / name).write_text(name)
@@ -154,16 +155,31 @@ def test_fresh_dir_only_empties_what_xcraft_made(project: Project, tmp_path: Pat
 
 
 def test_package_dirs(project: Project) -> None:
-    for path in ("base/foo", "base/.foo.import", "xostor/bar"):
-        (project.specs / path).mkdir(parents=True)
-    assert project.package_dirs == {"bar": project.specs / "xostor/bar", "foo": project.specs / "base/foo"}
-    (project.specs / "xostor/foo").mkdir()
+    project.config.repositories = ["base", "xostor"]
+    for path in ("base/foo", "base/.foo.import", "xostor/bar", "iso/bar"):
+        (project.root / path).mkdir(parents=True)
+    assert project.package_dirs == {"bar": project.root / "xostor/bar", "foo": project.root / "base/foo"}
+    (project.root / "xostor/foo").mkdir()
     with pytest.raises(RuntimeError, match="foo is in two repositories: base and xostor"):
         _ = Project(project.root, project.config).package_dirs
 
 
+def test_find(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "project/base/foo").mkdir(parents=True)
+    (tmp_path / "project/xcraft.toml").write_text(TOML)
+    monkeypatch.delenv("XCRAFT_PROJECT", raising=False)
+    monkeypatch.chdir(tmp_path / "project/base/foo")
+    assert Project.find().root == tmp_path / "project"
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(RuntimeError, match=r"no xcraft.toml in .* or its parents"):
+        Project.find()
+    monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path))
+    with pytest.raises(RuntimeError, match=r"no xcraft.toml in \S+$"):
+        Project.find()
+
+
 def test_platforms(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    (tmp_path / "xcraft.toml").write_text("")
+    (tmp_path / "xcraft.toml").write_text(TOML)
     monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path))
     monkeypatch.delenv("XCRAFT_ARCH", raising=False)
     for machine, arch in (("x86_64", "x86_64_v2"), ("aarch64", "aarch64"), ("ppc64le", "x86_64_v2")):
@@ -190,8 +206,8 @@ def test_build_dependencies(project: Project) -> None:
 
 def test_keys_of_cycles(project: Project) -> None:
     for name in ("a", "b", "0foo"):
-        (project.specs / "base" / name).mkdir(parents=True)
-        (project.specs / "base" / name / f"{name}.spec").write_text(name)
+        (project.root / "base" / name).mkdir(parents=True)
+        (project.root / "base" / name / f"{name}.spec").write_text(name)
     project.deps = {"a": {"b"}, "b": {"a"}}
     keys = build_keys(project)
     # not the order the cycle is reached in: from a package depending on b, first in name order
@@ -199,7 +215,7 @@ def test_keys_of_cycles(project: Project) -> None:
     more = build_keys(project)
     assert (more["a"], more["b"]) == (keys["a"], keys["b"])
     assert keys["a"] != keys["b"]
-    (project.specs / "base/b/b.spec").write_text("b changed")
+    (project.root / "base/b/b.spec").write_text("b changed")
     project.deps = {"a": {"b"}, "b": {"a"}}
     assert build_keys(project)["a"] != keys["a"]
 

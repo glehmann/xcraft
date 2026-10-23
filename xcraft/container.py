@@ -39,6 +39,10 @@ DNF_LOCK = "sudo flock /var/cache/dnf/.xcraft.lock"
 """Prefix of the dnf commands: the containers share the dnf cache volume, which dnf does not lock across them."""
 
 
+PACKAGES = ["dnf-plugins-core", "python3-dnf-plugin-versionlock", "createrepo_c", "python3-rpm", "ccache", "sudo"]
+"""Packages of the build environment used by xcraft, after those of the configuration."""
+
+
 class ContainerError(RuntimeError):
     """Raised when a command fails in the build environment."""
 
@@ -71,7 +75,7 @@ def _image(project: Project) -> tuple[str, dict[str, str], dict[str, str]]:
     once they are locked, so it identifies the image across machines.
     """
     config = project.config
-    args = {"BASE_IMAGE": config.base_image, "PACKAGES": " ".join(config.packages)}
+    args = {"BASE_IMAGE": config.base_image, "PACKAGES": " ".join([*config.packages, *PACKAGES])}
     files = _image_files(project, load_lock(project))
     digest = hashlib.sha256(json.dumps([project.platform, args, files], sort_keys=True).encode()).hexdigest()
     return f"localhost/xcraft-build:{digest}", args, files

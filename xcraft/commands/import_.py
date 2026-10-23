@@ -23,11 +23,11 @@ def import_(
         typer.Option(help="Packaging repository, or source RPM. Defaults to the previous import's, or xcp-ng-rpms'."),
     ] = None,
     repo: Annotated[
-        str, typer.Option(help="Repository of the new packages, as their directory in specs/. Others stay in theirs.")
+        str, typer.Option(help="Repository of the new packages, one of the project's. Others stay in theirs.")
     ] = "base",
     all_: All = False,
 ) -> None:
-    """Copy packages from their packaging repositories into specs/<repo>/.
+    """Copy packages from their packaging repositories into <repo>/.
 
     --all re-imports the packages imported before.
     """
@@ -40,12 +40,15 @@ def import_(
     if bad := [name for name in [*packages, repo] if not re.fullmatch(r"[A-Za-z0-9][\w.+-]*", name)]:
         msg = f"not package names: {', '.join(map(repr, bad))}"
         raise typer.BadParameter(msg)
+    if repo not in project.config.repositories:
+        msg = f"{repo} is not a repository of the project: {', '.join(project.config.repositories)}"
+        raise typer.BadParameter(msg)
     if url and len(packages) > 1:
         msg = "--url applies to a single package"
         raise typer.BadParameter(msg)
     with project.lock():
         for i, name in enumerate(packages, 1):
-            pkg_dir = project.package_dirs.get(name, project.specs / repo / name)
+            pkg_dir = project.package_dirs.get(name, project.root / repo / name)
             origin_url, origin_branch, _ = read_origin(pkg_dir) or (DEFAULT_URL.format(name=name), "master", "")
             # the previous branch, of the previous repository only
             pkg_branch = branch or (origin_branch if not url or url == origin_url else "master")
