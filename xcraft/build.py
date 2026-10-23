@@ -12,6 +12,7 @@ repositories. Packages not built locally come from those repositories.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -205,12 +206,13 @@ BUILD_FILES = ["RPMS", "SRPMS", "build.log"]
 def _fetch_source(project: Project, name: str, filename: str, digest: str) -> bool:
     """Download an archive of `name` into the source cache, and return whether it was found.
 
-    It comes from the remote storage, or else from the Source0 of `name`, when that is its URL.
+    It comes from the remote storage, or else from the source of the spec of `name` whose URL is its own.
     """
     archive = project.source_cache / digest / filename
     part = archive.with_name(f"{filename}.part")
     part.parent.mkdir(parents=True, exist_ok=True)
-    source0, origin, error = project.packages[name].source0, "", None
+    urls = (s for s in project.packages[name].sources if "://" in s and archive_name(s) == filename)
+    url, origin, error = next(urls, ""), "", None
     with activity(f"downloading {filename}") as on_line:
         try:
             if (storage := project.config.remote) and remote.download(
@@ -219,14 +221,16 @@ def _fetch_source(project: Project, name: str, filename: str, digest: str) -> bo
                 origin = "the remote storage"
         except remote.RemoteError as e:
             error = e
-        if not origin and "://" in source0 and archive_name(source0) == filename:
+        if not origin and url:
             try:
-                process.download(source0, part, download_progress(on_line))
-                origin = source0
+                process.download(url, part, download_progress(on_line))
+                origin = url
             except OSError as e:
                 error = e
     if not origin:
         part.unlink(missing_ok=True)
+        with contextlib.suppress(OSError):  # not to leave it empty
+            part.parent.rmdir()
         if error:
             msg = f"{filename} is not in the source cache, and cannot be downloaded: {error}"
             raise BuildError(msg) from error
@@ -267,7 +271,7 @@ def prepare_tree(project: Project, name: str) -> Path:
         pkg_dir, tree / "SOURCES", ignore=lambda d, _: [spec.name, "sources", "origin"] if d == str(pkg_dir) else []
     )
     if missing := fetch_sources(project, name):
-        msg = f"{', '.join(missing)} is not in the source cache, run: xcraft import {name}"
+        msg = f"{', '.join(missing)} is not in the source cache, the remote storage, nor at a URL of the spec"
         raise BuildError(msg)
     if (pkg_dir / "sources").exists():
         for filename, digest in read_manifest(pkg_dir / "sources").items():

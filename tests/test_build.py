@@ -262,7 +262,7 @@ def test_missing_archive_and_spec_error(root: Path) -> None:
     (root / "base/broken/broken.spec").write_text("Name: broken\n%if\n")
     code, output = xcraft("build", "trivial", "broken")
     assert code == 1
-    assert "trivial-1.0.tar.gz is not in the source cache, run: xcraft import trivial" in output
+    assert "trivial-1.0.tar.gz is not in the source cache, the remote storage, nor at a URL of the spec" in output
     assert "✗ broken: " in output
     assert re.search(r"^broken +error *$", xcraft("status")[1], re.MULTILINE)
     assert xcraft("st") == xcraft("status")

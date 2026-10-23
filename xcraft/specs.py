@@ -55,6 +55,7 @@ for spec_file in spec_files:
         "dist": rpm.expandMacro("%{?dist}"),
         # sources are of type 1, patches 2
         "source0": next((source for source, n, kind in spec.sources if kind == 1 and n == 0), ""),
+        "sources": [source for source, n, kind in sorted(spec.sources, key=lambda s: s[1]) if kind == 1],
     }
 pathlib.Path(out).write_text(json.dumps(result))
 """
@@ -80,6 +81,8 @@ class Package(BaseModel):
     """The value of %{dist}, at the end of the release of the binaries."""
     source0: str = ""
     """Source0, expanded: the URL of its archive, if the spec gives it."""
+    sources: list[str] = []
+    """All the sources, expanded, Source0 first: the URLs of their archives, for those the spec gives."""
     error: str = ""
     """Why the spec could not be parsed, if it could not."""
 

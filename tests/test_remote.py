@@ -144,24 +144,40 @@ def test_sources(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -
         prepare_tree(Project.find(), "trivial")
 
 
-def test_sources_from_source0(root: Path, tmp_path: Path) -> None:
-    archive = tmp_path / f"trivial-{secrets.token_hex(4)}.tar.gz"
-    archive.write_text(archive.name)
-    write_manifest(root / "base/trivial/sources", {archive.name: sha256_of(archive)})
+def test_sources_from_the_spec(root: Path, tmp_path: Path) -> None:
+    archive, extra = (tmp_path / f"{name}-{secrets.token_hex(4)}.tar.gz" for name in ("trivial", "extra"))
+    for path in (archive, extra):
+        path.write_text(path.name)
+    write_manifest(root / "base/trivial/sources", {path.name: sha256_of(path) for path in (archive, extra)})
     spec = root / "base/trivial/trivial.spec"
-    spec.write_text(spec.read_text().replace("BuildArch: noarch", f"BuildArch: noarch\nSource0: file://{archive}"))
+    sources = f"Source0: file://{archive}\nSource1: file://{extra}"
+    spec.write_text(spec.read_text().replace("BuildArch: noarch", f"BuildArch: noarch\n{sources}"))
     assert xcraft("fetch", "sources", "trivial") == (0, "all the source archives are in the source cache\n")
-    assert (Project.find().source_cache / sha256_of(archive) / archive.name).read_text() == archive.name
+    for path in (archive, extra):  # Source1's too
+        assert (Project.find().source_cache / sha256_of(path) / path.name).read_text() == path.name
+    write_manifest(root / "base/trivial/sources", {archive.name: sha256_of(archive)})
     # checked too
     write_manifest(root / "base/trivial/sources", {archive.name: "0" * 64})
     code, output = xcraft("fetch", "sources", "trivial")
     assert code == 1
     assert f"{archive.name} from file://{archive} does not match the sha256 of the manifest" in output
-    # found nowhere
-    spec.write_text(spec.read_text().replace(f"Source0: file://{archive}", "Source0: other.tar.gz"))
+    # a download failing, for the package only
+    spec.write_text(
+        spec.read_text().replace(f"Source0: file://{archive}", f"Source0: file://{tmp_path}/gone/{archive.name}")
+    )
+    code, output = xcraft("fetch", "sources")
+    assert code == 1
+    assert f"✗ trivial: {archive.name} is not in the source cache, and cannot be downloaded: " in output
+    # found nowhere, without a directory left in the cache
+    spec.write_text(
+        spec.read_text().replace(f"Source0: file://{tmp_path}/gone/{archive.name}", "Source0: other.tar.gz")
+    )
     code, output = xcraft("fetch")
     assert code == 1
-    assert output.endswith(f"✗ trivial: {archive.name} found nowhere, see xcraft import trivial\n")
+    assert output.endswith(
+        f"✗ trivial: {archive.name} found nowhere: not in the remote storage, nor at a URL of the spec\n"
+    )
+    assert not (Project.find().source_cache / ("0" * 64)).exists()
 
 
 def test_builds_shared_by_checkouts(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
