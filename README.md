@@ -60,9 +60,9 @@ xcraft --install-completion  # optional
 | `xcraft bump <pkg> --version v [-m message]` | Update a package to a new version, with the archive of its `Source0`, and the packages of the same version; the changelog entry is `Update to <v>` by default |
 | `xcraft clean [<pkg>...] [--builds] [--ccache]` | Remove the build trees and outdated builds, and optionally all builds and compiler caches, of the given packages or all; the source archives are kept |
 | `xcraft patchset [--package p] [--base ref] [--first n]` | Update the patches of a package with the commits of the current git branch, from the developer's repository |
-| `xcraft import <pkg>... [--branch b] [--url u] [--repo r]` | Copy packages from their packaging repositories, new ones into `base/`, or `<r>/` |
+| `xcraft import <pkg or srpm>... [--branch b] [--url u] [--repo r]` | Import the history of packages from their packaging repositories, or source RPMs, as the git branches `import/<pkg>/<branch>` to merge, new packages into `base/`, or `<r>/` |
 | `xcraft doctor [--fix]` | Check that the host has what xcraft needs, and with `--fix`, configure the emulation of the other architectures, with sudo, after showing the commands and asking |
-| `xcraft import --all` | Re-import all packages from where they were imported |
+| `xcraft import --all` | Import again the packages which have import branches |
 | `xcraft --trace <command>` | Show stack traces on errors |
 
 ## How it works
@@ -74,13 +74,9 @@ version of xcraft it uses: run `uv sync` there, then `uv run xcraft`, or `xcraft
 **Packages.** The packages are grouped by the repository they are published in: `<repo>/<pkg>/`, like `base/xen/`,
 for the `repositories` of `xcraft.toml`, `["base"]` by default. Their names are unique across the repositories. Each
 package directory holds a spec and its sources, except the source archives: they are listed with their SHA-256 in
-`<repo>/<pkg>/sources`, and stored in `.xcraft/cache/sources/<sha256>/<filename>`. `xcraft import` fills a package
-directory from a packaging repository (by default `https://github.com/xcp-ng-rpms/<pkg>`, on `master`), in `base/` for
-a new package, or another repository with `--repo`, and records where it comes from in `<pkg>/origin`. It
-takes the archives out of git LFS for repositories with the `SPECS/` and `SOURCES/` layout, and downloads them from
-the AlmaLinux lookaside cache for dist-git repositories. With `--url` ending with `.src.rpm`, it imports a source
-RPM instead, for packages only published this way, like CentOS 7's. The spec of a package is `<pkg>.spec`, or its
-only spec; other specs are sources of the main one.
+`<repo>/<pkg>/sources`, and stored in `.xcraft/cache/sources/<sha256>/<filename>`. Packages come into the project
+with their history, see [Import](#import). The spec of a package is `<pkg>.spec`, or its only spec; other specs are
+sources of the main one.
 
 **Metadata.** All specs are parsed by rpm in the build environment, so that macros and conditionals are evaluated as
 in a build. The result is cached until a package directory or the image changes.
@@ -224,6 +220,48 @@ xcraft repo xen --test fix123 --host root@testhost --upgrade
 Each `xcraft repo --test` makes new builds, which the upgrade takes over the previous ones. Without `--host`,
 `--baseurl` gives where the hosts find the repository, for instance over http; by default, it is its directory, to
 copy at the same place on the hosts.
+
+## Import
+
+`xcraft import <pkg>` imports the history of a package from its packaging repository, `https://github.com/xcp-ng-rpms/<pkg>`
+or `--url`, into the git repository of the project: each branch of `branches` of `[import]` in `xcraft.toml`,
+`["master"]` by default, like `["master", "XS-9.0"]`, or `--branch`, becomes the branch `import/<pkg>/<branch>`. The
+project merges it to bring the package, in `base/` for a new one, or another repository with `--repo`. Only git is
+used.
+
+The commits are rewritten for the project: the files of `SPECS/` and `SOURCES/` in the package directory, the archives
+stored with git LFS in its `sources` manifest, by the SHA-256 of their LFS pointer, so without downloading them, and
+nothing else, like the README and `.github/`. Links and submodules are refused, like a link to a file of the host. The
+commits left without a change are skipped, and so are the merges of what another parent already merges. Each commit
+gets the trailer `Imported-from: <owner>/<repository>@<commit>`, and keeps its author, committer, dates and message.
+
+The project's history must start with an empty commit: the first imported commits get it as parent. The rewrite only
+depends on the commits imported and on it: importing again gives the same commits, with the new ones on top, and the
+branches sharing commits, like master merging XS-9.0, share them. A merge brings the package into the project, with
+its history, and the next ones bring the new commits, which `xcraft import --all` imports for all the packages with
+import branches:
+
+```
+git merge import/xen/master import/libempserver/master
+```
+
+The package must not be in the project before its first merge: `git log` and `git blame` follow a merge only through
+the parents it is the same as, which would be the project's.
+
+`xcraft import <srpm>`, a path or a URL ending with `.src.rpm`, imports a source RPM, like a new one of XenServer, as
+a new commit of the import branch of its package, `srpm_branch` of `[import]`, from the first commit of the project for
+a new package. Its files are laid out the same way, its archives go into the source cache, and `removed` lists those to
+remove for legal reasons, each replaced by a `<file>.deleted-by-XCP-ng.txt` saying so:
+
+```toml
+[import]
+branches = ["master", "XS-9.0"]
+srpm_branch = "XS-9.0"
+removed = ["Citrix_Logo_Black.png", "COPYING.CitrixCommercial"]
+```
+
+A merge brings it into the project, like the history. The import of a history refuses to move an import branch which
+has commits it does not import, like those of a source RPM: the packaging repository is then no longer followed.
 
 ## Patchsets
 

@@ -15,8 +15,8 @@ uv sync && source .venv/bin/activate.fish     # xcraft, in the version xcp-ng-di
 xcraft doctor                    # what the host needs: --fix for the emulation of aarch64
 xcraft build
 xcraft push                      # the builds and the sources, like CI
-xcraft key show                  # or xcraft key create: the developer's key, for step 11
-xcraft build libempserver --arch aarch64     # for step 10: the aarch64 image and kernel-headers, under emulation
+xcraft key show                  # or xcraft key create: the developer's key, for step 12
+xcraft build libempserver --arch aarch64     # for step 11: the aarch64 image and kernel-headers, under emulation
 ```
 
 ## 1. What it is
@@ -24,8 +24,8 @@ xcraft build libempserver --arch aarch64     # for step 10: the aarch64 image an
 One tool, xcraft, and one repository, xcp-ng-dist, to build the whole XCP-ng distribution:
 
 - **The packages are in the repository**: each `base/<pkg>/` has the spec, its patches and small sources, imported
-  from the xcp-ng-rpms repositories. The source archives are not in git: they are listed with their sha256, and
-  shared through a remote storage.
+  from the xcp-ng-rpms repositories, most with their history. The source archives are not in git: they are listed with
+  their sha256, and shared through a remote storage.
 - **A reproducible build environment**: a podman container made only of AlmaLinux 10 and EPEL packages, from a base
   image pinned by digest, with the RPM macros of XCP-ng. Each build runs in a fresh one.
 - **A committed lock**: the exact version of each upstream package, in the image and in the build root of each of our
@@ -46,14 +46,31 @@ grep -A8 '^"biosdevname" = \[' xcraft.x86_64_v2.lock  # the upstream packages it
 grep '^"pciutils-devel" = ' xcraft.x86_64_v2.lock      # their version, the same for the whole tree
 ```
 
-## 2. Status at a glance
+## 2. The history of the packages
+
+Each package comes with the history of its packaging repository, rewritten for the project, the same way each time:
+`xcraft import` writes it in the git branches `import/<pkg>/master` and `import/<pkg>/XS-9.0`, and a merge brings it.
+Only git is used.
+
+```
+git log --first-parent --oneline            # the distribution: a merge for each package; jj log -r 'first_ancestors(@)'
+git log --oneline base/libempserver         # its history, from xcp-ng-rpms, with the source RPMs of XenServer
+git log -1 import/libempserver/XS-9.0       # the trailer Imported-from: where each commit comes from
+git branch --list 'import/*'                # master and XS-9.0, of each package
+xcraft import libempserver                  # again: the same commits, and the new ones on top, to merge
+```
+
+A new source RPM of XenServer becomes a new commit of `import/<pkg>/XS-9.0`, with `xcraft import <srpm>`, a path or
+a URL, without the files to remove for legal reasons, and a merge brings it too.
+
+## 3. Status at a glance
 
 ```
 xcraft status
 xcraft status xen qemu
 ```
 
-## 3. Dependencies come from the specs
+## 4. Dependencies come from the specs
 
 ```
 xcraft graph qemu                # every package depends on kernel, because of kernel-headers
@@ -61,7 +78,7 @@ xcraft graph branding-xcp-ng --dependents
 xcraft graph xen --upstream --flat
 ```
 
-## 4. Builds and their cache
+## 5. Builds and their cache
 
 ```
 xcraft clean branding-xcp-ng xcp-ng-release --builds
@@ -70,7 +87,7 @@ xcraft build xcp-ng-release --no-fetch      # branding-xcp-ng (~2s), then xcp-ng
 xcraft build xcp-ng-release                 # again: everything cached
 ```
 
-## 5. A change rebuilds only what it impacts
+## 6. A change rebuilds only what it impacts
 
 ```
 xcraft bump branding-xcp-ng -m "just a demo"
@@ -79,7 +96,7 @@ xcraft build xcp-ng-release                 # only what xcp-ng-release needs
 git restore base/branding-xcp-ng            # back to the cached builds
 ```
 
-## 6. Shared builds through remote storage
+## 7. Shared builds through remote storage
 
 ```
 xcraft clean python-bitarray --builds
@@ -104,10 +121,9 @@ The storage, read publicly over http, with a page for each directory:
 - <http://xcraft.web.garage.localhost:3902/builds/x86_64_v2/python-bitarray/>: a directory per build key; each has
   `RPMS/`, `SRPMS/`, `build.log`, and `manifest.json`, the checksums of its files
 - <http://xcraft.web.garage.localhost:3902/builds/x86_64_v2/kernel/>: pushed before the demo
-- <http://xcraft.web.garage.localhost:3902/sources/b7564fd218cc4479f7f0106d341e096f78907b47865aeeff702c807df1927c01/>:
-  the archive of `base/python-bitarray/sources`, by its sha256
+- <http://xcraft.web.garage.localhost:3902/sources/>: a directory per archive, by the sha256 of its `sources` manifest
 
-## 7. Inspecting and debugging a build
+## 8. Inspecting and debugging a build
 
 ```
 xcraft clean xcp-python-libs --builds
@@ -123,7 +139,7 @@ rpmbuild -ba SPECS/libempserver.spec    # in the shell, as it shows: built like 
 The builds run without the network, like koji and mock: only the loopback interface, for the test suites. A build only
 uses what it is given.
 
-## 8. Test builds
+## 9. Test builds
 
 ```
 xcraft build libempserver --test demo       # 0.demo.1: above the release, below the next one
@@ -134,13 +150,13 @@ xcraft repo libempserver --test demo        # repo-demo/, with a .repo file for 
 
 With a test host: `--host root@testhost --upgrade`.
 
-## 9. Upstream updates under control
+## 10. Upstream updates under control
 
 ```
 xcraft lock
 xcraft impacts
 xcraft bump python-bitarray -m "Rebuild"    # or: xcraft ack python-bitarray
-git restore base/python-bitarray            # not to rebuild sm and xapi for step 11
+git restore base/python-bitarray            # not to rebuild sm and xapi for step 12
 ```
 
 A new upstream version, with the archive downloaded from the `Source0` of the spec:
@@ -154,7 +170,7 @@ git restore base/xcp-ng-xapi-plugins
 
 `kernel` and `kernel-headers` are of the same archive: `same_version` in `xcraft.toml` updates them together.
 
-## 10. Other architectures
+## 11. Other architectures
 
 xcraft works on one architecture at a time: the host's by default, another one with `--arch` or `XCRAFT_ARCH`.
 Another one builds under emulation, fine for the small packages: the large ones are built by native builders, which
@@ -168,7 +184,7 @@ xcraft build libempserver --arch aarch64 --no-fetch     # ~2min, emulated, with 
 rpm -qp --qf '%{name} %{arch}\n' .xcraft/cache/builds/aarch64/libempserver/*/RPMS/aarch64/*.rpm
 ```
 
-## 11. Publishing a signed snapshot
+## 12. Publishing a signed snapshot
 
 A snapshot is a self-contained repository of all our packages and the upstream ones they need, as locked, for all the
 architectures, laid out like the repositories of XCP-ng 8.3, with the sources next to the binaries, and a build

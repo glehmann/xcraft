@@ -13,7 +13,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -95,6 +95,19 @@ class Publish(BaseModel):
     """Whether to publish the build repository too: the upstream packages the builds need, not in the base one."""
 
 
+class Import(BaseModel):
+    """What xcraft import makes of the packaging repositories and source RPMs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    branches: list[str] = ["master"]
+    """Branches of the packaging repositories whose history is imported, when they have them."""
+    srpm_branch: str = "srpm"
+    """The branch of import/<pkg>/ getting the commits of the source RPMs, like XS-9.0."""
+    removed: list[str] = []
+    """Files removed from the source RPMs for legal reasons, each replaced by <file>.deleted-by-XCP-ng.txt saying so."""
+
+
 class Iso(BaseModel):
     """What xcraft iso makes, from the snapshot."""
 
@@ -125,6 +138,7 @@ class Config(BaseModel):
     """RPMs not available from the repositories, as name -> URL."""
     repositories: list[str] = ["base"]
     """The repositories the packages are published in: directories of the project, with one subdirectory per package."""
+    import_: Import = Field(Import(), alias="import")
     remote: Remote | None = None
     """Where the source archives and the builds are shared, if anywhere."""
     publish: Publish = Publish()

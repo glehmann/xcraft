@@ -31,6 +31,12 @@ def run(
     return subprocess.run(cmd, check=check, capture_output=capture, text=True, input=input, env=env)
 
 
+def run_bytes(cmd: list[str], input: bytes = b"") -> bytes:  # noqa: A002, like subprocess.run
+    """Run `cmd`, failing when it fails, and return its output, as is: for streams like those of git fast-export."""
+    log.debug("running %s", shlex.join(cmd))
+    return subprocess.run(cmd, check=True, capture_output=True, input=input).stdout
+
+
 def popen(
     cmd: list[str],
     *,
