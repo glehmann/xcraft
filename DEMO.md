@@ -33,7 +33,8 @@ One tool, xcraft, and one repository, xcp-ng-dist, to build the whole XCP-ng dis
 - **Our packages build against each other**: a local repository of our builds wins over upstream, so a change in a
   package is used by those built against it.
 - **Builds are cached by content**: the key covers the package, the keys of the packages it needs, the locked upstream
-  packages and the build environment. Nothing is rebuilt for nothing, and a build of CI is reused as is everywhere.
+  packages and the build environment. Nothing is rebuilt for nothing, and a build of CI is reused as is everywhere. A
+  change to how xcraft builds which makes the same packages, like a fix of how it fails, can keep the builds.
 
 ```
 xcraft --help                    # the commands, by what they are about

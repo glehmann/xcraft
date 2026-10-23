@@ -52,12 +52,26 @@ if TYPE_CHECKING:
 
     from xcraft.project import Project
 
-_RECIPE = hashlib.sha256(
+RECIPE = hashlib.sha256(
     "".join(
         [REPO_FILE, *((BUILDENV / script).read_text() for script in ("build.sh", "offline.py", "record.py"))]
     ).encode()
 ).hexdigest()
-"""What makes the builds, besides the image and the packages: a change to it rebuilds them all."""
+"""What makes the builds, besides the image and the packages: a change to it rebuilds them all, but see _SAME_BUILDS."""
+_SAME_BUILDS = {
+    # offline.py: an EOF when a process dies first
+    "520edd959d64e226fcbb86a704bf7dbb75e57fa262ef70da5319d4e31f3ec1bc":
+        "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc",
+}  # fmt: skip
+"""Recipes making the same packages as an earlier one, by their hash: their builds keep the keys of the earlier one."""
+
+
+def recipe_key() -> str:
+    """Return the recipe in the build keys: the earliest one making the same packages."""
+    recipe = RECIPE
+    while recipe in _SAME_BUILDS:
+        recipe = _SAME_BUILDS[recipe]
+    return recipe
 
 
 class BuildError(RuntimeError):
@@ -95,7 +109,7 @@ def build_keys(project: Project, autorev: dict[str, str] | None = None) -> dict[
     other get the key of them all.
     """
     lock, deps = load_lock(project), project.deps
-    base = json.dumps([image_tag(project), project.platform, project.config.extra_upstream, _RECIPE])
+    base = json.dumps([image_tag(project), project.platform, project.config.extra_upstream, recipe_key()])
 
     def inputs(name: str) -> str:
         buildroot = [f"{upstream}={lock.packages[upstream].evr}" for upstream in lock.buildroots.get(name, [])]

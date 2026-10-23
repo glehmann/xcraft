@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from tests import TOML, config
-from xcraft.build import BuildError, build_keys, prepare_tree, previous_duration, queued
+from xcraft import build
+from xcraft.build import BuildError, build_keys, prepare_tree, previous_duration, queued, recipe_key
 from xcraft.clean import clean, repos_disk_usage
 from xcraft.commands import complete_arch
 from xcraft.localrepo import RepoError, fresh_dir
@@ -242,3 +243,14 @@ def test_hash_dir_covers_what_builds_get(tmp_path: Path) -> None:
     linked = hash_dir(pkg)
     (shared / "file").write_text("in a linked directory")
     assert hash_dir(pkg) != linked
+
+
+def test_recipe(monkeypatch: pytest.MonkeyPatch) -> None:
+    current = "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc"
+    assert recipe_key() == current, (
+        f"the recipe changed, to {build.RECIPE}: map it to {current} in _SAME_BUILDS if it makes the same packages, "
+        "or else set it here, which rebuilds everything"
+    )
+    monkeypatch.setattr(build, "RECIPE", "c")
+    monkeypatch.setattr(build, "_SAME_BUILDS", {"c": "b", "b": "a"})
+    assert recipe_key() == "a"
