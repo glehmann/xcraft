@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import secrets
 import shutil
@@ -31,7 +32,11 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.skipif(not shutil.which("podman"), reason="needs podman")
 
 GARAGE = "docker.io/dxflrs/garage:v2.1.0"
-CONTAINER = "xcraft-test-garage"
+# a garage for each worker of pytest-xdist, with its name and ports
+WORKER = int(os.environ.get("PYTEST_XDIST_WORKER", "gw0").removeprefix("gw"))
+CONTAINER = f"xcraft-test-garage-{WORKER}"
+S3_PORT, WEB_PORT = 13900 + 10 * WORKER, 13902 + 10 * WORKER
+WEB = f"http://xcraft.web.garage.localhost:{WEB_PORT}"
 
 
 def garage(*args: str) -> str:
@@ -52,8 +57,8 @@ def s3(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, str]]:
     )
     subprocess.run(["podman", "rm", "-f", CONTAINER], check=True, capture_output=True)
     subprocess.run(
-        ["podman", "run", "-d", "--rm", "--name", CONTAINER, "-p", "127.0.0.1:13900:3900", "-p", "127.0.0.1:13902:3902",
-         "-v", f"{garage_config}:/etc/garage.toml:ro,Z", GARAGE],
+        ["podman", "run", "-d", "--rm", "--name", CONTAINER, "-p", f"127.0.0.1:{S3_PORT}:3900",
+         "-p", f"127.0.0.1:{WEB_PORT}:3902", "-v", f"{garage_config}:/etc/garage.toml:ro,Z", GARAGE],
         check=True, capture_output=True,
     )  # fmt: skip
     try:
@@ -79,7 +84,7 @@ def s3(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, str]]:
 
 def page(directory: str) -> str:
     """Return the page of a directory of the storage, through its public endpoint."""
-    with urllib.request.urlopen(f"http://xcraft.web.garage.localhost:13902/{directory}") as response:
+    with urllib.request.urlopen(f"{WEB}/{directory}") as response:  # noqa: S310, the test garage
         assert response.headers["Content-Type"].startswith("text/html")
         assert response.headers["Cache-Control"] == "no-cache"
         return response.read().decode()
@@ -88,8 +93,7 @@ def page(directory: str) -> str:
 REMOTE = (
     # only the host's: publish fetches the builds of the others
     TOML.replace('platforms = ["linux/amd64/v2", "linux/arm64"]', 'platforms = ["linux/amd64/v2"]')
-    + '[remote]\nurl = "http://xcraft.web.garage.localhost:13902"\n'
-    's3_endpoint = "http://localhost:13900"\nbucket = "xcraft"\n'
+    + f'[remote]\nurl = "{WEB}"\ns3_endpoint = "http://localhost:{S3_PORT}"\nbucket = "xcraft"\n'
     # not the build repository, with the hundreds of source packages of their build environment to download
     '[publish]\nrelease = "9.0"\nbuild = false\n'
 )
@@ -129,9 +133,7 @@ def test_sources(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -
     shutil.rmtree(cache)
     with caplog.at_level(logging.DEBUG, logger="xcraft"):
         assert xcraft("fetch", "sources") == (0, "all the source archives are in the source cache\n")
-    assert any(
-        m.startswith(f"downloading http://xcraft.web.garage.localhost:13902/sources/{digest}/") for m in caplog.messages
-    )
+    assert any(m.startswith(f"downloading {WEB}/sources/{digest}/") for m in caplog.messages)
     assert (cache / digest / archive.name).read_text() == archive.name
     # and checks it
     shutil.rmtree(cache)
@@ -267,10 +269,10 @@ def test_ccache(root: Path) -> None:
 
 
 def test_unavailable_remote_storage(root: Path) -> None:
-    (root / "xcraft.toml").write_text(REMOTE.replace("13902", "13999"))
+    (root / "xcraft.toml").write_text(REMOTE.replace(str(WEB_PORT), "13899"))  # of no worker
     code, output = xcraft("build", "trivial")
     assert code == 0, output
-    assert output.startswith("remote storage unavailable, building locally: http://xcraft.web.garage.localhost:13999/")
+    assert output.startswith("remote storage unavailable, building locally: http://xcraft.web.garage.localhost:13899/")
     assert output.splitlines()[-1] == "1 built"
 
 
@@ -348,7 +350,7 @@ def test_signed_publish(root: Path) -> None:
         assert f"warning: no release key in xcraft.toml, signing with the developer's key {signer.key}" in output
         assert (root / ".xcraft/publish/RPM-GPG-KEY").read_text() == signer.public_key()
         # nor for a storage on another machine, unless asked
-        (root / "xcraft.toml").write_text(REMOTE.replace("localhost:13900", "192.0.2.1:13900"))
+        (root / "xcraft.toml").write_text(REMOTE.replace(f"localhost:{S3_PORT}", f"192.0.2.1:{S3_PORT}"))
         code, output = xcraft("publish")
         assert code == 2
         assert "or use --dev-key or --unsigned" in " ".join(output.replace("│", "").split())
