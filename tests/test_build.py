@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from tests import PROJECT, TOML
+from tests import ARCH, PROJECT, TOML
 from xcraft import container
 from xcraft.__main__ import app
 from xcraft.lock import Lock, load_lock, save_lock
@@ -66,7 +66,7 @@ def test_build_uses_local_builds_and_cache(root: Path) -> None:
     code, output = xcraft("build", "with-deps")
     assert code == 0
     assert output.splitlines() == ["· trivial cached", "· with-deps cached", "2 cached"]
-    assert list((root / ".xcraft/cache/builds/x86_64_v2/with-deps").glob("*/RPMS/noarch/with-deps-1.0-*.noarch.rpm"))
+    assert list((root / f".xcraft/cache/builds/{ARCH}/with-deps").glob("*/RPMS/noarch/with-deps-1.0-*.noarch.rpm"))
 
     # a change in trivial changes the key of with-deps too
     spec = root / "base/trivial/trivial.spec"
@@ -239,7 +239,7 @@ def test_build_back_to_a_cached_key(root: Path) -> None:
     assert code == 0, output
     assert results(output) == [results(output)[0], "1 built"]
     assert states() == {"trivial": "built", "with-deps": "missing"}
-    assert not list((root / ".xcraft/cache/builds/x86_64_v2/trivial").glob(".*"))
+    assert not list((root / f".xcraft/cache/builds/{ARCH}/trivial").glob(".*"))
 
 
 def test_failed_build_skips_dependents(root: Path) -> None:
@@ -304,10 +304,10 @@ def test_bump(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert " Me <me@example.com> - 1.0-3\n-\n\n" in (root / "base/trivial/trivial.spec").read_text()
     assert xcraft("build", "trivial")[0] == 0
     # with --dep, from the pending updates of all the platforms, cleared on all of them
-    arm = Project.find("aarch64")
-    save_lock(arm, Lock(pending={"trivial": {"zlib": "1.2-1"}}))
+    other = next(p for p in Project.find().all_platforms() if p.arch != ARCH)
+    save_lock(other, Lock(pending={"trivial": {"zlib": "1.2-1"}}))
     assert xcraft("bump", "--dep", "zlib")[1] == "trivial: 1.0-3 -> 1.0-4\n"
-    assert load_lock(arm).pending == {}
+    assert load_lock(other).pending == {}
 
 
 def test_bump_version(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -376,12 +376,12 @@ def test_lock(root: Path) -> None:
     assert lock.packages["zlib-ng-compat-devel"].source == "zlib-ng"
     assert "zlib-ng-compat-devel" in lock.buildroots["trivial"]
     assert xcraft("build", "trivial", "--locked") == (0, "· trivial cached\n1 cached\n")
-    assert "0 updated\nxcraft.x86_64_v2.lock: " in xcraft("lock", "--update", "zlib-ng")[1]
+    assert f"0 updated\nxcraft.{ARCH}.lock: " in xcraft("lock", "--update", "zlib-ng")[1]
     assert xcraft("lock", "--outdated", "zlib-ng") == (0, "up to date\n")
     # the versions of the architecture, for an update with those of the others
     available = root / "available.json"
     assert xcraft("lock", "zlib-ng", "--available", str(available))[1].endswith(
-        ": the available versions of 2 packages of x86_64_v2\n"
+        f": the available versions of 2 packages of {ARCH}\n"
     )
     assert xcraft("lock", "--outdated", "zlib-ng", "--available", str(available)) == (0, "up to date\n")
     # an update, which --outdated shows only, and fails for
