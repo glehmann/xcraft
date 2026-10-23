@@ -25,7 +25,9 @@ if TYPE_CHECKING:
 Dep = Annotated[
     list[str] | None,
     typer.Option(
-        "--dep", help="Upstream package: select the packages with a pending update of it.", show_default=False
+        "--dep",
+        help="Upstream package, binary or source name: select the packages with a pending update of it.",
+        show_default=False,
     ),
 ]
 
@@ -150,7 +152,8 @@ def bump(
         if version:
             names = same_version(project.config.same_version, (packages or [])[0])
         else:
-            names = pending_packages(packages, pending, dep or [])
+            deps = sorted({n for _, lock in locks for n in lock.binaries(dep or [])})
+            names = pending_packages(packages, pending, deps)
         message = message or (f"Update to {version}" if version else "")
         after = _update_specs(project, before, names, version=version, author=author, message=message)
         for package in names:

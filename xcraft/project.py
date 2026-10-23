@@ -136,6 +136,9 @@ class Config(BaseModel):
     """Packages installed in the build environment, with those xcraft uses."""
     extra_upstream: dict[str, str] = {}
     """RPMs not available from the repositories, as name -> URL."""
+    release_suffixes: list[str] = []
+    """Suffixes of the releases of the upstream packages rebuilt for an architecture, like AlmaLinux's .alma_altarch:
+    the locks of the architectures have the same versions but for them."""
     repositories: list[str] = ["base"]
     """The repositories the packages are published in: directories of the project, with one subdirectory per package."""
     import_: Import = Field(Import(), alias="import")

@@ -62,6 +62,9 @@ _SAME_BUILDS = {
     # offline.py: an EOF when a process dies first
     "520edd959d64e226fcbb86a704bf7dbb75e57fa262ef70da5319d4e31f3ec1bc":
         "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc",
+    # record.py: without the latest versions, which versions.py looks for
+    "9696604d19c16fc9fdebc6431bacf28b50585465cfb3148b8e041c4ff8153778":
+        "520edd959d64e226fcbb86a704bf7dbb75e57fa262ef70da5319d4e31f3ec1bc",
 }  # fmt: skip
 """Recipes making the same packages as an earlier one, by their hash: their builds keep the keys of the earlier one."""
 
