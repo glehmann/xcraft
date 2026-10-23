@@ -30,16 +30,20 @@ def everything(ctx: typer.Context, arch: Arch = None) -> None:
 def sources(packages: Packages = None, arch: Arch = None) -> None:
     """Put the source archives of the packages, all by default, in the source cache.
 
-    Those missing are downloaded from the remote storage, or else from the URL of the package's Source0.
+    Those missing are downloaded from the remote storage, or else from the source of the spec with their URL.
     """
     project = load(packages, arch=arch)
-    missing = {
-        name: archives
-        for name in packages or sorted(project.packages)
-        if (archives := builder.fetch_sources(project, name))
-    }
-    for name, archives in missing.items():
-        console.print(f"[red]✗[/] {name}: {', '.join(archives)} found nowhere, see xcraft import {name}")
+    missing = {}
+    for name in packages or sorted(project.packages):
+        try:  # the others too, when a download fails
+            if archives := builder.fetch_sources(project, name):
+                missing[name] = (
+                    f"{', '.join(archives)} found nowhere: not in the remote storage, nor at a URL of the spec"
+                )
+        except builder.BuildError as e:
+            missing[name] = str(e)
+    for name, why in missing.items():
+        console.print(f"[red]✗[/] {name}: {why}")
     if missing:
         raise typer.Exit(1)
     console.print("all the source archives are in the source cache")

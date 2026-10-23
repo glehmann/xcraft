@@ -113,9 +113,9 @@ xcraft --debug fetch builds python-bitarray     # what xcraft runs, downloads an
 ```
 
 `xcraft fetch` gets what the caches miss: the current builds, and the source archives, from the storage, or else
-from the `Source0` of the specs. The compiler caches are shared too: CI pushes them with `xcraft push ccache`, and a
-build without the one of its package gets it first, for a rebuild of a modified package, like the kernel with a patch,
-to find most of its objects.
+from the URLs of the sources of the specs. The compiler caches are shared too: CI pushes them with `xcraft push
+ccache`, and a build without the one of its package gets it first, for a rebuild of a modified package, like the
+kernel with a patch, to find most of its objects.
 
 The storage, read publicly over http, with a page for each directory:
 

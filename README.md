@@ -43,7 +43,7 @@ xcraft --install-completion  # optional
 | `xcraft push index` | Make the `index.html` pages of all the directories of the remote storage |
 | `xcraft push ccache [<pkg>...]` | Upload the compiler caches of the packages, replacing those of the remote storage, for CI |
 | `xcraft fetch` | Download everything the caches miss: the current builds of all packages, then their source archives |
-| `xcraft fetch sources [<pkg>...]` | Download the source archives missing from the source cache, from the remote storage, or else from the URL of Source0 |
+| `xcraft fetch sources [<pkg>...]` | Download the source archives missing from the source cache, from the remote storage, or else from the source of the spec with their URL |
 | `xcraft fetch builds [<pkg>...]` | Download the current builds missing from the build cache |
 | `xcraft fetch ccache [<pkg>...]` | Download the compiler caches of the packages, replacing the local ones |
 | `xcraft lock [--check]` | Show the locks of upstream packages, and the versions they differ on between the architectures; `--check` fails then |
@@ -323,7 +323,7 @@ The writes use the credentials of `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY
 `sources/<sha256>/<filename>` and `builds/<arch>/<package>/<key>/`, with a `manifest.json` of the build's files.
 
 - When an archive of a manifest is not in the source cache, the build, or `xcraft fetch sources`, downloads it, from
-  the storage, or else from the URL of the spec's Source0 when it has the name of the archive, and checks it against the
+  the storage, or else from the source of the spec whose URL has the name of the archive, and checks it against the
   manifest. So anyone can push sources: a bad archive cannot match the sha256 of the manifest, which is in git.
   `xcraft import` does not push: with `xcraft push sources`, the developer shares the archives with their change, and
   CI can check none is missing with `xcraft push sources --check`, which needs no credentials.
