@@ -11,13 +11,14 @@ import pytest
 
 from tests import TOML, config
 from xcraft import build
-from xcraft.build import BuildError, build_keys, prepare_tree, previous_duration, queued, recipe_key
+from xcraft.build import BuildError, build_keys, prepare_tree, previous_duration, queued, recipe_key, record_built
 from xcraft.clean import clean, repos_disk_usage
 from xcraft.commands import complete_arch
 from xcraft.localrepo import RepoError, fresh_dir
-from xcraft.lock import Lock, save_lock
+from xcraft.lock import Lock, load_lock, save_lock
 from xcraft.project import Project, ProjectLockedError
 from xcraft.publish import build_dependencies
+from xcraft.resolution import Resolved
 from xcraft.sources import cache_source, write_manifest
 from xcraft.specs import Binary, Package, hash_dir, main_spec
 
@@ -198,15 +199,18 @@ def test_platforms(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert ("epel" in arm.repos, "epel-fedora" in arm.repos) == (False, True)
 
 
-def test_build_dependencies(project: Project) -> None:
+def test_build_dependencies(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     binary = Binary(name="kernel-headers", evr="6.12-1", arch="x86_64_v2", provides=[], requires=[])
     project.packages = {"kernel": Package(name="kernel", binaries=[binary])}
-    lock = Lock(image=["bash", "gcc", "kernel-headers"], runtime=["bash"], buildroots={"xen": ["zlib-devel", "gcc"]})
-    save_lock(project, lock)
+    resolved = Resolved(image=["bash", "gcc", "kernel-headers"], buildroots={"xen": ["zlib-devel", "gcc"]})
+    monkeypatch.setattr("xcraft.publish.resolve", lambda _: resolved)
+    save_lock(project, Lock(runtime={project.arch: ["bash"]}))
     assert build_dependencies(project) == ["gcc", "zlib-devel"]  # but ours, and those of the base repository
 
 
-def test_keys_of_cycles(project: Project) -> None:
+def test_keys_of_cycles(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("xcraft.build.resolve", lambda _: Resolved())
+    monkeypatch.setattr("xcraft.build.image_tag", lambda _: "localhost/xcraft-build:image")
     for name in ("a", "b", "0foo"):
         (project.root / "base" / name).mkdir(parents=True)
         (project.root / "base" / name / f"{name}.spec").write_text(name)
@@ -255,3 +259,20 @@ def test_recipe(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(build, "RECIPE", "c")
     monkeypatch.setattr(build, "_SAME_BUILDS", {"c": "b", "b": "a"})
     assert recipe_key() == "a"
+
+
+def test_record_built(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    build = project.state / "cache/builds/x86_64_v2/foo/key"
+    (build / "RPMS/x86_64").mkdir(parents=True)
+    (build / "RPMS/x86_64/foo-1.0-1.x86_64.rpm").touch()
+    binary = Binary(name="foo", evr="1.0-1", arch="x86_64", provides=[], requires=[])
+    project.parsed = {"foo": Package(name="foo", binaries=[binary])}
+    # what cannot be recorded yet is not kept, to record it again next time
+    monkeypatch.setattr("xcraft.build.record", lambda *_: Resolved(errors={"foo": "nothing provides libbar.so.1"}))
+    assert not record_built(project, ["foo"], {"foo": "key"})
+    assert not (build / "recorded.json").exists()
+    monkeypatch.setattr("xcraft.build.record", lambda *_: Resolved(requires={"foo": ["bar"]}))
+    assert record_built(project, ["foo"], {"foo": "key"})
+    assert load_lock(project).requires.shared == {"foo": ["bar"]}
+    monkeypatch.setattr("xcraft.build.record", lambda *_: pytest.fail("recorded again"))
+    assert not record_built(project, ["foo"], {"foo": "key"})

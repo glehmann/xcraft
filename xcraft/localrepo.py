@@ -67,6 +67,22 @@ def fresh_dir(project: Project, path: Path) -> None:
     (path / OUTPUT_MARKER).touch()
 
 
+def extra_rpms(project: Project) -> list[Path]:
+    """Return the extra upstream RPMs, downloaded to their cache when missing."""
+    extra = project.state / "cache/extra"
+    extra.mkdir(parents=True, exist_ok=True)
+    rpms = []
+    for url in project.config.extra_upstream.values():
+        rpm = extra / url.rsplit("/", 1)[-1]
+        if not rpm.exists():
+            tmp = rpm.with_suffix(".part")
+            with activity(f"downloading {rpm.name}") as on_line:
+                process.download(url, tmp, download_progress(on_line))
+            tmp.rename(rpm)
+        rpms.append(rpm)
+    return rpms
+
+
 @dataclass
 class LocalRepo:
     """A repository of locally built packages, as seen by the containers."""
@@ -79,17 +95,7 @@ class LocalRepo:
         """Start the repository over, with only the extra upstream RPMs, or empty."""
         fresh_dir(self.project, self.path)
         self.up_to_date = False
-        if not extra_upstream:
-            return
-        extra = self.project.state / "cache/extra"
-        extra.mkdir(parents=True, exist_ok=True)
-        for url in self.project.config.extra_upstream.values():
-            rpm = extra / url.rsplit("/", 1)[-1]
-            if not rpm.exists():
-                tmp = rpm.with_suffix(".part")
-                with activity(f"downloading {rpm.name}") as on_line:
-                    process.download(url, tmp, download_progress(on_line))
-                tmp.rename(rpm)
+        for rpm in extra_rpms(self.project) if extra_upstream else []:
             link(rpm, self.path / rpm.name)
 
     def add(self, build: Path) -> None:

@@ -16,13 +16,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests import ARCH, PLATFORM, PROJECT, TOML
+from tests import ARCH, PLATFORM, TOML, copy_project
 from tests.test_build import write_spec, xcraft
 from xcraft import remote
 from xcraft.build import BuildError, prepare_tree, source_path
 from xcraft.container import run
 from xcraft.lock import load_lock
 from xcraft.project import Project
+from xcraft.resolution import resolve_image
 from xcraft.signing import check_signatures, create_dev_key
 from xcraft.sources import cache_source, sha256_of, write_manifest
 
@@ -102,7 +103,7 @@ REMOTE = (
 @pytest.fixture
 def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, s3: dict[str, str]) -> Path:
     root = tmp_path / "project"
-    shutil.copytree(PROJECT, root)
+    copy_project(root)
     (root / "xcraft.toml").write_text(REMOTE)
     monkeypatch.setenv("XCRAFT_PROJECT", str(root))
     for name, value in s3.items():
@@ -310,9 +311,9 @@ def test_publish(root: Path) -> None:
     (root / "xcraft.toml").write_text(REMOTE.replace(f'["{PLATFORM}"]', f"[{platforms}]") + 'extra = ["bc"]\n')
     code, output = xcraft("publish", "--unsigned")
     assert code == 0, output
-    lock = load_lock(Project.find())
-    assert {"bc", "glibc"} <= set(lock.runtime)
-    assert lock.packages["bc"].repo == "baseos"
+    assert {"bc", "glibc"} <= set(load_lock(Project.find()).runtime[ARCH])
+    bc = resolve_image(Project.find()).packages["bc"]
+    assert bc.repo == "baseos"
     storage = Project.find().config.remote
     assert storage
     day = datetime.now(UTC).date().isoformat()
@@ -324,7 +325,7 @@ def test_publish(root: Path) -> None:
                 storage, f"{base}/{repo}/trivial-1.0-1.xcpng8.99.{'src' if repo == 'Source' else 'noarch'}.rpm"
             )
         # the sources of the upstream packages too
-        assert remote.exists(storage, f"{base}/Source/bc-{lock.packages['bc'].evr}.src.rpm")
+        assert remote.exists(storage, f"{base}/Source/bc-{bc.evr}.src.rpm")
         assert 'href="trivial-1.0-1.xcpng8.99.noarch.rpm"' in page(f"{base}/{arches[-1]}/")
     # a second one the same day, without changing the locks
     code, output = xcraft("publish", "--locked", "--unsigned")
@@ -344,10 +345,10 @@ def test_publish(root: Path) -> None:
     (root / "xcraft.toml").write_text(REMOTE)
     code, output = xcraft("publish", "--locked", "--local")
     assert code == 1
-    assert re.search(r"--locked forbids: .*-runtime bc\b", output)
+    assert re.search(rf"--locked forbids: .*-runtime\.{ARCH} bc\b", output)
     # the upstream packages must be signed with the keys of the repositories
     (root / "xcraft.toml").write_text(f'{REMOTE}extra = ["bc"]\n')
-    srpm = root / f".xcraft/cache/srpms/bc-{lock.packages['bc'].evr}.src.rpm"
+    srpm = root / f".xcraft/cache/srpms/bc-{bc.evr}.src.rpm"
     shutil.copy(next(root.glob(f".xcraft/cache/builds/{ARCH}/trivial/*/SRPMS/*.src.rpm")), srpm)
     code, output = xcraft("publish", "--local")
     assert code == 1

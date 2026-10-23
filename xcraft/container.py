@@ -1,12 +1,14 @@
 """The build environment: a container image made only of the configured repositories, run with podman.
 
 The image is built from the configured base image, with its repositories
-replaced by the configured ones, and the versions of the lock. It is tagged
-with a hash of its definition, so that it is built again only when the
-configuration or the locked versions of its packages change. Its ``builder``
-user is mapped to the user running xcraft, and can use sudo.
+replaced by the configured ones, and the packages resolved from the lock (see
+xcraft.resolution). It is tagged with a hash of its definition, so that it is
+built again only when the configuration or the versions of its packages change.
+Its ``builder`` user is mapped to the user running xcraft, and can use sudo.
 
 In the containers, dnf only sees the locked version of a locked package.
+
+The resolution runs in the base image of the host, natively, for any platform.
 """
 
 from __future__ import annotations
@@ -22,8 +24,8 @@ from typing import TYPE_CHECKING
 
 from xcraft import host, process
 from xcraft.display import activity, read_tail
-from xcraft.lock import Lock, Locked, load_lock, save_lock
-from xcraft.project import ProjectLockedError
+from xcraft.lock import Locked, versionlock
+from xcraft.project import ProjectLockedError, write_atomically
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -52,31 +54,36 @@ def _tail(log: Path) -> str:
     return ", which ends with:" + "".join(f"\n  {line}" for line in read_tail(log, 2**14)[-15:]) if log.exists() else ""
 
 
-def _image_files(project: Project, lock: Lock) -> dict[str, str]:
-    config = project.config
-    repos = "".join(
+def repo_file(project: Project) -> str:
+    """Return the definition of the repositories of the build environment of the platform."""
+    return "".join(
         f"[{name}]\nname={name}\nbaseurl={repo.baseurl.format(arch=project.arch)}\n"
         + (f"gpgcheck=1\ngpgkey={repo.gpgkey}\n" if repo.gpgkey else "gpgcheck=0\n")
         + (f"includepkgs={' '.join(repo.includepkgs)}\n" if repo.includepkgs else "")
         for name, repo in project.repos.items()
     )
+
+
+def _image_files(project: Project) -> dict[str, str]:
+    from xcraft.resolution import resolve_image  # noqa: PLC0415, which runs containers
+
     return {
         "Containerfile": (BUILDENV / "Containerfile").read_text(),
-        "upstream.repo": repos,
-        "macros.xcraft": "".join(f"%{name} {value}\n" for name, value in config.macros.items()),
-        "versionlock.list": lock.versionlock([name for name in lock.image if name in lock.packages]),
+        "upstream.repo": repo_file(project),
+        "macros.xcraft": "".join(f"%{name} {value}\n" for name, value in project.config.macros.items()),
+        "versionlock.list": versionlock(resolve_image(project).image_packages()),
     }
 
 
 def _image(project: Project) -> tuple[str, dict[str, str], dict[str, str]]:
     """Return the tag of the build environment image, with its build args and files.
 
-    The tag is a hash of its definition, which pins the versions of its packages
-    once they are locked, so it identifies the image across machines.
+    The tag is a hash of its definition, which pins the versions of its packages,
+    so it identifies the image across machines.
     """
     config = project.config
     args = {"BASE_IMAGE": config.base_image, "PACKAGES": " ".join([*config.packages, *PACKAGES])}
-    files = _image_files(project, load_lock(project))
+    files = _image_files(project)
     digest = hashlib.sha256(json.dumps([project.platform, args, files], sort_keys=True).encode()).hexdigest()
     return f"localhost/xcraft-build:{digest}", args, files
 
@@ -93,39 +100,36 @@ def _exists(tag: str) -> bool:
 def build_image(project: Project) -> str:
     """Return the tag of the build environment image, building it if needed.
 
-    The packages of a new image are added to the lock, and when that changes
-    its definition, the image is built again, with them locked.
+    A new image must have the packages resolved for it, or it is removed.
     """
     if not project.native and (problem := host.emulation_problem(project.arch)):
         raise ContainerError(problem)
-    tag, _, _ = _image(project)
-    if _exists(tag) and load_lock(project).image:
+    tag, args, files = _image(project)
+    if _exists(tag):
         return tag
     try:
         with project.lock():
-            return _build_image(project)
+            if not _exists(tag):
+                _build_image(project, tag, args, files)
+            return tag
     except ProjectLockedError as e:
         msg = f"{e}, and the build environment image must be built first: try again when it is done"
         raise ProjectLockedError(msg) from None
 
 
-def _build_image(project: Project) -> str:
-    for _ in range(3):
-        tag, args, files = _image(project)
-        if not _exists(tag):
-            _podman_build(project, "image", tag, files, args, show="the build environment image")
-        elif load_lock(project).image:
-            return tag
-        # a new image, or an image built for another project, before it had a lock
-        installed = image_packages(project, tag)
-        lock = load_lock(project)
-        lock.merge(installed)
-        lock.image = sorted(installed)
-        save_lock(project, lock)
-        if _image(project)[0] == tag:
-            return tag
-    msg = "the build environment image does not get the locked versions"
-    raise ContainerError(msg)
+def _build_image(project: Project, tag: str, args: dict[str, str], files: dict[str, str]) -> None:
+    from xcraft.resolution import resolve_image  # noqa: PLC0415, which runs containers
+
+    _podman_build(project, "image", tag, files, args, show="the build environment image")
+    resolved = {n: (p.evr, p.arch) for n, p in resolve_image(project).image_packages().items()}
+    installed = {n: (p.evr, p.arch) for n, p in image_packages(project, tag).items()}
+    if differences := sorted(
+        [*(f"+{n}-{installed[n][0]}" for n in installed if installed[n] != resolved.get(n)),
+         *(f"-{n}-{resolved[n][0]}" for n in resolved if resolved[n] != installed.get(n))]
+    ):  # fmt: skip
+        process.run(["podman", "rmi", tag], capture=True)
+        msg = f"the build environment image does not have the packages resolved for it: {', '.join(differences)}"
+        raise ContainerError(msg)
 
 
 def _podman_build(  # noqa: PLR0913
@@ -172,7 +176,7 @@ def _warm_dnf_cache(project: Project) -> None:
     _warmed.add((project.root, project.platform))
     cache = "/var/cache/dnf-emulated"
     with project.work("warm") as work:
-        (work / "upstream.repo").write_text(_image_files(project, load_lock(project))["upstream.repo"])
+        (work / "upstream.repo").write_text(repo_file(project))
         run(
             native,
             "warm",
@@ -194,21 +198,60 @@ def image_packages(project: Project, image: str) -> dict[str, Locked]:
             show="recording the packages of the image",
             image=image,
         )
-        return {name: Locked.model_validate(p) for name, p in json.loads((work / "record.json").read_text()).items()}
+        installed = json.loads((work / "record.json").read_text())["installed"]
+        return {name: Locked.model_validate(p) for name, p in installed.items()}
 
 
-def available_versions(project: Project, names: list[str]) -> dict[str, list[Locked]]:
-    """Return the available versions of the upstream packages `names`, oldest first."""
-    with project.work("versions") as work:
-        run(
-            project,
-            "versions",
-            f"{DNF_LOCK} python3 /xcraft/versions.py /work/versions.json {' '.join(names)}",
-            volumes=[f"{work}:/work"],
-            show=f"looking for the versions of the packages of {project.arch}",
-        )
-        versions = json.loads((work / "versions.json").read_text())
-        return {name: [Locked.model_validate(p) for p in ps] for name, ps in versions.items()}
+def base_image(project: Project) -> str:
+    """Return the id of the base image of the platform, pulled if needed."""
+    ref = project.config.base_image
+    cache = project.state / "cache/base" / hashlib.sha256(f"{ref} {project.platform}".encode()).hexdigest()
+    if cache.exists() and _exists(image := cache.read_text()):
+        return image
+    with activity(f"pulling the base image of {project.arch}"):
+        image = process.run(["podman", "pull", "-q", "--platform", project.platform, ref], capture=True).stdout.split()[
+            -1
+        ]
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(image)
+    return image
+
+
+def base_packages(project: Project) -> list[str]:
+    """Return the packages of the base image of the platform, read natively."""
+    cache = project.state / "cache/base" / f"{hashlib.sha256(f'{base_image(project)}'.encode()).hexdigest()}.json"
+    if not cache.exists():
+        native = project.on_host()
+        mount = f"type=image,source={base_image(project)},target=/base"
+        cmd = ["podman", "run", "--rm", "--platform", native.platform, "--mount", mount, base_image(native)]
+        names = process.run([*cmd, "rpm", "--root", "/base", "-qa", "--qf", "%{NAME}\\n"], capture=True).stdout.split()
+        write_atomically(cache, json.dumps(sorted(set(names) - {"gpg-pubkey"})))
+    return json.loads(cache.read_text())
+
+
+def run_natively(project: Project, step: str, args: list[str], *, volumes: list[str], show: str) -> None:
+    """Run `args` as root in the base image of the host, for the platform of `project`, with its repositories and its
+    dnf cache, logged in .xcraft/logs/_<step>.log.
+    """  # noqa: D205
+    native, log = project.on_host(), project.state / f"logs/_{step}.log"
+    container = f"xcraft-{step}-{os.getpid()}"
+    with project.work(f"{step}-repos") as repos:
+        (repos / "upstream.repo").write_text(repo_file(project))
+        mounts = [f"{_dnf_cache(project)}:/var/cache/dnf", f"{BUILDENV}:/xcraft:ro", f"{repos}:/etc/yum.repos.d:ro"]
+        cmd = [
+            "podman", "run", "--rm", "--replace", "--name", container, "--platform", native.platform,
+            "--security-opt", "label=disable", *(a for v in [*mounts, *volumes] for a in ("--volume", v)),
+            base_image(native), "flock", "/var/cache/dnf/.xcraft.lock", *args,
+        ]  # fmt: skip
+        with activity(show) as on_line:
+            try:
+                failed = _run_logged(cmd, log, on_line, container)
+            except BaseException:
+                _kill(container)
+                raise
+        if failed:
+            msg = f"{show} failed, see {log}{_tail(log)}"
+            raise ContainerError(msg)
 
 
 def run(  # noqa: PLR0913
@@ -285,12 +328,14 @@ def run_container(  # noqa: PLR0913
     log. The container is stopped when interrupted, or when its log gets larger
     than MAX_LOG_SIZE.
     """
+    from xcraft.resolution import resolve_image  # noqa: PLC0415, which runs containers
+
     _warm_dnf_cache(project)
     image = image or build_image(project)
-    versionlock = project.state / "tmp" / f"versionlock-{os.getpid()}.list"
-    versionlock.parent.mkdir(parents=True, exist_ok=True)
-    versionlock.write_text(load_lock(project).versionlock())
-    volumes = [*volumes, f"{BUILDENV}:/xcraft:ro", f"{versionlock}:/etc/dnf/plugins/versionlock.list:ro"]
+    lock_list = project.state / "tmp" / f"versionlock-{os.getpid()}.list"
+    lock_list.parent.mkdir(parents=True, exist_ok=True)
+    lock_list.write_text(versionlock(resolve_image(project).packages))
+    volumes = [*volumes, f"{BUILDENV}:/xcraft:ro", f"{lock_list}:/etc/dnf/plugins/versionlock.list:ro"]
     cache = _dnf_cache(project)
     cmd = [
         # replacing a container of a killed xcraft

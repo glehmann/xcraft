@@ -12,9 +12,10 @@ from xcraft import process
 from xcraft.commands import Packages, load
 from xcraft.display import activity, console, download_progress
 from xcraft.importer import git
-from xcraft.lock import load_lock, lock_path, save_lock
+from xcraft.lock import load_lock, save_lock
 from xcraft.project import write_atomically
 from xcraft.release import add_changelog_entry, bump_release, reset_release, set_version
+from xcraft.resolution import upstream_sources
 from xcraft.sources import archive_name, cache_source, read_manifest, write_manifest
 from xcraft.specs import load_packages, main_spec
 
@@ -143,24 +144,17 @@ def bump(
     name, email = (git("-C", str(project.root), "config", key) for key in ("user.name", "user.email"))
     author = f"{name} <{email}>"
     with project.lock():
-        # the pending updates of all the platforms, which the next releases are built for
-        locks = [(p, load_lock(p)) for p in project.all_platforms() if lock_path(p).exists()]
-        pending: dict[str, dict[str, str]] = {}
-        for _, lock in locks:
-            for package, entries in lock.pending.items():
-                pending.setdefault(package, {}).update(entries)
+        lock = load_lock(project)
         if version:
             names = same_version(project.config.same_version, (packages or [])[0])
         else:
-            deps = sorted({n for _, lock in locks for n in lock.binaries(dep or [])})
-            names = pending_packages(packages, pending, deps)
+            names = pending_packages(packages, lock.pending, upstream_sources(project, dep) if dep else [])
         message = message or (f"Update to {version}" if version else "")
         after = _update_specs(project, before, names, version=version, author=author, message=message)
         for package in names:
             console.print(f"[bold]{package}[/]: {_evr(before[package])} -> {_evr(after[package])}")
-        # their next releases are built with the current locks
-        for on_platform, lock in locks:
-            lock.clear_pending(names)
-            save_lock(on_platform, lock)
+        # their next releases are built with the current lock
+        lock.clear_pending(names)
+        save_lock(project, lock)
     if version:
         console.print(f"once built, share the new archives with: xcraft push sources {' '.join(names)}")

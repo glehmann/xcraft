@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from xcraft.container import DNF_LOCK, run
 from xcraft.lock import Locked, load_lock, save_lock
+from xcraft.resolution import lock_installed, resolve_image
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -29,10 +30,11 @@ KEY_FILE = "RPM-GPG-KEY-xcpng"
 
 def _lock_tools(project: Project, recorded: dict[str, Locked]) -> None:
     """Add the upstream packages installed with the tools to the lock."""
+    image = set(resolve_image(project).image)
+    installed = {name: p for name, p in recorded.items() if name not in image}
+    lock_installed(project, installed)
     lock = load_lock(project)
-    installed = {name: p for name, p in recorded.items() if name not in lock.image}
-    lock.merge(installed)
-    lock.iso = sorted(installed)
+    lock.iso[project.arch] = sorted(installed)
     save_lock(project, lock)
 
 
@@ -66,7 +68,7 @@ def make_iso(  # noqa: PLR0913
             volumes=volumes,
             show="making the tree of the ISO",
         )
-        recorded = json.loads((work / "tools.json").read_text())
+        recorded = json.loads((work / "tools.json").read_text())["installed"]
         _lock_tools(project, {name: Locked.model_validate(p) for name, p in recorded.items()})
         tree = work / "tree"
         if signer and not netinstall:

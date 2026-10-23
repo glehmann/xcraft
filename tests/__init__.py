@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import tomllib
 from pathlib import Path
 
@@ -12,8 +13,22 @@ PROJECT = Path(__file__).parent / "project"
 TOML = (PROJECT / "xcraft.toml").read_text()
 # the platform of the host, which the tests build for, natively, like x86_64_v2 on x86_64
 PLATFORM, ARCH = {"x86_64": ("linux/amd64/v2", "x86_64_v2"), "aarch64": ("linux/arm64", "aarch64")}[os.uname().machine]
+TEMPLATE: Path | None = None
+"""The project, with its lock and what xcraft resolved for it, made once for all the tests: see conftest.py."""
 
 
 def config() -> Config:
     """Return the configuration of the test project."""
     return Config.model_validate(tomllib.loads(TOML))
+
+
+def copy_project(dest: Path) -> None:
+    """Copy the project to `dest`, with the lock and the resolutions of the template, when there is one."""
+
+    def ignored(directory: str, names: list[str]) -> list[str]:
+        kept = {".xcraft": ["cache"], ".xcraft/cache": ["base", "resolved", "specs"]}.get(
+            Path(directory).relative_to(TEMPLATE or PROJECT).as_posix()
+        )
+        return [name for name in names if kept is not None and name not in kept]
+
+    shutil.copytree(TEMPLATE or PROJECT, dest, ignore=ignored)

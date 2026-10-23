@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 
 from xcraft.container import BUILDENV, DNF_LOCK, build_image, image_tag, run
-from xcraft.lock import load_lock
+from xcraft.resolution import resolve_image
+from xcraft.specs import dep_name
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -29,16 +30,22 @@ class UpstreamRequires(BaseModel):
 def upstream_requires(project: Project) -> UpstreamRequires:
     """Return the requirements between the locked upstream packages, and with our packages."""
     packages = project.packages
-    ours = {c for package in packages.values() for binary in package.binaries for c in [binary.name, *binary.provides]}
+    ours = {
+        dep_name(c)
+        for package in packages.values()
+        for binary in package.binaries
+        for c in [binary.name, *binary.provides]
+    }
     capabilities = {
         r
         for package in packages.values()
         for r in [*package.buildrequires, *(r for b in package.binaries for r in b.requires)]
+        if dep_name(r) not in ours
     }
     data = json.dumps(
         {
-            "packages": {name: [p.evr, p.arch] for name, p in sorted(load_lock(project).packages.items())},
-            "capabilities": sorted(capabilities - ours),
+            "packages": {name: [p.evr, p.arch] for name, p in sorted(resolve_image(project).packages.items())},
+            "capabilities": sorted(capabilities),
         }
     )
 
