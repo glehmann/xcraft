@@ -39,7 +39,7 @@ from xcraft.display import (
     print_log_line,
     read_tail,
 )
-from xcraft.graph import build_order, components
+from xcraft.graph import build_order, components, reachable
 from xcraft.localrepo import REPO_FILE, LocalRepo, link, repo_id
 from xcraft.lock import Locked, load_lock, save_lock
 from xcraft.project import write_atomically
@@ -49,14 +49,14 @@ from xcraft.sources import archive_name, read_manifest, sha256_of
 from xcraft.specs import hash_dir, main_spec
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
     from pathlib import Path
 
     from xcraft.project import Project
 
 RECIPE = hashlib.sha256(
     "".join(
-        [REPO_FILE, *((BUILDENV / script).read_text() for script in ("build.sh", "offline.py", "record.py"))]
+        [REPO_FILE, *((BUILDENV / s).read_text() for s in ("build.sh", "offline.py", "record.py", "made.py"))]
     ).encode()
 ).hexdigest()
 """What makes the builds, besides the image and the packages: a change to it rebuilds them all, but see _SAME_BUILDS."""
@@ -70,6 +70,9 @@ _SAME_BUILDS = {
     # build.sh and record.py: the providers of the dynamic BuildRequires too
     "e4d86b87110eac1922b1127fa00c796d08b757136324c97223ea31f34236d20b":
         "9696604d19c16fc9fdebc6431bacf28b50585465cfb3148b8e041c4ff8153778",
+    # build.sh, record.py and made.py: the dynamic BuildRequires before installing them, and the packages made
+    "91b1c1f54f53be472170ccaf7f1001959e51a8206718056bb0020a4d383690c5":
+        "e4d86b87110eac1922b1127fa00c796d08b757136324c97223ea31f34236d20b",
 }  # fmt: skip
 """Recipes making the same packages as an earlier one, by their hash: their builds keep the keys of the earlier one."""
 
@@ -188,14 +191,23 @@ def test_builds(project: Project, name: str) -> list[TestBuild]:
     return sorted(latest.values(), key=lambda build: -build.built)
 
 
-def builds_repo(project: Project, keys: dict[str, str]) -> LocalRepo:
-    """Return the repository the builds run against, with the cached builds matching `keys`."""
+def builds_repo(project: Project, keys: dict[str, str], names: Iterable[str] | None = None) -> LocalRepo:
+    """Return the repository the builds run against, with the cached builds matching `keys`, of `names` only, or of
+    all the packages.
+    """  # noqa: D205
     repo = LocalRepo(project, project.state / "repo")
     repo.reset()
-    for name, key in keys.items():
-        if cached_build(project, name, key).exists():
-            repo.add(cached_build(project, name, key))
+    for name in keys if names is None else names:
+        if cached_build(project, name, keys[name]).exists():
+            repo.add(cached_build(project, name, keys[name]))
     return repo
+
+
+def deps_repo(project: Project, name: str, autorev: dict[str, str] | None = None) -> LocalRepo:
+    """Return the repository the build of `name` runs against: the builds of its dependencies, which its build root
+    can have.
+    """  # noqa: D205
+    return builds_repo(project, build_keys(project, autorev), reachable(project.deps, project.deps[name]))
 
 
 def source_path(filename: str, digest: str) -> str:
@@ -431,28 +443,52 @@ def _check_build_root(project: Project, name: str, installed: dict[str, Locked])
         raise BuildError(msg)
 
 
-def _record_build_root(project: Project, name: str, tree: Path) -> None:
-    """Record in the lock the dynamic BuildRequires of `name`, and check its build root, resolved again with them.
-
-    Raise BuildRootChangedError when it needs packages of ours it was not built after.
-    """
-    recorded = json.loads((tree / "buildroot.json").read_text())
-    installed = {n: Locked.model_validate(data) for n, data in recorded["installed"].items()}
+def _record_dynamic(project: Project, name: str, tree: Path) -> bool:
+    """Record in the lock the dynamic BuildRequires the build of `name` asked for, and return whether they changed."""
+    path = tree / "buildrequires.txt"
     static = set(project.parsed[name].buildrequires)
-    dynamic = sorted({p for r, names in recorded["providers"].items() if r not in static for p in names})
+    lines = path.read_text().splitlines() if path.exists() else []
+    dynamic = sorted({r for r in lines if r not in static and not r.startswith("rpmlib(")})
     lock = load_lock(project)
-    before = lock.buildrequires.of(project.arch).get(name, [])
-    if dynamic != before:
-        lock.buildrequires.record(project.arch, project.first, name, dynamic)
-        save_lock(project, lock)
-        project.refresh()
-    try:
-        _check_build_root(project, name, installed)
-    except BuildError as e:
-        if dynamic != before:
-            msg = f"{e}, with the dynamic BuildRequires it found, now in the lock: build it again"
-            raise BuildRootChangedError(msg) from None
-        raise
+    if dynamic == lock.buildrequires.of(project.arch).get(name, []):
+        return False
+    lock.buildrequires.record(project.arch, project.first, name, dynamic)
+    save_lock(project, lock)
+    project.refresh()
+    return True
+
+
+def _check_made(project: Project, name: str, tree: Path, *, test: bool) -> None:
+    """Raise when the build of `name` did not make the binary packages parsed from its spec for the architecture.
+
+    Their names, versions and architectures, and the provides and requirements their spec declares, those rpm
+    generates apart, and the debug packages too, which rpm splits while building. A test build has its own releases.
+    """
+
+    def debug(n: str) -> bool:
+        return n.endswith(("-debuginfo", "-debugsource"))
+
+    made = {n: b for n, b in json.loads((tree / "made.json").read_text()).items() if not debug(n)}
+    parsed = {b.name: b for b in project.parsed[name].binaries if not debug(b.name)}
+    problems = [
+        *(f"+{n}" for n in sorted(made.keys() - parsed.keys())),
+        *(f"-{n}" for n in sorted(parsed.keys() - made.keys())),
+    ]
+    for n in sorted(made.keys() & parsed.keys()):
+        b, m = parsed[n], made[n]
+        if (m["arch"], m["evr"] if not test else "") != (b.arch, b.evr if not test else ""):
+            problems.append(f"{n}-{m['evr']}.{m['arch']} rather than {b.evr}.{b.arch}")
+        problems += [
+            f"{n} without the {field} {', '.join(missing)}"
+            for field in (("provides", "requires") if not test else ())
+            if (missing := sorted(set(getattr(b, field)) - set(m[field])))
+        ]
+    if problems:
+        msg = (
+            f"its build did not make the packages parsed from its spec for {project.arch}: {'; '.join(problems)}: "
+            "xcraft parses the spec otherwise than rpmbuild builds it"
+        )
+        raise BuildError(msg)
 
 
 def _rpms(build: Path) -> list[Path]:
@@ -513,19 +549,38 @@ def record_built(project: Project, names: list[str], keys: dict[str, str]) -> bo
     return True
 
 
-def _build_one(project: Project, name: str, repo: LocalRepo, *, status: str | None, autorev: dict[str, str]) -> None:
+def _check_build(project: Project, name: str, tree: Path, *, test: bool) -> None:
+    """Record the dynamic BuildRequires of the build of `name` in `tree`, and check what it installed and made."""
+    changed = _record_dynamic(project, name, tree)
+    installed = json.loads((tree / "buildroot.json").read_text())["installed"]
+    try:
+        _check_build_root(project, name, {n: Locked.model_validate(p) for n, p in installed.items()})
+    except BuildError as e:
+        if changed:
+            msg = f"{e}, with the dynamic BuildRequires it asked for, now in the lock: built again after what they need"
+            raise BuildRootChangedError(msg) from None
+        raise
+    _check_made(project, name, tree, test=test)
+
+
+def _build_one(project: Project, name: str, *, status: str | None, autorev: dict[str, str]) -> None:
     """Build `name` and cache the result, showing `status` while it runs, or the build log without status.
 
-    What its build found is recorded in the lock: its dynamic BuildRequires,
-    and what rpm generated for its binary packages. It is not cached when its
-    spec directory changed during the build, or when its build root is not the
-    one resolved for it (see _check_build_root).
+    It only gets the builds of its dependencies. What its build found is
+    recorded in the lock: its dynamic BuildRequires, even when it fails, and
+    what rpm generated for its binary packages. It is not cached when its spec
+    directory changed during the build, when its build root is not the one
+    resolved for it (see _check_build_root), or when it did not make the
+    packages parsed from its spec (see _check_made). Raise
+    BuildRootChangedError when it found what changes its build root, to build
+    it again, after the packages it needs.
     """
     if error := project.packages[name].error:
         raise BuildError(error)
     _check_resolved(project, name)
     staged = hash_dir(project.package_dirs[name])
     replace = _image_replacements(project, name)
+    repo = deps_repo(project, name, autorev)
     tree = prepare_tree(project, name)
     log = project.log(name)
     pid_file = _pid_file(project, name)
@@ -543,9 +598,15 @@ def _build_one(project: Project, name: str, repo: LocalRepo, *, status: str | No
             _run_build(
                 project, name, repo, "a", replace=replace, suffix=autorev.get(name, ""), log=log, on_line=on_line
             )
+    except ContainerError as e:
+        # those it asked for before failing, maybe for one of ours not among its dependencies
+        if (tree / "buildrequires.txt").exists() and _record_dynamic(project, name, tree):
+            msg = f"{e}, asking for other dynamic BuildRequires, now in the lock: built again after what they need"
+            raise BuildRootChangedError(msg) from None
+        raise
     finally:
         pid_file.unlink()
-    _record_build_root(project, name, tree)
+    _check_build(project, name, tree, test=name in autorev)
     if hash_dir(project.package_dirs[name]) != staged:
         msg = f"{project.package_dirs[name].relative_to(project.root)} changed during the build, build it again"
         raise BuildError(msg)
@@ -553,7 +614,7 @@ def _build_one(project: Project, name: str, repo: LocalRepo, *, status: str | No
     if name in autorev and (signer := dev_signer(project)):
         for output in ("RPMS", "SRPMS"):
             signer.sign_rpms(project, tree / output)
-    repo.add(_cache(project, name, tree, autorev))
+    _cache(project, name, tree, autorev)
     record_built(project, [name], build_keys(project, autorev))
 
 
@@ -641,11 +702,10 @@ def build(  # noqa: PLR0913
         if dry_run:
             _show_plan(project, plan, keys, fetch=fetch)
             return []
-        repo = builds_repo(project, keys)
         _queue_file(project).parent.mkdir(parents=True, exist_ok=True)
         try:
             results = _build_all(
-                project, plan, repo, verbose=verbose, autorev=autorev, fetch=fetch, build_missing=build_missing
+                project, plan, verbose=verbose, autorev=autorev, fetch=fetch, build_missing=build_missing
             )
         finally:
             _queue_file(project).unlink(missing_ok=True)
@@ -669,7 +729,6 @@ def _record_cached(project: Project, autorev: dict[str, str]) -> dict[str, str]:
 def _build_all(  # noqa: PLR0913
     project: Project,
     plan: list[str],
-    repo: LocalRepo,
     *,
     verbose: bool,
     autorev: dict[str, str],
@@ -693,7 +752,7 @@ def _build_all(  # noqa: PLR0913
                 console.print(f"[yellow]remote storage unavailable, building locally[/]: {escape(str(e))}")
                 use_remote = fetched = False
             if fetched:
-                _add_fetched(project, name, keys, repo)
+                _add_fetched(project, name, keys)
                 results[name] = Result(name, "fetched")
                 continue
         if failed := _failed(project, name, results):
@@ -707,17 +766,15 @@ def _build_all(  # noqa: PLR0913
         status = None if verbose else f"[{i}/{len(plan)}] building {name}{_estimate(project, name)}"
         if use_remote:  # without a compiler cache, the one of the remote storage
             ccache.fetch_missing(project, name)
-        results[name] = _build_shown(project, name, repo, status=status, autorev=autorev, verbose=verbose)
+        results[name] = _build_shown(project, name, status=status, autorev=autorev, verbose=verbose)
     return list(results.values())
 
 
-def _build_shown(  # noqa: PLR0913
-    project: Project, name: str, repo: LocalRepo, *, status: str | None, autorev: dict[str, str], verbose: bool
-) -> Result:
+def _build_shown(project: Project, name: str, *, status: str | None, autorev: dict[str, str], verbose: bool) -> Result:
     """Build `name` with _build_one(), and show how it went."""
     start = time.monotonic()
     try:
-        _build_one(project, name, repo, status=status, autorev=autorev)
+        _build_one(project, name, status=status, autorev=autorev)
     except BuildRootChangedError as e:
         console.print(f"[yellow]↻[/] {name}: {escape(str(e))}")
         return Result(name, "again")
@@ -733,9 +790,8 @@ def _failed(project: Project, name: str, results: dict[str, Result]) -> list[str
     return sorted(dep for dep in project.deps[name] if dep in results and results[dep].status in ("failed", "skipped"))
 
 
-def _add_fetched(project: Project, name: str, keys: dict[str, str], repo: LocalRepo) -> None:
-    """Add the fetched build of `name` to the builds `repo`, with what rpm generated for it in the lock."""
-    repo.add(cached_build(project, name, keys[name]))
+def _add_fetched(project: Project, name: str, keys: dict[str, str]) -> None:
+    """Record in the lock what rpm generated for the fetched build of `name`."""
     record_built(project, [name], keys)
     console.print(f"[green]↓[/] {name} [green]fetched[/]")
 
@@ -756,7 +812,7 @@ def shell(project: Project, name: str) -> None:
     the prompt. The build tree is the one of the host, in .xcraft/build/, where its files can be edited, and its
     packages are.
     """
-    repo = builds_repo(project, build_keys(project))
+    repo = deps_repo(project, name)
     tree = prepare_tree(project, name)
     replace = _image_replacements(project, name)
     spec = main_spec(project.package_dirs[name]).name

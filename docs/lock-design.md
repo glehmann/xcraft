@@ -1,6 +1,6 @@
 # Design: one lock, computed from one architecture
 
-Status: the first step implemented (see *Size of the change*).
+Status: implemented.
 
 ## Build roots
 
@@ -65,7 +65,7 @@ builds, in the lock, which becomes one for all the architectures.
 "xen-devel" = ["pkgconfig(xenctrl) = 4.17.6"]
 
 [buildrequires]                             # from %generate_buildrequires, not in the specs: what builds need
-"xcp-python-libs" = ["python3-pip", "python3-setuptools", "python3-wheel"]
+"xcp-python-libs" = ["python3dist(setuptools) >= 40.8", "python3dist(wheel)"]
 
 [pending."xen"]                             # by source package, as today otherwise
 "openssl" = "1:3.5.2-1.el10_2"
@@ -88,9 +88,10 @@ builds, in the lock, which becomes one for all the architectures.
   synthetic `xen-devel` provide it. The files of ours a spec requires too, which the metadata from the specs does not
   have. Builds record them from the packages they made, which the cache keeps: a spec requiring one of them later gets
   them recorded from there, without a new build.
-- **`[buildrequires]`**, for each source package of ours with `%generate_buildrequires`, the packages its dynamic
-  `BuildRequires` resolve to, by name. rpm only knows them by running the spec's script, in a build, like `xcraft build`
-  does today with `rpmbuild -br`. Builds record them, from the source packages `rpmbuild -br` makes with them.
+- **`[buildrequires]`**, for each source package of ours with `%generate_buildrequires`, its dynamic `BuildRequires`,
+  as the script writes them, like those of a spec: they have no hashes, and the resolution takes them like the others.
+  rpm only knows them by running the spec's script, in a build, like `xcraft build` does today with `rpmbuild -br`.
+  Builds record them, from the source packages `rpmbuild -br` makes with them, before installing them.
 - **`[requires.<arch>]`, `[provides.<arch>]` and `[buildrequires.<arch>]`**, the entries of an architecture that differ
   from the shared ones. An entry there replaces the shared entry of the same package on that architecture, rather than
   adding to it, so that it can also have less, or nothing, with an empty list. A build of the first architecture of
@@ -227,8 +228,9 @@ dynamic `BuildRequires`. Its key is right after its build, which records it, and
 - **Unresolved requirements.** The measurements found 7 requirements of our opentelemetry packages with no provider,
   like `python3.12dist(requests)`. They have to be fixed first: the resolution fails on them.
 - **Size of the change.** `lock.py`, the keys, `impacts`, the build environment, and the tests of all of them. It
-  lands in steps: the lock format, the native parsing and the computation first, with the check of what builds install,
-  which replaces today's `_check_build_root`, done; the check of what they make and the restricted repository of our
-  builds next, with the recording of the dynamic `BuildRequires` before installing them. Meanwhile, the resolution
-  already restricts the packages of ours of a build root to those of its dependencies, and the check catches a build
-  installing others.
+  landed in two steps: the lock format, the native parsing and the computation first, with the check of what builds
+  install, which replaced `_check_build_root`; then the check of what they make and the restricted repository of our
+  builds, with the recording of the dynamic `BuildRequires` before installing them.
+- **What the specs build.** Comparing the packages of the builds with the parsed specs found two differences that are
+  not ones: the debug packages rpm splits by subpackage while building, which the check leaves out, and the packages
+  without `%files`, which rpmbuild does not build, and the parser now leaves out too.

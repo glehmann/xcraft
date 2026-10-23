@@ -478,7 +478,7 @@ architectures, and has, one line per package for readable diffs:
 - What the builds found, which the specs do not have: `[requires]`, for each binary package of ours, the packages the
   requirements rpm generated for it resolve to, like `lzo` for `xen-dom0-libs`, which links against it; `[provides]`,
   the capabilities and files rpm generated for it that a spec of ours requires; `[buildrequires]`, for each package
-  with `%generate_buildrequires`, the packages its dynamic `BuildRequires` resolve to. An architecture which finds
+  with `%generate_buildrequires`, its dynamic `BuildRequires`. An architecture which finds
   others has its own entries, which replace the shared ones, in `[requires.<arch>]` and the like.
 - `[runtime]` and `[iso]`, by architecture: the upstream packages published, and those of the tools making the ISO.
 - `[pending.<pkg>]`: for each of our packages, the upstream source packages of its build root updated since its
@@ -493,10 +493,12 @@ the keys of all the architectures are known on any machine, before building ther
 but not locked yet get locked, at the latest version all the architectures have, and the lock is committed with the
 change of the spec; with `--locked`, for CI, it fails instead. See also [the design](docs/lock-design.md).
 
-**Checked builds.** A build records what only a build can know: its dynamic `BuildRequires`, and what rpm generated
-for its binary packages, which a build fetched from the remote storage records too. It then checks that dnf installed
-the build root resolved for it, with what it recorded: a build of a package needing one of ours it was not built after
-is planned again. With `--locked`, a build recording something fails.
+**Checked builds.** A build only gets the builds of its dependencies. It records what only a build can know: its
+dynamic `BuildRequires`, before installing them, and what rpm generated for its binary packages, which a build fetched
+from the remote storage records too. It then checks that dnf installed the build root resolved for it, with what it
+recorded, and that it made the binary packages parsed from its spec for the architecture, with the provides and
+requirements the spec declares. A build of a package needing one of ours it was not built after is planned again. With
+`--locked`, a build recording something fails.
 
 **Updates.** The lock only changes otherwise with `xcraft lock --update`, which takes the latest version all the
 architectures have of all the locked source packages, or of some of them, given by binary or source package name, to

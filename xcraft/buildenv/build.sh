@@ -31,15 +31,17 @@ time {
     if grep -q '^%generate_buildrequires' "$spec"; then
         # rpmbuild -br exits with 11 while some dynamic BuildRequires are missing
         while rc=0; offline rpmbuild -br "${defines[@]}" "$spec" </dev/null || rc=$?; [ $rc -eq 11 ]; do
+            # all the BuildRequires, the dynamic ones included, which xcraft records, even when they cannot be installed
+            rpm -qp --requires /build/SRPMS/*.buildreqs.nosrc.rpm >/build/buildrequires.txt
             $lock dnf -y builddep /build/SRPMS/*.buildreqs.nosrc.rpm
             rm /build/SRPMS/*.buildreqs.nosrc.rpm
         done
         [ $rc -eq 0 ]
         rm -f /build/SRPMS/*.buildreqs.nosrc.rpm
-        # all the BuildRequires, the dynamic ones included, which xcraft records: rpmbuild -br wrote the source package
+        # the last ones: rpmbuild -br wrote the source package
         rpm -qp --requires /build/SRPMS/*.src.rpm >/build/buildrequires.txt
     fi
-    $lock python3 /xcraft/record.py /build/buildroot.json /build/buildrequires.txt
+    $lock python3 /xcraft/record.py /build/buildroot.json
     # like mock's login shell, for the environment of build dependencies, like opam's, which are not written for set -eu
     set +eu +o pipefail
     for profile in /etc/profile.d/*.sh; do
@@ -48,4 +50,7 @@ time {
     done
     set -eu -o pipefail
     offline rpmbuild -b"$stage" "${defines[@]}" "$spec" </dev/null
+    if [ "$stage" = a ]; then
+        python3 /xcraft/made.py /build/made.json /build/RPMS
+    fi
 }
