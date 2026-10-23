@@ -158,7 +158,7 @@ builds it again as soon as one of its inputs changes. The key is the name of the
 | The build environment image | A hash of the base image, pinned by digest, the platform, `packages` of `xcraft.toml`, the repositories, the RPM macros (`%dist`...), and the locked versions of the image's packages | Any change to these settings, or an update of a package of the image |
 | The platform | The one xcraft works on, see [Architectures](#configuration) | `--arch` |
 | The extra upstream RPMs | The names and URLs of `extra_upstream` | `extra_upstream` |
-| The recipe | The build script, `xcraft/buildenv/build.sh`, the `.repo` file of the local repository, and the script recording the build roots | A change to how xcraft builds |
+| The recipe | The build script, `xcraft/buildenv/build.sh`, the `.repo` file of the local repository, and the scripts recording the build roots and isolating it from the network | A change to how xcraft builds, but one declared making the same packages |
 | The package | Its name, and all the files of `<repo>/<pkg>/`, but `origin`: their paths, contents, and whether they are executable. The `sources` manifest covers the archives by their SHA-256 | Any change to the spec, a patch, a source file, or an archive |
 | Its build root | The upstream packages its last build installed besides the image's, as recorded in the lock, with their locked versions | `xcraft lock --update` of one of them, or a build installing other ones |
 | Its test build suffix | `.0.ID.<n>` or `~ID.<n>`, for `--test` and `--pre` only | Each test build |
@@ -180,6 +180,11 @@ for its own metadata in the dnf cache the containers share, but the recipe the k
 - an update of the lock: the packages with the updated package in their build root, and those built against them, or
   everything when the package is in the image;
 - the configuration of the build environment, or a new version of xcraft changing the recipe: everything.
+
+**Same builds.** A change to the recipe which makes the same packages, like a fix of how it fails, can keep the
+builds: `_SAME_BUILDS` of `xcraft/build.py` maps its hash to the one of the earlier recipe, whose hash stays in the keys.
+Not the packages, nor the image: what a package directory has goes in its source RPM, and what the image has can change
+the builds. `test_recipe` fails on a change to the recipe in the keys, giving the new hash, to choose between both.
 
 `xcraft build --dry-run` shows what would be built, fetched, or is cached, before building anything.
 
