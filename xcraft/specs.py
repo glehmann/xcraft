@@ -65,7 +65,8 @@ for spec_file in spec_files:
                 "requires": deps(h, rpm.RPMTAG_REQUIRENAME),
                 "recommends": deps(h, rpm.RPMTAG_RECOMMENDNAME),
             }
-            for h in (p.header for p in spec.packages)
+            # those without %files are not built
+            for h in (p.header for p in spec.packages if p.fileList is not None)
         ],
         "buildrequires": deps(spec.sourceHeader, rpm.RPMTAG_REQUIRENAME),
         "dist": rpm.expandMacro("%{?dist}"),

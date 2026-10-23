@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import re
 from typing import TYPE_CHECKING
@@ -11,7 +12,16 @@ import pytest
 
 from tests import TOML, config
 from xcraft import build
-from xcraft.build import BuildError, build_keys, prepare_tree, previous_duration, queued, recipe_key, record_built
+from xcraft.build import (
+    BuildError,
+    _check_made,
+    build_keys,
+    prepare_tree,
+    previous_duration,
+    queued,
+    recipe_key,
+    record_built,
+)  # fmt: skip
 from xcraft.clean import clean, repos_disk_usage
 from xcraft.commands import complete_arch
 from xcraft.localrepo import RepoError, fresh_dir
@@ -259,6 +269,30 @@ def test_recipe(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(build, "RECIPE", "c")
     monkeypatch.setattr(build, "_SAME_BUILDS", {"c": "b", "b": "a"})
     assert recipe_key() == "a"
+
+
+def test_check_made(project: Project, tmp_path: Path) -> None:
+    binary = Binary(name="foo", evr="1.0-1", arch="x86_64", provides=["foo = 1.0-1"], requires=["bar >= 2"])
+    debug = Binary(name="foo-debuginfo", evr="1.0-1", arch="x86_64", provides=[], requires=[])
+    project.parsed = {"foo": Package(name="foo", binaries=[binary, debug])}
+    made = {
+        "foo": {"evr": "1.0-1", "arch": "x86_64", "provides": ["foo = 1.0-1", "libfoo.so.1()(64bit)"],
+                "requires": ["bar >= 2", "libc.so.6()(64bit)"]},
+        # the debug packages rpm splits while building
+        "foo-tools-debuginfo": {"evr": "1.0-1", "arch": "x86_64", "provides": [], "requires": []},
+    }  # fmt: skip
+    (tmp_path / "made.json").write_text(json.dumps(made))
+    _check_made(project, "foo", tmp_path, test=False)
+    made["foo"] |= {"evr": "1.0-1.0.fix.1", "requires": ["libc.so.6()(64bit)"]}
+    (tmp_path / "made.json").write_text(json.dumps({**made, "foo-extra": made["foo"]}))
+    problems = (
+        r"\+foo-extra; foo-1\.0-1\.0\.fix\.1\.x86_64 rather than 1\.0-1\.x86_64; foo without the requires bar >= 2"
+    )
+    with pytest.raises(BuildError, match=f": {problems}: xcraft parses"):
+        _check_made(project, "foo", tmp_path, test=False)
+    # a test build has its own release
+    (tmp_path / "made.json").write_text(json.dumps(made))
+    _check_made(project, "foo", tmp_path, test=True)
 
 
 def test_record_built(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:

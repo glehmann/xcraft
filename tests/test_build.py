@@ -135,6 +135,19 @@ def test_build_without_network(root: Path) -> None:
     assert "no network" in (root / ".xcraft/logs/offline.log").read_text()  # but its loopback interface
 
 
+def test_dynamic_buildrequires_on_ours(root: Path) -> None:
+    spec = root / "base/with-deps/with-deps.spec"
+    spec.write_text(spec.read_text().replace("BuildRequires: trivial\n", "").replace(
+        "%prep", "%generate_buildrequires\necho trivial\n\n%prep"
+    ))  # fmt: skip
+    # not known to need trivial: built alone, then again after it
+    code, output = xcraft("build", "with-deps")
+    assert code == 0, output
+    assert "↻ with-deps: " in output
+    assert [line.split(" built")[0] for line in results(output) if line[0] == "✓"] == ["✓ trivial", "✓ with-deps"]
+    assert load_lock(Project.find()).buildrequires.shared == {"with-deps": ["trivial"]}
+
+
 def test_build_root_of_files_of_ours(root: Path) -> None:
     # xcraft does not know which files our packages provide before they are built
     write_spec(root, "tool", files="/usr/bin/xcraft-test-tool")
