@@ -1,3 +1,0 @@
-# Additional options for the XCP networking deamon.
-# XCP_NETWORKD_OPTIONS= : extra commandline startup arguments for xcp-networkd
-XCP_NETWORKD_OPTIONS=

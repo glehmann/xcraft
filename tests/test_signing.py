@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.test_build import FIXTURES, xcraft
+from tests import PROJECT
+from tests.test_build import xcraft
 from xcraft.project import Project
 from xcraft.signing import SigningError, check_signatures, dev_keyring, dev_signer
 
@@ -23,10 +24,7 @@ needs_podman = pytest.mark.skipif(not shutil.which("podman"), reason="needs podm
 @pytest.fixture
 def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     root = tmp_path / "project"
-    (root / "specs/base").mkdir(parents=True)
-    for name in ("trivial", "with-deps"):
-        shutil.copytree(FIXTURES / name, root / "specs/base" / name)
-    (root / "xcraft.toml").write_text("")
+    shutil.copytree(PROJECT, root)
     subprocess.run(["git", "init", "-q", str(root)], check=True)
     for key, value in (("user.name", "Test User"), ("user.email", "test@example.com")):
         subprocess.run(["git", "-C", str(root), "config", key, value], check=True)

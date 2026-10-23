@@ -1,6 +1,6 @@
 """The lock of upstream packages: the exact versions the builds use, per architecture.
 
-``locks/<arch>.toml`` has one version of each upstream package installed in
+``xcraft.<arch>.lock`` has one version of each upstream package installed in
 the build environment image, in a build root or with the tools making the ISO,
 for the whole tree, and the upstream packages each of our builds installed
 besides the image's. The build environment only sees the locked version of a
@@ -103,7 +103,7 @@ class Lock(BaseModel):
 
 def lock_path(project: Project) -> Path:
     """Return the lock file of the project's architecture."""
-    return project.root / "locks" / f"{project.arch}.toml"
+    return project.root / f"xcraft.{project.arch}.lock"
 
 
 def load_lock(project: Project) -> Lock:

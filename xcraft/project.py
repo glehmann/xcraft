@@ -54,19 +54,6 @@ ARCHES: dict[Platform, str] = {"linux/amd64/v2": "x86_64_v2", "linux/amd64": "x8
 """The RPM architecture of each platform."""
 
 
-_ALMALINUX_KEY = "file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-10"
-_EPEL_KEY = "https://repo.almalinux.org/almalinux/RPM-GPG-KEY-AlmaLinux-10-EPEL-AltArch"
-_FEDORA_EPEL = "https://dl.fedoraproject.org/pub/epel"
-
-
-def _almalinux(section: str) -> Repo:
-    return Repo(
-        baseurl=f"https://repo.almalinux.org/almalinux/10/{section}/{{arch}}/os/",
-        gpgkey=_ALMALINUX_KEY,
-        source_baseurl=f"https://vault.almalinux.org/10/{section}/Source/",
-    )
-
-
 class Remote(BaseModel):
     """The shared storage of the source archives and the builds: public reads, authenticated S3 writes.
 
@@ -100,8 +87,8 @@ class Publish(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    release: str = "9.0"
-    """Name of the release, in the paths of its repositories."""
+    release: str = ""
+    """Name of the release, in the paths of its repositories: needed to publish."""
     extra: list[str] = []
     """Upstream packages to publish too, for convenience, like mc, with what they need."""
     build: bool = True
@@ -113,21 +100,9 @@ class Iso(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    installer: list[str] = [
-        # the mandatory packages of AlmaLinux's @core, but kexec-tools, xfsprogs and yum
-        *["audit", "basesystem", "bash", "coreutils", "cronie", "cronie-noanacron", "curl", "dnf", "e2fsprogs"],
-        *["filesystem", "firewalld", "glibc", "grubby", "hostname", "iproute", "iproute-tc", "iputils"],
-        *["irqbalance", "kbd", "less", "logrotate", "man-db", "ncurses", "openssh-clients", "openssh-server"],
-        *["p11-kit", "parted", "policycoreutils", "procps-ng", "rootfiles", "rpm", "rpm-plugin-audit"],
-        *["selinux-policy-targeted", "setup", "shadow-utils", "sssd-common", "sssd-kcm", "sudo", "systemd"],
-        *["util-linux", "vim-minimal"],
-        # the installer, xl for its preinit, and the hardware support
-        *["host-installer-startup", "chrony", "dhcp-client", "xen-dom0-tools", "kernel", "linux-firmware"],
-        # for debugging
-        *["netcat", "pciutils", "usbutils"],
-    ]
+    installer: list[str] = []
     """Packages of the installer's root filesystem, install.img: they are published too."""
-    packages: list[str] = ["xcp-ng-deps"]
+    packages: list[str] = []
     """Packages of the repository of the ISO, with what they need, unless --netinstall."""
 
 
@@ -136,48 +111,24 @@ class Config(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    base_image: str = (
-        "ghcr.io/almalinux/10-base:10.2@sha256:ed618ca107e9fd47ee2a64d1d33119ef356cfaf65a338daaa3fad19b80ae5da4"
-    )
+    base_image: str
     """Image the build environment is made from, with a digest to pin it."""
-    platforms: list[Platform] = ["linux/amd64/v2", "linux/arm64"]
+    platforms: list[Platform]
     """Platforms of the builds: xcraft works on one at a time, see Project.find()."""
-    repos: dict[str, Repo] = {
-        # the current AlmaLinux 10 and its EPEL: the lock decides of the versions used
-        **{s.lower(): _almalinux(s) for s in ("BaseOS", "AppStream", "CRB", "extras", "devel")},
-        # AlmaLinux rebuilds EPEL for x86_64_v2 only
-        "epel": Repo(
-            baseurl="https://epel.repo.almalinux.org/10/{arch}/",
-            gpgkey=_EPEL_KEY,
-            source_baseurl="https://epel.vault.almalinux.org/10/Source/",
-            arches=["x86_64_v2"],
-        ),
-        "epel-fedora": Repo(
-            baseurl=f"{_FEDORA_EPEL}/10/Everything/{{arch}}/",
-            gpgkey=f"{_FEDORA_EPEL}/RPM-GPG-KEY-EPEL-10",
-            source_baseurl=f"{_FEDORA_EPEL}/10/Everything/source/tree/",
-            arches=["x86_64", "aarch64"],
-        ),
-    }
+    repos: dict[str, Repo]
     """The only repositories of the build environment, with the local builds."""
-    macros: dict[str, str] = {"dist": "%{?autorev}.xcpng8.99", "xcpng": "9", "xenserver": "9"}
+    macros: dict[str, str] = {}
     """RPM macros of the build environment."""
-    packages: list[str] = [
-        # like mock's build roots, and what XCP-ng specs expect without BuildRequires
-        # (coreutils-single, in the base image, provides coreutils)
-        *["bash", "bzip2", "cpio", "diffutils", "findutils", "gawk", "grep", "gzip", "patch", "sed"],
-        *["tar", "unzip", "which", "xz"],
-        *["rpm-build", "redhat-rpm-config", "epel-rpm-macros", "gcc", "gcc-c++", "make", "git"],
-        # used by xcraft
-        *["dnf-plugins-core", "python3-dnf-plugin-versionlock", "createrepo_c", "python3-rpm", "ccache", "sudo"],
-    ]
-    """Packages installed in the build environment."""
+    packages: list[str] = []
+    """Packages installed in the build environment, with those xcraft uses."""
     extra_upstream: dict[str, str] = {}
     """RPMs not available from the repositories, as name -> URL."""
+    repositories: list[str] = ["base"]
+    """The repositories the packages are published in: directories of the project, with one subdirectory per package."""
     remote: Remote | None = None
     """Where the source archives and the builds are shared, if anywhere."""
     publish: Publish = Publish()
-    ccache_size: dict[str, str] = {"kernel": "20G"}
+    ccache_size: dict[str, str] = {}
     """The maximum size of the compiler cache of packages, by name, like 20G: ccache's default, 5G, for the others."""
     same_version: list[list[str]] = []
     """Groups of packages with the same version, like kernel and kernel-headers: bump --version updates them all."""
@@ -203,14 +154,18 @@ class Project:
 
     @classmethod
     def find(cls, arch: str | None = None) -> Project:
-        """Return the project: $XCRAFT_PROJECT, or the checkout of xcraft's code, which comes with its specs.
+        """Return the project of $XCRAFT_PROJECT, or else the first of the current directory and its parents.
 
         It works on the platform of the RPM architecture `arch`, $XCRAFT_ARCH, or the host's, like x86_64 for
         x86_64_v2, or else on the first one of the configuration.
         """
-        root = Path(os.environ.get("XCRAFT_PROJECT") or Path(__file__).resolve().parent.parent)
-        if not (root / "xcraft.toml").exists():
-            msg = f"no xcraft.toml in {root}, set XCRAFT_PROJECT to the xcraft project"
+        candidates = (
+            [Path(os.environ["XCRAFT_PROJECT"])]
+            if "XCRAFT_PROJECT" in os.environ
+            else [Path.cwd(), *Path.cwd().parents]
+        )
+        if not (root := next((d for d in candidates if (d / "xcraft.toml").exists()), None)):
+            msg = f"no xcraft.toml in {candidates[0]}" + ("" if "XCRAFT_PROJECT" in os.environ else " or its parents")
             raise RuntimeError(msg)
         with (root / "xcraft.toml").open("rb") as f:
             config = Config.model_validate(tomllib.load(f))
@@ -241,16 +196,11 @@ class Project:
         """The repositories of the build environment for the platform."""
         return {name: repo for name, repo in self.config.repos.items() if not repo.arches or self.arch in repo.arches}
 
-    @property
-    def specs(self) -> Path:
-        """Directory with one subdirectory per repository, like ``base``, with one subdirectory per package."""
-        return self.root / "specs"
-
     @cached_property
     def package_dirs(self) -> dict[str, Path]:
         """The directory of each package, by name, but the hidden ones, like those of the imports in progress."""
         dirs: dict[str, Path] = {}
-        for path in sorted(self.specs.glob("[!.]*/[!.]*/")):
+        for path in sorted(p for repo in self.config.repositories for p in (self.root / repo).glob("[!.]*/")):
             if path.name in dirs:
                 msg = f"{path.name} is in two repositories: {dirs[path.name].parent.name} and {path.parent.name}"
                 raise RuntimeError(msg)

@@ -1,5 +1,3 @@
-# package sources, kept as upstream wrote them, and the lock, generated
-exclude: ^(specs|locks)/
 repos:
   - repo: local
     hooks:

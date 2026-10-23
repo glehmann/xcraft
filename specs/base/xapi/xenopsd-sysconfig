@@ -1,7 +1,0 @@
-# Additional options for the Xenopsd VM manager(s)
-# XENOPSD_XC_OPTIONS= : extra commandline startup arguments for xenopsd-xc
-# XENOPSD_XENLIGHT_OPTIONS= : extra commandline startup arguments for xenopsd-xenlight
-# XENOPSD_SIMULATOR_OPTIONS= : extra commandline startup arguments for xenopsd-simulator
-XENOPSD_XC_OPTIONS=
-XENOPSD_XENLIGHT_OPTIONS=
-XENOPSD_SIMULATOR_OPTIONS=

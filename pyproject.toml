@@ -35,8 +35,8 @@ include = ["xcraft*"]
 xcraft = ["buildenv/*"]
 
 [tool.typos.files]
-# package sources, kept as upstream wrote them, and the lock, generated
-extend-exclude = ["specs/", "locks/"]
+# the specs of the test project
+extend-exclude = ["tests/project/"]
 
 [tool.typos.default.extend-words]
 fpr = "fpr"  # the fingerprint records of gpg --with-colons
@@ -45,7 +45,6 @@ ba = "ba"    # rpmbuild -ba
 [tool.ruff]
 line-length = 120
 target-version = "py313"
-extend-exclude = ["specs"]  # package sources, kept as upstream wrote them
 
 [tool.ruff.lint]
 select = ["ALL"]
@@ -91,6 +90,3 @@ fail_under = 80
 [tool.pytest.ini_options]
 addopts = "--pdbcls=IPython.terminal.debugger:TerminalPdb"
 testpaths = ["tests"]
-
-[tool.ty.src]
-exclude = ["specs"]

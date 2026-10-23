@@ -3,10 +3,11 @@ from __future__ import annotations
 import pytest
 from typer.testing import CliRunner
 
+from tests import TOML, config
 from xcraft.__main__ import app
 from xcraft.iso import _lock_tools
 from xcraft.lock import Lock, Locked, load_lock, lock_path, save_lock
-from xcraft.project import Config, Project
+from xcraft.project import Project
 
 
 def locked(evr: str, source: str = "foo") -> Locked:
@@ -14,12 +15,12 @@ def locked(evr: str, source: str = "foo") -> Locked:
 
 
 def test_save_and_load(tmp_path) -> None:  # noqa: ANN001
-    project = Project(tmp_path, Config())
+    project = Project(tmp_path, config())
     lock = Lock(image=["bash"], packages={"gcc-c++": locked("1:14.2-1"), "bash": locked("5.2-3")})
     lock.buildroots = {"xen": ["gcc-c++"]}
     lock.iso = ["gcc-c++"]
     save_lock(project, lock)
-    assert lock_path(project) == tmp_path / "locks/x86_64_v2.toml"
+    assert lock_path(project) == tmp_path / "xcraft.x86_64_v2.lock"
     assert load_lock(project) == lock
     # one line per package, for readable diffs
     assert '"gcc-c++" = { evr = "1:14.2-1", arch = "x86_64_v2", source = "foo"' in lock_path(project).read_text()
@@ -66,7 +67,7 @@ def test_pending() -> None:
 
 
 def test_pending_saved(tmp_path) -> None:  # noqa: ANN001
-    project = Project(tmp_path, Config())
+    project = Project(tmp_path, config())
     lock = Lock(packages={"gcc-c++": locked("1:14.2-1")}, pending={"xen": {"gcc-c++": "1:14.1-3"}})
     save_lock(project, lock)
     assert load_lock(project) == lock
@@ -74,8 +75,8 @@ def test_pending_saved(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_ack(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: ANN001
-    (tmp_path / "xcraft.toml").write_text("")
-    project = Project(tmp_path, Config())
+    (tmp_path / "xcraft.toml").write_text(TOML)
+    project = Project(tmp_path, config())
     pending = {"xen": {"glibc": "2.39-1", "openssl-devel": "3.2-1"}, "vmss": {"glibc": "2.39-1"}}
     save_lock(project, Lock(pending=pending))
     monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path))
@@ -88,7 +89,7 @@ def test_ack(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: ANN001
 
 
 def test_iso_tools(tmp_path) -> None:  # noqa: ANN001
-    project = Project(tmp_path, Config())
+    project = Project(tmp_path, config())
     save_lock(project, Lock(image=["bash"], packages={"bash": locked("5.2-3")}))
     tools = {"bash": locked("5.2-3"), "xorriso": locked("1.5.6-1")}
     _lock_tools(project, tools)
@@ -98,7 +99,7 @@ def test_iso_tools(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_frozen(tmp_path) -> None:  # noqa: ANN001
-    project = Project(tmp_path, Config())
+    project = Project(tmp_path, config())
     lock = Lock(image=["bash"], packages={"bash": locked("5.2-3")}, buildroots={"xen": ["bash"]})
     save_lock(project, lock)
     project.frozen = True

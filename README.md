@@ -1,7 +1,7 @@
 # xcraft — XCP-ng Distribution Build Tool
 
-Build the RPM packages of [XCP-ng](https://xcp-ng.org/) from the specs in this repository, in a container made only
-of AlmaLinux 10 packages, in the versions of a committed lock, and of the packages built here.
+Build the RPM packages of [XCP-ng](https://xcp-ng.org/) from the specs of a project, xcp-ng-dist for XCP-ng, in a
+container made only of AlmaLinux 10 packages, in the versions of a committed lock, and of the packages built there.
 
 ## Prerequisites
 
@@ -60,22 +60,23 @@ xcraft --install-completion  # optional
 | `xcraft bump <pkg> --version v [-m message]` | Update a package to a new version, with the archive of its `Source0`, and the packages of the same version; the changelog entry is `Update to <v>` by default |
 | `xcraft clean [<pkg>...] [--builds] [--ccache]` | Remove the build trees and outdated builds, and optionally all builds and compiler caches, of the given packages or all; the source archives are kept |
 | `xcraft patchset [--package p] [--base ref] [--first n]` | Update the patches of a package with the commits of the current git branch, from the developer's repository |
-| `xcraft import <pkg>... [--branch b] [--url u] [--repo r]` | Copy packages from their packaging repositories, new ones into `specs/base/`, or `specs/<r>/` |
+| `xcraft import <pkg>... [--branch b] [--url u] [--repo r]` | Copy packages from their packaging repositories, new ones into `base/`, or `<r>/` |
 | `xcraft doctor [--fix]` | Check that the host has what xcraft needs, and with `--fix`, configure the emulation of the other architectures, with sudo, after showing the commands and asking |
 | `xcraft import --all` | Re-import all packages from where they were imported |
 | `xcraft --trace <command>` | Show stack traces on errors |
 
 ## How it works
 
-**Project.** xcraft works on the specs that come with its code: the project is the checkout of xcraft containing
-the code run, wherever the command is run from. `XCRAFT_PROJECT` can point to another one, like in the tests.
+**Project.** Like git, xcraft works on the project of the current directory: the first of it and its parents with an
+`xcraft.toml`. `XCRAFT_PROJECT` can point to another one, like in the tests. XCP-ng's is xcp-ng-dist, which pins the
+version of xcraft it uses: run `uv sync` there, then `uv run xcraft`, or `xcraft` in its activated `.venv`.
 
-**Packages.** The packages are grouped by the repository they are published in: `specs/<repo>/<pkg>/`, like
-`specs/base/xen/`. Their names are unique across the repositories. Each package directory holds a spec and its
-sources, except the source archives: they are listed with their SHA-256 in `specs/<repo>/<pkg>/sources`, and stored in
-`.xcraft/cache/sources/<sha256>/<filename>`. `xcraft import` fills a package directory from a packaging repository (by
-default `https://github.com/xcp-ng-rpms/<pkg>`, on `master`), in `specs/base/` for a new package, or another
-repository with `--repo`, and records where it comes from in `<pkg>/origin`. It
+**Packages.** The packages are grouped by the repository they are published in: `<repo>/<pkg>/`, like `base/xen/`,
+for the `repositories` of `xcraft.toml`, `["base"]` by default. Their names are unique across the repositories. Each
+package directory holds a spec and its sources, except the source archives: they are listed with their SHA-256 in
+`<repo>/<pkg>/sources`, and stored in `.xcraft/cache/sources/<sha256>/<filename>`. `xcraft import` fills a package
+directory from a packaging repository (by default `https://github.com/xcp-ng-rpms/<pkg>`, on `master`), in `base/` for
+a new package, or another repository with `--repo`, and records where it comes from in `<pkg>/origin`. It
 takes the archives out of git LFS for repositories with the `SPECS/` and `SOURCES/` layout, and downloads them from
 the AlmaLinux lookaside cache for dist-git repositories. With `--url` ending with `.src.rpm`, it imports a source
 RPM instead, for packages only published this way, like CentOS 7's. The spec of a package is `<pkg>.spec`, or its
@@ -86,9 +87,9 @@ in a build. The result is cached until a package directory or the image changes.
 
 **Dependencies**: see [Dependencies](#dependencies).
 
-**Build environment.** xcraft builds a container image from a base image pinned by digest, AlmaLinux 10, with only
-the configured repositories, AlmaLinux 10 and its EPEL by default, the configured RPM macros (`%dist`...) and the
-packages builds expect, in their locked versions. The image is tagged with a hash of its definition, so it is only
+**Build environment.** xcraft builds a container image from a base image pinned by digest, AlmaLinux 10 for XCP-ng,
+with only the configured repositories, AlmaLinux 10 and its EPEL for XCP-ng, the configured RPM macros (`%dist`...)
+and the packages builds expect, with those xcraft uses, in their locked versions. The image is tagged with a hash of its definition, so it is only
 built again when the configuration or the locked versions of its packages change.
 
 **Builds.** Each build runs in a fresh container: `dnf builddep`, then the dynamic `BuildRequires` if any, then
@@ -107,12 +108,13 @@ the macros it ends with, like `%{?dist}`, downloads the archive of the new `Sour
 replaces the old one in `sources`. The packages of the same archive, listed together in `same_version` in
 `xcraft.toml`, like `kernel` and `kernel-headers`, get the same version.
 
-**Configuration** is in `xcraft.toml`, which also marks the root of the project. All its settings are optional:
+**Configuration** is in `xcraft.toml`, which also marks the root of the project. Its settings are optional, but
+`base_image`, `platforms` and `repos`:
 
 ```toml
 base_image = "ghcr.io/almalinux/10-base:10.2@sha256:..."   # image the build environment is made from
 platforms = ["linux/amd64/v2", "linux/arm64"]   # the platforms of the builds, one at a time
-packages = ["rpm-build", "gcc", ...]   # installed in the build environment
+packages = ["rpm-build", "gcc", ...]   # installed in the build environment, with what xcraft uses
 same_version = [["kernel", "kernel-headers"]]   # updated together by xcraft bump --version
 [ccache_size]                          # the maximum size of the compiler cache of packages, 5G by default
 kernel = "20G"
@@ -127,7 +129,8 @@ arches = ["x86_64_v2"]                 # optional: the only architectures it is 
 foo = "https://.../foo-1.0-1.noarch.rpm"
 ```
 
-The defaults are in `xcraft/project.py`; a setting given in `xcraft.toml` replaces its default, `repos` included.
+The settings of XCP-ng are in the `xcraft.toml` of xcp-ng-dist, and those of the tests in `tests/project/xcraft.toml`,
+the project they copy.
 
 **Architectures.** xcraft works on one platform at a time: the one of the RPM architecture given with `--arch`, like
 `aarch64`, or in `$XCRAFT_ARCH`, or else the host's, `x86_64_v2` on an x86_64 host. So `xcraft build foo` builds `foo`
@@ -156,7 +159,7 @@ builds it again as soon as one of its inputs changes. The key is the name of the
 | The platform | The one xcraft works on, see [Architectures](#configuration) | `--arch` |
 | The extra upstream RPMs | The names and URLs of `extra_upstream` | `extra_upstream` |
 | The recipe | The build script, `xcraft/buildenv/build.sh`, the `.repo` file of the local repository, and the script recording the build roots | A change to how xcraft builds |
-| The package | Its name, and all the files of `specs/<repo>/<pkg>/`, but `origin`: their paths, contents, and whether they are executable. The `sources` manifest covers the archives by their SHA-256 | Any change to the spec, a patch, a source file, or an archive |
+| The package | Its name, and all the files of `<repo>/<pkg>/`, but `origin`: their paths, contents, and whether they are executable. The `sources` manifest covers the archives by their SHA-256 | Any change to the spec, a patch, a source file, or an archive |
 | Its build root | The upstream packages its last build installed besides the image's, as recorded in the lock, with their locked versions | `xcraft lock --update` of one of them, or a build installing other ones |
 | Its test build suffix | `.0.ID.<n>` or `~ID.<n>`, for `--test` and `--pre` only | Each test build |
 | Its dependencies | The keys of the packages of ours its build installs (see [Dependencies](#dependencies)), like `kernel-headers`, in all the build roots | Any change to one of them, recursively |
@@ -165,7 +168,7 @@ The first four are common to all the packages: changing one of them rebuilds eve
 other, a cycle, share the hash of them all, from which each one gets its own key.
 
 **What it does not cover.** The path of the checkout, the machine, the user and the time; `origin`, and the files out of
-`specs/<repo>/<pkg>/`, but those above; the SHA-256 and architecture of the upstream packages, only their versions. So the
+`<repo>/<pkg>/`, but those above; the SHA-256 and architecture of the upstream packages, only their versions. So the
 same commit gives the same keys everywhere: a build pushed by CI, or by a colleague, is fetched by any checkout instead
 of being built again. The local repository of the builds gets its own name in each checkout, `xcraft-<project id>`,
 for its own metadata in the dnf cache the containers share, but the recipe the key covers has a placeholder instead.
@@ -248,10 +251,10 @@ does, from a snapshot like `xcraft publish --local` makes, of its architecture o
 
 - `install.img`, the installer's root filesystem, is installed from the snapshot: its packages, `[iso] installer` in
   `xcraft.toml`, are published with the others. The firmware files no driver names are removed, and the files of
-  `iso/installimg/` are added, like its systemd units;
+  `iso/installimg/` of the project are added, like its systemd units;
 - the boot files come from our packages: the kernel, Xen's debug builds, grub's image for CDs and host-installer's
   grub configurations, for UEFI, with isolinux, for BIOS, configured by the files of `iso/tree/`;
-- its repository has `[iso] packages`, `xcp-ng-deps` by default, and what they need, signed like the snapshot, unless
+- its repository has `[iso] packages`, like `xcp-ng-deps`, and what they need, signed like the snapshot, unless
   `--netinstall`, where the installer gets the packages from the network;
 - it is hybrid: it boots with BIOS and UEFI, from a CD or a USB stick.
 
@@ -293,7 +296,8 @@ Without network, or when the storage is unavailable, everything still works with
 The storage does not list its directories: xcraft writes the `index.html` page of each directory it changes, and of
 their parents, to browse it. `xcraft push index` makes all of them, for what was not written by xcraft.
 
-For development, `local-s3.sh` runs such a storage locally, with Garage in a container, and `xcraft.toml` uses it:
+For development, `local-s3.sh` runs such a storage locally, with Garage in a container, and the `xcraft.toml` of xcp-ng-dist uses
+it:
 
 ```
 ./local-s3.sh up                  # set it up, or start it again, and show the credentials to export
@@ -317,6 +321,8 @@ repos/<release>/<date>[.<n>]/build/<arch>/   the upstream RPMs our builds need, 
 repos/<release>/<date>[.<n>]/build/Source/   their source RPMs
 repos/<release>/latest/...                   a copy of the latest snapshot
 ```
+
+`<release>` is `[publish] release` of `xcraft.toml`, like `9.0`.
 
 - Our packages are built or fetched, but only fetched for the architectures the host emulates: those are built by
   native builders, which push them. The publish fails when the remote storage misses one of their builds.
@@ -380,7 +386,7 @@ The upstream packages keep their signatures, which are checked against the keys 
 
 A package depends on two kinds of packages, handled differently.
 
-**Our packages**, the ones in `specs/`, are known to xcraft from the parsed specs. A package depends on one of ours
+**Our packages**, the ones of the project, are known to xcraft from the parsed specs. A package depends on one of ours
 when:
 
 - one of its `BuildRequires` is the name, or an explicit `Provides`, of a binary package of ours;
@@ -405,11 +411,11 @@ They decide:
   repositories, so dnf takes our package whenever we built one, even when a repository has a newer version (like
   AlmaLinux's ocaml 5.2, while we build 4.14).
 
-**Everything else** comes from the repositories of the build environment: by default AlmaLinux 10 (BaseOS, AppStream,
+**Everything else** comes from the repositories of the build environment: for XCP-ng, AlmaLinux 10 (BaseOS, AppStream,
 CRB, extras, devel) and its EPEL, which get updates, the security fixes in particular. xcraft doesn't model these
 dependencies: in each build, `dnf builddep` resolves and installs the `BuildRequires`, with its own choice among
 providers. But dnf only sees the locked version of the packages in the lock (see below). A build environment is
-therefore made of the locked packages and of `specs/`: a package of ours that is not built, with `--no-deps` for
+therefore made of the locked packages and of ours: a package of ours that is not built, with `--no-deps` for
 instance, is not available.
 
 To see them anyway, `xcraft graph --upstream` resolves the requirements between the locked packages, in the build
@@ -419,7 +425,7 @@ shows our packages built against `python3`, through the upstream packages requir
 
 ## The lock
 
-`locks/<arch>.toml` is committed with the specs. It has:
+`xcraft.<arch>.lock`, a TOML file next to `xcraft.toml`, is committed with the specs. It has:
 
 - `[packages]`: one version of each upstream package installed in the build environment image or in a build root,
   for the whole tree, with its source package, repository and SHA-256, on one line, for readable diffs;
