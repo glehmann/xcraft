@@ -8,13 +8,20 @@ permissions: {}
 jobs:
   pytest:
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
-    runs-on: ubuntu-latest
+    # natively on both architectures: the tests build for the host's
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    name: pytest (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - uses: $/.github/actions/uv-setup
-      # the build tests run podman, which the runners have, rootless
+      # the build tests run podman, rootless: the arm64 runners may not have it
+      - run: command -v podman || { sudo apt-get update -q && sudo apt-get install -qy podman; }
       - run: podman info --format '{{.Version.Version}} {{.Host.Security.Rootless}}'
       # pytest's colours only: FORCE_COLOR, or GITHUB_ACTIONS for typer, would make the output of xcraft the one of a
       # terminal, which the tests do not expect; GitHub does not let the workflows set GITHUB_ACTIONS

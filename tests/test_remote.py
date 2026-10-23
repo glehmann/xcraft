@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests import PROJECT, TOML
+from tests import ARCH, PLATFORM, PROJECT, TOML
 from tests.test_build import write_spec, xcraft
 from xcraft import remote
 from xcraft.build import BuildError, prepare_tree, source_path
@@ -92,7 +92,7 @@ def page(directory: str) -> str:
 
 REMOTE = (
     # only the host's: publish fetches the builds of the others
-    TOML.replace('platforms = ["linux/amd64/v2", "linux/arm64"]', 'platforms = ["linux/amd64/v2"]')
+    TOML.replace('platforms = ["linux/amd64/v2", "linux/arm64"]', f'platforms = ["{PLATFORM}"]')
     + f'[remote]\nurl = "{WEB}"\ns3_endpoint = "http://localhost:{S3_PORT}"\nbucket = "xcraft"\n'
     # not the build repository, with the hundreds of source packages of their build environment to download
     '[publish]\nrelease = "9.0"\nbuild = false\n'
@@ -202,7 +202,7 @@ def test_builds(root: Path) -> None:
     assert xcraft("push", "builds", "trivial")[1] == "↑ trivial\n1 pushed, 0 already in the remote storage\n"
     # browsable, as the storage does not list directories
     assert 'href="builds/"' in page("")
-    assert 'href="trivial/"' in page("builds/x86_64_v2/")
+    assert 'href="trivial/"' in page(f"builds/{ARCH}/")
     # with the size of all that is below them and the date of the newest file, from their pages when only their
     # parent is listed
     assert re.search(
@@ -225,10 +225,10 @@ def test_builds(root: Path) -> None:
     assert output.splitlines()[0] == "↓ trivial fetched"
     assert output.splitlines()[-1] == "1 built, 1 fetched"
     assert list(
-        (root / ".xcraft/cache/builds/x86_64_v2/trivial").glob("*/RPMS/noarch/trivial-1.0-1.xcpng8.99.noarch.rpm")
+        (root / f".xcraft/cache/builds/{ARCH}/trivial").glob("*/RPMS/noarch/trivial-1.0-1.xcpng8.99.noarch.rpm")
     )
     # built, even though the storage has it
-    shutil.rmtree(root / ".xcraft/cache/builds/x86_64_v2/trivial")
+    shutil.rmtree(root / f".xcraft/cache/builds/{ARCH}/trivial")
     code, output = xcraft("build", "trivial", "--no-fetch")
     assert code == 0, output
     assert output.splitlines()[-1] == "1 built"
@@ -288,9 +288,10 @@ def test_push_needs_the_credentials(root: Path, monkeypatch: pytest.MonkeyPatch)
 
 
 def test_publish(root: Path) -> None:
-    # two architectures the host runs, built for both
-    two = REMOTE.replace('["linux/amd64/v2"]', '["linux/amd64/v2", "linux/amd64"]')
-    (root / "xcraft.toml").write_text(f'{two}extra = ["bc"]\n')
+    # the architectures the host runs, built for all: two on x86_64
+    arches = [ARCH, "x86_64"] if ARCH == "x86_64_v2" else [ARCH]
+    platforms = ", ".join(f'"{p}"' for p in [PLATFORM, "linux/amd64"][: len(arches)])
+    (root / "xcraft.toml").write_text(REMOTE.replace(f'["{PLATFORM}"]', f"[{platforms}]") + 'extra = ["bc"]\n')
     code, output = xcraft("publish", "--unsigned")
     assert code == 0, output
     lock = load_lock(Project.find())
@@ -301,14 +302,14 @@ def test_publish(root: Path) -> None:
     day = datetime.now(UTC).date().isoformat()
     for name in (day, "latest"):
         base = f"repos/9.0/{name}/base"
-        for repo in ("x86_64_v2", "x86_64", "Source"):
+        for repo in (*arches, "Source"):
             assert remote.exists(storage, f"{base}/{repo}/repodata/repomd.xml")
             assert remote.exists(
                 storage, f"{base}/{repo}/trivial-1.0-1.xcpng8.99.{'src' if repo == 'Source' else 'noarch'}.rpm"
             )
         # the sources of the upstream packages too
         assert remote.exists(storage, f"{base}/Source/bc-{lock.packages['bc'].evr}.src.rpm")
-        assert 'href="trivial-1.0-1.xcpng8.99.noarch.rpm"' in page(f"{base}/x86_64/")
+        assert 'href="trivial-1.0-1.xcpng8.99.noarch.rpm"' in page(f"{base}/{arches[-1]}/")
     # a second one the same day, without changing the locks
     code, output = xcraft("publish", "--locked", "--unsigned")
     assert code == 0, output
@@ -316,12 +317,13 @@ def test_publish(root: Path) -> None:
     # a local one is of the host's architecture, unless asked
     code, output = xcraft("publish", "--local")
     assert code == 0, output
-    assert "warning: only x86_64_v2 is published, not x86_64: --arch all publishes them all" in output
-    assert sorted(p.name for p in (root / ".xcraft/publish/base").iterdir()) == ["Source", "x86_64_v2"]
-    code, output = xcraft("publish", "--local", "--arch", "x86_64")
-    assert code == 0, output
-    assert "warning" not in output
-    assert sorted(p.name for p in (root / ".xcraft/publish/base").iterdir()) == ["Source", "x86_64"]
+    assert sorted(p.name for p in (root / ".xcraft/publish/base").iterdir()) == ["Source", ARCH]
+    if len(arches) > 1:
+        assert f"warning: only {ARCH} is published, not x86_64: --arch all publishes them all" in output
+        code, output = xcraft("publish", "--local", "--arch", "x86_64")
+        assert code == 0, output
+        assert "warning" not in output
+        assert sorted(p.name for p in (root / ".xcraft/publish/base").iterdir()) == ["Source", "x86_64"]
     # what our packages need at runtime is checked
     (root / "xcraft.toml").write_text(REMOTE)
     code, output = xcraft("publish", "--locked", "--local")
@@ -330,7 +332,7 @@ def test_publish(root: Path) -> None:
     # the upstream packages must be signed with the keys of the repositories
     (root / "xcraft.toml").write_text(f'{REMOTE}extra = ["bc"]\n')
     srpm = root / f".xcraft/cache/srpms/bc-{lock.packages['bc'].evr}.src.rpm"
-    shutil.copy(next(root.glob(".xcraft/cache/builds/x86_64_v2/trivial/*/SRPMS/*.src.rpm")), srpm)
+    shutil.copy(next(root.glob(f".xcraft/cache/builds/{ARCH}/trivial/*/SRPMS/*.src.rpm")), srpm)
     code, output = xcraft("publish", "--local")
     assert code == 1
     assert f"✗ base/Source/{srpm.name}: digests SIGNATURES NOT OK" in output
@@ -364,15 +366,15 @@ def test_signed_publish(root: Path) -> None:
         assert code == 0, output
         snapshot = root / ".xcraft/publish"
         assert (snapshot / "RPM-GPG-KEY").read_text() == signer.public_key()
-        for repo in ("x86_64_v2", "Source"):
+        for repo in (ARCH, "Source"):
             assert (snapshot / "base" / repo / "repodata/repomd.xml.asc").exists()
-        ours = ["base/x86_64_v2/trivial-1.0-1.xcpng8.99.noarch.rpm", "base/Source/trivial-1.0-1.xcpng8.99.src.rpm"]
+        ours = [f"base/{ARCH}/trivial-1.0-1.xcpng8.99.noarch.rpm", "base/Source/trivial-1.0-1.xcpng8.99.src.rpm"]
         check_signatures(Project.find(), snapshot, ours, what="packages of ours", public_key=signer.public_key())
         storage = Project.find().config.remote
         assert storage
-        assert remote.exists(storage, "repos/9.0/latest/base/x86_64_v2/repodata/repomd.xml.asc")
+        assert remote.exists(storage, f"repos/9.0/latest/base/{ARCH}/repodata/repomd.xml.asc")
         signed = list((root / ".xcraft/cache/signed" / signer.key / "trivial").iterdir())
-        assert remote.tree_exists(storage, f"signed/{signer.key}/x86_64_v2/trivial/{signed[0].name}")
+        assert remote.tree_exists(storage, f"signed/{signer.key}/{ARCH}/trivial/{signed[0].name}")
         # signed once: the next snapshots have the same files
         rpm = signed[0] / "RPMS/noarch/trivial-1.0-1.xcpng8.99.noarch.rpm"
         before = rpm.read_bytes()
@@ -391,7 +393,7 @@ def test_publish_rebuilt_package(root: Path, tmp_path: Path) -> None:
     assert code == 0, output
     storage = Project.find().config.remote
     assert storage
-    rpm = "base/x86_64_v2/trivial-1.0-1.xcpng8.99.noarch.rpm"
+    rpm = f"base/{ARCH}/trivial-1.0-1.xcpng8.99.noarch.rpm"
     local = root / ".xcraft/publish" / rpm
     for name in (re.search(r"published (repos/\S+),", output)[1], "repos/9.0/latest"):  # ty: ignore[not-subscriptable]
         assert remote.read_manifest(storage, name)[rpm] == sha256_of(local)
