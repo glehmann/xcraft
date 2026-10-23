@@ -76,10 +76,11 @@ def test_pending_saved(tmp_path) -> None:  # noqa: ANN001
 
 def test_ack(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: ANN001
     (tmp_path / "xcraft.toml").write_text(TOML)
-    project = Project(tmp_path, config())
+    monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path))
+    monkeypatch.delenv("XCRAFT_ARCH", raising=False)
+    project = Project.find()  # the platform of the host, which xcraft ack works on
     pending = {"xen": {"glibc": "2.39-1", "openssl-devel": "3.2-1"}, "vmss": {"glibc": "2.39-1"}}
     save_lock(project, Lock(pending=pending))
-    monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path))
     result = CliRunner().invoke(app, ["ack", "--dep", "glibc"])
     assert result.exit_code == 0, result.output
     assert result.output == "vmss: glibc\nxen: glibc\n"
