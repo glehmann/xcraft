@@ -185,25 +185,30 @@ def _warm_dnf_cache(project: Project) -> None:
 
 def image_packages(project: Project, image: str) -> dict[str, Locked]:
     """Return the upstream packages installed in `image`."""
-    return _record(project, image, [])
-
-
-def latest_versions(project: Project, names: list[str]) -> dict[str, Locked]:
-    """Return the latest versions of the upstream packages `names`."""
-    return _record(project, build_image(project), names)
-
-
-def _record(project: Project, image: str, names: list[str]) -> dict[str, Locked]:
     with project.work("record") as work:
         run(
             project,
             "record",
-            f"{DNF_LOCK} python3 /xcraft/record.py /work/record.json {' '.join(names)}",
+            f"{DNF_LOCK} python3 /xcraft/record.py /work/record.json",
             volumes=[f"{work}:/work"],
-            show="looking for the latest packages" if names else "recording the packages of the image",
+            show="recording the packages of the image",
             image=image,
         )
         return {name: Locked.model_validate(p) for name, p in json.loads((work / "record.json").read_text()).items()}
+
+
+def available_versions(project: Project, names: list[str]) -> dict[str, list[Locked]]:
+    """Return the available versions of the upstream packages `names`, oldest first."""
+    with project.work("versions") as work:
+        run(
+            project,
+            "versions",
+            f"{DNF_LOCK} python3 /xcraft/versions.py /work/versions.json {' '.join(names)}",
+            volumes=[f"{work}:/work"],
+            show=f"looking for the versions of the packages of {project.arch}",
+        )
+        versions = json.loads((work / "versions.json").read_text())
+        return {name: [Locked.model_validate(p) for p in ps] for name, ps in versions.items()}
 
 
 def run(  # noqa: PLR0913

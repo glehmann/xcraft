@@ -17,6 +17,7 @@ def ack(packages: Packages = None, dep: Dep = None, arch: Arch = None) -> None:
     project = Project.find(arch)
     with project.lock():
         lock = load_lock(project)
+        dep = lock.binaries(dep) if dep else None
         names = pending_packages(packages, lock.pending, dep or [])
         for package in names:
             cleared = sorted(

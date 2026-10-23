@@ -29,7 +29,8 @@ One tool, xcraft, and one repository, xcp-ng-dist, to build the whole XCP-ng dis
 - **A reproducible build environment**: a podman container made only of AlmaLinux 10 and EPEL packages, from a base
   image pinned by digest, with the RPM macros of XCP-ng. Each build runs in a fresh one.
 - **A committed lock**: the exact version of each upstream package, in the image and in the build root of each of our
-  packages. An AlmaLinux update changes nothing until the lock is updated, on purpose.
+  packages, the same on all the architectures. An AlmaLinux update changes nothing until the lock is updated, on
+  purpose.
 - **Our packages build against each other**: a local repository of our builds wins over upstream, so a change in a
   package is used by those built against it.
 - **Builds are cached by content**: the key covers the package, the keys of the packages it needs, the locked upstream
@@ -39,6 +40,7 @@ One tool, xcraft, and one repository, xcp-ng-dist, to build the whole XCP-ng dis
 ```
 xcraft --help                    # the commands, by what they are about
 xcraft doctor                    # what xcraft needs on the host, and how to get what it misses
+ls                               # xcraft.toml, next to the locks of the architectures
 ls base/ && ls base/xen/         # the packages, by the repository they are published in
 cat base/xen/sources             # archives listed by sha256, not stored in git
 cat xcraft.toml                  # the settings: the build environment, the remote storage...
@@ -153,11 +155,17 @@ With a test host: `--host root@testhost --upgrade`.
 ## 10. Upstream updates under control
 
 ```
-xcraft lock
-xcraft impacts
-xcraft bump python-bitarray -m "Rebuild"    # or: xcraft ack python-bitarray
-git restore base/python-bitarray            # not to rebuild sm and xapi for step 12
+xcraft lock                                 # the locks of the architectures: the same versions
+xcraft lock --check                         # what CI checks for each change
+xcraft lock --update sg3_utils              # an AlmaLinux update, of a package only xapi builds with
+xcraft impacts                              # xapi, built with the previous version, not rebuilt yet: ✗
+xcraft ack xapi                             # no new release needed; or xcraft bump xapi
+git restore xcraft.x86_64_v2.lock           # back to the cached builds
 ```
+
+Every day, CI looks for the updates of each architecture on a runner of it, without emulation, with `xcraft lock
+--available`, updates the locks of all of them at once, and proposes them in a pull request, with their impacts: see
+`.github/workflows/lock-update.yml`.
 
 A new upstream version, with the archive downloaded from the `Source0` of the spec:
 
@@ -172,7 +180,8 @@ git restore base/xcp-ng-xapi-plugins
 
 ## 11. Other architectures
 
-xcraft works on one architecture at a time: the host's by default, another one with `--arch` or `XCRAFT_ARCH`.
+xcraft works on one architecture at a time: the host's by default, another one with `--arch` or `XCRAFT_ARCH`. Each
+one has its lock, with the same versions as the others: `xcraft lock --update --arch aarch64` aligns it on them.
 Another one builds under emulation, fine for the small packages: the large ones are built by native builders, which
 share them through the storage. Before the demo, build libempserver once for aarch64: it needs kernel-headers, ~15min
 under emulation.

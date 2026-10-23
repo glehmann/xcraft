@@ -10,6 +10,10 @@ added to the lock.
 When an update changes upstream packages in the build root of one of our
 packages, it gets pending entries, with the versions its release was built
 with, until it gets a new release, or the change is acknowledged.
+
+The architectures lock the same versions, but for the suffixes of the releases
+of the rebuilds for an architecture, like AlmaLinux's .alma_altarch: an update
+takes the latest version all of them have.
 """
 
 from __future__ import annotations
@@ -41,6 +45,17 @@ class Locked(BaseModel):
     sha256: str
 
 
+class Available(BaseModel):
+    """The available versions of the locked packages of an architecture, oldest first, for the update of the locks of
+    all the architectures, with those of the others: CI looks for them on a machine of each architecture.
+    """  # noqa: D205
+
+    model_config = ConfigDict(extra="forbid")
+
+    arch: str
+    versions: dict[str, list[Locked]]
+
+
 class Lock(BaseModel):
     """The content of a lock file."""
 
@@ -68,6 +83,14 @@ class Lock(BaseModel):
                     if entries[name] == self.packages[name].evr:  # back to the version it was built with
                         del entries[name]
         self.pending = {package: entries for package, entries in self.pending.items() if entries}
+
+    def source(self, name: str) -> str:
+        """Return the source package of the upstream package `name`, itself when it is not locked anymore."""
+        return self.packages[name].source if name in self.packages else name
+
+    def binaries(self, names: list[str]) -> list[str]:
+        """Return the upstream packages `names`, binary or source names, as binary names."""
+        return sorted({*names, *(n for n in self.packages if self.source(n) in names)})
 
     def clear_pending(self, packages: list[str], upstream: list[str] | None = None) -> None:
         """Remove the pending entries of `packages`, all of them, or only those of the `upstream` packages."""
@@ -99,6 +122,52 @@ class Lock(BaseModel):
         added = sorted(installed.keys() - self.packages.keys())
         self.packages.update((name, installed[name]) for name in added)
         return added
+
+
+def same_version(evr: str, suffixes: list[str]) -> str:
+    """Return `evr` without the release `suffixes` of the rebuilds for an architecture, to compare architectures."""
+    for suffix in suffixes:
+        evr = evr.replace(suffix, "")
+    return evr
+
+
+def choose_versions(
+    locks: dict[str, Lock], available: dict[str, dict[str, list[Locked]]], suffixes: list[str]
+) -> dict[str, dict[str, Locked]]:
+    """Return the versions to lock, by architecture, of the packages of `available`, their versions oldest first, for
+    the architectures updated: the version the other `locks` have, or else the latest one all the updated ones have,
+    or else, when there is none, their latest one.
+    """  # noqa: D205
+    chosen: dict[str, dict[str, Locked]] = {arch: {} for arch in available}
+    for name in sorted({name for versions in available.values() for name in versions}):
+        candidates = {
+            arch: ps
+            for arch, versions in available.items()
+            if (ps := [p for p in versions.get(name, []) if p.arch == locks[arch].packages[name].arch])
+        }
+        if not candidates:
+            continue
+        fixed = {
+            same_version(lock.packages[name].evr, suffixes)
+            for arch, lock in locks.items()
+            if arch not in available and name in lock.packages
+        }
+        common = set.intersection(*({same_version(p.evr, suffixes) for p in ps} for ps in candidates.values()))
+        order = [v for p in next(iter(candidates.values())) if (v := same_version(p.evr, suffixes)) in common]
+        targets = fixed & common if fixed else set(order[-1:])
+        for arch, ps in candidates.items():
+            chosen[arch][name] = next((p for p in reversed(ps) if same_version(p.evr, suffixes) in targets), ps[-1])
+    return chosen
+
+
+def differences(locks: dict[str, Lock], suffixes: list[str]) -> dict[str, dict[str, str]]:
+    """Return the packages locked in other versions on some architectures, with their version on each."""
+    result = {}
+    for name in sorted({name for lock in locks.values() for name in lock.packages}):
+        evrs = {arch: lock.packages[name].evr for arch, lock in locks.items() if name in lock.packages}
+        if len({same_version(evr, suffixes) for evr in evrs.values()}) > 1:
+            result[name] = evrs
+    return result
 
 
 def lock_path(project: Project) -> Path:

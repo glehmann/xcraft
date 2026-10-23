@@ -46,9 +46,11 @@ xcraft --install-completion  # optional
 | `xcraft fetch sources [<pkg>...]` | Download the source archives missing from the source cache, from the remote storage, or else from the URL of Source0 |
 | `xcraft fetch builds [<pkg>...]` | Download the current builds missing from the build cache |
 | `xcraft fetch ccache [<pkg>...]` | Download the compiler caches of the packages, replacing the local ones |
-| `xcraft lock` | Show the lock of upstream packages |
-| `xcraft lock --update [<pkg>...]` | Update locked packages, all or some (binary or source names), to their latest versions |
-| `xcraft impacts` | Show the pending updates: the upstream packages updated since the release of the packages built with them |
+| `xcraft lock [--check]` | Show the locks of upstream packages, and the versions they differ on between the architectures; `--check` fails then |
+| `xcraft lock --outdated [<pkg>...]` | Show what `--update` would change, without changing it, and fail then, for CI |
+| `xcraft lock --available <file> [--arch a]` | Write the available versions of the locked packages of an architecture, for `--update` or `--outdated` with `--available` for each architecture, on another machine |
+| `xcraft lock --update [<pkg>...] [--arch a]` | Update locked packages, all or some (binary or source names), to the latest version all the architectures have, or only the lock of `--arch`, to the versions of the others |
+| `xcraft impacts [--markdown]` | Show the pending updates: the upstream source packages updated since the release of the packages built with them; `--markdown` as a Markdown table, like for a pull request |
 | `xcraft ack <pkg>... [--dep <upstream>]` | Clear pending updates without a new release |
 | `xcraft repo [<pkg>...] [--output dir]` | Build packages, all by default, and what they need, put them in a repository, and check that everything they require is available |
 | `xcraft shell <pkg>` | Open a shell in the build tree of a package, with its build dependencies installed and its sources prepared, where `rpmbuild -ba SPECS/<spec>` builds it, without the network like the builds, the exact command shown before the prompt |
@@ -481,17 +483,33 @@ In the build environment, dnf only sees the locked version of a locked package. 
 locked yet, for a new `BuildRequires` for instance, takes their latest versions and adds them to the lock, which is
 then committed with the spec change; with `--locked`, for CI, such a build fails instead. The lock only changes
 otherwise with `xcraft lock --update`, which takes the latest versions of all the locked packages, or of some of them,
-given by binary or source package name, to get updates and security fixes.
+given by binary or source package name, to get updates and security fixes. `xcraft lock --outdated` shows what it
+would change, without changing it, and fails then: a scheduled CI job can run it to notify of the updates, or run the
+update and propose it, like the one of xcp-ng-dist. CI looks for the versions without emulation, on a machine of each
+architecture, with `xcraft lock --available <arch>.json`, and updates the locks of all of them on one machine, from
+these files, without the build environment: `xcraft lock --update --available x86_64_v2.json --available aarch64.json`.
+
+**Architectures.** Each architecture has its lock, with its own image and build roots, but they lock the same versions,
+so that the distribution is the same on all of them. `xcraft lock --update` updates the locks of all the architectures
+at once, to the latest version all of them have: when the updates of an architecture are late, the others wait for it.
+The versions are compared without `release_suffixes` of `xcraft.toml`, like `[".alma_altarch"]`, of the packages
+AlmaLinux rebuilds for x86_64_v2. A build adds a new package to the lock of its architecture at its latest version,
+which can differ from the others: `xcraft lock` shows such differences, `xcraft lock --check`, for CI, fails on them,
+and `xcraft lock --update --arch <arch>` aligns the lock of an architecture on the versions of the others, like a new
+one, without updating them. For an emulated architecture, dnf looks for the versions under emulation, once the
+metadata of its repositories are solved natively.
 
 Since the cache key of a package covers the locked versions of its build root, an update rebuilds the packages whose
 build root has an updated package, and the packages built against them.
 
 A rebuild is not a release: rebuilt packages keep their version-release, so hosts keep the one published. For each
 update, the packages with the updated package in their build root, or in the image, get pending entries, which
-`xcraft impacts` shows, grouped by upstream package, with whether each package builds with the current lock. They
-stay until decided: `xcraft bump`, when the update requires shipping a rebuild (static linking, OCaml module hashes,
-soname changes...), or `xcraft ack`, when it does not, like most ABI compatible updates, with the reason in the
-commit. Both work on packages, or on all the packages with a pending update of an upstream package, with `--dep`.
+`xcraft impacts` shows, grouped by upstream source package, like glibc for glibc-devel and glibc-common, with whether
+each package builds with the current lock; for an update of the image, which impacts all the packages, only their
+count. They stay until decided: `xcraft bump`, when the update requires shipping a rebuild (static linking, OCaml
+module hashes, soname changes...), or `xcraft ack`, when it does not, like most ABI compatible updates, with the reason
+in the commit. Both work on packages, or on all the packages with a pending update of an upstream package, binary or
+source name, with `--dep`.
 
 **Limits.** Only the dependencies written in the specs are known before building. Those rpm generates while building,
 like libraries (`libfoo.so.1()(64bit)`) or OCaml modules (`ocaml(Stdlib) = <hash>`), are not, so a package requiring

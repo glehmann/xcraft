@@ -376,7 +376,23 @@ def test_lock(root: Path) -> None:
     assert lock.packages["zlib-ng-compat-devel"].source == "zlib-ng"
     assert "zlib-ng-compat-devel" in lock.buildroots["trivial"]
     assert xcraft("build", "trivial", "--locked") == (0, "· trivial cached\n1 cached\n")
-    assert xcraft("lock", "--update", "zlib-ng")[1].endswith("updated\n")
+    assert "0 updated\nxcraft.x86_64_v2.lock: " in xcraft("lock", "--update", "zlib-ng")[1]
+    assert xcraft("lock", "--outdated", "zlib-ng") == (0, "up to date\n")
+    # the versions of the architecture, for an update with those of the others
+    available = root / "available.json"
+    assert xcraft("lock", "zlib-ng", "--available", str(available))[1].endswith(
+        ": the available versions of 2 packages of x86_64_v2\n"
+    )
+    assert xcraft("lock", "--outdated", "zlib-ng", "--available", str(available)) == (0, "up to date\n")
+    # an update, which --outdated shows only, and fails for
+    lock = load_lock(Project.find())
+    lock.packages["zlib-ng-compat-devel"].evr = "1.0-1.el10"
+    save_lock(Project.find(), lock)
+    code, output = xcraft("lock", "--outdated", "zlib-ng")
+    assert (code, output.startswith("zlib-ng-compat-devel 1.0-1.el10 -> ")) == (1, True), output
+    assert output.endswith("1 to update: xcraft lock --update updates them\n")
+    assert load_lock(Project.find()).packages["zlib-ng-compat-devel"].evr == "1.0-1.el10"
+    assert xcraft("lock", "--update", "zlib-ng")[1].startswith("zlib-ng-compat-devel 1.0-1.el10 -> ")
 
     # a build root of locked packages, but not the one of the lock
     spec.write_text(spec.read_text().replace("BuildRequires: zlib-ng-compat-devel\n", ""))
@@ -420,13 +436,15 @@ def test_impacts_and_bump(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     save_lock(Project.find(), lock)
     code, output = xcraft("impacts")
     assert code == 0, output
-    assert "zlib-ng-compat-devel  0:1.0-1" in output
-    assert "✓ trivial" in output  # built with the current lock
+    # by source package, and built with the current lock
+    assert re.search(r"^ zlib-ng +0:1\.0-1 +\S+ +✓ trivial", output, re.MULTILINE), output
+    now = load_lock(Project.find()).packages["zlib-ng-compat-devel"].evr
+    assert xcraft("impacts", "--markdown")[1].endswith(f"| zlib-ng | 0:1.0-1 | {now} | ✓ trivial |\n")
 
     gitconfig = root / "gitconfig"
     gitconfig.write_text("[user]\n\tname = Me\n\temail = me@example.com\n")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(gitconfig))
-    assert xcraft("bump", "--dep", "zlib-ng-compat-devel", "-m", "Rebuild for zlib-ng") == (
+    assert xcraft("bump", "--dep", "zlib-ng", "-m", "Rebuild for zlib-ng") == (
         0,
         "trivial: 1.0-1 -> 1.0-2\n",
     )
