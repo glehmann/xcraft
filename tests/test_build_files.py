@@ -269,7 +269,7 @@ def test_recipe(monkeypatch: pytest.MonkeyPatch) -> None:
         "or else set it here, which rebuilds everything"
     )
     monkeypatch.setattr(build, "RECIPE", "c")
-    monkeypatch.setattr(build, "_SAME_BUILDS", {"c": "b", "b": "a"})
+    monkeypatch.setattr(build, "_SAME_BUILDS", {"c": "a", "b": "a"})
     assert recipe_key() == "a"
 
 

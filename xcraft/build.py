@@ -68,26 +68,24 @@ _SAME_BUILDS = {
         "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc",
     # record.py: without the latest versions, which another script looks for
     "9696604d19c16fc9fdebc6431bacf28b50585465cfb3148b8e041c4ff8153778":
-        "520edd959d64e226fcbb86a704bf7dbb75e57fa262ef70da5319d4e31f3ec1bc",
+        "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc",
     # build.sh and record.py: the providers of the dynamic BuildRequires too
     "e4d86b87110eac1922b1127fa00c796d08b757136324c97223ea31f34236d20b":
-        "9696604d19c16fc9fdebc6431bacf28b50585465cfb3148b8e041c4ff8153778",
+        "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc",
     # build.sh, record.py and made.py: the dynamic BuildRequires before installing them, and the packages made
     "91b1c1f54f53be472170ccaf7f1001959e51a8206718056bb0020a4d383690c5":
-        "e4d86b87110eac1922b1127fa00c796d08b757136324c97223ea31f34236d20b",
+        "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc",
     # made.py and record.py: entry points, and the dependencies of rpm headers in rpmdeps.py
     "cd1db99022f6382f7e7363906e76061130bd36e1aa129d164e8917f48cb9ea3a":
-        "91b1c1f54f53be472170ccaf7f1001959e51a8206718056bb0020a4d383690c5",
+        "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc",
 }  # fmt: skip
-"""Recipes making the same packages as an earlier one, by their hash: their builds keep the keys of the earlier one."""
+"""Recipes making the same packages as an earlier one, by their hash, with the earliest one: their builds keep its
+keys."""
 
 
 def recipe_key() -> str:
     """Return the recipe in the build keys: the earliest one making the same packages."""
-    recipe = RECIPE
-    while recipe in _SAME_BUILDS:
-        recipe = _SAME_BUILDS[recipe]
-    return recipe
+    return _SAME_BUILDS.get(RECIPE, RECIPE)
 
 
 class BuildError(RuntimeError):
