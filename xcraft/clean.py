@@ -52,10 +52,8 @@ def clean(
     paths = [state / "repo", state / "publish"]
     if names is None:
         paths += [state / "build", state / "tmp", state / "cache/extra"]
-        # keep the metadata of the current specs, the latest
-        paths += sorted((state / "cache/specs" / project.arch).glob("*.json"), key=lambda path: path.stat().st_mtime)[
-            :-1
-        ]
+        specs = sorted((state / "cache/specs" / project.arch).glob("*.json"), key=lambda path: path.stat().st_mtime)
+        paths += specs[:-1]  # but the metadata of the current specs, the latest
         packages = list(builds.glob("*"))
     else:
         paths += [state / "build" / name for name in names]
