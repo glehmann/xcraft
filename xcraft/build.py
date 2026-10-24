@@ -530,8 +530,14 @@ def _check_build(project: Project, name: str, tree: Path, *, test: bool) -> bool
     return changed
 
 
-def _build_one(
-    project: Project, name: str, keys: dict[str, str], *, status: str | None, autorev: dict[str, str]
+def _build_one(  # noqa: PLR0913
+    project: Project,
+    name: str,
+    keys: dict[str, str],
+    hashes: dict[str, str],
+    *,
+    status: str | None,
+    autorev: dict[str, str],
 ) -> None:
     """Build `name` and cache the result, showing `status` while it runs, or the build log without status.
 
@@ -542,7 +548,9 @@ def _build_one(
     resolved for it (see _check_build_root), or when it did not make the
     packages parsed from its spec (see _check_made). Raise
     BuildRootChangedError when it found what changes its build root, to build
-    it again, after the packages it needs.
+    it again, after the packages it needs. The `keys` are those of the
+    `hashes` of the package directories at the start of the builds, computed
+    again with them when the build changes the lock.
     """
     if error := project.packages[name].error:
         raise BuildError(error)
@@ -576,7 +584,7 @@ def _build_one(
     finally:
         pid_file.unlink()
     if _check_build(project, name, tree, test=name in autorev):
-        keys = build_keys(project, autorev)  # covering what the build recorded
+        keys = build_keys(project, autorev, hashes)  # covering what the build recorded
     if hash_dir(project.package_dirs[name]) != staged:
         msg = f"{project.package_dirs[name].relative_to(project.root)} changed during the build, build it again"
         raise BuildError(msg)
@@ -756,7 +764,7 @@ def _build_all(  # noqa: PLR0913
         status = None if verbose else f"[{i}/{len(plan)}] building {name}{_estimate(project, name)}"
         if use_remote:  # without a compiler cache, the one of the remote storage
             ccache.fetch_missing(project, name)
-        results[name] = _build_shown(project, name, keys, status=status, autorev=autorev, verbose=verbose)
+        results[name] = _build_shown(project, name, keys, hashes, status=status, autorev=autorev, verbose=verbose)
     return list(results.values())
 
 
@@ -780,12 +788,19 @@ def _lock_state(project: Project) -> bytes:
 
 
 def _build_shown(  # noqa: PLR0913
-    project: Project, name: str, keys: dict[str, str], *, status: str | None, autorev: dict[str, str], verbose: bool
+    project: Project,
+    name: str,
+    keys: dict[str, str],
+    hashes: dict[str, str],
+    *,
+    status: str | None,
+    autorev: dict[str, str],
+    verbose: bool,
 ) -> Result:
     """Build `name` with _build_one(), and show how it went."""
     start = time.monotonic()
     try:
-        _build_one(project, name, keys, status=status, autorev=autorev)
+        _build_one(project, name, keys, hashes, status=status, autorev=autorev)
     except BuildRootChangedError as e:
         console.print(f"[yellow]↻[/] {name}: {escape(str(e))}")
         return Result(name, "again")
