@@ -230,9 +230,7 @@ def assemble(
         if build:
             _assemble_build(project, dest, sources[BUILD], signer=signer)
     for repo in sources.values():
-        repo.index()
-        if signer:
-            signer.sign_file(repo.path / "repodata/repomd.xml")
+        repo.index(signer)
     if signer:
         (dest / KEY_FILE).write_text(signer.public_key())
 
@@ -265,9 +263,7 @@ def _assemble_arch(  # noqa: PLR0913
     for rpm in extra_rpms(project):
         link(rpm, binaries.path / rpm.name)
     _add_upstream(project, load_lock(project).runtime.get(project.arch, []), dest, binaries, sources)
-    binaries.index()
-    if signer:
-        signer.sign_file(binaries.path / "repodata/repomd.xml")
+    binaries.index(signer)
     _check_installable(project, [binaries.path])
 
 
@@ -287,9 +283,7 @@ def _assemble_build(project: Project, dest: Path, sources: LocalRepo, *, signer:
     binaries = LocalRepo(project, dest / BUILD / project.arch)
     binaries.reset(extra_upstream=False)
     _add_upstream(project, build_dependencies(project), dest, binaries, sources)
-    binaries.index()
-    if signer:
-        signer.sign_file(binaries.path / "repodata/repomd.xml")
+    binaries.index(signer)
     _check_installable(project, [dest / REPO / project.arch, binaries.path])
 
 
