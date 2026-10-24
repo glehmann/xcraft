@@ -231,13 +231,7 @@ def record(project: Project, names: list[str], rpms: list[Path]) -> Resolved:
     their generated capabilities that our specs require, from the built `rpms`, theirs and those providing them.
     """  # noqa: D205
     parsed = {b.name: b for package in project.parsed.values() for b in package.binaries}
-    wanted = sorted(
-        {
-            dep_name(r)
-            for p in project.parsed.values()
-            for r in [*p.buildrequires, *(r for b in p.binaries for r in b.requires)]
-        }
-    )
+    wanted = sorted({dep_name(r) for p in project.parsed.values() for r in p.requirements})
     data = {
         **_image_data(project),
         "record": {name: {"requires": parsed[name].requires, "provides": parsed[name].provides} for name in names},
