@@ -63,7 +63,7 @@ xcraft --install-completion  # optional
 | `xcraft patchset [--package p] [--base ref] [--first n]` | Update the patches of a package with the commits of the current git branch, from the developer's repository |
 | `xcraft import <pkg or srpm>... [--branch b] [--url u] [--repo r]` | Import the history of packages from their packaging repositories, or source RPMs, as the git branches `import/<pkg>/<branch>` to merge, new packages into `base/`, or `<r>/` |
 | `xcraft doctor [--fix]` | Check that the host has what xcraft needs, and with `--fix`, configure the emulation of the other architectures, with sudo, after showing the commands and asking |
-| `xcraft import --all` | Import again the packages which have import branches |
+| `xcraft import --all` | Import again the packages which have import branches of histories, not of source RPMs only |
 | `xcraft --trace <command>` | Show stack traces on errors |
 
 ## How it works
@@ -241,7 +241,7 @@ The project's history must start with an empty commit: the first imported commit
 depends on the commits imported and on it: importing again gives the same commits, with the new ones on top, and the
 branches sharing commits, like master merging XS-9.0, share them. A merge brings the package into the project, with
 its history, and the next ones bring the new commits, which `xcraft import --all` imports for all the packages with
-import branches:
+import branches of histories:
 
 ```
 git merge import/xen/master import/libempserver/master
