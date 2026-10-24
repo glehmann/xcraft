@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from xcraft.project import Project
+    from xcraft.signing import Signer
 
 # its own id in each project, {repo}, for its own metadata in the dnf cache the containers share: the builds do
 # not depend on it, nor their keys
@@ -111,8 +112,8 @@ class LocalRepo:
         repo_file.write_text(REPO_FILE.format(repo=repo_id(self.project)))
         return [f"{self.path}:/xcraft-repo:ro", f"{repo_file}:/etc/yum.repos.d/xcraft.repo:ro"]
 
-    def index(self) -> None:
-        """Generate the metadata of the repository, when it changed."""
+    def index(self, signer: Signer | None = None) -> None:
+        """Generate the metadata of the repository, when it changed, signed by `signer`, if any."""
         if not self.up_to_date:
             run(
                 self.project,
@@ -123,3 +124,5 @@ class LocalRepo:
                 network=False,
             )
             self.up_to_date = True
+        if signer:
+            signer.sign_file(self.path / "repodata/repomd.xml")
