@@ -428,13 +428,10 @@ def _check_made(project: Project, name: str, tree: Path, *, test: bool) -> None:
     """
     made = {n: b for n, b in json.loads((tree / "made.json").read_text()).items() if not is_debug(n)}
     parsed = {b.name: b for b in project.parsed[name].binaries if not is_debug(b.name)}
-    problems = [
-        *(f"+{n}" for n in sorted(made.keys() - parsed.keys())),
-        *(f"-{n}" for n in sorted(parsed.keys() - made.keys())),
-    ]
+    problems = changes(set(parsed), set(made))
     for n in sorted(made.keys() & parsed.keys()):
         b, m = parsed[n], made[n]
-        if (m["arch"], m["evr"] if not test else "") != (b.arch, b.evr if not test else ""):
+        if m["arch"] != b.arch or (not test and m["evr"] != b.evr):
             problems.append(f"{n}-{m['evr']}.{m['arch']} rather than {b.evr}.{b.arch}")
         problems += [
             f"{n} without the {field} {', '.join(missing)}"
