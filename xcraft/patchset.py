@@ -29,13 +29,17 @@ class PatchsetError(RuntimeError):
     """Raised when a patchset cannot be exported."""
 
 
+def _origin(repo: Path) -> str:
+    """Return the URL of the origin remote of a git repository, or its path without one."""
+    try:
+        return git("-C", str(repo), "remote", "get-url", "origin")
+    except subprocess.CalledProcessError:
+        return str(repo.resolve())
+
+
 def repo_name(repo: Path) -> str:
     """Return the name of a git repository: the one of its origin remote, or of its directory."""
-    try:
-        url = git("-C", str(repo), "remote", "get-url", "origin")
-    except subprocess.CalledProcessError:
-        return repo.resolve().name
-    return url.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1].removesuffix(".git")
+    return _origin(repo).rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1].removesuffix(".git")
 
 
 def guess_package(name: str, packages: dict[str, Package]) -> str | None:
@@ -134,12 +138,8 @@ def update_patchset(pkg_dir: Path, spec: Path, repo: Path, base: str, first: int
             raise PatchsetError(msg)
         head = git("-C", str(repo), "rev-parse", "--short=12", "HEAD")
         branch = git("-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD")
-        try:
-            origin = git("-C", str(repo), "remote", "get-url", "origin")
-        except subprocess.CalledProcessError:
-            origin = str(repo.resolve())
         block = [
-            f"{BEGIN}{origin} {branch} {base}..{head}\n",
+            f"{BEGIN}{_origin(repo)} {branch} {base}..{head}\n",
             *(f"Patch{number}: {patch.name}\n" for number, patch in zip(numbers, patches, strict=True)),
             f"{END}\n",
         ]
