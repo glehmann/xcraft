@@ -138,11 +138,11 @@ def copy(storage: Remote, src: str, dest: str) -> None:
 
 
 def listing(storage: Remote, prefix: str) -> list[str]:
-    """Return the paths under `prefix`, with the S3 credentials, as the public reads cannot list."""
-    log.debug("listing %s", _s3_url(storage, prefix))
+    """Return the files below the directory `prefix`, relative to it, but the pages of the directories, with the S3
+    credentials, as the public reads cannot list.
+    """  # noqa: D205
     with _writing(storage, f"list {prefix}") as s3:
-        pages = s3.get_paginator("list_objects_v2").paginate(Bucket=storage.bucket, Prefix=prefix)
-        return [o["Key"] for page in pages for o in page.get("Contents", [])]
+        return list(_objects(s3, storage.bucket, prefix, below=True)[1])
 
 
 def delete(storage: Remote, paths: list[str]) -> None:

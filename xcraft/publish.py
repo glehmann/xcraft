@@ -338,8 +338,7 @@ def snapshot_name(project: Project, storage: Remote) -> str:
 
 def _delete_stale(storage: Remote, prefix: str, keep: set[str]) -> None:
     """Delete the files under `prefix` but those of `keep`, and the pages of the directories, written again after."""
-    stale = [p for p in remote.listing(storage, f"{prefix}/") if p.removeprefix(f"{prefix}/") not in keep]
-    remote.delete(storage, [p for p in stale if Path(p).name != remote.INDEX])
+    remote.delete(storage, [f"{prefix}/{p}" for p in remote.listing(storage, f"{prefix}/") if p not in keep])
 
 
 def upload_snapshot(
