@@ -173,22 +173,18 @@ class TestBuild:
 
 def test_builds(project: Project, name: str) -> list[TestBuild]:
     """Return the latest cached test or pre build of `name` for each ID, the newest first."""
-    latest: dict[tuple[str, str], TestBuild] = {}
+    latest: dict[tuple[str, str], tuple[TestBuild, Path]] = {}
     for marker in cached_build(project, name, "").glob("[!.]*/autorev"):
-        autorev = json.loads(marker.read_text())
-        if not (m := _TEST_SUFFIX.match(autorev[name])):
+        if not (m := _TEST_SUFFIX.match(json.loads(marker.read_text())[name])):
             continue
         kind = "test" if m["test"] else "pre"
-        build = TestBuild(
-            kind=kind,
-            ident=m[kind],
-            number=int(m["number"]),
-            built=(marker.parent / "build.log").stat().st_mtime,
-            current=build_keys(project, autorev)[name] == marker.parent.name,
-        )
-        if (kind, build.ident) not in latest or build.number > latest[kind, build.ident].number:
-            latest[kind, build.ident] = build
-    return sorted(latest.values(), key=lambda build: -build.built)
+        built = (marker.parent / "build.log").stat().st_mtime
+        # the numbers start again with each release
+        if (kind, m[kind]) not in latest or built > latest[kind, m[kind]][0].built:
+            latest[kind, m[kind]] = TestBuild(kind, m[kind], int(m["number"]), built, current=False), marker
+    for build, marker in latest.values():
+        build.current = build_keys(project, json.loads(marker.read_text()))[name] == marker.parent.name
+    return sorted((build for build, _ in latest.values()), key=lambda build: -build.built)
 
 
 def builds_repo(project: Project, keys: dict[str, str], names: Iterable[str] | None = None) -> LocalRepo:
@@ -346,6 +342,11 @@ class Result:
 
     name: str
     status: str  # cached, fetched, built, failed, skipped, or again, to build again
+
+    @property
+    def failed(self) -> bool:
+        """Whether it is not built: failed, skipped, or still to build again."""
+        return self.status in ("failed", "skipped", "again")
 
 
 def previous_duration(project: Project, name: str) -> float | None:
@@ -536,15 +537,18 @@ def record_built(project: Project, names: list[str], keys: dict[str, str]) -> bo
                 "provides": {b: result.provides[b] for b in binaries[name] if b in result.provides},
             }
             write_atomically(builds[name] / "recorded.json", json.dumps(recorded))
-    before = lock.model_dump()
-    for build in builds.values():
-        recorded = found(build) or {}
-        for field in ("requires", "provides"):
-            for binary, values in recorded.get(field, {}).items():
-                getattr(lock, field).record(project.arch, project.first, binary, values)
-    if lock.model_dump() == before:
-        return False
-    save_lock(project, lock)
+    # what dry runs do too, without the lock of the project otherwise
+    with project.lock():
+        lock = load_lock(project)
+        before = lock.model_dump()
+        for build in builds.values():
+            recorded = found(build) or {}
+            for field in ("requires", "provides"):
+                for binary, values in recorded.get(field, {}).items():
+                    getattr(lock, field).record(project.arch, project.first, binary, values)
+        if lock.model_dump() == before:
+            return False
+        save_lock(project, lock)
     project.refresh()
     return True
 
@@ -712,7 +716,8 @@ def build(  # noqa: PLR0913
         if attempt or all(r.status != "again" for r in results):
             break
         console.print("the builds found what changes the build roots: planning them again")
-    return results
+    # those to build again still, after the second attempt
+    return [Result(r.name, "failed") if r.status == "again" else r for r in results]
 
 
 def _record_cached(project: Project, autorev: dict[str, str]) -> dict[str, str]:

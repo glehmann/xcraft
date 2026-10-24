@@ -5,9 +5,12 @@ from datetime import date
 
 import pytest
 
-from xcraft.commands.bump import same_version
+from tests import config
+from xcraft.commands.bump import _update_specs, same_version
+from xcraft.project import Project
 from xcraft.release import add_changelog_entry, bump_release, reset_release, set_version
 from xcraft.sources import archive_name
+from xcraft.specs import Binary, Package
 
 
 @pytest.mark.parametrize(
@@ -72,3 +75,28 @@ def test_same_version() -> None:
     groups = [["kernel", "kernel-headers"]]
     assert same_version(groups, "kernel-headers") == ["kernel", "kernel-headers"]
     assert same_version(groups, "xen") == ["xen"]
+
+
+def test_failed_bumps_change_nothing(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: ANN001
+    project = Project(tmp_path, config())
+    for name in ("a", "b"):
+        (tmp_path / "base" / name).mkdir(parents=True)
+        (tmp_path / "base" / name / f"{name}.spec").write_text(
+            f"Name: {name}\nVersion: 1\nRelease: 1%{{?dist}}\n%changelog\n"
+        )
+    (tmp_path / "a-2.tar.gz").write_bytes(b"new")
+    binary = Binary(name="a", evr="2-1", arch="noarch", provides=[], requires=[])
+    after = {"a": Package(name="a", binaries=[binary], source0=f"file://{tmp_path}/a-2.tar.gz"), "b": Package(name="b")}
+    monkeypatch.setattr("xcraft.commands.bump.load_packages", lambda _: after)
+    before = {name: Package(name=name) for name in ("a", "b")}
+    specs = {name: (tmp_path / "base" / name / f"{name}.spec").read_text() for name in ("a", "b")}
+    # the archive of a downloaded, but b has none
+    with pytest.raises(ValueError, match="the Source0 of b is not a URL"):
+        _update_specs(project, before, ["a", "b"], version="2", author="Me <me@example.com>", message="")
+    assert not (tmp_path / "base/a/sources").exists()
+    assert {name: (tmp_path / "base" / name / f"{name}.spec").read_text() for name in ("a", "b")} == specs
+    # a spec rpm cannot parse anymore
+    after["b"] = Package(name="b", error="bad spec")
+    with pytest.raises(RuntimeError, match="the specs cannot be parsed: b: bad spec"):
+        _update_specs(project, before, ["a", "b"], version="", author="Me <me@example.com>", message="")
+    assert {name: (tmp_path / "base" / name / f"{name}.spec").read_text() for name in ("a", "b")} == specs

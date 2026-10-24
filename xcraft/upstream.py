@@ -13,7 +13,6 @@ from xcraft.resolution import resolve_image
 from xcraft.specs import dep_name
 
 if TYPE_CHECKING:
-    from pathlib import Path
 
     from xcraft.project import Project
 
@@ -49,13 +48,11 @@ def upstream_requires(project: Project) -> UpstreamRequires:
         }
     )
 
-    def cache() -> Path:
-        script = (BUILDENV / "requires.py").read_text()
-        key = hashlib.sha256(json.dumps([script, image_tag(project), data]).encode()).hexdigest()
-        return project.state / "cache/upstream" / f"{key}.json"
-
-    if not cache().exists():
-        build_image(project)  # which may change its tag, when it is new
+    script = (BUILDENV / "requires.py").read_text()
+    key = hashlib.sha256(json.dumps([script, image_tag(project), data]).encode()).hexdigest()
+    cache = project.state / "cache/upstream" / f"{key}.json"
+    if not cache.exists():
+        build_image(project)
         with project.work("upstream") as work:
             (work / "input.json").write_text(data)
             run(
@@ -65,6 +62,6 @@ def upstream_requires(project: Project) -> UpstreamRequires:
                 volumes=[f"{work}:/work"],
                 show="resolving the requirements of the upstream packages",
             )
-            cache().parent.mkdir(parents=True, exist_ok=True)
-            (work / "output.json").rename(cache())
-    return UpstreamRequires.model_validate_json(cache().read_bytes())
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            (work / "output.json").rename(cache)
+    return UpstreamRequires.model_validate_json(cache.read_bytes())

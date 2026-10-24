@@ -6,12 +6,13 @@ import fcntl
 import json
 import os
 import re
+import tarfile
 from typing import TYPE_CHECKING
 
 import pytest
 
 from tests import TOML, config
-from xcraft import build
+from xcraft import build, ccache
 from xcraft.build import (
     BuildError,
     _check_made,
@@ -26,7 +27,7 @@ from xcraft.clean import clean, repos_disk_usage
 from xcraft.commands import complete_arch
 from xcraft.localrepo import RepoError, fresh_dir
 from xcraft.lock import Lock, load_lock, save_lock
-from xcraft.project import Project, ProjectLockedError
+from xcraft.project import Project, ProjectLockedError, Remote
 from xcraft.publish import build_dependencies
 from xcraft.resolution import Resolved
 from xcraft.sources import cache_source, write_manifest
@@ -310,3 +311,41 @@ def test_record_built(project: Project, monkeypatch: pytest.MonkeyPatch) -> None
     assert load_lock(project).requires.shared == {"foo": ["bar"]}
     monkeypatch.setattr("xcraft.build.record", lambda *_: pytest.fail("recorded again"))
     assert not record_built(project, ["foo"], {"foo": "key"})
+
+
+def test_builds_still_to_build_again_fail(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    project.deps = {"a": set()}
+    monkeypatch.setattr(build, "build_image", lambda _: "image")
+    monkeypatch.setattr(build, "_record_cached", lambda *_: {"a": "key"})
+    attempts = []
+    monkeypatch.setattr(build, "_build_all", lambda *_, **__: attempts.append(1) or [build.Result("a", "again")])
+    assert build.build(project, ["a"]) == [build.Result("a", "failed")]
+    assert len(attempts) == 2
+
+
+def test_latest_test_builds(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(build, "build_keys", lambda *_: {"foo": "other"})
+    # the numbers start again with each release: the latest is the newest
+    for key, suffix, mtime in (("old", ".0.dev.9", 1000), ("new", ".0.dev.1", 2000)):
+        (project.state / f"cache/builds/x86_64_v2/foo/{key}").mkdir(parents=True)
+        (project.state / f"cache/builds/x86_64_v2/foo/{key}/autorev").write_text(json.dumps({"foo": suffix}))
+        log = project.state / f"cache/builds/x86_64_v2/foo/{key}/build.log"
+        log.touch()
+        os.utime(log, (mtime, mtime))
+    assert [(b.ident, b.number) for b in build.test_builds(project, "foo")] == [("dev", 1)]
+
+
+def test_empty_compiler_cache(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    def download(_storage: object, _path: str, dest: Path, _on_line: object) -> bool:
+        dest.mkdir(parents=True)
+        with tarfile.open(dest / ccache.TARBALL, "w"):  # of a build which compiled nothing
+            pass
+        return True
+
+    monkeypatch.setattr(ccache.remote, "download_tree", download)
+    cache = ccache.local_path(project, "foo")
+    cache.mkdir(parents=True)
+    (cache / "old").touch()
+    assert ccache.fetch(project, Remote(url="http://localhost/"), "foo")
+    assert cache.is_dir()
+    assert not list(cache.iterdir())

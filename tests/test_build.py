@@ -30,7 +30,7 @@ pytestmark = pytest.mark.skipif(not shutil.which("podman"), reason="needs podman
 
 
 @pytest.fixture
-def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_environment: None) -> Path:
     root = tmp_path / "project"
     copy_project(root)
     monkeypatch.setenv("XCRAFT_PROJECT", str(root))

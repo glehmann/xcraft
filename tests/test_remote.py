@@ -101,7 +101,7 @@ REMOTE = (
 
 
 @pytest.fixture
-def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, s3: dict[str, str]) -> Path:
+def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, s3: dict[str, str], build_environment: None) -> Path:
     root = tmp_path / "project"
     copy_project(root)
     (root / "xcraft.toml").write_text(REMOTE)

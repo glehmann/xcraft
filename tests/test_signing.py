@@ -22,7 +22,7 @@ needs_podman = pytest.mark.skipif(not shutil.which("podman"), reason="needs podm
 
 
 @pytest.fixture
-def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_environment: None) -> Iterator[Path]:
     root = tmp_path / "project"
     copy_project(root)
     subprocess.run(["git", "init", "-q", str(root)], check=True)

@@ -59,6 +59,8 @@ def fetch(project: Project, storage: Remote, name: str) -> bool:
         with activity(f"downloading the ccache of {name}") as on_line:
             if not remote.download_tree(storage, remote_path(project, name), Path(tmp) / "tree", on_line):
                 return False
+        # there, even when empty, before the local one is replaced
+        (Path(tmp) / "cache").mkdir()
         with tarfile.open(Path(tmp) / "tree" / TARBALL) as tar:
             tar.extractall(Path(tmp) / "cache", filter="data")
         if cache.exists():
