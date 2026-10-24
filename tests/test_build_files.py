@@ -320,8 +320,10 @@ def test_builds_still_to_build_again_fail(project: Project, monkeypatch: pytest.
     monkeypatch.setattr(build, "build_image", lambda _: "image")
     monkeypatch.setattr(build, "_record_cached", lambda *_: ({"a": "key"}, {}))
     attempts = []
-    monkeypatch.setattr(build, "_build_all", lambda *_, **__: attempts.append(1) or [build.Result("a", "again")])
-    assert build.build(project, ["a"]) == [build.Result("a", "failed")]
+    monkeypatch.setattr(
+        build, "_build_all", lambda *_, **__: attempts.append(1) or ([build.Result("a", "again")], {"a": "key"})
+    )
+    assert build.build(project, ["a"]) == ([build.Result("a", "failed")], {"a": "key"})
     assert len(attempts) == 2
 
 
@@ -371,7 +373,7 @@ def test_packages_edited_while_building(project: Project, monkeypatch: pytest.Mo
 
     monkeypatch.setattr(build, "_build_shown", building)
     (project.state / "build").mkdir(parents=True)  # for the queue, which build() makes
-    results = build._build_all(  # noqa: SLF001
+    results, _ = build._build_all(  # noqa: SLF001
         project, ["a", "c", "b"], keys, hashes, verbose=False, autorev={}, fetch=False, build_missing=True
     )
     # the builds work on the packages as they were at the start: b fails, rather than b cached with the old a
