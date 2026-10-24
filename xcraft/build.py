@@ -45,7 +45,7 @@ from xcraft.project import write_atomically
 from xcraft.resolution import Resolved, prepare, record, resolve
 from xcraft.signing import dev_signer
 from xcraft.sources import fetch_sources, read_manifest
-from xcraft.specs import hash_dir, main_spec
+from xcraft.specs import hash_dir, is_debug, main_spec
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -426,12 +426,8 @@ def _check_made(project: Project, name: str, tree: Path, *, test: bool) -> None:
     Their names, versions and architectures, and the provides and requirements their spec declares, those rpm
     generates apart, and the debug packages too, which rpm splits while building. A test build has its own releases.
     """
-
-    def debug(n: str) -> bool:
-        return n.endswith(("-debuginfo", "-debugsource"))
-
-    made = {n: b for n, b in json.loads((tree / "made.json").read_text()).items() if not debug(n)}
-    parsed = {b.name: b for b in project.parsed[name].binaries if not debug(b.name)}
+    made = {n: b for n, b in json.loads((tree / "made.json").read_text()).items() if not is_debug(n)}
+    parsed = {b.name: b for b in project.parsed[name].binaries if not is_debug(b.name)}
     problems = [
         *(f"+{n}" for n in sorted(made.keys() - parsed.keys())),
         *(f"-{n}" for n in sorted(parsed.keys() - made.keys())),
@@ -455,7 +451,7 @@ def _check_made(project: Project, name: str, tree: Path, *, test: bool) -> None:
 
 def _rpms(build: Path) -> list[Path]:
     """Return the binary packages of a build, but the debug ones."""
-    return [p for p in (build / "RPMS").rglob("*.rpm") if not re.search(r"-debug(info|source)-", p.name)]
+    return [p for p in (build / "RPMS").rglob("*.rpm") if not is_debug(p.name.rsplit("-", 2)[0])]
 
 
 def record_built(project: Project, names: list[str], keys: dict[str, str]) -> bool:

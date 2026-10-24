@@ -13,6 +13,7 @@ from xcraft import process
 from xcraft.commands import Arch, Packages, Pre, Test, load, test_kind
 from xcraft.display import activity, console
 from xcraft.signing import check_signatures, dev_signer
+from xcraft.specs import is_debug
 
 REMOTE = "/var/local/xcraft"
 """Where the repositories of test builds go on the hosts, one per ID."""
@@ -118,12 +119,7 @@ def repo(  # noqa: PLR0913, PLR0917
             f"[xcraft-{kind[1]}]\nname=xcraft {kind[0]} builds {kind[1]}\nbaseurl={url}\n"
             f"enabled=1\n{checks}metadata_expire=0\n"
         )
-        binaries = [
-            b.name
-            for name in names
-            for b in project.packages[name].binaries
-            if not b.name.endswith(("-debuginfo", "-debugsource"))
-        ]
+        binaries = [b.name for name in names for b in project.packages[name].binaries if not is_debug(b.name)]
         for host in hosts or []:
             _copy_to_host(host, output, kind[1], binaries, upgrade=upgrade)
         if not hosts:

@@ -32,6 +32,11 @@ def dep_name(dep: str) -> str:
     return dep if dep.startswith("(") else dep.split(" ", 1)[0]
 
 
+def is_debug(name: str) -> bool:
+    """Return whether `name` is a debug package, which rpm splits from the others while building."""
+    return name.endswith(("-debuginfo", "-debugsource"))
+
+
 class Binary(BaseModel):
     """A binary package defined by a spec."""
 
