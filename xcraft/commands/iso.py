@@ -7,11 +7,10 @@ from typing import Annotated
 
 import typer
 
-from xcraft.commands import Arch, load
-from xcraft.commands.publish import choose_signer, snapshot
+from xcraft.commands import Arch, choose_signer, load
 from xcraft.display import console
 from xcraft.iso import make_iso
-from xcraft.publish import REPO
+from xcraft.publish import REPO, snapshot
 
 
 def iso(  # noqa: PLR0913, PLR0917

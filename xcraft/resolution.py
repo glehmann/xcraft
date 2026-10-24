@@ -8,9 +8,10 @@ repositories, in the locked versions, and a repository of our binary packages,
 written from their specs and what their builds found. So the build keys are
 known before building, on every architecture.
 
-The upstream source packages they need that are not locked yet are locked, in
-the latest version all the architectures have. The results are cached by what
-they are resolved from.
+Resolving does not change the lock: prepare() does, for the commands, and the
+builds once they recorded what they found, locking the upstream source packages
+needed but not locked yet, in the latest version all the architectures have.
+The results are cached by what they are resolved from.
 """
 
 from __future__ import annotations
@@ -140,27 +141,47 @@ def lock_sources(project: Project, sources: list[str]) -> None:
         raise ResolutionError(msg)
     with project.lock():
         lock = load_lock(project)
-        lock.sources |= chosen
+        # those locked meanwhile, by another command, keep their versions
+        lock.sources |= {source: version for source, version in chosen.items() if source not in lock.sources}
         save_lock(project, lock)
     project.refresh()
 
 
-def _locking(project: Project, resolve: Callable[[], Resolved]) -> Resolved:
-    """Return what `resolve` resolves, once the upstream source packages it needs are locked."""
+def _locking(project: Project, resolve: Callable[[], Resolved]) -> None:
+    """Lock the upstream source packages what `resolve` resolves needs."""
     for _ in range(3):
-        resolved = resolve()
-        if not resolved.unlocked:
-            return resolved
+        if not (resolved := resolve()).unlocked:
+            return
         lock_sources(project, resolved.unlocked)
     msg = f"upstream source packages needed, but locked in a version {project.arch} does not have: "
     raise ResolutionError(msg + ", ".join(resolved.unlocked))
 
 
+def _locked(resolved: Resolved) -> Resolved:
+    if resolved.unlocked:
+        msg = f"upstream source packages not locked yet: {', '.join(resolved.unlocked)}"
+        raise ResolutionError(msg)
+    return resolved
+
+
+def prepare(project: Project, *, roots: bool = True) -> None:
+    """Lock the upstream source packages needed by the build environment image, the one of the host too, for the
+    specs, and the build roots, unless not `roots`: what the commands resolving do first, and the builds once they
+    recorded what they found.
+    """  # noqa: D205
+    native = project.on_host()
+    for platform in [native] if native == project else [native, project]:
+        _locking(platform, lambda p=platform: _cached(p, _image_data(p), show=f"resolving the image of {p.arch}"))
+    if roots:
+        _locking(project, lambda: _cached(project, _roots_data(project), show=_roots_show(project)))
+
+
 def resolve_image(project: Project) -> Resolved:
-    """Return the packages of the build environment image of the platform, and the locked upstream packages."""
-    resolved = _locking(
-        project, lambda: _cached(project, _image_data(project), show=f"resolving the image of {project.arch}")
-    )
+    """Return the packages of the build environment image of the platform, and the locked upstream packages.
+
+    Raise when the lock misses some: prepare() it first.
+    """
+    resolved = _locked(_cached(project, _image_data(project), show=f"resolving the image of {project.arch}"))
     if error := resolved.errors.get("image"):
         msg = f"the build environment image of {project.arch} cannot be resolved: {error}"
         raise ResolutionError(msg)
@@ -176,22 +197,29 @@ def _ours(project: Project) -> list[dict]:
     ]
 
 
-def resolve(project: Project) -> Resolved:
-    """Return the build environment image and the build roots of the platform."""
-
-    def data() -> dict:
-        packages, deps = project.packages, project.deps
-        builds = {
-            name: {
-                "buildrequires": package.buildrequires,
-                "allowed": sorted(b.name for dep in reachable(deps, deps[name]) for b in packages[dep].binaries),
-            }
-            for name, package in sorted(packages.items())
+def _roots_data(project: Project) -> dict:
+    packages, deps = project.packages, project.deps
+    builds = {
+        name: {
+            "buildrequires": package.buildrequires,
+            "allowed": sorted(b.name for dep in reachable(deps, deps[name]) for b in packages[dep].binaries),
         }
-        return {**_image_data(project), "ours": _ours(project), "builds": builds}
+        for name, package in sorted(packages.items())
+    }
+    return {**_image_data(project), "ours": _ours(project), "builds": builds}
 
+
+def _roots_show(project: Project) -> str:
+    return f"resolving the build roots of {project.arch}"
+
+
+def resolve(project: Project) -> Resolved:
+    """Return the build environment image and the build roots of the platform.
+
+    Raise when the lock misses upstream source packages they need: prepare() it first.
+    """
     resolve_image(project)
-    return _locking(project, lambda: _cached(project, data(), show=f"resolving the build roots of {project.arch}"))
+    return _locked(_cached(project, _roots_data(project), show=_roots_show(project)))
 
 
 def record(project: Project, names: list[str], rpms: list[Path]) -> Resolved:
@@ -215,13 +243,14 @@ def record(project: Project, names: list[str], rpms: list[Path]) -> Resolved:
 
 
 def upstream_sources(project: Project, names: list[str]) -> list[str]:
-    """Return the locked upstream source packages of `names`, binary or source names."""
+    """Return the locked upstream source packages of `names`, binary or source names, which the images of all the
+    architectures are prepared for, to know the binary ones.
+    """  # noqa: D205
     lock = load_lock(project)
-    binaries = {
-        n: p.source
-        for platform in (project.all_platforms() if set(names) - lock.sources.keys() else [])
-        for n, p in resolve_image(platform).packages.items()
-    }
+    platforms = project.all_platforms() if set(names) - lock.sources.keys() else []
+    for platform in platforms:
+        prepare(platform, roots=False)
+    binaries = {n: p.source for platform in platforms for n, p in resolve_image(platform).packages.items()}
     if unknown := sorted(n for n in names if n not in lock.sources and n not in binaries):
         msg = f"not locked: {', '.join(unknown)}"
         raise ResolutionError(msg)
@@ -237,9 +266,12 @@ def lock_installed(project: Project, installed: dict[str, Locked]) -> bool:
     """  # noqa: D205
 
     def changed() -> list[str]:
-        locked = resolve_image(project).packages
+        """Return the installed packages of locked sources not in their locked versions, or not in them at all."""
+        locked, sources = resolve_image(project).packages, load_lock(project).sources
         return sorted(
-            n for n, p in installed.items() if n in locked and (locked[n].evr, locked[n].arch) != (p.evr, p.arch)
+            n
+            for n, p in installed.items()
+            if ((locked[n].evr, locked[n].arch) != (p.evr, p.arch) if n in locked else p.source in sources)
         )
 
     if before := changed():

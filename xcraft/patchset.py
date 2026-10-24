@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from xcraft.importer import git
+from xcraft.process import git
 from xcraft.sources import archive_name
 
 if TYPE_CHECKING:

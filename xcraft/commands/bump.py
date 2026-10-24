@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 
 from xcraft import process
-from xcraft.commands import Packages, load
+from xcraft.commands import Dep, Packages, load, pending_packages
 from xcraft.display import activity, console, download_progress
-from xcraft.importer import git
 from xcraft.lock import load_lock, save_lock
+from xcraft.process import git
 from xcraft.project import write_atomically
 from xcraft.release import add_changelog_entry, bump_release, reset_release, set_version
 from xcraft.resolution import upstream_sources
@@ -22,24 +22,6 @@ from xcraft.specs import load_packages, main_spec
 if TYPE_CHECKING:
     from xcraft.project import Project
     from xcraft.specs import Package
-
-Dep = Annotated[
-    list[str] | None,
-    typer.Option(
-        "--dep",
-        help="Upstream package, binary or source name: select the packages with a pending update of it.",
-        show_default=False,
-    ),
-]
-
-
-def pending_packages(names: list[str] | None, pending: dict[str, dict[str, str]], upstream: list[str]) -> list[str]:
-    """Return the packages `names`, and those with pending updates of the `upstream` packages."""
-    selected = set(names or []) | {package for package, entries in pending.items() if set(upstream) & entries.keys()}
-    if not selected:
-        msg = "no package given, or pending on the given upstream packages"
-        raise typer.BadParameter(msg)
-    return sorted(selected)
 
 
 def _check_parsed(packages: dict[str, Package], names: list[str]) -> None:

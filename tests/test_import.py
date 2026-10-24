@@ -13,6 +13,7 @@ from xcraft.__main__ import app
 from xcraft.container import run
 from xcraft.importer import PackageImportError, import_history
 from xcraft.project import Project
+from xcraft.resolution import prepare
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -144,6 +145,7 @@ def source_rpm(tmp_path: Path, name: str, version: str) -> Path:
         f"Source0: {name}-{version}.tar.gz\nSource1: Citrix_Logo_Black.png\nPatch0: fix.patch\n%description\n{name}\n"
     )
     # in the build environment: rpmbuild is not on every host
+    prepare(Project.find(), roots=False)
     run(Project.find(), "test-srpm", f"rpmbuild -bs -D '_topdir /top' /top/{name}.spec", volumes=[f"{top}:/top"])
     return next((top / "SRPMS").glob("*.src.rpm"))
 

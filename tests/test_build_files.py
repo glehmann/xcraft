@@ -10,6 +10,7 @@ import tarfile
 from typing import TYPE_CHECKING
 
 import pytest
+import typer
 
 from tests import TOML, config
 from xcraft import build, ccache
@@ -24,7 +25,7 @@ from xcraft.build import (
     record_built,
 )  # fmt: skip
 from xcraft.clean import clean, repos_disk_usage
-from xcraft.commands import complete_arch
+from xcraft.commands import complete_arch, load
 from xcraft.localrepo import RepoError, fresh_dir
 from xcraft.lock import Lock, load_lock, save_lock
 from xcraft.project import Project, ProjectLockedError, Remote
@@ -315,8 +316,9 @@ def test_record_built(project: Project, monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_builds_still_to_build_again_fail(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     project.deps = {"a": set()}
+    monkeypatch.setattr(build, "prepare", lambda _: None)
     monkeypatch.setattr(build, "build_image", lambda _: "image")
-    monkeypatch.setattr(build, "_record_cached", lambda *_: {"a": "key"})
+    monkeypatch.setattr(build, "_record_cached", lambda *_: ({"a": "key"}, {}))
     attempts = []
     monkeypatch.setattr(build, "_build_all", lambda *_, **__: attempts.append(1) or [build.Result("a", "again")])
     assert build.build(project, ["a"]) == [build.Result("a", "failed")]
@@ -349,3 +351,43 @@ def test_empty_compiler_cache(project: Project, monkeypatch: pytest.MonkeyPatch)
     assert ccache.fetch(project, Remote(url="http://localhost/"), "foo")
     assert cache.is_dir()
     assert not list(cache.iterdir())
+
+
+def test_packages_edited_while_building(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("a", "b", "c"):
+        (project.root / "base" / name).mkdir(parents=True)
+        (project.root / "base" / name / f"{name}.spec").write_text(name)
+    project.deps = {"a": set(), "b": {"a"}, "c": set()}
+    monkeypatch.setattr(build, "resolve", lambda _: Resolved())
+    monkeypatch.setattr(build, "image_tag", lambda _: "localhost/xcraft-build:image")
+    hashes = build.inputs(project)
+    keys = build_keys(project, hashes=hashes)
+    (build.cached_build(project, "b", keys["b"])).mkdir(parents=True)
+
+    def building(_project: Project, name: str, _keys: dict[str, str], **_: object) -> build.Result:
+        if name == "c":  # a, which b depends on, edited meanwhile
+            (project.root / "base/a/a.spec").write_text("a edited")
+        return build.Result(name, "built")
+
+    monkeypatch.setattr(build, "_build_shown", building)
+    (project.state / "build").mkdir(parents=True)  # for the queue, which build() makes
+    results = build._build_all(  # noqa: SLF001
+        project, ["a", "c", "b"], keys, hashes, verbose=False, autorev={}, fetch=False, build_missing=True
+    )
+    # the builds work on the packages as they were at the start: b fails, rather than b cached with the old a
+    assert results == [build.Result("a", "built"), build.Result("c", "built"), build.Result("b", "failed")]
+
+
+def test_recordings_not_converging(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(build, "build_keys", lambda *_: {})
+    monkeypatch.setattr(build, "record_built", lambda *_: True)
+    monkeypatch.setattr(build, "prepare", lambda _: None)
+    with pytest.raises(BuildError, match="keeps changing the keys"):
+        build._record_cached(project, {})  # noqa: SLF001
+
+
+def test_unknown_packages_before_preparing(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XCRAFT_PROJECT", str(project.root))
+    monkeypatch.setattr("xcraft.commands.prepare", lambda _: pytest.fail("prepared"))
+    with pytest.raises(typer.BadParameter, match="unknown package"):
+        load(["nope"])

@@ -18,13 +18,14 @@ from typing import TYPE_CHECKING
 
 from rich.markup import escape
 
+from xcraft import build as builder
 from xcraft import remote
 from xcraft.build import BuildError, build_path, builds_repo, cached_build
 from xcraft.container import DNF_LOCK, run
 from xcraft.display import activity, console
 from xcraft.localrepo import OUTPUT_MARKER, LocalRepo, extra_rpms, fresh_dir, link
 from xcraft.lock import Locked, load_lock, save_lock
-from xcraft.resolution import lock_installed, resolve, resolve_image
+from xcraft.resolution import lock_installed, prepare, resolve, resolve_image
 from xcraft.signing import Signer, check_signatures
 from xcraft.sources import sha256_of
 
@@ -397,3 +398,31 @@ def upload_snapshot(
         signed = [f"signed/{signer.key}/{platform.arch}/" for platform, _ in platforms] if signer else []
         remote.update_pages(storage, [f"{snapshot}/", f"{latest}/", *signed])
     console.print(f"[bold green]✓[/] published {snapshot}, and as {latest}")
+
+
+def snapshot(
+    platforms: list[Project], dest: Path, *, signer: Signer | None, push: bool, build: bool
+) -> list[tuple[Project, dict[str, str]]]:
+    """Make the snapshot of the `platforms` in `dest`, and return them with the keys of their packages.
+
+    Our packages are built or fetched first, but only fetched for the platforms the host emulates. With `build`, the
+    snapshot has the build repository too.
+    """
+    built, upstream = [], {}
+    for project in platforms:
+        prepare(project)
+        results = builder.build(project, sorted(project.packages), build_missing=project.native)
+        if failed := [r.name for r in results if r.failed]:
+            msg = f"not built for {project.arch}: {', '.join(failed)}"
+            raise RuntimeError(msg)
+        keys = builder.build_keys(project)
+        upstream[project.arch] = f"{len(resolve_runtime(project, keys))} upstream ones" + (
+            f", and {len(build_dependencies(project))} to build them" if build else ""
+        )
+        built.append((project, keys))
+    assemble(built, dest, signer=signer, push=push, build=build)
+    console.print(
+        f"[bold green]✓[/] snapshot in {dest}: "
+        + ", ".join(f"{p.arch}: {len(keys)} packages, {upstream[p.arch]}" for p, keys in built)
+    )
+    return built

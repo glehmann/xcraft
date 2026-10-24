@@ -11,8 +11,10 @@ import typer
 from xcraft import process
 from xcraft.commands import All, complete_package
 from xcraft.display import activity, console, download_progress
-from xcraft.importer import DEFAULT_URL, git, import_history, import_srpm
+from xcraft.importer import DEFAULT_URL, import_history, import_srpm
+from xcraft.process import git
 from xcraft.project import Project
+from xcraft.resolution import prepare
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -49,21 +51,11 @@ def import_(
     if not sources:
         msg = "no package given"
         raise typer.BadParameter(msg)
-    names = [
-        s.rsplit("/", 1)[-1].removesuffix(".src.rpm").rsplit("-", 2)[0] if s.endswith(".src.rpm") else s
-        for s in sources
-    ]
-    if bad := [name for name in [*names, repo] if not re.fullmatch(r"[A-Za-z0-9][\w.+-]*", name)]:
-        msg = f"not package names: {', '.join(map(repr, bad))}"
-        raise typer.BadParameter(msg)
-    if repo not in project.config.repositories:
-        msg = f"{repo} is not a repository of the project: {', '.join(project.config.repositories)}"
-        raise typer.BadParameter(msg)
-    if url and len(sources) > 1:
-        msg = "--url applies to a single package"
-        raise typer.BadParameter(msg)
+    names = _names(project, sources, repo, url)
     branches = [branch] if branch else project.config.import_.branches
     with project.lock():
+        if any(source.endswith(".src.rpm") for source in sources):
+            prepare(project, roots=False)  # for the build environment, which unpacks them
         for i, (source, name) in enumerate(zip(sources, names, strict=True), 1):
             pkg_dir = project.package_dirs.get(name, project.root / repo / name)
             with project.work("import") as work, activity(f"[{i}/{len(sources)}] importing {source}") as on_line:
@@ -78,6 +70,24 @@ def import_(
             for head, commit in heads.items():
                 console.print(f"[bold]{name}[/]: import/{name}/{head} at {commit[:12]}")
     console.print("merge them into the project with [bold]git merge import/<pkg>/<branch>[/]")
+
+
+def _names(project: Project, sources: list[str], repo: str, url: str | None) -> list[str]:
+    """Return the names of the packages of `sources`, checking them with the other arguments."""
+    names = [
+        s.rsplit("/", 1)[-1].removesuffix(".src.rpm").rsplit("-", 2)[0] if s.endswith(".src.rpm") else s
+        for s in sources
+    ]
+    if bad := [name for name in [*names, repo] if not re.fullmatch(r"[A-Za-z0-9][\w.+-]*", name)]:
+        msg = f"not package names: {', '.join(map(repr, bad))}"
+        raise typer.BadParameter(msg)
+    if repo not in project.config.repositories:
+        msg = f"{repo} is not a repository of the project: {', '.join(project.config.repositories)}"
+        raise typer.BadParameter(msg)
+    if url and len(sources) > 1:
+        msg = "--url applies to a single package"
+        raise typer.BadParameter(msg)
+    return names
 
 
 def _download(source: str, work: Path, on_line: Callable[[str], None]) -> Path:

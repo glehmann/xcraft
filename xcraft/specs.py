@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, TypeAdapter
 
-from xcraft.container import build_image, image_tag, run
+from xcraft.container import BUILDENV, build_image, image_tag, run
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -23,59 +23,13 @@ if TYPE_CHECKING:
     from xcraft.project import Project
 
 
+_SCRIPTS = [(BUILDENV / script).read_text() for script in ("parse.py", "rpmdeps.py")]
+"""The parser of the specs, in the cache key of what it parsed."""
+
+
 def dep_name(dep: str) -> str:
     """Return the capability of a dependency, like ``foo`` for ``foo >= 1.0``, or a rich one whole."""
     return dep if dep.startswith("(") else dep.split(" ", 1)[0]
-
-
-# Run by the build environment's python, with the rpm bindings.
-_PARSER = """
-import json, pathlib, rpm, subprocess, sys
-
-out, target, *spec_files = sys.argv[1:]
-result = {}
-
-
-def deps(h, tag):
-    # like "foo >= 1:2-3", or a rich one, like "(a if b)"
-    return [d.DNEVR()[2:] for d in rpm.ds(h, tag) if not d.N().startswith("rpmlib(")]
-
-
-for spec_file in spec_files:
-    pkg_dir = pathlib.Path(spec_file).parent
-    # for the target architecture, like rpmbuild --target
-    rpm.reloadConfig(target)
-    rpm.addMacro("_sourcedir", str(pkg_dir))
-    rpm.addMacro("_specdir", str(pkg_dir))
-    try:
-        spec = rpm.spec(spec_file)
-    except ValueError:
-        # parse again with rpmspec, to get the error message
-        error = subprocess.run(["rpmspec", "-D", f"_sourcedir {pkg_dir}", "-q", spec_file],
-                               capture_output=True, text=True).stderr
-        result[pkg_dir.name] = {"error": error.strip() or "cannot parse spec"}
-        continue
-    result[pkg_dir.name] = {
-        "binaries": [
-            {
-                "name": h[rpm.RPMTAG_NAME],
-                "evr": h[rpm.RPMTAG_EVR],
-                "arch": h[rpm.RPMTAG_ARCH],
-                "provides": deps(h, rpm.RPMTAG_PROVIDENAME),
-                "requires": deps(h, rpm.RPMTAG_REQUIRENAME),
-                "recommends": deps(h, rpm.RPMTAG_RECOMMENDNAME),
-            }
-            # those without %files are not built
-            for h in (p.header for p in spec.packages if p.fileList is not None)
-        ],
-        "buildrequires": deps(spec.sourceHeader, rpm.RPMTAG_REQUIRENAME),
-        "dist": rpm.expandMacro("%{?dist}"),
-        # sources are of type 1, patches 2
-        "source0": next((source for source, n, kind in spec.sources if kind == 1 and n == 0), ""),
-        "sources": [source for source, n, kind in sorted(spec.sources, key=lambda s: s[1]) if kind == 1],
-    }
-pathlib.Path(out).write_text(json.dumps(result))
-"""
 
 
 class Binary(BaseModel):
@@ -150,7 +104,9 @@ def load_packages(project: Project) -> dict[str, Package]:
         / "cache/specs"
         / project.arch
         / (
-            hashlib.sha256(json.dumps([_PARSER, image_tag(native), target(project.arch), *hashes]).encode()).hexdigest()
+            hashlib.sha256(
+                json.dumps([*_SCRIPTS, image_tag(native), target(project.arch), *hashes]).encode()
+            ).hexdigest()
             + ".json"
         )
     )
@@ -158,11 +114,10 @@ def load_packages(project: Project) -> dict[str, Package]:
         build_image(native)
         specs = " ".join(f"/project/{main_spec(d).relative_to(project.root)}" for d in dirs)
         with project.work("specs") as work:
-            (work / "parse.py").write_text(_PARSER)
             run(
                 native,
                 "specs",
-                f"python3 /work/parse.py /work/specs.json {target(project.arch)} {specs}",
+                f"python3 /xcraft/parse.py /work/specs.json {target(project.arch)} {specs}",
                 volumes=[f"{project.root}:/project:ro", f"{work}:/work"],
                 show="parsing the specs",
                 network=False,

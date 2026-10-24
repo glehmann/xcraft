@@ -9,7 +9,7 @@ import typer
 from xcraft.display import console
 from xcraft.lock import choose_versions, load_lock, lock_path, save_lock
 from xcraft.project import Project
-from xcraft.resolution import available_versions, resolve, upstream_sources
+from xcraft.resolution import available_versions, prepare, resolve, upstream_sources
 
 
 def lock(
@@ -65,6 +65,7 @@ def _update(project: Project, packages: list[str], *, write: bool) -> int:
         # the upstream source packages of the build roots, before the update
         roots: dict[str, set[str]] = {}
         for platform in project.all_platforms():
+            prepare(platform)
             resolved = resolve(platform)
             for name, names in resolved.buildroots.items():
                 roots.setdefault(name, set()).update(resolved.packages[n].source for n in names)

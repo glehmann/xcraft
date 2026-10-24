@@ -19,13 +19,13 @@ import pytest
 from tests import ARCH, PLATFORM, TOML, copy_project
 from tests.test_build import write_spec, xcraft
 from xcraft import remote
-from xcraft.build import BuildError, prepare_tree, source_path
+from xcraft.build import prepare_tree
 from xcraft.container import run
 from xcraft.lock import load_lock
 from xcraft.project import Project
 from xcraft.resolution import resolve_image
 from xcraft.signing import check_signatures, create_dev_key
-from xcraft.sources import cache_source, sha256_of, write_manifest
+from xcraft.sources import SourceError, cache_source, sha256_of, source_path, write_manifest
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -141,7 +141,7 @@ def test_sources(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -
     storage = Project.find().config.remote
     assert storage
     remote.upload(storage, source_path(archive.name, digest), root / "xcraft.toml")
-    with pytest.raises(BuildError, match="does not match the sha256 of the manifest"):
+    with pytest.raises(SourceError, match="does not match the sha256 of the manifest"):
         prepare_tree(Project.find(), "trivial")
 
 

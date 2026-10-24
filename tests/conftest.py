@@ -13,6 +13,7 @@ from tests import PROJECT, config
 from xcraft.build import build_keys
 from xcraft.container import build_image
 from xcraft.project import Project
+from xcraft.resolution import prepare
 
 
 @pytest.fixture(scope="session")
@@ -32,6 +33,7 @@ def build_environment(tmp_path_factory: pytest.TempPathFactory) -> None:
             shutil.rmtree(root, ignore_errors=True)
             shutil.copytree(PROJECT, root)
             native = Project(root, config()).on_host()
+            prepare(native)
             build_image(native)
             build_keys(native)
     tests.TEMPLATE = root

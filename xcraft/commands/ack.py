@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from xcraft.commands import Packages
-from xcraft.commands.bump import Dep, pending_packages
+from xcraft.commands import Dep, Packages, pending_packages
 from xcraft.display import console
 from xcraft.lock import load_lock, save_lock
 from xcraft.project import Project

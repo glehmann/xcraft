@@ -54,3 +54,8 @@ def download(url: str, dest: Path, report: Callable[[int, int, int], None] | Non
     """Download `url` to `dest`, giving the progress to `report`, like urlretrieve."""
     log.debug("downloading %s to %s", url, dest)
     urllib.request.urlretrieve(url, dest, reporthook=report)  # noqa: S310
+
+
+def git(*args: str) -> str:
+    """Run git and return its stripped output."""
+    return run(["git", *args], capture=True).stdout.strip()

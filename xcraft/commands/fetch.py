@@ -9,6 +9,7 @@ from xcraft import ccache
 from xcraft.commands import Arch, Packages, load, remote_storage
 from xcraft.display import console
 from xcraft.project import Project
+from xcraft.sources import SourceError, fetch_sources
 
 app = typer.Typer()
 
@@ -36,11 +37,11 @@ def sources(packages: Packages = None, arch: Arch = None) -> None:
     missing = {}
     for name in packages or sorted(project.packages):
         try:  # the others too, when a download fails
-            if archives := builder.fetch_sources(project, name):
+            if archives := fetch_sources(project, name):
                 missing[name] = (
                     f"{', '.join(archives)} found nowhere: not in the remote storage, nor at a URL of the spec"
                 )
-        except builder.BuildError as e:
+        except SourceError as e:
             missing[name] = str(e)
     for name, why in missing.items():
         console.print(f"[red]✗[/] {name}: {why}")

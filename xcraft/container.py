@@ -100,7 +100,8 @@ def _exists(tag: str) -> bool:
 def build_image(project: Project) -> str:
     """Return the tag of the build environment image, building it if needed.
 
-    A new image must have the packages resolved for it, or it is removed.
+    A new image must have the packages resolved for it, or it is removed. Its
+    packages must be locked: see resolution.prepare().
     """
     if not project.native and (problem := host.emulation_problem(project.arch)):
         raise ContainerError(problem)
