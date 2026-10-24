@@ -342,18 +342,14 @@ def _delete_stale(storage: Remote, prefix: str, keep: set[str]) -> None:
 
 
 def upload_snapshot(
-    platforms: list[tuple[Project, dict[str, str]]], src: Path, name: str, *, signer: Signer | None
+    platforms: list[tuple[Project, dict[str, str]]], src: Path, storage: Remote, name: str, *, signer: Signer | None
 ) -> None:
-    """Upload the snapshot in `src` of the `platforms` as `name`, and make it the latest one.
+    """Upload the snapshot in `src` of the `platforms` to `storage` as `name`, and make it the latest one.
 
     The packages already in the storage, in the latest snapshot or the builds with the keys of the platforms, are
     copied there.
     """
     project = platforms[0][0]
-    storage = project.config.remote
-    if not storage:
-        msg = "no remote storage: see [remote] in xcraft.toml"
-        raise BuildError(msg)
     snapshot, latest = _snapshot_path(project, name), _snapshot_path(project, "latest")
     files = sorted(f.relative_to(src).as_posix() for f in src.rglob("*") if f.is_file() and f.name != OUTPUT_MARKER)
     manifest = {f: sha256_of(src / f) for f in files}
