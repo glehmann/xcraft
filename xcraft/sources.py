@@ -1,21 +1,27 @@
-"""Source archives: the ``sources`` manifest of a package, and the local source cache.
+"""Source archives: the ``sources`` manifest of a package, the local source cache, and their downloads.
 
 Archives are not committed with the specs. A package's ``sources`` file lists
 them as ``<sha256>  <filename>`` lines, and the cache stores them as
-``<cache_dir>/<sha256>/<filename>``.
+``<cache_dir>/<sha256>/<filename>``. Missing ones come from the remote storage,
+or else from the URLs of the spec.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import shutil
 import urllib.parse
 from typing import TYPE_CHECKING
 
+from xcraft import process
+from xcraft.display import activity, download_progress
 from xcraft.project import write_atomically
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from xcraft.project import Project
 
 
 def sha256_of(path: Path) -> str:
@@ -47,3 +53,65 @@ def cache_source(cache_dir: Path, path: Path) -> str:
 def archive_name(url: str) -> str:
     """Return the file name of the archive at `url`: after its ``#/``, like rpm, or the last part of its path."""
     return url.rsplit("#/", maxsplit=1)[-1] if "#/" in url else urllib.parse.urlparse(url).path.rsplit("/", 1)[-1]
+
+
+class SourceError(RuntimeError):
+    """Raised when an archive cannot be downloaded, or does not match its manifest."""
+
+
+def source_path(filename: str, digest: str) -> str:
+    """Return the path of a source archive in the remote storage."""
+    return f"sources/{digest}/{filename}"
+
+
+def _fetch_source(project: Project, name: str, filename: str, digest: str) -> bool:
+    """Download an archive of `name` into the source cache, and return whether it was found.
+
+    It comes from the remote storage, or else from the source of the spec of `name` whose URL is its own.
+    """
+    from xcraft import remote  # noqa: PLC0415, which uses sha256_of()
+
+    archive = project.source_cache / digest / filename
+    part = archive.with_name(f"{filename}.part")
+    part.parent.mkdir(parents=True, exist_ok=True)
+    urls = (s for s in project.packages[name].sources if "://" in s and archive_name(s) == filename)
+    url, origin, error = next(urls, ""), "", None
+    with activity(f"downloading {filename}") as on_line:
+        try:
+            if (storage := project.config.remote) and remote.download(
+                storage, source_path(filename, digest), part, on_line
+            ):
+                origin = "the remote storage"
+        except remote.RemoteError as e:
+            error = e
+        if not origin and url:
+            try:
+                process.download(url, part, download_progress(on_line))
+                origin = url
+            except OSError as e:
+                error = e
+    if not origin:
+        part.unlink(missing_ok=True)
+        with contextlib.suppress(OSError):  # not to leave it empty
+            part.parent.rmdir()
+        if error:
+            msg = f"{filename} is not in the source cache, and cannot be downloaded: {error}"
+            raise SourceError(msg) from error
+        return False
+    if sha256_of(part) != digest:
+        part.unlink()
+        msg = f"{filename} from {origin} does not match the sha256 of the manifest"
+        raise SourceError(msg)
+    part.rename(archive)
+    return True
+
+
+def fetch_sources(project: Project, name: str) -> list[str]:
+    """Put the archives of `name` in the source cache, downloaded when missing, and return those found nowhere."""
+    manifest = project.package_dirs[name] / "sources"
+    return [
+        filename
+        for filename, digest in (read_manifest(manifest).items() if manifest.exists() else [])
+        if not (project.source_cache / digest / filename).exists()
+        and not _fetch_source(project, name, filename, digest)
+    ]

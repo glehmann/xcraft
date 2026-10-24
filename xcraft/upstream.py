@@ -13,7 +13,6 @@ from xcraft.resolution import resolve_image
 from xcraft.specs import dep_name
 
 if TYPE_CHECKING:
-
     from xcraft.project import Project
 
 

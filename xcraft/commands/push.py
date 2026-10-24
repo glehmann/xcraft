@@ -11,7 +11,7 @@ from xcraft import ccache, remote
 from xcraft.commands import Arch, Packages, load, remote_storage
 from xcraft.display import activity, console
 from xcraft.project import Project
-from xcraft.sources import read_manifest
+from xcraft.sources import read_manifest, source_path
 
 app = typer.Typer()
 
@@ -55,7 +55,7 @@ def sources(
     with activity("checking the remote storage") as on_line:
         for filename, digest in archives:
             on_line(filename)
-            if not remote.exists(storage, builder.source_path(filename, digest)):
+            if not remote.exists(storage, source_path(filename, digest)):
                 missing.append((filename, digest))
     if check:
         for filename, _ in missing:
@@ -69,11 +69,11 @@ def sources(
         raise RuntimeError(msg)
     for filename, digest in missing:
         with activity(f"uploading {filename}"):
-            remote.upload(storage, builder.source_path(filename, digest), project.source_cache / digest / filename)
+            remote.upload(storage, source_path(filename, digest), project.source_cache / digest / filename)
         console.print(f"[green]↑[/] {filename}")
     if missing:
         with activity("making the pages of the directories"):
-            remote.update_pages(storage, [f"{builder.source_path(f, d).rsplit('/', 1)[0]}/" for f, d in missing])
+            remote.update_pages(storage, [f"{source_path(f, d).rsplit('/', 1)[0]}/" for f, d in missing])
     console.print(f"{len(missing)} pushed, {len(archives) - len(missing)} already in the remote storage")
 
 

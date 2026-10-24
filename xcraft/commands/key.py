@@ -8,7 +8,7 @@ import typer
 from rich.markup import escape
 
 from xcraft.display import console
-from xcraft.importer import git
+from xcraft.process import git
 from xcraft.project import Project
 from xcraft.signing import create_dev_key, dev_keyring, dev_signer
 

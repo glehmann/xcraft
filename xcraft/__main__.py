@@ -40,23 +40,17 @@ app = typer.Typer(
     no_args_is_help=True,
     context_settings={"help_option_names": ["-h", "--help"]},
 )
-app.command(rich_help_panel="Building")(build.build)
-app.command(rich_help_panel="Building")(repo.repo)
-app.command(rich_help_panel="Building")(shell.shell)
-app.command(rich_help_panel="Building")(log.log)
-app.command(rich_help_panel="Building")(graph.graph)
-app.command(rich_help_panel="Building")(status.status)
+for panel, commands in {
+    "Building": [build.build, repo.repo, shell.shell, log.log, graph.graph, status.status, clean.clean],
+    "Packages": [bump.bump, patchset.patchset],
+    "Upstream packages": [lock.lock, impacts.impacts, ack.ack],
+    "Publishing": [publish.publish, iso.iso],
+    "Host": [doctor.doctor],
+}.items():
+    for command in commands:
+        app.command(rich_help_panel=panel)(command)
 app.command("st", hidden=True)(status.status)
-app.command(rich_help_panel="Packages")(bump.bump)
-app.command(rich_help_panel="Packages")(patchset.patchset)
-app.command(rich_help_panel="Upstream packages")(lock.lock)
-app.command(rich_help_panel="Upstream packages")(impacts.impacts)
-app.command(rich_help_panel="Upstream packages")(ack.ack)
-app.command(rich_help_panel="Building")(clean.clean)
 app.command("import", rich_help_panel="Packages")(import_.import_)
-app.command(rich_help_panel="Publishing")(publish.publish)
-app.command(rich_help_panel="Publishing")(iso.iso)
-app.command(rich_help_panel="Host")(doctor.doctor)
 app.add_typer(push.app, name="push", rich_help_panel="Sharing")
 app.add_typer(fetch.app, name="fetch", rich_help_panel="Sharing")
 app.add_typer(key.app, name="key", rich_help_panel="Publishing")

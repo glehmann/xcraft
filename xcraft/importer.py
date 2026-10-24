@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 
 from xcraft import process
 from xcraft.container import run
+from xcraft.process import git
 from xcraft.sources import cache_source, write_manifest
 
 if TYPE_CHECKING:
@@ -43,11 +44,6 @@ _LFS_SIZE = 1024
 """The pointers of git LFS are smaller."""
 _TRAILER = re.compile(rb"^[\w-]+: ")
 _DELETED = "File deleted from the original sources for trademark-related or copyright-related legal reasons.\n"
-
-
-def git(*args: str) -> str:
-    """Run git and return its stripped output."""
-    return process.run(["git", *args], capture=True).stdout.strip()
 
 
 def _is_file_to_import(path: Path, top: Path) -> bool:

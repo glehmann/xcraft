@@ -12,7 +12,6 @@ repositories. Packages not built locally come from those repositories.
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
 import os
@@ -27,13 +26,12 @@ from typing import TYPE_CHECKING
 from rich.markup import escape
 from rich.text import Text
 
-from xcraft import ccache, process, remote
+from xcraft import ccache, remote
 from xcraft.container import BUILDENV, DNF_LOCK, ContainerError, build_image, image_tag, run, run_container
 from xcraft.display import (
     activity,
     console,
     diagnostics,
-    download_progress,
     duration,
     log_step,
     print_log_line,
@@ -41,11 +39,11 @@ from xcraft.display import (
 )
 from xcraft.graph import build_order, components, reachable
 from xcraft.localrepo import REPO_FILE, LocalRepo, link, repo_id
-from xcraft.lock import Locked, load_lock, save_lock
+from xcraft.lock import Locked, load_lock, lock_path, save_lock
 from xcraft.project import write_atomically
-from xcraft.resolution import record, resolve
+from xcraft.resolution import Resolved, prepare, record, resolve
 from xcraft.signing import dev_signer
-from xcraft.sources import archive_name, read_manifest, sha256_of
+from xcraft.sources import fetch_sources, read_manifest
 from xcraft.specs import hash_dir, main_spec
 
 if TYPE_CHECKING:
@@ -56,7 +54,10 @@ if TYPE_CHECKING:
 
 RECIPE = hashlib.sha256(
     "".join(
-        [REPO_FILE, *((BUILDENV / s).read_text() for s in ("build.sh", "offline.py", "record.py", "made.py"))]
+        [
+            REPO_FILE,
+            *((BUILDENV / s).read_text() for s in ("build.sh", "offline.py", "record.py", "made.py", "rpmdeps.py")),
+        ]
     ).encode()
 ).hexdigest()
 """What makes the builds, besides the image and the packages: a change to it rebuilds them all, but see _SAME_BUILDS."""
@@ -73,6 +74,9 @@ _SAME_BUILDS = {
     # build.sh, record.py and made.py: the dynamic BuildRequires before installing them, and the packages made
     "91b1c1f54f53be472170ccaf7f1001959e51a8206718056bb0020a4d383690c5":
         "e4d86b87110eac1922b1127fa00c796d08b757136324c97223ea31f34236d20b",
+    # made.py and record.py: entry points, and the dependencies of rpm headers in rpmdeps.py
+    "cd1db99022f6382f7e7363906e76061130bd36e1aa129d164e8917f48cb9ea3a":
+        "91b1c1f54f53be472170ccaf7f1001959e51a8206718056bb0020a4d383690c5",
 }  # fmt: skip
 """Recipes making the same packages as an earlier one, by their hash: their builds keep the keys of the earlier one."""
 
@@ -110,32 +114,42 @@ def next_test_suffixes(project: Project, names: list[str], kind: str, ident: str
     return suffixes
 
 
-def build_keys(project: Project, autorev: dict[str, str] | None = None) -> dict[str, str]:
+def inputs(project: Project) -> dict[str, str]:
+    """Return the hash of the directory of each package, its input in the keys."""
+    return {name: hash_dir(path) for name, path in project.package_dirs.items()}
+
+
+def build_keys(
+    project: Project, autorev: dict[str, str] | None = None, hashes: dict[str, str] | None = None
+) -> dict[str, str]:
     """Return the cache key of each package: a SHA-256 of all that makes its build.
 
     That is its package directory, the build environment image and recipe,
     the versions of the upstream packages of its build root, resolved, besides
     the image's ones, which the image id covers, the `autorev` of the test
     builds, and the keys of its dependencies. Packages depending on each other
-    get the key of them all.
+    get the key of them all. The `hashes` of the package directories are those
+    of inputs(), computed now by default. The lock must be prepared: see
+    resolution.prepare().
     """
     resolved, deps = resolve(project), project.deps
+    hashes = hashes or inputs(project)
     image = set(resolved.image)
     base = json.dumps([image_tag(project), project.platform, project.config.extra_upstream, recipe_key()])
 
-    def inputs(name: str) -> str:
+    def package(name: str) -> str:
         buildroot = [
             f"{upstream}={resolved.packages[upstream].evr}"
             for upstream in resolved.buildroots.get(name, [])
             if upstream not in image
         ]
-        return json.dumps([name, hash_dir(project.package_dirs[name]), (autorev or {}).get(name), buildroot])
+        return json.dumps([name, hashes[name], (autorev or {}).get(name), buildroot])
 
     keys: dict[str, str] = {}
     for component in components(deps):  # the dependencies first
         h = hashlib.sha256(base.encode())
         for name in sorted(component):
-            h.update(inputs(name).encode())
+            h.update(package(name).encode())
         for dep in sorted({dep for name in component for dep in deps[name]} - component):
             h.update(keys[dep].encode())
         keys |= {name: hashlib.sha256(f"{h.hexdigest()}\0{name}".encode()).hexdigest() for name in component}
@@ -199,16 +213,11 @@ def builds_repo(project: Project, keys: dict[str, str], names: Iterable[str] | N
     return repo
 
 
-def deps_repo(project: Project, name: str, autorev: dict[str, str] | None = None) -> LocalRepo:
-    """Return the repository the build of `name` runs against: the builds of its dependencies, which its build root
-    can have.
+def deps_repo(project: Project, name: str, keys: dict[str, str]) -> LocalRepo:
+    """Return the repository the build of `name` runs against: the builds of its dependencies, with their `keys`,
+    which its build root can have.
     """  # noqa: D205
-    return builds_repo(project, build_keys(project, autorev), reachable(project.deps, project.deps[name]))
-
-
-def source_path(filename: str, digest: str) -> str:
-    """Return the path of a source archive in the remote storage."""
-    return f"sources/{digest}/{filename}"
+    return builds_repo(project, keys, reachable(project.deps, project.deps[name]))
 
 
 def build_path(project: Project, name: str, key: str) -> str:
@@ -218,57 +227,6 @@ def build_path(project: Project, name: str, key: str) -> str:
 
 BUILD_FILES = ["RPMS", "SRPMS", "build.log"]
 """What a build is made of, in the cache and in the remote storage."""
-
-
-def _fetch_source(project: Project, name: str, filename: str, digest: str) -> bool:
-    """Download an archive of `name` into the source cache, and return whether it was found.
-
-    It comes from the remote storage, or else from the source of the spec of `name` whose URL is its own.
-    """
-    archive = project.source_cache / digest / filename
-    part = archive.with_name(f"{filename}.part")
-    part.parent.mkdir(parents=True, exist_ok=True)
-    urls = (s for s in project.packages[name].sources if "://" in s and archive_name(s) == filename)
-    url, origin, error = next(urls, ""), "", None
-    with activity(f"downloading {filename}") as on_line:
-        try:
-            if (storage := project.config.remote) and remote.download(
-                storage, source_path(filename, digest), part, on_line
-            ):
-                origin = "the remote storage"
-        except remote.RemoteError as e:
-            error = e
-        if not origin and url:
-            try:
-                process.download(url, part, download_progress(on_line))
-                origin = url
-            except OSError as e:
-                error = e
-    if not origin:
-        part.unlink(missing_ok=True)
-        with contextlib.suppress(OSError):  # not to leave it empty
-            part.parent.rmdir()
-        if error:
-            msg = f"{filename} is not in the source cache, and cannot be downloaded: {error}"
-            raise BuildError(msg) from error
-        return False
-    if sha256_of(part) != digest:
-        part.unlink()
-        msg = f"{filename} from {origin} does not match the sha256 of the manifest"
-        raise BuildError(msg)
-    part.rename(archive)
-    return True
-
-
-def fetch_sources(project: Project, name: str) -> list[str]:
-    """Put the archives of `name` in the source cache, downloaded when missing, and return those found nowhere."""
-    manifest = project.package_dirs[name] / "sources"
-    return [
-        filename
-        for filename, digest in (read_manifest(manifest).items() if manifest.exists() else [])
-        if not (project.source_cache / digest / filename).exists()
-        and not _fetch_source(project, name, filename, digest)
-    ]
 
 
 def prepare_tree(project: Project, name: str) -> Path:
@@ -398,19 +356,19 @@ def queued(project: Project) -> list[str]:
     return names if _alive(pid) else []
 
 
-def _image_replacements(project: Project, name: str) -> list[str]:
-    """Return the upstream packages of the image to replace by ours in the build root of `name`."""
-    resolved = resolve(project)
+def _image_replacements(resolved: Resolved, name: str) -> list[str]:
+    """Return the upstream packages of the image to replace by ours in the `resolved` build root of `name`."""
     return sorted(set(resolved.ours.get(name, [])) & set(resolved.image))
 
 
-def _check_resolved(project: Project, name: str) -> None:
-    """Raise when the build root of `name` cannot be resolved, or has upstream packages with the names of ours.
+def _check_resolved(project: Project, name: str) -> Resolved:
+    """Return what is resolved for the build of `name`, but raise when its build root cannot be resolved, or has
+    upstream packages with the names of ours.
 
     Those are packages of ours its build should get, but for those of the image
     in the builds of the packages ours need. It happens with requirements xcraft
     cannot see in the specs: files, versions.
-    """
+    """  # noqa: D205
     resolved = resolve(project)
     if error := resolved.errors.get(name):
         msg = f"its build root cannot be resolved: {error}"
@@ -424,6 +382,7 @@ def _check_resolved(project: Project, name: str) -> None:
     ):
         msg = f"its build root has the upstream {', '.join(shadowed)}: add a BuildRequires on their name to its spec"
         raise BuildError(msg)
+    return resolved
 
 
 class BuildRootChangedError(BuildError):
@@ -456,6 +415,7 @@ def _record_dynamic(project: Project, name: str, tree: Path) -> bool:
     lock.buildrequires.record(project.arch, project.first, name, dynamic)
     save_lock(project, lock)
     project.refresh()
+    prepare(project)  # for the upstream packages they need
     return True
 
 
@@ -553,8 +513,10 @@ def record_built(project: Project, names: list[str], keys: dict[str, str]) -> bo
     return True
 
 
-def _check_build(project: Project, name: str, tree: Path, *, test: bool) -> None:
-    """Record the dynamic BuildRequires of the build of `name` in `tree`, and check what it installed and made."""
+def _check_build(project: Project, name: str, tree: Path, *, test: bool) -> bool:
+    """Record the dynamic BuildRequires of the build of `name` in `tree`, check what it installed and made, and return
+    whether the lock changed.
+    """  # noqa: D205
     changed = _record_dynamic(project, name, tree)
     installed = json.loads((tree / "buildroot.json").read_text())["installed"]
     try:
@@ -565,9 +527,12 @@ def _check_build(project: Project, name: str, tree: Path, *, test: bool) -> None
             raise BuildRootChangedError(msg) from None
         raise
     _check_made(project, name, tree, test=test)
+    return changed
 
 
-def _build_one(project: Project, name: str, *, status: str | None, autorev: dict[str, str]) -> None:
+def _build_one(
+    project: Project, name: str, keys: dict[str, str], *, status: str | None, autorev: dict[str, str]
+) -> None:
     """Build `name` and cache the result, showing `status` while it runs, or the build log without status.
 
     It only gets the builds of its dependencies. What its build found is
@@ -581,10 +546,10 @@ def _build_one(project: Project, name: str, *, status: str | None, autorev: dict
     """
     if error := project.packages[name].error:
         raise BuildError(error)
-    _check_resolved(project, name)
+    resolved = _check_resolved(project, name)
     staged = hash_dir(project.package_dirs[name])
-    replace = _image_replacements(project, name)
-    repo = deps_repo(project, name, autorev)
+    replace = _image_replacements(resolved, name)
+    repo = deps_repo(project, name, keys)
     tree = prepare_tree(project, name)
     log = project.log(name)
     pid_file = _pid_file(project, name)
@@ -610,7 +575,8 @@ def _build_one(project: Project, name: str, *, status: str | None, autorev: dict
         raise
     finally:
         pid_file.unlink()
-    _check_build(project, name, tree, test=name in autorev)
+    if _check_build(project, name, tree, test=name in autorev):
+        keys = build_keys(project, autorev)  # covering what the build recorded
     if hash_dir(project.package_dirs[name]) != staged:
         msg = f"{project.package_dirs[name].relative_to(project.root)} changed during the build, build it again"
         raise BuildError(msg)
@@ -618,14 +584,15 @@ def _build_one(project: Project, name: str, *, status: str | None, autorev: dict
     if name in autorev and (signer := dev_signer(project)):
         for output in ("RPMS", "SRPMS"):
             signer.sign_rpms(project, tree / output)
-    _cache(project, name, tree, autorev)
-    record_built(project, [name], build_keys(project, autorev))
+    _cache(project, name, keys[name], tree, autorev)
+    record_built(project, [name], keys)
 
 
-def _cache(project: Project, name: str, tree: Path, autorev: dict[str, str]) -> Path:
-    """Move the build of `name` in `tree` to the cache, with the test build suffixes `autorev`, and return it there."""
-    # its key covers what the build recorded
-    build_dir = cached_build(project, name, build_keys(project, autorev)[name])
+def _cache(project: Project, name: str, key: str, tree: Path, autorev: dict[str, str]) -> Path:
+    """Move the build of `name` in `tree` to the cache, with its `key` and the test build suffixes `autorev`, and
+    return it there.
+    """  # noqa: D205
+    build_dir = cached_build(project, name, key)
     # assembled next to it, and renamed, not to leave a partial build in the cache
     new = build_dir.with_name(f".{build_dir.name}")
     shutil.rmtree(new, ignore_errors=True)
@@ -695,13 +662,17 @@ def build(  # noqa: PLR0913
     `fetch`, what is not cached locally is built, even when the remote storage
     has it. Without `build_missing`, what is neither cached nor in the remote
     storage fails, rather than being built. When builds find what changes the
-    build roots of others, the builds are planned again, once.
+    build roots of others, the builds are planned again, once. A package whose
+    directory, or one of its dependencies', changed since the start fails: the
+    builds work on the packages as they were then.
+
+    The lock must be prepared: see resolution.prepare().
     """
     autorev = autorev or {}
     if not dry_run:
         build_image(project)
     for attempt in range(2):
-        keys = _record_cached(project, autorev)
+        keys, hashes = _record_cached(project, autorev)
         plan = build_order(project.deps, targets, with_deps=with_deps)
         if dry_run:
             _show_plan(project, plan, keys, fetch=fetch)
@@ -709,7 +680,14 @@ def build(  # noqa: PLR0913
         _queue_file(project).parent.mkdir(parents=True, exist_ok=True)
         try:
             results = _build_all(
-                project, plan, verbose=verbose, autorev=autorev, fetch=fetch, build_missing=build_missing
+                project,
+                plan,
+                keys,
+                hashes,
+                verbose=verbose,
+                autorev=autorev,
+                fetch=fetch,
+                build_missing=build_missing,
             )
         finally:
             _queue_file(project).unlink(missing_ok=True)
@@ -720,20 +698,25 @@ def build(  # noqa: PLR0913
     return [Result(r.name, "failed") if r.status == "again" else r for r in results]
 
 
-def _record_cached(project: Project, autorev: dict[str, str]) -> dict[str, str]:
+def _record_cached(project: Project, autorev: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
     """Record what rpm generated for the cached builds of the current keys, and return the keys, with what they
-    recorded.
+    recorded, and the hashes of the package directories they have.
     """  # noqa: D205
+    hashes = inputs(project)
     for _ in range(5):
-        keys = build_keys(project, autorev)
+        keys = build_keys(project, autorev, hashes)
         if not record_built(project, [n for n, k in keys.items() if cached_build(project, n, k).exists()], keys):
-            break
-    return keys
+            return keys, hashes
+        prepare(project)  # for what they recorded
+    msg = "what the cached builds recorded keeps changing the keys"
+    raise BuildError(msg)
 
 
 def _build_all(  # noqa: PLR0913
     project: Project,
     plan: list[str],
+    keys: dict[str, str],
+    hashes: dict[str, str],
     *,
     verbose: bool,
     autorev: dict[str, str],
@@ -742,13 +725,15 @@ def _build_all(  # noqa: PLR0913
 ) -> list[Result]:
     results: dict[str, Result] = {}
     use_remote = fetch and project.config.remote is not None
+    recorded = _lock_state(project)
     for i, name in enumerate(plan, 1):
         _queue_file(project).write_text("\n".join([str(os.getpid()), *plan[i:]]) + "\n")
-        # the keys change with what each build records
-        keys = build_keys(project, autorev)
-        if cached_build(project, name, keys[name]).exists():
-            results[name] = Result(name, "cached")
-            console.print(f"[dim]·[/] {name} [dim]cached[/]")
+        # the keys change with what the builds record, not with the packages, as they were at the start
+        if (state := _lock_state(project)) != recorded:
+            prepare(project)
+            recorded, keys = state, build_keys(project, autorev, hashes)
+        if done := _done(project, name, keys, hashes, verbose=verbose):
+            results[name] = done
             continue
         if use_remote and name not in autorev:
             try:
@@ -771,15 +756,36 @@ def _build_all(  # noqa: PLR0913
         status = None if verbose else f"[{i}/{len(plan)}] building {name}{_estimate(project, name)}"
         if use_remote:  # without a compiler cache, the one of the remote storage
             ccache.fetch_missing(project, name)
-        results[name] = _build_shown(project, name, status=status, autorev=autorev, verbose=verbose)
+        results[name] = _build_shown(project, name, keys, status=status, autorev=autorev, verbose=verbose)
     return list(results.values())
 
 
-def _build_shown(project: Project, name: str, *, status: str | None, autorev: dict[str, str], verbose: bool) -> Result:
+def _done(project: Project, name: str, keys: dict[str, str], hashes: dict[str, str], *, verbose: bool) -> Result | None:
+    """Return the result of `name` when it is not to build: failed, as it or one of its dependencies changed since
+    they had the `hashes` of the `keys`, or cached.
+    """  # noqa: D205
+    if edited := [n for n in sorted(reachable(project.deps, [name])) if hash_dir(project.package_dirs[n]) != hashes[n]]:
+        error = BuildError(f"{', '.join(edited)} changed since the builds started: build again")
+        _show_failure(project, name, error, verbose=verbose)
+        return Result(name, "failed")
+    if cached_build(project, name, keys[name]).exists():
+        console.print(f"[dim]·[/] {name} [dim]cached[/]")
+        return Result(name, "cached")
+    return None
+
+
+def _lock_state(project: Project) -> bytes:
+    """Return the content of the lock, which the keys depend on."""
+    return path.read_bytes() if (path := lock_path(project)).exists() else b""
+
+
+def _build_shown(  # noqa: PLR0913
+    project: Project, name: str, keys: dict[str, str], *, status: str | None, autorev: dict[str, str], verbose: bool
+) -> Result:
     """Build `name` with _build_one(), and show how it went."""
     start = time.monotonic()
     try:
-        _build_one(project, name, status=status, autorev=autorev)
+        _build_one(project, name, keys, status=status, autorev=autorev)
     except BuildRootChangedError as e:
         console.print(f"[yellow]↻[/] {name}: {escape(str(e))}")
         return Result(name, "again")
@@ -817,9 +823,9 @@ def shell(project: Project, name: str) -> None:
     the prompt. The build tree is the one of the host, in .xcraft/build/, where its files can be edited, and its
     packages are.
     """
-    repo = deps_repo(project, name)
+    repo = deps_repo(project, name, build_keys(project))
     tree = prepare_tree(project, name)
-    replace = _image_replacements(project, name)
+    replace = _image_replacements(resolve(project), name)
     spec = main_spec(project.package_dirs[name]).name
     # the labels dim, the path bold, the command bold cyan: on a terminal, without NO_COLOR, like xcraft's console
     rows = [("build tree", f"{tree}, on the host", "bold"), ("to build", f"rpmbuild -ba SPECS/{spec}", "cyan")]
