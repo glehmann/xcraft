@@ -118,6 +118,9 @@ def test_update_errors(repo: Path, pkg: Path) -> None:
         update_patchset(pkg, pkg / "foo.spec", repo, "v1.0", 2000)
     assert (pkg / "0001-first-change.patch").read_text() == "Subject: [PATCH] unrelated\n"
     assert (pkg / "foo.spec").read_text() == SPEC
+    (pkg / "foo.spec").write_text(SPEC.replace("Patch1000", f"{BEGIN}origin branch v1.0..abc\nPatch1000"))
+    with pytest.raises(PatchsetError, match="has no 'end of xcraft patchset'"):
+        update_patchset(pkg, pkg / "foo.spec", repo, "v1.0", 1000)
 
 
 def test_guesses(repo: Path, pkg: Path) -> None:

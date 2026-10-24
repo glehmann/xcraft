@@ -85,6 +85,32 @@ class Update:
     """Patches of the spec outside of a patchset block, replaced as previous exports of the same commits."""
 
 
+def _place(spec: Path, pkg_dir: Path, subjects: set[str]) -> tuple[list[str], int, int, list[str], list[str]]:
+    """Return the lines of `spec`, where its patchset block goes, from its start to its end, the patches it replaces,
+    and those of them outside of a block, previous exports of the commits of the `subjects`.
+    """  # noqa: D205
+    lines = spec.read_text().splitlines(keepends=True)
+    if (start := next((i for i, line in enumerate(lines) if line.startswith(BEGIN)), None)) is not None:
+        if (end := next((i + 1 for i in range(start, len(lines)) if lines[i].startswith(END)), None)) is None:
+            msg = f"{spec.name} has no {END.removeprefix('# ')!r} after its {BEGIN.strip()!r}"
+            raise PatchsetError(msg)
+        return lines, start, end, [m.group(2) for line in lines[start:end] if (m := _PATCH_RE.match(line))], []
+    # previous exports of the same commits, by subject
+    matching = {
+        i: m.group(2) for i, line in enumerate(lines)
+        if (m := _PATCH_RE.match(line)) and (pkg_dir / m.group(2)).is_file()
+        and _subject((pkg_dir / m.group(2)).read_text(errors="replace")) in subjects
+    }  # fmt: skip
+    if matching:
+        start = min(matching)
+        lines = [line for i, line in enumerate(lines) if i == start or i not in matching]
+        return lines, start, start + 1, list(matching.values()), list(matching.values())
+    # after the last patch, or the last source
+    last = [i for i, line in enumerate(lines) if re.match(r"^(Patch|Source)\d*\s*:", line)]
+    start = (max(last) + 1) if last else 0
+    return lines, start, start, [], []
+
+
 def update_patchset(pkg_dir: Path, spec: Path, repo: Path, base: str, first: int) -> Update:
     """Replace the patchset of the package in `pkg_dir` with the commits of `base`..HEAD in `repo`."""
     text = spec.read_text()
@@ -96,29 +122,7 @@ def update_patchset(pkg_dir: Path, spec: Path, repo: Path, base: str, first: int
         if not patches:
             msg = f"no commit in {base}..HEAD"
             raise PatchsetError(msg)
-        subjects = {_subject(p.read_text()) for p in patches}
-        lines = text.splitlines(keepends=True)
-        start = next((i for i, line in enumerate(lines) if line.startswith(BEGIN)), None)
-        if start is not None:
-            end = next(i for i in range(start, len(lines)) if lines[i].startswith(END)) + 1
-            old = [m.group(2) for line in lines[start:end] if (m := _PATCH_RE.match(line))]
-            replaced = []
-        else:
-            # previous exports of the same commits, by subject
-            matching = {
-                i: m.group(2) for i, line in enumerate(lines)
-                if (m := _PATCH_RE.match(line)) and (pkg_dir / m.group(2)).is_file()
-                and _subject((pkg_dir / m.group(2)).read_text(errors="replace")) in subjects
-            }  # fmt: skip
-            old = replaced = list(matching.values())
-            if matching:
-                start = min(matching)
-                end = start + 1
-                lines = [line for i, line in enumerate(lines) if i == start or i not in matching]
-            else:
-                # after the last patch, or the last source
-                last = [i for i, line in enumerate(lines) if re.match(r"^(Patch|Source)\d*\s*:", line)]
-                start = end = (max(last) + 1) if last else 0
+        lines, start, end, old, replaced = _place(spec, pkg_dir, {_subject(p.read_text()) for p in patches})
         others = {int(m.group(1)) for m in _PATCH_RE.finditer("".join(lines[:start] + lines[end:]))}
         numbers = range(first, first + len(patches))
         if clashes := sorted(others & set(numbers)):
