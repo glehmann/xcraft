@@ -21,7 +21,7 @@ import shutil
 import time
 from contextlib import nullcontext
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from rich.markup import escape
 from rich.text import Text
@@ -295,12 +295,16 @@ def _run_build(  # noqa: PLR0913
     run_container(project, script, container=f"xcraft-{project.id}-{name}", volumes=volumes, log=log, on_line=on_line)
 
 
+Status = Literal["cached", "fetched", "built", "failed", "skipped", "again"]
+"""What became of a package in a build: again, to build again."""
+
+
 @dataclass
 class Result:
     """Outcome of a package in a build."""
 
     name: str
-    status: str  # cached, fetched, built, failed, skipped, or again, to build again
+    status: Status
 
     @property
     def failed(self) -> bool:
