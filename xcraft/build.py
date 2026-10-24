@@ -738,7 +738,8 @@ def _build_all(  # noqa: PLR0913
                 console.print(f"[yellow]remote storage unavailable, building locally[/]: {escape(str(e))}")
                 use_remote = fetched = False
             if fetched:
-                _add_fetched(project, name, keys)
+                record_built(project, [name], keys)
+                console.print(f"[green]↓[/] {name} [green]fetched[/]")
                 results[name] = Result(name, "fetched")
                 continue
         if failed := _failed(project, name, results):
@@ -814,12 +815,6 @@ def _build_shown(  # noqa: PLR0913
 def _failed(project: Project, name: str, results: dict[str, Result]) -> list[str]:
     """Return the dependencies of `name` that failed or were skipped."""
     return sorted(dep for dep in project.deps[name] if dep in results and results[dep].status in ("failed", "skipped"))
-
-
-def _add_fetched(project: Project, name: str, keys: dict[str, str]) -> None:
-    """Record in the lock what rpm generated for the fetched build of `name`."""
-    record_built(project, [name], keys)
-    console.print(f"[green]↓[/] {name} [green]fetched[/]")
 
 
 def _show_failure(project: Project, name: str, error: Exception, *, verbose: bool) -> None:
