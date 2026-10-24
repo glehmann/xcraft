@@ -70,4 +70,4 @@ def publish(  # noqa: PLR0913, PLR0917
         dest = (output or project.state / "publish").absolute()
         built = snapshot(platforms, dest, signer=signer, push=not local, build=project.config.publish.build)
         if not local and (storage := project.config.remote):
-            publisher.upload_snapshot(built, dest, publisher.snapshot_name(project, storage), signer=signer)
+            publisher.upload_snapshot(built, dest, storage, publisher.snapshot_name(project, storage), signer=signer)
