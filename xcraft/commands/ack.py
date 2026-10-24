@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import typer
+
 from xcraft.commands import Dep, Packages, pending_packages
 from xcraft.display import console
 from xcraft.lock import load_lock, save_lock
@@ -19,6 +21,10 @@ def ack(packages: Packages = None, dep: Dep = None) -> None:
         # first, as it may lock them
         sources = upstream_sources(project, dep) if dep else None
         lock = load_lock(project)
+        # those removed from the project keep their pending updates until acknowledged
+        if unknown := sorted(set(packages or []) - project.package_dirs.keys() - lock.pending.keys()):
+            msg = f"unknown package(s), without pending updates: {', '.join(unknown)}"
+            raise typer.BadParameter(msg)
         names = pending_packages(packages, lock.pending, sources or [])
         for package in names:
             entries = lock.pending.get(package, {})
