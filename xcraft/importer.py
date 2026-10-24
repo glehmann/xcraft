@@ -189,18 +189,19 @@ def _repository(root: Path) -> tuple[str, str]:
     return repo, start[0]
 
 
+def _commit(repo: str, ref: str) -> str | None:
+    """Return the commit of `ref`, if it exists."""
+    found = process.run(["git", "-C", repo, "rev-parse", "--verify", "--quiet", ref], check=False, capture=True)
+    return found.stdout.strip() if found.returncode == 0 else None
+
+
 def _update(repo: str, ref: str, commit: str) -> None:
     """Move the branch `ref` forward to `commit`, refusing to drop its commits."""
-    old = process.run(["git", "-C", repo, "rev-parse", "--verify", "--quiet", ref], check=False, capture=True)
-    if (
-        old.returncode == 0
-        and process.run(
-            ["git", "-C", repo, "merge-base", "--is-ancestor", old.stdout.strip(), commit], check=False
-        ).returncode
-    ):
+    old = _commit(repo, ref)
+    if old and process.run(["git", "-C", repo, "merge-base", "--is-ancestor", old, commit], check=False).returncode:
         msg = f"{ref.removeprefix('refs/heads/')} has commits that are not imported, like those of import-srpm"
         raise PackageImportError(msg)
-    git("-C", repo, "update-ref", ref, commit, old.stdout.strip() if old.returncode == 0 else "")
+    git("-C", repo, "update-ref", ref, commit, old or "")
 
 
 def import_history(root: Path, pkg_dir: Path, url: str, branches: list[str]) -> dict[str, str]:
@@ -279,8 +280,7 @@ def import_srpm(
     """  # noqa: D205
     repo, first = _repository(project.root)
     ref = f"refs/heads/import/{pkg_dir.name}/{project.config.import_.srpm_branch}"
-    parent = process.run(["git", "-C", repo, "rev-parse", "--verify", "--quiet", ref], check=False, capture=True)
-    parent = parent.stdout.strip() if parent.returncode == 0 else first
+    parent = _commit(repo, ref) or first
     with project.work("import-srpm") as work:
         dest = work / "tree" / pkg_dir.resolve().relative_to(repo)
         dest.mkdir(parents=True)
