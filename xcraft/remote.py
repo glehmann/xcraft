@@ -112,9 +112,13 @@ def _writing(storage: Remote, action: str) -> Generator[S3Client]:
         raise RemoteError(msg)
     try:
         yield _s3(storage.s3_endpoint, storage.region, os.environ["AWS_ACCESS_KEY_ID"])
-    except RemoteError:
-        raise
-    except Exception as e:  # botocore has many exception types, all to report the same way
+    except Exception as e:
+        # those of boto3 and botocore, imported with it, not those of xcraft
+        from boto3.exceptions import Boto3Error  # noqa: PLC0415
+        from botocore.exceptions import BotoCoreError, ClientError  # noqa: PLC0415
+
+        if not isinstance(e, Boto3Error | BotoCoreError | ClientError):
+            raise
         msg = f"cannot {action}: {e}"
         raise RemoteError(msg) from e
 
