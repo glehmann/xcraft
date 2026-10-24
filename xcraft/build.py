@@ -185,8 +185,10 @@ class TestBuild:
     """Whether it is built from the current spec and dependencies."""
 
 
-def test_builds(project: Project, name: str) -> list[TestBuild]:
-    """Return the latest cached test or pre build of `name` for each ID, the newest first."""
+def test_builds(project: Project, name: str, hashes: dict[str, str]) -> list[TestBuild]:
+    """Return the latest cached test or pre build of `name` for each ID, the newest first, current or not with the
+    `hashes` of the package directories (see inputs()).
+    """  # noqa: D205
     latest: dict[tuple[str, str], tuple[TestBuild, Path]] = {}
     for marker in cached_build(project, name, "").glob("[!.]*/autorev"):
         if not (m := _TEST_SUFFIX.match(json.loads(marker.read_text())[name])):
@@ -197,7 +199,7 @@ def test_builds(project: Project, name: str) -> list[TestBuild]:
         if (kind, m[kind]) not in latest or built > latest[kind, m[kind]][0].built:
             latest[kind, m[kind]] = TestBuild(kind, m[kind], int(m["number"]), built, current=False), marker
     for build, marker in latest.values():
-        build.current = build_keys(project, json.loads(marker.read_text()))[name] == marker.parent.name
+        build.current = build_keys(project, json.loads(marker.read_text()), hashes)[name] == marker.parent.name
     return sorted((build for build, _ in latest.values()), key=lambda build: -build.built)
 
 
