@@ -30,6 +30,7 @@ from xcraft import ccache, remote
 from xcraft.container import BUILDENV, DNF_LOCK, ContainerError, build_image, image_tag, run, run_container
 from xcraft.display import (
     activity,
+    changes,
     console,
     diagnostics,
     duration,
@@ -394,13 +395,11 @@ class BuildRootChangedError(BuildError):
 def _check_build_root(project: Project, name: str, installed: dict[str, Locked]) -> None:
     """Raise when dnf installed, in the build root of `name`, other packages than those resolved for it."""
     resolved = resolve(project)
-    expected = {n: resolved.packages[n].evr for n in resolved.buildroots[name]}
-    expected |= dict.fromkeys(resolved.ours[name], "ours")
-    got = {n: "ours" if p.repo == "xcraft" else p.evr for n, p in installed.items()}
-    if differences := sorted(
-        [*(f"+{n} ({got[n]})" for n in got if got[n] != expected.get(n)),
-         *(f"-{n} ({expected[n]})" for n in expected if expected[n] != got.get(n))]
-    ):  # fmt: skip
+    expected = {f"{n} ({resolved.packages[n].evr})" for n in resolved.buildroots[name]}
+    expected |= {f"{n} (ours)" for n in resolved.ours[name]}
+    if differences := changes(
+        expected, {f"{n} ({'ours' if p.repo == 'xcraft' else p.evr})" for n, p in installed.items()}
+    ):
         msg = f"its build root is not the one resolved for it: {', '.join(differences)}"
         raise BuildError(msg)
 
