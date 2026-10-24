@@ -364,7 +364,7 @@ def test_packages_edited_while_building(project: Project, monkeypatch: pytest.Mo
     keys = build_keys(project, hashes=hashes)
     (build.cached_build(project, "b", keys["b"])).mkdir(parents=True)
 
-    def building(_project: Project, name: str, _keys: dict[str, str], **_: object) -> build.Result:
+    def building(_project: Project, name: str, *_: object, **__: object) -> build.Result:
         if name == "c":  # a, which b depends on, edited meanwhile
             (project.root / "base/a/a.spec").write_text("a edited")
         return build.Result(name, "built")
