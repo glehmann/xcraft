@@ -133,6 +133,8 @@ def _parse(stream: bytes) -> list[_Commit]:
 
 def _lfs_pointers(repo: str, blobs: set[bytes]) -> dict[bytes, str]:
     """Return the SHA-256 of the archive of each of the `blobs` which is a pointer of git LFS."""
+    if not blobs:  # git cat-file would read an empty line
+        return {}
     small = [
         oid for oid, _, size in (line.split() for line in process.run_bytes(
             ["git", "-C", repo, "cat-file", "--batch-check"], b"\n".join(sorted(blobs)) + b"\n"

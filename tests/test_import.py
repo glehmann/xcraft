@@ -217,3 +217,11 @@ def test_import_refuses_links(root: Path, upstream: Path, tmp_path: Path) -> Non
     assert "SOURCES/key of " in str(result.exception)
     assert "not a regular file, not imported" in str(result.exception)
     assert git(root, "for-each-ref", "refs/heads/import") == ""
+
+
+def test_import_without_files(root: Path, tmp_path: Path) -> None:
+    upstream = tmp_path / "rpms/empty"
+    upstream.mkdir(parents=True)
+    git(upstream, "init", "-q", "-b", "master")
+    git(upstream, "commit", "-q", "--allow-empty", "-m", "nothing yet")
+    assert import_history(root, root / "base/empty", f"file://{upstream}", ["master"]) == {}
