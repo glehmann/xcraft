@@ -18,6 +18,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -333,26 +334,26 @@ def run_container(  # noqa: PLR0913
 
     _warm_dnf_cache(project)
     image = image or build_image(project)
-    lock_list = project.state / "tmp" / f"versionlock-{os.getpid()}.list"
-    lock_list.parent.mkdir(parents=True, exist_ok=True)
-    lock_list.write_text(versionlock(resolve_image(project).packages))
-    volumes = [*volumes, f"{BUILDENV}:/xcraft:ro", f"{lock_list}:/etc/dnf/plugins/versionlock.list:ro"]
-    cache = _dnf_cache(project)
-    cmd = [
-        # replacing a container of a killed xcraft
-        "podman", "run", "--rm", "--replace", "--name", container, "--platform", project.platform,
-        "--userns=keep-id:uid=1000,gid=1000", "--security-opt", "label=disable",
-        *([] if network else ["--network", "none"]), *(["--interactive", "--tty"] if log is None else []),
-        *(arg for volume in [f"{cache}:/var/cache/dnf", *volumes] for arg in ("--volume", volume)),
-        image, "bash", "-c", script,
-    ]  # fmt: skip
-    try:
-        returncode = (
-            process.run(cmd, check=False).returncode if log is None else _run_logged(cmd, log, on_line, container)
-        )
-    except BaseException:
-        _kill(container)
-        raise
+    (project.state / "tmp").mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", dir=project.state / "tmp", prefix="versionlock-") as lock_list:
+        lock_list.write(versionlock(resolve_image(project).packages))
+        lock_list.flush()
+        volumes = [*volumes, f"{BUILDENV}:/xcraft:ro", f"{lock_list.name}:/etc/dnf/plugins/versionlock.list:ro"]
+        cmd = [
+            # replacing a container of a killed xcraft
+            "podman", "run", "--rm", "--replace", "--name", container, "--platform", project.platform,
+            "--userns=keep-id:uid=1000,gid=1000", "--security-opt", "label=disable",
+            *([] if network else ["--network", "none"]), *(["--interactive", "--tty"] if log is None else []),
+            *(arg for volume in [f"{_dnf_cache(project)}:/var/cache/dnf", *volumes] for arg in ("--volume", volume)),
+            image, "bash", "-c", script,
+        ]  # fmt: skip
+        try:
+            returncode = (
+                process.run(cmd, check=False).returncode if log is None else _run_logged(cmd, log, on_line, container)
+            )
+        except BaseException:
+            _kill(container)
+            raise
     if returncode:
         msg = "failed" + (f", see {log}" if log else "")
         raise ContainerError(msg)
