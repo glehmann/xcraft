@@ -147,10 +147,10 @@ def lock_sources(project: Project, sources: list[str]) -> None:
     project.refresh()
 
 
-def _locking(project: Project, resolve: Callable[[], Resolved]) -> None:
-    """Lock the upstream source packages what `resolve` resolves needs."""
+def _locking(project: Project, resolve: Callable[[Project], Resolved]) -> None:
+    """Lock the upstream source packages what `resolve` resolves for `project` needs."""
     for _ in range(3):
-        if not (resolved := resolve()).unlocked:
+        if not (resolved := resolve(project)).unlocked:
             return
         lock_sources(project, resolved.unlocked)
     msg = f"upstream source packages needed, but locked in a version {project.arch} does not have: "
@@ -171,9 +171,13 @@ def prepare(project: Project, *, roots: bool = True) -> None:
     """  # noqa: D205
     native = project.on_host()
     for platform in [native] if native == project else [native, project]:
-        _locking(platform, lambda p=platform: _cached(p, _image_data(p), show=f"resolving the image of {p.arch}"))
+        _locking(platform, _image)
     if roots:
-        _locking(project, lambda: _cached(project, _roots_data(project), show=_roots_show(project)))
+        _locking(project, _roots)
+
+
+def _image(project: Project) -> Resolved:
+    return _cached(project, _image_data(project), show=f"resolving the image of {project.arch}")
 
 
 def resolve_image(project: Project) -> Resolved:
@@ -181,7 +185,7 @@ def resolve_image(project: Project) -> Resolved:
 
     Raise when the lock misses some: prepare() it first.
     """
-    resolved = _locked(_cached(project, _image_data(project), show=f"resolving the image of {project.arch}"))
+    resolved = _locked(_image(project))
     if error := resolved.errors.get("image"):
         msg = f"the build environment image of {project.arch} cannot be resolved: {error}"
         raise ResolutionError(msg)
@@ -209,8 +213,8 @@ def _roots_data(project: Project) -> dict:
     return {**_image_data(project), "ours": _ours(project), "builds": builds}
 
 
-def _roots_show(project: Project) -> str:
-    return f"resolving the build roots of {project.arch}"
+def _roots(project: Project) -> Resolved:
+    return _cached(project, _roots_data(project), show=f"resolving the build roots of {project.arch}")
 
 
 def resolve(project: Project) -> Resolved:
@@ -219,7 +223,7 @@ def resolve(project: Project) -> Resolved:
     Raise when the lock misses upstream source packages they need: prepare() it first.
     """
     resolve_image(project)
-    return _locked(_cached(project, _roots_data(project), show=_roots_show(project)))
+    return _locked(_roots(project))
 
 
 def record(project: Project, names: list[str], rpms: list[Path]) -> Resolved:
