@@ -207,9 +207,8 @@ def base_image(project: Project) -> str:
     if cache.exists() and _exists(image := cache.read_text()):
         return image
     with activity(f"pulling the base image of {project.arch}"):
-        image = process.run(["podman", "pull", "-q", "--platform", project.platform, ref], capture=True).stdout.split()[
-            -1
-        ]
+        pulled = process.run(["podman", "pull", "-q", "--platform", project.platform, ref], capture=True)
+    image = pulled.stdout.split()[-1]
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(image)
     return image
@@ -217,10 +216,11 @@ def base_image(project: Project) -> str:
 
 def base_packages(project: Project) -> list[str]:
     """Return the packages of the base image of the platform, read natively."""
-    cache = project.state / "cache/base" / f"{hashlib.sha256(f'{base_image(project)}'.encode()).hexdigest()}.json"
+    image = base_image(project)
+    cache = project.state / "cache/base" / f"{hashlib.sha256(image.encode()).hexdigest()}.json"
     if not cache.exists():
         native = project.on_host()
-        mount = f"type=image,source={base_image(project)},target=/base"
+        mount = f"type=image,source={image},target=/base"
         cmd = ["podman", "run", "--rm", "--platform", native.platform, "--mount", mount, base_image(native)]
         names = process.run([*cmd, "rpm", "--root", "/base", "-qa", "--qf", "%{NAME}\\n"], capture=True).stdout.split()
         write_atomically(cache, json.dumps(sorted(set(names) - {"gpg-pubkey"})))
