@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
+from xcraft.display import changes
 from xcraft.project import write_atomically
 
 if TYPE_CHECKING:
@@ -199,9 +200,8 @@ def save_lock(project: Project, lock: Lock) -> None:
     When the project is `frozen`, fail instead if that changes the lock.
     """
     if project.frozen:
-        before, after = _entries(load_lock(project)), _entries(lock)
-        if changes := [*(f"+{e}" for e in sorted(after - before)), *(f"-{e}" for e in sorted(before - after))]:
-            msg = f"the lock would change, which --locked forbids: {', '.join(changes)}"
+        if differences := changes(_entries(load_lock(project)), _entries(lock)):
+            msg = f"the lock would change, which --locked forbids: {', '.join(differences)}"
             raise RuntimeError(msg)
         return
     lines = ["# written by xcraft: the versions of the upstream packages, for all the architectures", "", "[sources]"]

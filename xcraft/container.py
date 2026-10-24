@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from xcraft import host, process
-from xcraft.display import activity, read_tail
+from xcraft.display import activity, changes, read_tail
 from xcraft.lock import Locked, versionlock
 from xcraft.project import ProjectLockedError, write_atomically
 
@@ -123,12 +123,8 @@ def _build_image(project: Project, tag: str, args: dict[str, str], files: dict[s
     from xcraft.resolution import resolve_image  # noqa: PLC0415, which runs containers
 
     _podman_build(project, "image", tag, files, args, show="the build environment image")
-    resolved = {n: (p.evr, p.arch) for n, p in resolve_image(project).image_packages().items()}
-    installed = {n: (p.evr, p.arch) for n, p in image_packages(project, tag).items()}
-    if differences := sorted(
-        [*(f"+{n}-{installed[n][0]}" for n in installed if installed[n] != resolved.get(n)),
-         *(f"-{n}-{resolved[n][0]}" for n in resolved if resolved[n] != installed.get(n))]
-    ):  # fmt: skip
+    resolved = {f"{n}-{p.evr}.{p.arch}" for n, p in resolve_image(project).image_packages().items()}
+    if differences := changes(resolved, {f"{n}-{p.evr}.{p.arch}" for n, p in image_packages(project, tag).items()}):
         process.run(["podman", "rmi", tag], capture=True)
         msg = f"the build environment image does not have the packages resolved for it: {', '.join(differences)}"
         raise ContainerError(msg)

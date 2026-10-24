@@ -151,6 +151,11 @@ def log_step(lines: list[str], step: str = "last") -> list[str]:
     return lines[starts[n][0] : starts[n + 1][0] if n + 1 < len(starts) else None]
 
 
+def changes(before: set[str], after: set[str]) -> list[str]:
+    """Return what `after` has but not `before`, as ``+<it>``, then what it lost, as ``-<it>``."""
+    return [*(f"+{e}" for e in sorted(after - before)), *(f"-{e}" for e in sorted(before - after))]
+
+
 def duration(seconds: float) -> str:
     """Return a duration like 2m30s: hours and minutes, minutes and seconds, or seconds."""
     hours, rest = divmod(round(seconds), 3600)
