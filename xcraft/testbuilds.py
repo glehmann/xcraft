@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from xcraft.cache import build_keys, cached_build
+from xcraft.cache import build_keys, builds_dir
 from xcraft.project import write_atomically
 
 if TYPE_CHECKING:
@@ -58,7 +58,7 @@ def test_builds(project: Project, name: str, hashes: dict[str, str]) -> list[Tes
     `hashes` of the package directories (see xcraft.cache.inputs()).
     """  # noqa: D205
     latest: dict[tuple[str, str], tuple[TestBuild, Path]] = {}
-    for marker in cached_build(project, name, "").glob("[!.]*/autorev"):
+    for marker in builds_dir(project, name).glob("[!.]*/autorev"):
         if not (m := _TEST_SUFFIX.match(json.loads(marker.read_text())[name])):
             continue
         kind = "test" if m["test"] else "pre"

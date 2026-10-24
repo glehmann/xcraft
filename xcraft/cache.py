@@ -105,16 +105,21 @@ def build_keys(
     return keys
 
 
+def builds_dir(project: Project, name: str) -> Path:
+    """Return where the builds of `name` are cached, one per key."""
+    return project.state / "cache/builds" / project.arch / name
+
+
 def cached_build(project: Project, name: str, key: str) -> Path:
     """Return where the build of `name` with `key` is cached."""
-    return project.state / "cache/builds" / project.arch / name / key
+    return builds_dir(project, name) / key
 
 
 def has_normal_build(project: Project, name: str) -> bool:
     """Return whether `name` has a cached build, of any version, besides the test builds."""
     return any(
         not (build.name.startswith(".") or (build / "autorev").exists())  # not a build in progress, or a test one
-        for build in cached_build(project, name, "").glob("*")
+        for build in builds_dir(project, name).glob("*")
     )
 
 
@@ -148,7 +153,7 @@ BUILD_FILES = ["RPMS", "SRPMS", "build.log"]
 
 def previous_duration(project: Project, name: str) -> float | None:
     """Return how long the last cached build of `name` took, if any."""
-    builds = sorted(cached_build(project, name, "").glob("*/build.log"), key=lambda log: log.stat().st_mtime)
+    builds = sorted(builds_dir(project, name).glob("*/build.log"), key=lambda log: log.stat().st_mtime)
     for log in reversed(builds):
         # the build environment runs the build under `time`
         if times := re.findall(r"^real\s+(\d+)m([\d.]+)s$", log.read_text(errors="replace"), re.MULTILINE):
