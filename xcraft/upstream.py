@@ -34,12 +34,7 @@ def upstream_requires(project: Project) -> UpstreamRequires:
         for binary in package.binaries
         for c in [binary.name, *binary.provides]
     }
-    capabilities = {
-        r
-        for package in packages.values()
-        for r in [*package.buildrequires, *(r for b in package.binaries for r in b.requires)]
-        if dep_name(r) not in ours
-    }
+    capabilities = {r for package in packages.values() for r in package.requirements if dep_name(r) not in ours}
     data = json.dumps(
         {
             "packages": {name: [p.evr, p.arch] for name, p in sorted(resolve_image(project).packages.items())},

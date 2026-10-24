@@ -466,9 +466,7 @@ def record_built(project: Project, names: list[str], keys: dict[str, str]) -> bo
     What a build generated is kept with it, for the same locked versions and requirements of our specs.
     """  # noqa: D205
     lock = load_lock(project)
-    wanted = sorted(
-        {r for p in project.parsed.values() for r in [*p.buildrequires, *(r for b in p.binaries for r in b.requires)]}
-    )
+    wanted = sorted({r for p in project.parsed.values() for r in p.requirements})
     context = hashlib.sha256(
         json.dumps([(BUILDENV / "resolve.py").read_text(), lock.sources, wanted]).encode()
     ).hexdigest()

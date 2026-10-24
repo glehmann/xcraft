@@ -59,6 +59,11 @@ class Package(BaseModel):
     error: str = ""
     """Why the spec could not be parsed, if it could not."""
 
+    @property
+    def requirements(self) -> list[str]:
+        """Its BuildRequires, and the requirements of its binary packages."""
+        return [*self.buildrequires, *(r for b in self.binaries for r in b.requires)]
+
 
 _Packages = TypeAdapter(dict[str, Package])
 
