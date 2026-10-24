@@ -13,17 +13,10 @@ import pytest
 import typer
 
 from tests import TOML, config
-from xcraft import build, ccache
-from xcraft.build import (
-    BuildError,
-    _check_made,
-    build_keys,
-    prepare_tree,
-    previous_duration,
-    queued,
-    recipe_key,
-    record_built,
-)  # fmt: skip
+from xcraft import build, cache, ccache, testbuilds
+from xcraft.build import queued
+from xcraft.cache import BuildError, build_keys, previous_duration, recipe_key
+from xcraft.checks import _check_made, record_built
 from xcraft.clean import clean, repos_disk_usage
 from xcraft.commands import complete_arch, load
 from xcraft.localrepo import RepoError, fresh_dir
@@ -31,6 +24,7 @@ from xcraft.lock import Lock, load_lock, save_lock
 from xcraft.project import Project, ProjectLockedError, Remote
 from xcraft.publish import build_dependencies
 from xcraft.resolution import Resolved
+from xcraft.rpmbuild import prepare_tree
 from xcraft.sources import cache_source, write_manifest
 from xcraft.specs import Binary, Package, hash_dir, main_spec
 
@@ -221,8 +215,8 @@ def test_build_dependencies(project: Project, monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_keys_of_cycles(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("xcraft.build.resolve", lambda _: Resolved())
-    monkeypatch.setattr("xcraft.build.image_tag", lambda _: "localhost/xcraft-build:image")
+    monkeypatch.setattr("xcraft.cache.resolve", lambda _: Resolved())
+    monkeypatch.setattr("xcraft.cache.image_tag", lambda _: "localhost/xcraft-build:image")
     for name in ("a", "b", "0foo"):
         (project.root / "base" / name).mkdir(parents=True)
         (project.root / "base" / name / f"{name}.spec").write_text(name)
@@ -265,11 +259,11 @@ def test_hash_dir_covers_what_builds_get(tmp_path: Path) -> None:
 def test_recipe(monkeypatch: pytest.MonkeyPatch) -> None:
     current = "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc"
     assert recipe_key() == current, (
-        f"the recipe changed, to {build.RECIPE}: map it to {current} in _SAME_BUILDS if it makes the same packages, "
+        f"the recipe changed, to {cache.RECIPE}: map it to {current} in _SAME_BUILDS if it makes the same packages, "
         "or else set it here, which rebuilds everything"
     )
-    monkeypatch.setattr(build, "RECIPE", "c")
-    monkeypatch.setattr(build, "_SAME_BUILDS", {"c": "a", "b": "a"})
+    monkeypatch.setattr(cache, "RECIPE", "c")
+    monkeypatch.setattr(cache, "_SAME_BUILDS", {"c": "a", "b": "a"})
     assert recipe_key() == "a"
 
 
@@ -304,13 +298,13 @@ def test_record_built(project: Project, monkeypatch: pytest.MonkeyPatch) -> None
     binary = Binary(name="foo", evr="1.0-1", arch="x86_64", provides=[], requires=[])
     project.parsed = {"foo": Package(name="foo", binaries=[binary])}
     # what cannot be recorded yet is not kept, to record it again next time
-    monkeypatch.setattr("xcraft.build.record", lambda *_: Resolved(errors={"foo": "nothing provides libbar.so.1"}))
+    monkeypatch.setattr("xcraft.checks.record", lambda *_: Resolved(errors={"foo": "nothing provides libbar.so.1"}))
     assert not record_built(project, ["foo"], {"foo": "key"})
     assert not (build / "recorded.json").exists()
-    monkeypatch.setattr("xcraft.build.record", lambda *_: Resolved(requires={"foo": ["bar"]}))
+    monkeypatch.setattr("xcraft.checks.record", lambda *_: Resolved(requires={"foo": ["bar"]}))
     assert record_built(project, ["foo"], {"foo": "key"})
     assert load_lock(project).requires.shared == {"foo": ["bar"]}
-    monkeypatch.setattr("xcraft.build.record", lambda *_: pytest.fail("recorded again"))
+    monkeypatch.setattr("xcraft.checks.record", lambda *_: pytest.fail("recorded again"))
     assert not record_built(project, ["foo"], {"foo": "key"})
 
 
@@ -328,7 +322,7 @@ def test_builds_still_to_build_again_fail(project: Project, monkeypatch: pytest.
 
 
 def test_latest_test_builds(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(build, "build_keys", lambda *_: {"foo": "other"})
+    monkeypatch.setattr(testbuilds, "build_keys", lambda *_: {"foo": "other"})
     # the numbers start again with each release: the latest is the newest
     for key, suffix, mtime in (("old", ".0.dev.9", 1000), ("new", ".0.dev.1", 2000)):
         (project.state / f"cache/builds/x86_64_v2/foo/{key}").mkdir(parents=True)
@@ -336,7 +330,7 @@ def test_latest_test_builds(project: Project, monkeypatch: pytest.MonkeyPatch) -
         log = project.state / f"cache/builds/x86_64_v2/foo/{key}/build.log"
         log.touch()
         os.utime(log, (mtime, mtime))
-    assert [(b.ident, b.number) for b in build.test_builds(project, "foo", {})] == [("dev", 1)]
+    assert [(b.ident, b.number) for b in testbuilds.test_builds(project, "foo", {})] == [("dev", 1)]
 
 
 def test_empty_compiler_cache(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -360,11 +354,11 @@ def test_packages_edited_while_building(project: Project, monkeypatch: pytest.Mo
         (project.root / "base" / name).mkdir(parents=True)
         (project.root / "base" / name / f"{name}.spec").write_text(name)
     project.deps = {"a": set(), "b": {"a"}, "c": set()}
-    monkeypatch.setattr(build, "resolve", lambda _: Resolved())
-    monkeypatch.setattr(build, "image_tag", lambda _: "localhost/xcraft-build:image")
-    hashes = build.inputs(project)
+    monkeypatch.setattr(cache, "resolve", lambda _: Resolved())
+    monkeypatch.setattr(cache, "image_tag", lambda _: "localhost/xcraft-build:image")
+    hashes = cache.inputs(project)
     keys = build_keys(project, hashes=hashes)
-    (build.cached_build(project, "b", keys["b"])).mkdir(parents=True)
+    (cache.cached_build(project, "b", keys["b"])).mkdir(parents=True)
 
     def building(_project: Project, name: str, *_: object, **__: object) -> build.Result:
         if name == "c":  # a, which b depends on, edited meanwhile

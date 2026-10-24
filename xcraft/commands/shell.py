@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from xcraft import build as builder
+from xcraft import rpmbuild
 from xcraft.commands import Arch, OnePackage, load
 
 
@@ -14,4 +14,4 @@ def shell(package: OnePackage, arch: Arch = None) -> None:
     """
     project = load([package], arch=arch)
     with project.lock():
-        builder.shell(project, package)
+        rpmbuild.shell(project, package)

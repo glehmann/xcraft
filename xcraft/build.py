@@ -1,9 +1,4 @@
-"""Building packages in the build environment, with a cache of the results.
-
-The result of a build is cached under a key covering everything that goes into
-it: the package directory (spec, patches, ``sources`` manifest), the keys of
-the packages it is built against, the build environment image and platform,
-and the extra upstream RPMs.
+"""Building packages in the build environment, with a cache of the results (see xcraft.cache).
 
 The builds run against a local repository holding the cached results matching
 the current keys, with a priority taking over the build environment's
@@ -12,11 +7,8 @@ repositories. Packages not built locally come from those repositories.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import re
-import shlex
 import shutil
 import time
 from contextlib import nullcontext
@@ -27,273 +19,31 @@ from rich.markup import escape
 from rich.text import Text
 
 from xcraft import ccache, remote
-from xcraft.container import BUILDENV, DNF_LOCK, ContainerError, build_image, image_tag, run, run_container
-from xcraft.display import (
-    activity,
-    changes,
-    console,
-    diagnostics,
-    duration,
-    log_step,
-    print_log_line,
-    read_tail,
+from xcraft.cache import (
+    BuildError,
+    build_keys,
+    build_path,
+    builds_repo,
+    cached_build,
+    deps_repo,
+    inputs,
+    previous_duration,
 )
-from xcraft.graph import build_order, components, reachable
-from xcraft.localrepo import REPO_FILE, LocalRepo, link, repo_id
-from xcraft.lock import Locked, load_lock, lock_path, save_lock
-from xcraft.project import write_atomically
-from xcraft.resolution import Resolved, prepare, record, resolve
+from xcraft.checks import BuildRootChangedError, check_build, check_resolved, record_built, record_dynamic
+from xcraft.container import DNF_LOCK, ContainerError, build_image, run
+from xcraft.display import activity, console, diagnostics, duration, log_step, print_log_line, read_tail
+from xcraft.graph import build_order, reachable
+from xcraft.localrepo import LocalRepo, repo_id
+from xcraft.lock import lock_path
+from xcraft.resolution import prepare
+from xcraft.rpmbuild import image_replacements, prepare_tree, run_build
 from xcraft.signing import dev_signer
-from xcraft.sources import fetch_sources, read_manifest
-from xcraft.specs import hash_dir, is_debug, main_spec
+from xcraft.specs import hash_dir
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
     from pathlib import Path
 
     from xcraft.project import Project
-
-RECIPE = hashlib.sha256(
-    "".join(
-        [
-            REPO_FILE,
-            *((BUILDENV / s).read_text() for s in ("build.sh", "offline.py", "record.py", "made.py", "rpmdeps.py")),
-        ]
-    ).encode()
-).hexdigest()
-"""What makes the builds, besides the image and the packages: a change to it rebuilds them all, but see _SAME_BUILDS."""
-_SAME_BUILDS = {
-    # offline.py: an EOF when a process dies first
-    "520edd959d64e226fcbb86a704bf7dbb75e57fa262ef70da5319d4e31f3ec1bc":
-        "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc",
-    # record.py: without the latest versions, which another script looks for
-    "9696604d19c16fc9fdebc6431bacf28b50585465cfb3148b8e041c4ff8153778":
-        "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc",
-    # build.sh and record.py: the providers of the dynamic BuildRequires too
-    "e4d86b87110eac1922b1127fa00c796d08b757136324c97223ea31f34236d20b":
-        "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc",
-    # build.sh, record.py and made.py: the dynamic BuildRequires before installing them, and the packages made
-    "91b1c1f54f53be472170ccaf7f1001959e51a8206718056bb0020a4d383690c5":
-        "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc",
-    # made.py and record.py: entry points, and the dependencies of rpm headers in rpmdeps.py
-    "cd1db99022f6382f7e7363906e76061130bd36e1aa129d164e8917f48cb9ea3a":
-        "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc",
-}  # fmt: skip
-"""Recipes making the same packages as an earlier one, by their hash, with the earliest one: their builds keep its
-keys."""
-
-
-def recipe_key() -> str:
-    """Return the recipe in the build keys: the earliest one making the same packages."""
-    return _SAME_BUILDS.get(RECIPE, RECIPE)
-
-
-class BuildError(RuntimeError):
-    """Raised when a package cannot be built."""
-
-
-def next_test_suffixes(project: Project, names: list[str], kind: str, ident: str) -> dict[str, str]:
-    """Return the release suffixes of the next test or pre builds of `names`, numbered by `ident` and release.
-
-    A test build is above its release and below the next one, and a pre build
-    below its release. The numbers are kept with the project's generated files,
-    across `clean`.
-    """
-    path = project.state / "test-builds.json"
-    counters: dict[str, int] = json.loads(path.read_text()) if path.exists() else {}
-    suffixes = {}
-    for name in names:
-        package = project.packages[name]
-        release = package.binaries[0].evr.removesuffix(package.dist) if package.binaries else ""
-        counter = f"{name} {release} {kind} {ident}"
-        counters[counter] = counters.get(counter, 0) + 1
-        suffixes[name] = f".0.{ident}.{counters[counter]}" if kind == "test" else f"~{ident}.{counters[counter]}"
-    path.parent.mkdir(exist_ok=True)
-    write_atomically(path, json.dumps(counters, indent=1, sort_keys=True) + "\n")
-    return suffixes
-
-
-def inputs(project: Project) -> dict[str, str]:
-    """Return the hash of the directory of each package, its input in the keys."""
-    return {name: hash_dir(path) for name, path in project.package_dirs.items()}
-
-
-def build_keys(
-    project: Project, autorev: dict[str, str] | None = None, hashes: dict[str, str] | None = None
-) -> dict[str, str]:
-    """Return the cache key of each package: a SHA-256 of all that makes its build.
-
-    That is its package directory, the build environment image and recipe,
-    the versions of the upstream packages of its build root, resolved, besides
-    the image's ones, which the image id covers, the `autorev` of the test
-    builds, and the keys of its dependencies. Packages depending on each other
-    get the key of them all. The `hashes` of the package directories are those
-    of inputs(), computed now by default. The lock must be prepared: see
-    resolution.prepare().
-    """
-    resolved, deps = resolve(project), project.deps
-    hashes = hashes or inputs(project)
-    image = set(resolved.image)
-    base = json.dumps([image_tag(project), project.platform, project.config.extra_upstream, recipe_key()])
-
-    def package(name: str) -> str:
-        buildroot = [
-            f"{upstream}={resolved.packages[upstream].evr}"
-            for upstream in resolved.buildroots.get(name, [])
-            if upstream not in image
-        ]
-        return json.dumps([name, hashes[name], (autorev or {}).get(name), buildroot])
-
-    keys: dict[str, str] = {}
-    for component in components(deps):  # the dependencies first
-        h = hashlib.sha256(base.encode())
-        for name in sorted(component):
-            h.update(package(name).encode())
-        for dep in sorted({dep for name in component for dep in deps[name]} - component):
-            h.update(keys[dep].encode())
-        keys |= {name: hashlib.sha256(f"{h.hexdigest()}\0{name}".encode()).hexdigest() for name in component}
-    return keys
-
-
-def cached_build(project: Project, name: str, key: str) -> Path:
-    """Return where the build of `name` with `key` is cached."""
-    return project.state / "cache/builds" / project.arch / name / key
-
-
-def has_normal_build(project: Project, name: str) -> bool:
-    """Return whether `name` has a cached build, of any version, besides the test builds."""
-    return any(
-        not (build.name.startswith(".") or (build / "autorev").exists())  # not a build in progress, or a test one
-        for build in cached_build(project, name, "").glob("*")
-    )
-
-
-_TEST_SUFFIX = re.compile(r"^(?:\.0\.(?P<test>[a-zA-Z0-9]+)|~(?P<pre>[a-zA-Z0-9]+))\.(?P<number>\d+)$")
-
-
-@dataclass
-class TestBuild:
-    """A cached test or pre build of a package."""
-
-    kind: str
-    ident: str
-    number: int
-    built: float
-    """When it was built, as a timestamp."""
-    current: bool
-    """Whether it is built from the current spec and dependencies."""
-
-
-def test_builds(project: Project, name: str, hashes: dict[str, str]) -> list[TestBuild]:
-    """Return the latest cached test or pre build of `name` for each ID, the newest first, current or not with the
-    `hashes` of the package directories (see inputs()).
-    """  # noqa: D205
-    latest: dict[tuple[str, str], tuple[TestBuild, Path]] = {}
-    for marker in cached_build(project, name, "").glob("[!.]*/autorev"):
-        if not (m := _TEST_SUFFIX.match(json.loads(marker.read_text())[name])):
-            continue
-        kind = "test" if m["test"] else "pre"
-        built = (marker.parent / "build.log").stat().st_mtime
-        # the numbers start again with each release
-        if (kind, m[kind]) not in latest or built > latest[kind, m[kind]][0].built:
-            latest[kind, m[kind]] = TestBuild(kind, m[kind], int(m["number"]), built, current=False), marker
-    for build, marker in latest.values():
-        build.current = build_keys(project, json.loads(marker.read_text()), hashes)[name] == marker.parent.name
-    return sorted((build for build, _ in latest.values()), key=lambda build: -build.built)
-
-
-def builds_repo(project: Project, keys: dict[str, str], names: Iterable[str] | None = None) -> LocalRepo:
-    """Return the repository the builds run against, with the cached builds matching `keys`, of `names` only, or of
-    all the packages.
-    """  # noqa: D205
-    repo = LocalRepo(project, project.state / "repo")
-    repo.reset()
-    for name in keys if names is None else names:
-        if cached_build(project, name, keys[name]).exists():
-            repo.add(cached_build(project, name, keys[name]))
-    return repo
-
-
-def deps_repo(project: Project, name: str, keys: dict[str, str]) -> LocalRepo:
-    """Return the repository the build of `name` runs against: the builds of its dependencies, with their `keys`,
-    which its build root can have.
-    """  # noqa: D205
-    return builds_repo(project, keys, reachable(project.deps, project.deps[name]))
-
-
-def build_path(project: Project, name: str, key: str) -> str:
-    """Return the path of the tree of a build in the remote storage."""
-    return f"builds/{project.arch}/{name}/{key}"
-
-
-BUILD_FILES = ["RPMS", "SRPMS", "build.log"]
-"""What a build is made of, in the cache and in the remote storage."""
-
-
-def prepare_tree(project: Project, name: str) -> Path:
-    """Return a fresh build tree of `name`, laid out as a packaging repository.
-
-    The main spec is in SPECS/, everything else in SOURCES/, with the archives
-    from the source cache, downloaded when missing (see fetch_sources).
-    """
-    pkg_dir = project.package_dirs[name]
-    spec = main_spec(pkg_dir)
-    tree = project.state / "build" / name
-    shutil.rmtree(tree, ignore_errors=True)
-    (tree / "SPECS").mkdir(parents=True)
-    shutil.copy2(spec, tree / "SPECS")
-    # `sources` and `origin` are xcraft's
-    shutil.copytree(
-        pkg_dir, tree / "SOURCES", ignore=lambda d, _: [spec.name, "sources", "origin"] if d == str(pkg_dir) else []
-    )
-    if missing := fetch_sources(project, name):
-        msg = f"{', '.join(missing)} is not in the source cache, the remote storage, nor at a URL of the spec"
-        raise BuildError(msg)
-    if (pkg_dir / "sources").exists():
-        for filename, digest in read_manifest(pkg_dir / "sources").items():
-            archive = project.source_cache / digest / filename
-            # read-only: the build tree has it hard-linked, and could change it
-            archive.chmod(0o444)
-            link(archive, tree / "SOURCES" / filename)
-    return tree
-
-
-def _run_build(  # noqa: PLR0913
-    project: Project,
-    name: str,
-    repo: LocalRepo,
-    rpmbuild_stage: str,
-    *,
-    replace: list[str],
-    suffix: str = "",
-    after: str = "",
-    log: Path | None = None,
-    on_line: Callable[[str], None] | None = None,
-) -> None:
-    """Run rpmbuild `rpmbuild_stage` (a: all, p: prep...) in the build tree of `name`, then the `after` commands.
-
-    The upstream packages of the image named in `replace` are replaced first by
-    ours. `suffix` is added to the release of a test build, as %autorev. The output goes to
-    `log`, or to an interactive terminal without log.
-    """
-    parameters = {
-        "spec": main_spec(project.package_dirs[name]).name,
-        "stage": rpmbuild_stage,
-        "repo": repo_id(project),
-        "lock": DNF_LOCK,
-        "autorev": suffix,
-        "replace": " ".join(replace),
-    }
-    script = "".join(f"{p}={shlex.quote(value)}\n" for p, value in parameters.items()) + f". /xcraft/build.sh\n{after}"
-    if size := project.config.ccache_size.get(name):
-        # not in the recipe of the builds: it does not change them
-        script = f"export CCACHE_MAXSIZE={shlex.quote(size)}\n{script}"
-    cache = ccache.local_path(project, name)
-    cache.mkdir(parents=True, exist_ok=True)
-    tree = project.state / "build" / name
-    volumes = [f"{tree}:/build", f"{cache}:/ccache", *repo.volumes()]
-    run_container(project, script, container=f"xcraft-{project.id}-{name}", volumes=volumes, log=log, on_line=on_line)
-
 
 Status = Literal["cached", "fetched", "built", "failed", "skipped", "again"]
 """What became of a package in a build: again, to build again."""
@@ -310,17 +60,6 @@ class Result:
     def failed(self) -> bool:
         """Whether it is not built: failed, skipped, or still to build again."""
         return self.status in ("failed", "skipped", "again")
-
-
-def previous_duration(project: Project, name: str) -> float | None:
-    """Return how long the last cached build of `name` took, if any."""
-    builds = sorted(cached_build(project, name, "").glob("*/build.log"), key=lambda log: log.stat().st_mtime)
-    for log in reversed(builds):
-        # the build environment runs the build under `time`
-        if times := re.findall(r"^real\s+(\d+)m([\d.]+)s$", log.read_text(errors="replace"), re.MULTILINE):
-            minutes, seconds = times[-1]
-            return int(minutes) * 60 + float(seconds)
-    return None
 
 
 def _estimate(project: Project, name: str) -> str:
@@ -361,169 +100,6 @@ def queued(project: Project) -> list[str]:
     return names if _alive(pid) else []
 
 
-def _image_replacements(resolved: Resolved, name: str) -> list[str]:
-    """Return the upstream packages of the image to replace by ours in the `resolved` build root of `name`."""
-    return sorted(set(resolved.ours.get(name, [])) & set(resolved.image))
-
-
-def _check_resolved(project: Project, name: str) -> Resolved:
-    """Return what is resolved for the build of `name`, but raise when its build root cannot be resolved, or has
-    upstream packages with the names of ours.
-
-    Those are packages of ours its build should get, but for those of the image
-    in the builds of the packages ours need. It happens with requirements xcraft
-    cannot see in the specs: files, versions.
-    """  # noqa: D205
-    resolved = resolve(project)
-    if error := resolved.errors.get(name):
-        msg = f"its build root cannot be resolved: {error}"
-        raise BuildError(msg)
-    owners = {binary.name: package.name for package in project.packages.values() for binary in package.binaries}
-    image, deps = set(resolved.image), project.deps[name]
-    if shadowed := sorted(
-        f"{n} (ours from {owners[n]})"
-        for n in resolved.buildroots[name]
-        if n in owners and (n not in image or owners[n] in deps)
-    ):
-        msg = f"its build root has the upstream {', '.join(shadowed)}: add a BuildRequires on their name to its spec"
-        raise BuildError(msg)
-    return resolved
-
-
-class BuildRootChangedError(BuildError):
-    """Raised when what a build found in the lock changed its build root: it is built again, in the new order."""
-
-
-def _check_build_root(project: Project, name: str, installed: dict[str, Locked]) -> None:
-    """Raise when dnf installed, in the build root of `name`, other packages than those resolved for it."""
-    resolved = resolve(project)
-    expected = {f"{n} ({resolved.packages[n].evr})" for n in resolved.buildroots[name]}
-    expected |= {f"{n} (ours)" for n in resolved.ours[name]}
-    if differences := changes(
-        expected, {f"{n} ({'ours' if p.repo == 'xcraft' else p.evr})" for n, p in installed.items()}
-    ):
-        msg = f"its build root is not the one resolved for it: {', '.join(differences)}"
-        raise BuildError(msg)
-
-
-def _record_dynamic(project: Project, name: str, tree: Path) -> bool:
-    """Record in the lock the dynamic BuildRequires the build of `name` asked for, and return whether they changed."""
-    path = tree / "buildrequires.txt"
-    static = set(project.parsed[name].buildrequires)
-    lines = path.read_text().splitlines() if path.exists() else []
-    dynamic = sorted({r for r in lines if r not in static and not r.startswith("rpmlib(")})
-    lock = load_lock(project)
-    if dynamic == lock.buildrequires.of(project.arch).get(name, []):
-        return False
-    lock.buildrequires.record(project.arch, project.first, name, dynamic)
-    save_lock(project, lock)
-    project.refresh()
-    prepare(project)  # for the upstream packages they need
-    return True
-
-
-def _check_made(project: Project, name: str, tree: Path, *, test: bool) -> None:
-    """Raise when the build of `name` did not make the binary packages parsed from its spec for the architecture.
-
-    Their names, versions and architectures, and the provides and requirements their spec declares, those rpm
-    generates apart, and the debug packages too, which rpm splits while building. A test build has its own releases.
-    """
-    made = {n: b for n, b in json.loads((tree / "made.json").read_text()).items() if not is_debug(n)}
-    parsed = {b.name: b for b in project.parsed[name].binaries if not is_debug(b.name)}
-    problems = changes(set(parsed), set(made))
-    for n in sorted(made.keys() & parsed.keys()):
-        b, m = parsed[n], made[n]
-        if m["arch"] != b.arch or (not test and m["evr"] != b.evr):
-            problems.append(f"{n}-{m['evr']}.{m['arch']} rather than {b.evr}.{b.arch}")
-        problems += [
-            f"{n} without the {field} {', '.join(missing)}"
-            for field in (("provides", "requires") if not test else ())
-            if (missing := sorted(set(getattr(b, field)) - set(m[field])))
-        ]
-    if problems:
-        msg = (
-            f"its build did not make the packages parsed from its spec for {project.arch}: {'; '.join(problems)}: "
-            "xcraft parses the spec otherwise than rpmbuild builds it"
-        )
-        raise BuildError(msg)
-
-
-def _rpms(build: Path) -> list[Path]:
-    """Return the binary packages of a build, but the debug ones."""
-    return [p for p in (build / "RPMS").rglob("*.rpm") if not is_debug(p.name.rsplit("-", 2)[0])]
-
-
-def record_built(project: Project, names: list[str], keys: dict[str, str]) -> bool:
-    """Record in the lock what rpm generated for the binary packages of the cached builds of `names`, with `keys`,
-    and return whether the lock changed.
-
-    What a build generated is kept with it, for the same locked versions and requirements of our specs.
-    """  # noqa: D205
-    lock = load_lock(project)
-    wanted = sorted({r for p in project.parsed.values() for r in p.requirements})
-    context = hashlib.sha256(
-        json.dumps([(BUILDENV / "resolve.py").read_text(), lock.sources, wanted]).encode()
-    ).hexdigest()
-    builds = {name: cached_build(project, name, keys[name]) for name in names}
-
-    def found(build: Path) -> dict | None:
-        recorded = json.loads(path.read_text()) if (path := build / "recorded.json").exists() else {}
-        return recorded if recorded.get("context") == context else None
-
-    if new := [name for name, build in builds.items() if not found(build)]:
-        current = [
-            rpm for n, k in keys.items() if (build := cached_build(project, n, k)).exists() for rpm in _rpms(build)
-        ]
-        binaries = {name: [rpm.name.rsplit("-", 2)[0] for rpm in _rpms(builds[name])] for name in new}
-        parsed = {b.name for p in project.parsed.values() for b in p.binaries}
-        result = record(project, sorted(b for bs in binaries.values() for b in bs if b in parsed), current)
-        for name in new:
-            # not kept: recorded again next time, once what they need is there
-            if failed := sorted(set(binaries[name]) & result.errors.keys()):
-                for binary in failed:
-                    console.print(
-                        f"[yellow]cannot record what rpm generated for {binary}[/]: {escape(result.errors[binary])}"
-                    )
-                continue
-            recorded = {
-                "context": context,
-                "requires": {b: result.requires[b] for b in binaries[name] if b in result.requires},
-                "provides": {b: result.provides[b] for b in binaries[name] if b in result.provides},
-            }
-            write_atomically(builds[name] / "recorded.json", json.dumps(recorded))
-    # what dry runs do too, without the lock of the project otherwise
-    with project.lock():
-        lock = load_lock(project)
-        before = lock.model_dump()
-        for build in builds.values():
-            recorded = found(build) or {}
-            for field in ("requires", "provides"):
-                for binary, values in recorded.get(field, {}).items():
-                    getattr(lock, field).record(project.arch, project.first, binary, values)
-        if lock.model_dump() == before:
-            return False
-        save_lock(project, lock)
-    project.refresh()
-    return True
-
-
-def _check_build(project: Project, name: str, tree: Path, *, test: bool) -> bool:
-    """Record the dynamic BuildRequires of the build of `name` in `tree`, check what it installed and made, and return
-    whether the lock changed.
-    """  # noqa: D205
-    changed = _record_dynamic(project, name, tree)
-    installed = json.loads((tree / "buildroot.json").read_text())["installed"]
-    try:
-        _check_build_root(project, name, {n: Locked.model_validate(p) for n, p in installed.items()})
-    except BuildError as e:
-        if changed:
-            msg = f"{e}, with the dynamic BuildRequires it asked for, now in the lock: built again after what they need"
-            raise BuildRootChangedError(msg) from None
-        raise
-    _check_made(project, name, tree, test=test)
-    return changed
-
-
 def _build_one(  # noqa: PLR0913
     project: Project,
     name: str,
@@ -539,8 +115,8 @@ def _build_one(  # noqa: PLR0913
     recorded in the lock: its dynamic BuildRequires, even when it fails, and
     what rpm generated for its binary packages. It is not cached when its spec
     directory changed during the build, when its build root is not the one
-    resolved for it (see _check_build_root), or when it did not make the
-    packages parsed from its spec (see _check_made). Raise
+    resolved for it, or when it did not make the packages parsed from its
+    spec (see xcraft.checks). Raise
     BuildRootChangedError when it found what changes its build root, to build
     it again, after the packages it needs. The `keys` are those of the
     `hashes` of the package directories at the start of the builds, computed
@@ -548,9 +124,9 @@ def _build_one(  # noqa: PLR0913
     """
     if error := project.packages[name].error:
         raise BuildError(error)
-    resolved = _check_resolved(project, name)
+    resolved = check_resolved(project, name)
     staged = hash_dir(project.package_dirs[name])
-    replace = _image_replacements(resolved, name)
+    replace = image_replacements(resolved, name)
     repo = deps_repo(project, name, keys)
     tree = prepare_tree(project, name)
     log = project.log(name)
@@ -566,18 +142,16 @@ def _build_one(  # noqa: PLR0913
                     progress(line)
                 diagnose(line)
 
-            _run_build(
-                project, name, repo, "a", replace=replace, suffix=autorev.get(name, ""), log=log, on_line=on_line
-            )
+            run_build(project, name, repo, "a", replace=replace, suffix=autorev.get(name, ""), log=log, on_line=on_line)
     except ContainerError as e:
         # those it asked for before failing, maybe for one of ours not among its dependencies
-        if (tree / "buildrequires.txt").exists() and _record_dynamic(project, name, tree):
+        if (tree / "buildrequires.txt").exists() and record_dynamic(project, name, tree):
             msg = f"{e}, asking for other dynamic BuildRequires, now in the lock: built again after what they need"
             raise BuildRootChangedError(msg) from None
         raise
     finally:
         pid_file.unlink()
-    if _check_build(project, name, tree, test=name in autorev):
+    if check_build(project, name, tree, test=name in autorev):
         keys = build_keys(project, autorev, hashes)  # covering what the build recorded
     if hash_dir(project.package_dirs[name]) != staged:
         msg = f"{project.package_dirs[name].relative_to(project.root)} changed during the build, build it again"
@@ -828,33 +402,6 @@ def _show_failure(project: Project, name: str, error: Exception, *, verbose: boo
         for line in log_step(read_tail(project.log(name)))[-40:]:
             print_log_line(line)
         console.print(f"[dim]full log: xcraft log {name}[/]")
-
-
-def shell(project: Project, name: str) -> None:
-    """Open a shell in the build tree of `name`, with its build dependencies installed and sources prepared.
-
-    rpmbuild works on the build tree there, like in the builds: rpmbuild -ba SPECS/<spec> builds it again, shown before
-    the prompt. The build tree is the one of the host, in .xcraft/build/, where its files can be edited, and its
-    packages are.
-    """
-    repo = deps_repo(project, name, build_keys(project))
-    tree = prepare_tree(project, name)
-    replace = _image_replacements(resolve(project), name)
-    spec = main_spec(project.package_dirs[name]).name
-    # the labels dim, the path bold, the command bold cyan: on a terminal, without NO_COLOR, like xcraft's console
-    rows = [("build tree", f"{tree}, on the host", "bold"), ("to build", f"rpmbuild -ba SPECS/{spec}", "cyan")]
-    after = (
-        "echo '%_topdir /build' > ~/.rpmmacros"
-        """ && echo 'alias rpmbuild="python3 /xcraft/offline.py rpmbuild"' >> ~/.bashrc && cd /build"""
-        ' && dim= bold= cyan= off= && if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then'
-        " dim=$'\\e[2m' bold=$'\\e[0;1m' cyan=$'\\e[0;1;36m' off=$'\\e[0m'; fi"
-        + "".join(
-            f' && printf "%s%-12s%s%s%s\\n" "$dim" {shlex.quote(label)} "${style}" {shlex.quote(value)} "$off"'
-            for label, value, style in rows
-        )
-        + " && exec bash -l"
-    )
-    _run_build(project, name, repo, "p", replace=replace, after=after)
 
 
 def make_repo(

@@ -6,8 +6,8 @@ from typing import Annotated
 
 import typer
 
-from xcraft import build as builder
 from xcraft import clean as cleaner
+from xcraft.cache import build_keys
 from xcraft.commands import Arch, Packages, load
 from xcraft.display import activity, console
 
@@ -27,7 +27,7 @@ def clean(
     The source archives are always kept.
     """
     project = load(packages, arch=arch)
-    keys = builder.build_keys(project)
+    keys = build_keys(project)
     with project.lock(), activity("cleaning"):
         freed = cleaner.clean(project, keys, packages or None, all_builds=builds, ccache=ccache)
     console.print(f"freed {_size(freed)}")

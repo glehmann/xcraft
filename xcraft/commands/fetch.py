@@ -6,6 +6,7 @@ import typer
 
 from xcraft import build as builder
 from xcraft import ccache
+from xcraft.cache import build_keys, cached_build
 from xcraft.commands import Arch, Packages, load, remote_storage
 from xcraft.display import console
 from xcraft.project import Project
@@ -70,10 +71,10 @@ def builds(packages: Packages = None, arch: Arch = None) -> None:
     """Download from the remote storage the current builds of the packages, all by default, missing from the cache."""
     project = load(packages, arch=arch)
     remote_storage(project)
-    keys = builder.build_keys(project)
+    keys = build_keys(project)
     fetched, cached, absent = [], [], []
     for name in packages or sorted(project.packages):
-        if builder.cached_build(project, name, keys[name]).exists():
+        if cached_build(project, name, keys[name]).exists():
             cached.append(name)
         elif builder.fetch_build(project, name, keys[name]):
             fetched.append(name)

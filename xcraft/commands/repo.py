@@ -14,6 +14,7 @@ from xcraft.commands import Arch, Packages, Pre, Test, load, test_kind
 from xcraft.display import activity, console
 from xcraft.signing import check_signatures, dev_signer
 from xcraft.specs import is_debug
+from xcraft.testbuilds import next_test_suffixes
 
 REMOTE = "/var/local/xcraft"
 """Where the repositories of test builds go on the hosts, one per ID."""
@@ -93,7 +94,7 @@ def repo(  # noqa: PLR0913, PLR0917
     project = load(packages, arch=arch)
     names = list(packages or sorted(project.packages))
     with project.lock():
-        autorev = builder.next_test_suffixes(project, names, *kind) if kind else {}
+        autorev = next_test_suffixes(project, names, *kind) if kind else {}
         results, keys = builder.build(project, names, autorev=autorev)
         if failed := [r.name for r in results if r.failed]:
             msg = f"not built: {', '.join(failed)}"

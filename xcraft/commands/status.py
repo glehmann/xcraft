@@ -9,8 +9,10 @@ from rich.measure import Measurement
 from rich.table import Table
 
 from xcraft import build as builder
+from xcraft.cache import build_keys, cached_build, has_normal_build, inputs
 from xcraft.commands import Arch, Packages, load
 from xcraft.display import console
+from xcraft.testbuilds import TestBuild, test_builds
 
 _STYLES = {
     "error": "red",
@@ -30,7 +32,7 @@ def _age(timestamp: float) -> str:
     return "just now"
 
 
-def _tests(builds: list[builder.TestBuild]) -> str:
+def _tests(builds: list[TestBuild]) -> str:
     return ", ".join(
         f"{b.ident}.{b.number} ({b.kind}, {_age(b.built)}{'' if b.current else ', [yellow]outdated[/]'})"
         for b in builds
@@ -46,11 +48,11 @@ def status(packages: Packages = None, arch: Arch = None) -> None:
     package or its dependencies changed since.
     """
     project = load(packages, arch=arch)
-    hashes = builder.inputs(project)
-    keys = builder.build_keys(project, hashes=hashes)
-    queue = [name for name in builder.queued(project) if not builder.cached_build(project, name, keys[name]).exists()]
+    hashes = inputs(project)
+    keys = build_keys(project, hashes=hashes)
+    queue = [name for name in builder.queued(project) if not cached_build(project, name, keys[name]).exists()]
     shown = sorted(set(packages or project.packages))
-    tests = {name: builder.test_builds(project, name, hashes) for name in shown}
+    tests = {name: test_builds(project, name, hashes) for name in shown}
     columns = ["package", "version", "state"] + (["tests"] if any(tests.values()) else [])
     table = Table(*columns, box=None, pad_edge=False, header_style="bold")
     states = Counter[str]()
@@ -63,10 +65,10 @@ def status(packages: Packages = None, arch: Arch = None) -> None:
             state = "building"
         elif name in queue:
             state = "queued"
-        elif builder.cached_build(project, name, keys[name]).exists():
+        elif cached_build(project, name, keys[name]).exists():
             state = "built"
         else:
-            state = "outdated" if builder.has_normal_build(project, name) else "missing"
+            state = "outdated" if has_normal_build(project, name) else "missing"
         states[state] += 1
         detail = f" {queue.index(name) + 1}/{len(queue)}" if state == "queued" else ""
         table.add_row(

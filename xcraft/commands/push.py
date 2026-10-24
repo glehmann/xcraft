@@ -6,8 +6,8 @@ from typing import Annotated
 
 import typer
 
-from xcraft import build as builder
 from xcraft import ccache, remote
+from xcraft.cache import BUILD_FILES, build_keys, build_path, cached_build
 from xcraft.commands import Arch, Packages, load, remote_storage
 from xcraft.display import activity, console
 from xcraft.project import Project
@@ -89,24 +89,24 @@ def _push_builds(packages: list[str] | None, arch: str | None) -> list[str]:
     """Upload the current builds of `packages`, all by default, and return those not built."""
     project = load(packages, arch=arch)
     storage = remote_storage(project)
-    keys = builder.build_keys(project)
+    keys = build_keys(project)
     pushed, present, not_built = [], [], []
     for name in packages or sorted(project.packages):
-        build = builder.cached_build(project, name, keys[name])
+        build = cached_build(project, name, keys[name])
         if not build.exists():
             not_built.append(name)
             continue
-        path = builder.build_path(project, name, keys[name])
+        path = build_path(project, name, keys[name])
         if remote.tree_exists(storage, path):
             present.append(name)
             continue
         with activity(f"uploading the build of {name}"):
-            remote.upload_tree(storage, path, build, builder.BUILD_FILES)
+            remote.upload_tree(storage, path, build, BUILD_FILES)
         console.print(f"[green]↑[/] {name}")
         pushed.append(name)
     if pushed:
         with activity("making the pages of the directories"):
-            remote.update_pages(storage, [f"{builder.build_path(project, name, keys[name])}/" for name in pushed])
+            remote.update_pages(storage, [f"{build_path(project, name, keys[name])}/" for name in pushed])
     console.print(f"{len(pushed)} pushed, {len(present)} already in the remote storage")
     return not_built
 
