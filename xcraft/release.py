@@ -14,14 +14,19 @@ _MACRO_RE = re.compile(r"%\{[^}]*\}|%\w+")
 _CHANGELOG_RE = re.compile(r"^%changelog[ \t]*\n", re.MULTILINE)
 
 
+def _release(spec: str) -> re.Match[str]:
+    if not (m := _RELEASE_RE.search(spec)):
+        msg = "no Release in the spec"
+        raise ValueError(msg)
+    return m
+
+
 def bump_release(spec: str) -> str:
     """Return `spec` with the last number of its Release, outside of macros, incremented.
 
     That is the XCP-ng part in releases like ``1%{?xsrel}.3%{?dist}``.
     """
-    if not (m := _RELEASE_RE.search(spec)):
-        msg = "no Release in the spec"
-        raise ValueError(msg)
+    m = _release(spec)
     release = m.group(1)
     outside_macros = _MACRO_RE.sub(lambda macro: "%" * len(macro.group()), release)
     if not (numbers := list(re.finditer(r"\d+", outside_macros))):
@@ -33,11 +38,9 @@ def bump_release(spec: str) -> str:
 
 def reset_release(spec: str) -> str:
     """Return `spec` with 1 as its Release, followed by the macros its Release ends with, like ``%{?dist}``."""
-    if not (m := _RELEASE_RE.search(spec)):
-        msg = "no Release in the spec"
-        raise ValueError(msg)
-    suffix = re.search(rf"(?:{_MACRO_RE.pattern})*$", m.group(1))
-    return f"{spec[: m.start(1)]}1{suffix.group() if suffix else ''}{spec[m.end(1) :]}"
+    m = _release(spec)
+    suffix = re.findall(rf"(?:{_MACRO_RE.pattern})*$", m.group(1))[0]
+    return f"{spec[: m.start(1)]}1{suffix}{spec[m.end(1) :]}"
 
 
 def set_version(spec: str, version: str) -> str:
