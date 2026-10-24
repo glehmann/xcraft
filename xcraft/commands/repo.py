@@ -93,13 +93,13 @@ def repo(  # noqa: PLR0913, PLR0917
     names = list(packages or sorted(project.packages))
     with project.lock():
         autorev = builder.next_test_suffixes(project, names, *kind) if kind else {}
-        results = builder.build(project, names, autorev=autorev)
+        results, keys = builder.build(project, names, autorev=autorev)
         if failed := [r.name for r in results if r.failed]:
             msg = f"not built: {', '.join(failed)}"
             raise RuntimeError(msg)
         output = (output or project.root / (f"repo-{kind[1]}" if kind else "repo")).absolute()
         published = names if kind else [r.name for r in results]
-        builder.make_repo(project, published, output, autorev=autorev)
+        builder.make_repo(project, published, output, keys, autorev=autorev)
     console.print(f"[bold green]✓[/] repository in {output}, with all dependencies satisfied")
     if kind:
         url = baseurl or (f"file://{REMOTE}/{kind[1]}" if hosts else f"file://{output}")

@@ -47,11 +47,10 @@ def build(  # noqa: PLR0913, PLR0917
         return
     with project.lock():
         autorev = builder.next_test_suffixes(project, names, *kind) if kind else {}
-        results = builder.build(
+        results, keys = builder.build(
             project, names, with_deps=not no_deps, verbose=verbose, autorev=autorev, fetch=not no_fetch
         )
     if autorev:
-        keys = builder.build_keys(project, autorev)
         for r in results:
             if r.name in autorev and r.status == "built":
                 for rpm in sorted((builder.cached_build(project, r.name, keys[r.name]) / "RPMS").rglob("*.rpm")):

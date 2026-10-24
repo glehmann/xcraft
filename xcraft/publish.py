@@ -411,11 +411,10 @@ def snapshot(
     built, upstream = [], {}
     for project in platforms:
         prepare(project)
-        results = builder.build(project, sorted(project.packages), build_missing=project.native)
+        results, keys = builder.build(project, sorted(project.packages), build_missing=project.native)
         if failed := [r.name for r in results if r.failed]:
             msg = f"not built for {project.arch}: {', '.join(failed)}"
             raise RuntimeError(msg)
-        keys = builder.build_keys(project)
         upstream[project.arch] = f"{len(resolve_runtime(project, keys))} upstream ones" + (
             f", and {len(build_dependencies(project))} to build them" if build else ""
         )

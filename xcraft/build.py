@@ -663,8 +663,9 @@ def build(  # noqa: PLR0913
     autorev: dict[str, str] | None = None,
     fetch: bool = True,
     build_missing: bool = True,
-) -> list[Result]:
-    """Build `targets` and, unless `with_deps` is false, what they need, skipping what is cached.
+) -> tuple[list[Result], dict[str, str]]:
+    """Build `targets` and, unless `with_deps` is false, what they need, skipping what is cached, and return how
+    it went, with the keys of all the packages, those of their builds.
 
     `autorev` has the release suffixes of the test builds, by package. Without
     `fetch`, what is not cached locally is built, even when the remote storage
@@ -675,7 +676,7 @@ def build(  # noqa: PLR0913
     builds work on the packages as they were then.
 
     The lock must be prepared: see resolution.prepare().
-    """
+    """  # noqa: D205
     autorev = autorev or {}
     if not dry_run:
         build_image(project)
@@ -684,10 +685,10 @@ def build(  # noqa: PLR0913
         plan = build_order(project.deps, targets, with_deps=with_deps)
         if dry_run:
             _show_plan(project, plan, keys, fetch=fetch)
-            return []
+            return [], keys
         _queue_file(project).parent.mkdir(parents=True, exist_ok=True)
         try:
-            results = _build_all(
+            results, keys = _build_all(
                 project,
                 plan,
                 keys,
@@ -703,7 +704,7 @@ def build(  # noqa: PLR0913
             break
         console.print("the builds found what changes the build roots: planning them again")
     # those to build again still, after the second attempt
-    return [Result(r.name, "failed") if r.status == "again" else r for r in results]
+    return [Result(r.name, "failed") if r.status == "again" else r for r in results], keys
 
 
 def _record_cached(project: Project, autorev: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
@@ -730,16 +731,13 @@ def _build_all(  # noqa: PLR0913
     autorev: dict[str, str],
     fetch: bool,
     build_missing: bool,
-) -> list[Result]:
+) -> tuple[list[Result], dict[str, str]]:
     results: dict[str, Result] = {}
     use_remote = fetch and project.config.remote is not None
     recorded = _lock_state(project)
     for i, name in enumerate(plan, 1):
         _queue_file(project).write_text("\n".join([str(os.getpid()), *plan[i:]]) + "\n")
-        # the keys change with what the builds record, not with the packages, as they were at the start
-        if (state := _lock_state(project)) != recorded:
-            prepare(project)
-            recorded, keys = state, build_keys(project, autorev, hashes)
+        keys, recorded = _current(project, keys, recorded, autorev, hashes)
         if done := _done(project, name, keys, hashes, verbose=verbose):
             results[name] = done
             continue
@@ -765,7 +763,19 @@ def _build_all(  # noqa: PLR0913
         if use_remote:  # without a compiler cache, the one of the remote storage
             ccache.fetch_missing(project, name)
         results[name] = _build_shown(project, name, keys, hashes, status=status, autorev=autorev, verbose=verbose)
-    return list(results.values())
+    return list(results.values()), _current(project, keys, recorded, autorev, hashes)[0]
+
+
+def _current(
+    project: Project, keys: dict[str, str], recorded: bytes, autorev: dict[str, str], hashes: dict[str, str]
+) -> tuple[dict[str, str], bytes]:
+    """Return the `keys` of the lock `recorded`, and the lock, computed again when the builds changed it: not with
+    the packages, as they were at the start.
+    """  # noqa: D205
+    if (state := _lock_state(project)) == recorded:
+        return keys, recorded
+    prepare(project)
+    return build_keys(project, autorev, hashes), state
 
 
 def _done(project: Project, name: str, keys: dict[str, str], hashes: dict[str, str], *, verbose: bool) -> Result | None:
@@ -858,14 +868,15 @@ def shell(project: Project, name: str) -> None:
     _run_build(project, name, repo, "p", replace=replace, after=after)
 
 
-def make_repo(project: Project, names: list[str], dest: Path, *, autorev: dict[str, str] | None = None) -> None:
-    """Make `dest` a repository with the builds of `names` and the extra upstream RPMs.
+def make_repo(
+    project: Project, names: list[str], dest: Path, keys: dict[str, str], *, autorev: dict[str, str] | None = None
+) -> None:
+    """Make `dest` a repository with the builds of `names`, with their `keys`, and the extra upstream RPMs.
 
     Check that everything they require is available, from this repository or from the
     build environment's ones. With the test builds of `autorev`, the repository only has
     them, to install over a host's packages, and they are checked with our other builds.
     """
-    keys = build_keys(project, autorev)
     if missing := [name for name in names if not cached_build(project, name, keys[name]).exists()]:
         msg = f"not built: {', '.join(missing)}"
         raise BuildError(msg)
