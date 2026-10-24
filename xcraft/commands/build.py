@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Annotated
 
 import typer
@@ -55,10 +56,8 @@ def build(  # noqa: PLR0913, PLR0917
             if r.name in autorev and r.status == "built":
                 for rpm in sorted((builder.cached_build(project, r.name, keys[r.name]) / "RPMS").rglob("*.rpm")):
                     console.print(str(rpm), markup=False)
-    counts = {
-        status: sum(r.status == status for r in results)
-        for status in ("built", "fetched", "cached", "failed", "skipped")
-    }
-    console.print(", ".join(f"{count} {status}" for status, count in counts.items() if count))
-    if counts["failed"] or counts["skipped"]:
+    counts = Counter(r.status for r in results)
+    statuses = ("built", "fetched", "cached", "failed", "skipped")
+    console.print(", ".join(f"{counts[status]} {status}" for status in statuses if counts[status]))
+    if any(r.failed for r in results):
         raise typer.Exit(1)

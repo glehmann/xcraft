@@ -126,7 +126,11 @@ def available_versions(project: Project, sources: list[str]) -> dict[str, list[s
 
 
 def lock_sources(project: Project, sources: list[str]) -> None:
-    """Lock the upstream source packages `sources`, in the latest version all the architectures have."""
+    """Lock the upstream source packages `sources`, in the latest version all the architectures have.
+
+    It holds the lock of the project to change the lock file, which commands only reading the project, like xcraft
+    status, may need to do.
+    """
     if project.frozen:
         msg = f"upstream packages not locked, which --locked forbids: {', '.join(sorted(sources))}"
         raise ResolutionError(msg)
@@ -134,9 +138,10 @@ def lock_sources(project: Project, sources: list[str]) -> None:
     if missing := sorted(set(sources) - chosen.keys()):
         msg = f"upstream source packages found on no architecture: {', '.join(missing)}"
         raise ResolutionError(msg)
-    lock = load_lock(project)
-    lock.sources |= chosen
-    save_lock(project, lock)
+    with project.lock():
+        lock = load_lock(project)
+        lock.sources |= chosen
+        save_lock(project, lock)
     project.refresh()
 
 
@@ -223,16 +228,24 @@ def upstream_sources(project: Project, names: list[str]) -> list[str]:
     return sorted({n if n in lock.sources else binaries[n] for n in names})
 
 
-def lock_installed(project: Project, installed: dict[str, Locked]) -> None:
-    """Lock the upstream source packages of the `installed` packages not locked yet.
+def lock_installed(project: Project, installed: dict[str, Locked]) -> bool:
+    """Lock the upstream source packages of the `installed` packages not locked yet, and return whether all of them
+    were installed in the locked versions: those locked here may get other ones, which the other architectures have,
+    and the packages have to be installed again.
 
     Raise when locked ones were installed in another version, which means the versionlock was not applied.
-    """
-    locked = resolve_image(project).packages
-    if changed := sorted(
-        n for n, p in installed.items() if n in locked and (locked[n].evr, locked[n].arch) != (p.evr, p.arch)
-    ):
-        msg = f"packages installed in another version than locked: {', '.join(changed)}"
+    """  # noqa: D205
+
+    def changed() -> list[str]:
+        locked = resolve_image(project).packages
+        return sorted(
+            n for n, p in installed.items() if n in locked and (locked[n].evr, locked[n].arch) != (p.evr, p.arch)
+        )
+
+    if before := changed():
+        msg = f"packages installed in another version than locked: {', '.join(before)}"
         raise ResolutionError(msg)
     if new := sorted({p.source for p in installed.values()} - load_lock(project).sources.keys()):
         lock_sources(project, new)
+        return not changed()
+    return True

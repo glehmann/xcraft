@@ -17,8 +17,9 @@ def ack(packages: Packages = None, dep: Dep = None) -> None:
     """
     project = Project.find()
     with project.lock():
-        lock = load_lock(project)
+        # first, as it may lock them
         sources = upstream_sources(project, dep) if dep else None
+        lock = load_lock(project)
         names = pending_packages(packages, lock.pending, sources or [])
         for package in names:
             entries = lock.pending.get(package, {})

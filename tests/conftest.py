@@ -15,10 +15,11 @@ from xcraft.container import build_image
 from xcraft.project import Project
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def build_environment(tmp_path_factory: pytest.TempPathFactory) -> None:
     """Build the image of the build environment of the test projects first, and resolve their lock, once for all the
-    workers of pytest-xdist, rather than all of them at once: the tests copy that template.
+    workers of pytest-xdist, rather than all of them at once: the tests in containers copy that template, the others
+    do not need it.
     """  # noqa: D205
     if not shutil.which("podman"):
         return

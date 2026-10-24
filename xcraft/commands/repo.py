@@ -94,7 +94,7 @@ def repo(  # noqa: PLR0913, PLR0917
     with project.lock():
         autorev = builder.next_test_suffixes(project, names, *kind) if kind else {}
         results = builder.build(project, names, autorev=autorev)
-        if failed := [r.name for r in results if r.status in ("failed", "skipped")]:
+        if failed := [r.name for r in results if r.failed]:
             msg = f"not built: {', '.join(failed)}"
             raise RuntimeError(msg)
         output = (output or project.root / (f"repo-{kind[1]}" if kind else "repo")).absolute()

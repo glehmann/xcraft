@@ -42,6 +42,13 @@ def pending_packages(names: list[str] | None, pending: dict[str, dict[str, str]]
     return sorted(selected)
 
 
+def _check_parsed(packages: dict[str, Package], names: list[str]) -> None:
+    """Raise when the specs of `names` cannot be parsed."""
+    if errors := [f"{name}: {packages[name].error}" for name in names if packages[name].error]:
+        msg = f"the specs cannot be parsed: {'; '.join(errors)}"
+        raise RuntimeError(msg)
+
+
 def _evr(package: Package) -> str:
     return package.binaries[0].evr.removesuffix(package.dist) if package.binaries else "?"
 
@@ -86,16 +93,18 @@ def _update_specs(  # noqa: PLR0913
         package: reset_release(set_version(text, version)) if version else bump_release(text)
         for package, text in texts.items()
     }
+    # and those to remove, which a new version would create
     manifests = {
-        path: path.read_text()
+        path: path.read_text() if path.exists() else None
         for name in names
-        if (path := (project.package_dirs[name] / "sources").resolve()).exists()
+        if (path := (project.package_dirs[name] / "sources").resolve())
     }
     try:
         for package, spec in specs.items():
             write_atomically(spec, bumped[package])
         # parse them again, for their new releases with their macros expanded
         after = load_packages(project)
+        _check_parsed(after, names)
         if version:
             _new_archives(project, before, after, names)
         day = datetime.now(UTC).date()
@@ -108,7 +117,10 @@ def _update_specs(  # noqa: PLR0913
         for package, spec in specs.items():
             write_atomically(spec, texts[package])
         for path, text in manifests.items():
-            write_atomically(path, text)
+            if text is None:
+                path.unlink(missing_ok=True)
+            else:
+                write_atomically(path, text)
         raise
     return after
 
@@ -144,11 +156,13 @@ def bump(
     name, email = (git("-C", str(project.root), "config", key) for key in ("user.name", "user.email"))
     author = f"{name} <{email}>"
     with project.lock():
+        # first, as it may lock them
+        sources = upstream_sources(project, dep) if dep else []
         lock = load_lock(project)
         if version:
             names = same_version(project.config.same_version, (packages or [])[0])
         else:
-            names = pending_packages(packages, lock.pending, upstream_sources(project, dep) if dep else [])
+            names = pending_packages(packages, lock.pending, sources)
         message = message or (f"Update to {version}" if version else "")
         after = _update_specs(project, before, names, version=version, author=author, message=message)
         for package in names:

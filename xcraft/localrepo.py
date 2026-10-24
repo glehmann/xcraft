@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -68,12 +69,11 @@ def fresh_dir(project: Project, path: Path) -> None:
 
 
 def extra_rpms(project: Project) -> list[Path]:
-    """Return the extra upstream RPMs, downloaded to their cache when missing."""
-    extra = project.state / "cache/extra"
-    extra.mkdir(parents=True, exist_ok=True)
+    """Return the extra upstream RPMs, downloaded to their cache, by URL, when missing."""
     rpms = []
     for url in project.config.extra_upstream.values():
-        rpm = extra / url.rsplit("/", 1)[-1]
+        rpm = project.state / "cache/extra" / hashlib.sha256(url.encode()).hexdigest()[:16] / url.rsplit("/", 1)[-1]
+        rpm.parent.mkdir(parents=True, exist_ok=True)
         if not rpm.exists():
             tmp = rpm.with_suffix(".part")
             with activity(f"downloading {rpm.name}") as on_line:

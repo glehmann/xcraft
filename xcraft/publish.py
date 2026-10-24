@@ -22,7 +22,7 @@ from xcraft import remote
 from xcraft.build import BuildError, build_path, builds_repo, cached_build
 from xcraft.container import DNF_LOCK, run
 from xcraft.display import activity, console
-from xcraft.localrepo import OUTPUT_MARKER, LocalRepo, fresh_dir, link
+from xcraft.localrepo import OUTPUT_MARKER, LocalRepo, extra_rpms, fresh_dir, link
 from xcraft.lock import Locked, load_lock, save_lock
 from xcraft.resolution import lock_installed, resolve, resolve_image
 from xcraft.signing import Signer, check_signatures
@@ -42,8 +42,26 @@ BUILD = "build"
 
 
 def resolve_runtime(project: Project, keys: dict[str, str]) -> list[str]:
-    """Add to the lock the upstream packages our builds need, the extra ones and the installer's, and return them."""
+    """Add to the lock the upstream packages our builds need, the extra ones and the installer's, and return them.
+
+    They are resolved again when they need upstream source packages not locked yet, which get other versions.
+    """
     repo = builds_repo(project, keys)
+    for _ in range(3):
+        if lock_installed(project, needed := _runtime(project, repo)):
+            break
+    else:
+        msg = "what our packages need at runtime is not available in the versions locked for all the architectures"
+        raise BuildError(msg)
+    with project.lock():
+        lock = load_lock(project)
+        lock.runtime[project.arch] = sorted(needed)
+        save_lock(project, lock)
+    return lock.runtime[project.arch]
+
+
+def _runtime(project: Project, repo: LocalRepo) -> dict[str, Locked]:
+    """Return the upstream packages needed by our packages of `repo`, the extra ones and the installer's."""
     with project.work("runtime") as work:
         (work / "input.json").write_text(
             json.dumps(
@@ -67,12 +85,7 @@ def resolve_runtime(project: Project, keys: dict[str, str]) -> list[str]:
             console.print(f"[red]✗[/] {escape(f'{name}: {error}')}")
         msg = f"cannot install: {', '.join(sorted(output['errors']))}"
         raise BuildError(msg)
-    needed = {name: Locked.model_validate(p) for name, p in output["packages"].items()}
-    lock_installed(project, needed)
-    lock = load_lock(project)
-    lock.runtime[project.arch] = sorted(needed)
-    save_lock(project, lock)
-    return lock.runtime[project.arch]
+    return {name: Locked.model_validate(p) for name, p in output["packages"].items()}
 
 
 def _download(
@@ -247,6 +260,9 @@ def _assemble_arch(  # noqa: PLR0913
                     ours.append(f"{source}/{srpm.name}")
     if signer:
         check_signatures(project, dest, ours, what="packages of ours", public_key=signer.public_key())
+    # neither ours nor from the repositories: as they are
+    for rpm in extra_rpms(project):
+        link(rpm, binaries.path / rpm.name)
     _add_upstream(project, load_lock(project).runtime.get(project.arch, []), dest, binaries, sources)
     binaries.index()
     if signer:

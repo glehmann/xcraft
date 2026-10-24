@@ -8,7 +8,7 @@ from xcraft.__main__ import app
 from xcraft.iso import _lock_tools
 from xcraft.lock import Lock, Locked, Recorded, choose_versions, load_lock, lock_path, save_lock, versionlock
 from xcraft.project import Project
-from xcraft.resolution import Resolved
+from xcraft.resolution import Resolved, lock_installed
 
 
 def locked(evr: str, source: str = "foo", arch: str = "x86_64_v2") -> Locked:
@@ -146,7 +146,7 @@ def test_iso_tools(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     locked_sources = []
     monkeypatch.setattr("xcraft.resolution.lock_sources", lambda _, sources: locked_sources.extend(sources))
     save_lock(project, Lock(sources={"bash": "5.2-3"}))
-    _lock_tools(project, packages)
+    assert _lock_tools(project, packages)
     assert (load_lock(project).iso, locked_sources) == ({project.arch: ["xorriso"]}, ["xorriso"])
     with pytest.raises(RuntimeError, match="installed in another version than locked: xorriso"):
         _lock_tools(project, {"xorriso": locked("1.5.6-2", source="xorriso")})
@@ -200,3 +200,13 @@ def test_update(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
         "2.39-145",
         {"vmss": {"glibc": "2.39-142"}, "xen": {"glibc": "2.39-142"}},
     )
+
+
+def test_lock_installed_in_other_versions(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    # installed in their latest version, but locked in the one all the architectures have
+    resolved = [Resolved(), Resolved(packages={"foo": locked("1-1", source="foo")})]
+    monkeypatch.setattr("xcraft.resolution.resolve_image", lambda _: resolved[0])
+    monkeypatch.setattr("xcraft.resolution.lock_sources", lambda *_: resolved.pop(0))
+    assert not lock_installed(project, {"foo": locked("2-1", source="foo")})
+    save_lock(project, Lock(sources={"foo": "1-1"}))  # as lock_sources() does
+    assert lock_installed(project, {"foo": locked("1-1", source="foo")})

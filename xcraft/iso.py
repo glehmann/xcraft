@@ -28,14 +28,37 @@ KEY_FILE = "RPM-GPG-KEY-xcpng"
 """The public key of the signed repository of the ISO, as named in its .treeinfo."""
 
 
-def _lock_tools(project: Project, recorded: dict[str, Locked]) -> None:
-    """Add the upstream packages installed with the tools to the lock."""
+def _lock_tools(project: Project, recorded: dict[str, Locked]) -> bool:
+    """Add the upstream packages installed with the tools to the lock, and return whether they have the locked
+    versions: not when it locked other ones.
+    """  # noqa: D205
     image = set(resolve_image(project).image)
     installed = {name: p for name, p in recorded.items() if name not in image}
-    lock_installed(project, installed)
-    lock = load_lock(project)
-    lock.iso[project.arch] = sorted(installed)
-    save_lock(project, lock)
+    if not lock_installed(project, installed):
+        return False
+    with project.lock():
+        lock = load_lock(project)
+        lock.iso[project.arch] = sorted(installed)
+        save_lock(project, lock)
+    return True
+
+
+def _install_tools(project: Project) -> None:
+    """Lock the upstream packages of the tools making the ISO, installed until they have the locked versions."""
+    for _ in range(3):
+        with project.work("tools") as work:
+            run(
+                project,
+                "tools",
+                f"{_INSTALL_TOOLS} && {DNF_LOCK} python3 /xcraft/record.py /work/tools.json",
+                volumes=[f"{work}:/work"],
+                show="installing the tools making the ISO",
+            )
+            recorded = json.loads((work / "tools.json").read_text())["installed"]
+        if _lock_tools(project, {name: Locked.model_validate(p) for name, p in recorded.items()}):
+            return
+    msg = "the tools making the ISO are not available in the versions locked for all the architectures"
+    raise RuntimeError(msg)
 
 
 def make_iso(  # noqa: PLR0913
@@ -52,6 +75,7 @@ def make_iso(  # noqa: PLR0913
     Return the path of the ISO.
     """
     iso = project.config.iso
+    _install_tools(project)  # in the versions of the lock, which the ISO is then made with
     with project.work("iso") as work:
         (work / "config.json").write_text(
             json.dumps({
@@ -63,13 +87,10 @@ def make_iso(  # noqa: PLR0913
         run(
             project,
             "iso",
-            f"{_INSTALL_TOOLS} && {DNF_LOCK} python3 /xcraft/record.py /work/tools.json"
-            " && sudo python3 /xcraft/iso.py /work/config.json",
+            f"{_INSTALL_TOOLS} && sudo python3 /xcraft/iso.py /work/config.json",
             volumes=volumes,
             show="making the tree of the ISO",
         )
-        recorded = json.loads((work / "tools.json").read_text())["installed"]
-        _lock_tools(project, {name: Locked.model_validate(p) for name, p in recorded.items()})
         tree = work / "tree"
         if signer and not netinstall:
             signer.sign_file(tree / "repodata/repomd.xml")

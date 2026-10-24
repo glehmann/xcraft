@@ -51,8 +51,9 @@ def _update(project: Project, packages: list[str], *, write: bool) -> int:
     """Update the lock, for the `packages`, all by default, or only show what would change without `write`, and return
     the number of changes.
     """  # noqa: D205
+    # first, as it may lock them
+    sources = upstream_sources(project, packages) if packages else sorted(load_lock(project).sources)
     current = load_lock(project)
-    sources = upstream_sources(project, packages) if packages else sorted(current.sources)
     chosen = choose_versions({p.arch: available_versions(p, sources) for p in project.all_platforms()})
     changed = {s: v for s, v in chosen.items() if v != current.sources[s]}
     for source, version in changed.items():
