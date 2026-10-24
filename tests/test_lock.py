@@ -134,7 +134,8 @@ def test_ack(project: Project) -> None:
     assert result.exit_code == 0, result.output
     assert result.output == "vmss: glibc\nxen: glibc\n"
     assert load_lock(project).pending == {"xen": {"openssl": "3.2-1"}}
-    assert CliRunner().invoke(app, ["ack", "xen"]).exit_code == 0
+    assert CliRunner().invoke(app, ["ack", "nope"]).exit_code == 2
+    assert CliRunner().invoke(app, ["ack", "xen"]).exit_code == 0  # not in the project, with pending updates
     assert load_lock(project).pending == {}
 
 
