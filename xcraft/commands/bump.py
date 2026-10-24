@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated
 
@@ -48,13 +47,9 @@ def _new_archives(project: Project, before: dict[str, Package], after: dict[str,
             msg = f"the Source0 of {name} is not a URL, but {url or 'nothing'}: give the URL of its archive in its spec"
             raise ValueError(msg)
         if url not in digests:
-            work = project.state / "tmp" / "archive"
-            shutil.rmtree(work, ignore_errors=True)
-            work.mkdir(parents=True)
-            with activity(f"downloading {url}") as on_line:
+            with project.work("archive") as work, activity(f"downloading {url}") as on_line:
                 process.download(url, work / archive_name(url), download_progress(on_line))
-            digests[url] = cache_source(project.source_cache, work / archive_name(url))
-            shutil.rmtree(work)
+                digests[url] = cache_source(project.source_cache, work / archive_name(url))
         # the file of a link, like the sources of kernel-headers, which are the kernel's
         manifest = (project.package_dirs[name] / "sources").resolve()
         entries = read_manifest(manifest) if manifest.exists() else {}
