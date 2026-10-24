@@ -46,10 +46,11 @@ def status(packages: Packages = None, arch: Arch = None) -> None:
     package or its dependencies changed since.
     """
     project = load(packages, arch=arch)
-    keys = builder.build_keys(project)
+    hashes = builder.inputs(project)
+    keys = builder.build_keys(project, hashes=hashes)
     queue = [name for name in builder.queued(project) if not builder.cached_build(project, name, keys[name]).exists()]
     shown = sorted(set(packages or project.packages))
-    tests = {name: builder.test_builds(project, name) for name in shown}
+    tests = {name: builder.test_builds(project, name, hashes) for name in shown}
     columns = ["package", "version", "state"] + (["tests"] if any(tests.values()) else [])
     table = Table(*columns, box=None, pad_edge=False, header_style="bold")
     states = Counter[str]()

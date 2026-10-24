@@ -336,7 +336,7 @@ def test_latest_test_builds(project: Project, monkeypatch: pytest.MonkeyPatch) -
         log = project.state / f"cache/builds/x86_64_v2/foo/{key}/build.log"
         log.touch()
         os.utime(log, (mtime, mtime))
-    assert [(b.ident, b.number) for b in build.test_builds(project, "foo")] == [("dev", 1)]
+    assert [(b.ident, b.number) for b in build.test_builds(project, "foo", {})] == [("dev", 1)]
 
 
 def test_empty_compiler_cache(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
