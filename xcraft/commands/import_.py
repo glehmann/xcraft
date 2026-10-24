@@ -42,17 +42,22 @@ def import_(
 
     The history of a package's packaging repository, for the branches of [import] in xcraft.toml, rewritten for the
     project the same way each time: importing again gives the new commits on top. A source RPM, like XenServer's, as a
-    new commit of the srpm_branch of [import]. --all imports again the packages which have import branches.
+    new commit of the srpm_branch of [import]. --all imports again the packages which have import branches of
+    histories.
     """
     project = Project.find()
+    imports = project.config.import_
     if all_:
         heads = git("-C", str(project.root), "for-each-ref", "--format=%(refname:lstrip=3)", "refs/heads/import/")
-        sources = sorted({head.split("/", 1)[0] for head in heads.splitlines()})
+        history = set(imports.branches) - {imports.srpm_branch}
+        sources = sorted(
+            {pkg for pkg, _, branch in (head.partition("/") for head in heads.splitlines()) if branch in history}
+        )
     if not sources:
         msg = "no package given"
         raise typer.BadParameter(msg)
     names = _names(project, sources, repo, url)
-    branches = [branch] if branch else project.config.import_.branches
+    branches = [branch] if branch else imports.branches
     with project.lock():
         if any(source.endswith(".src.rpm") for source in sources):
             prepare(project, roots=False)  # for the build environment, which unpacks them
@@ -62,11 +67,12 @@ def import_(
                 if not source.endswith(".src.rpm"):
                     heads = import_history(project.root, pkg_dir, url or DEFAULT_URL.format(name=name), branches)
                 elif commit := import_srpm(project, _download(source, work, on_line), pkg_dir, on_line=on_line):
-                    heads = {project.config.import_.srpm_branch: commit}
+                    heads = {imports.srpm_branch: commit}
                 else:
                     heads = {}
-                    branch = project.config.import_.srpm_branch
-                    console.print(f"[bold]{name}[/]: import/{name}/{branch} has the content of {source} already")
+                    console.print(
+                        f"[bold]{name}[/]: import/{name}/{imports.srpm_branch} has the content of {source} already"
+                    )
             for head, commit in heads.items():
                 console.print(f"[bold]{name}[/]: import/{name}/{head} at {commit[:12]}")
     console.print("merge them into the project with [bold]git merge import/<pkg>/<branch>[/]")

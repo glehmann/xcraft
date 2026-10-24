@@ -186,10 +186,12 @@ def test_import_all(root: Path, upstream: Path) -> None:
     assert runner.invoke(app, ["import", "foo", "--url", f"file://{upstream}"]).exit_code == 0
     master = git(root, "rev-parse", "import/foo/master")
     commit_files(upstream, {"SPECS/foo.spec": "Name: foo\nVersion: 3.0\n"})
+    git(root, "branch", "import/bar/XS-9.0", "master")  # of source RPMs only: not imported again
     # from xcp-ng-rpms by default: a file:// URL can stand for it
     result = runner.invoke(app, ["import", "--all", "--url", f"file://{upstream}"])
     assert result.exit_code == 0, result.output
     assert git(root, "rev-parse", "import/foo/master~") == master
+    assert git(root, "branch", "--list", "import/bar/*").split() == ["import/bar/XS-9.0"]
 
 
 def test_import_options(root: Path, upstream: Path) -> None:
