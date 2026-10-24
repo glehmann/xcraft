@@ -179,7 +179,7 @@ for its own metadata in the dnf cache the containers share, but the recipe the k
 - the configuration of the build environment, or a new version of xcraft changing the recipe: everything.
 
 **Same builds.** A change to the recipe which makes the same packages, like a fix of how it fails, can keep the
-builds: `_SAME_BUILDS` of `xcraft/build.py` maps its hash to the one of the earliest recipe making the same packages,
+builds: `_SAME_BUILDS` of `xcraft/cache.py` maps its hash to the one of the earliest recipe making the same packages,
 which stays in the keys.
 Not the packages, nor the image: what a package directory has goes in its source RPM, and what the image has can change
 the builds. `test_recipe` fails on a change to the recipe in the keys, giving the new hash, to choose between both.

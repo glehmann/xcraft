@@ -7,7 +7,7 @@ from typing import Annotated
 import typer
 from rich.table import Table
 
-from xcraft import build as builder
+from xcraft.cache import build_keys, cached_build
 from xcraft.commands import Arch, load
 from xcraft.display import console
 from xcraft.lock import load_lock
@@ -28,11 +28,11 @@ def impacts(
     if not lock.pending:
         console.print("nothing pending")
         return
-    keys = builder.build_keys(project)
+    keys = build_keys(project)
     image = {p.source for p in resolve_image(project).image_packages().values()}
 
     def built(package: str) -> bool:
-        return package in keys and builder.cached_build(project, package, keys[package]).exists()
+        return package in keys and cached_build(project, package, keys[package]).exists()
 
     rows = []
     for source in sorted({source for entries in lock.pending.values() for source in entries}):

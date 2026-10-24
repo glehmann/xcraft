@@ -10,7 +10,7 @@ import pytest
 
 import tests
 from tests import PROJECT, config
-from xcraft.build import build_keys
+from xcraft.cache import build_keys
 from xcraft.container import build_image
 from xcraft.project import Project
 from xcraft.resolution import prepare

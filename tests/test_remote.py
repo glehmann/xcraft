@@ -19,11 +19,11 @@ import pytest
 from tests import ARCH, PLATFORM, TOML, copy_project
 from tests.test_build import write_spec, xcraft
 from xcraft import remote
-from xcraft.build import prepare_tree
 from xcraft.container import run
 from xcraft.lock import load_lock
 from xcraft.project import Project
 from xcraft.resolution import resolve_image
+from xcraft.rpmbuild import prepare_tree
 from xcraft.signing import check_signatures, create_dev_key
 from xcraft.sources import SourceError, cache_source, sha256_of, source_path, write_manifest
 

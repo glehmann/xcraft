@@ -20,7 +20,7 @@ from rich.markup import escape
 
 from xcraft import build as builder
 from xcraft import remote
-from xcraft.build import BuildError, build_path, builds_repo, cached_build
+from xcraft.cache import BuildError, build_path, builds_repo, cached_build
 from xcraft.container import DNF_LOCK, run
 from xcraft.display import activity, console
 from xcraft.localrepo import OUTPUT_MARKER, LocalRepo, extra_rpms, fresh_dir, link

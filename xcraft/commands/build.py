@@ -8,9 +8,11 @@ from typing import Annotated
 import typer
 
 from xcraft import build as builder
+from xcraft.cache import cached_build
 from xcraft.commands import Arch, Packages, Pre, Test, load, test_kind
 from xcraft.display import console
 from xcraft.graph import dependents
+from xcraft.testbuilds import next_test_suffixes
 
 
 def build(  # noqa: PLR0913, PLR0917
@@ -46,14 +48,14 @@ def build(  # noqa: PLR0913, PLR0917
         builder.build(project, names, with_deps=not no_deps, dry_run=True, autorev=autorev, fetch=not no_fetch)
         return
     with project.lock():
-        autorev = builder.next_test_suffixes(project, names, *kind) if kind else {}
+        autorev = next_test_suffixes(project, names, *kind) if kind else {}
         results, keys = builder.build(
             project, names, with_deps=not no_deps, verbose=verbose, autorev=autorev, fetch=not no_fetch
         )
     if autorev:
         for r in results:
             if r.name in autorev and r.status == "built":
-                for rpm in sorted((builder.cached_build(project, r.name, keys[r.name]) / "RPMS").rglob("*.rpm")):
+                for rpm in sorted((cached_build(project, r.name, keys[r.name]) / "RPMS").rglob("*.rpm")):
                     console.print(str(rpm), markup=False)
     counts = Counter(r.status for r in results)
     statuses = ("built", "fetched", "cached", "failed", "skipped")
