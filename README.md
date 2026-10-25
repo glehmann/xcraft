@@ -340,6 +340,8 @@ The writes use the credentials of `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY
   one CI pushes after its builds, with `xcraft push ccache`, so that rebuilding a modified package, like the kernel
   with a patch, mostly finds its objects. The cache of a package is a tarball, in `ccache/<arch>/<package>/`, rather
   than read by ccache from the storage, as the builds run without the network. `xcraft fetch ccache` gets it again.
+  `xcraft push ccache` only uploads the entries the last successful build of the package used or made, which ccache
+  dates of their last use: not those of the older builds, which the local cache keeps.
 
 Without network, or when the storage is unavailable, everything still works with what is local.
 

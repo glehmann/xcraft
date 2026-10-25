@@ -23,8 +23,11 @@ if TYPE_CHECKING:
     from xcraft.project import Project, Remote
 
 TARBALL = "ccache.tar"
-_LOCAL = {"ccache.conf", "tmp"}
-"""What is not shared: the configuration of a cache, and its temporary files."""
+_LAST_BUILD = "xcraft-last-build"
+"""When the last successful build of the package started: the entries ccache dates after, as it dates them of their
+last use, are those it used or made."""
+_LOCAL = {"ccache.conf", "tmp", _LAST_BUILD}
+"""What is not shared: the configuration of a cache, its temporary files, and when its last build started."""
 
 
 def local_path(project: Project, name: str) -> Path:
@@ -37,15 +40,29 @@ def remote_path(project: Project, name: str) -> str:
     return f"ccache/{project.arch}/{name}"
 
 
+def note_build(project: Project, name: str, start: float) -> None:
+    """Note that the build of `name` started at `start` succeeded: see push()."""
+    (local_path(project, name) / _LAST_BUILD).write_text(f"{start}\n")
+
+
 def push(project: Project, storage: Remote, name: str) -> bool:
-    """Upload the compiler cache of `name`, replacing the one of the storage, and return whether it has one."""
+    """Upload the compiler cache of `name`, replacing the one of the storage, and return whether it has one.
+
+    Only the entries its last successful build used or made are uploaded, if it was built: not those of the older
+    builds, which the local cache keeps. Its statistics neither, which would count them.
+    """
     if not (cache := local_path(project, name)).is_dir():
         return False
+    since = int(float(last.read_text())) if (last := cache / _LAST_BUILD).exists() else 0
+
+    def used(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
+        return info if info.isdir() or (info.mtime >= since and Path(info.name).name != "stats") else None
+
     with tempfile.TemporaryDirectory(prefix="xcraft-ccache-") as tmp, activity(f"uploading the ccache of {name}"):
         with tarfile.open(Path(tmp) / TARBALL, "w") as tar:
             for path in sorted(cache.iterdir()):
                 if path.name not in _LOCAL:
-                    tar.add(path, path.name)
+                    tar.add(path, path.name, filter=used)
         remote.upload_tree(storage, remote_path(project, name), Path(tmp), [TARBALL])
     return True
 

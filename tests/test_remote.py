@@ -317,6 +317,36 @@ def test_ccache(root: Path) -> None:
         assert ccache_hits(cache) == hits
 
 
+def test_ccache_of_the_last_build(root: Path) -> None:
+    write_spec(root, "compiled", files="/usr/lib/compiled/t.o")
+    spec = root / "base/compiled/compiled.spec"
+    template = (
+        spec.read_text()
+        .replace("BuildArch: noarch\n", "")
+        .replace("touch %{buildroot}/usr/lib/compiled/t.o", "cp t.o %{buildroot}/usr/lib/compiled/t.o")
+    )
+    cache = root / ".xcraft/ccache/compiled"
+
+    def build(release: str, value: str) -> None:
+        compile_ = f"%build\necho 'int f(void) {{ return {value}; }}' > t.c\ngcc -c t.c -o t.o\n"
+        spec.write_text(
+            template.replace("Release: 1", f"Release: {release}").replace("%install\n", compile_ + "%install\n")
+        )
+        assert xcraft("build", "compiled", "--fetch=none")[0] == 0
+
+    build("1", "1")
+    build("2", "2")
+    first, second = sorted(cache.rglob("*R"), key=lambda path: path.stat().st_mtime)
+    # only a hit on the second: its entries only are pushed, with their last use
+    build("3", "2")
+    assert ccache_hits(cache) == 1
+    assert xcraft("push", "ccache", "compiled") == (0, "↑ compiled\n1 pushed\n")
+    shutil.rmtree(cache)
+    assert xcraft("fetch", "ccache", "compiled") == (0, "↓ compiled\n1 fetched\n")
+    assert sorted(cache.rglob("*R")) == [second]  # not first, of the first build
+    assert first != second
+
+
 def test_unavailable_remote_storage(root: Path) -> None:
     (root / "xcraft.toml").write_text(REMOTE.replace(str(WEB_PORT), "13899"))  # of no worker
     code, output = xcraft("build", "trivial")

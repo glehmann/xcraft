@@ -135,6 +135,7 @@ def _build_one(  # noqa: PLR0913
     log = project.log(name)
     pid_file = _pid_file(project, name)
     pid_file.write_text(str(os.getpid()))
+    start = time.time()
     try:
         with activity(status, expected=previous_duration(project, name)) if status else nullcontext(None) as progress:
             # the errors and warnings above the progress, like with the whole log, after the status
@@ -154,6 +155,7 @@ def _build_one(  # noqa: PLR0913
         raise
     finally:
         pid_file.unlink()
+    ccache.note_build(project, name, start)
     if check_build(project, name, tree, test=name in autorev):
         keys = build_keys(project, autorev, hashes)  # covering what the build recorded
     if hash_dir(project.package_dirs[name]) != staged:
