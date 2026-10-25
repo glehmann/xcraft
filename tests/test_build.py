@@ -395,6 +395,26 @@ def test_lock(root: Path) -> None:
     assert xcraft("lock", "--outdated", "lzo") == (0, "up to date\n")
 
 
+def test_lock_versions_of_all_the_architectures(root: Path) -> None:
+    # toyarch 2 is only for x86_64: toyarch is locked in the version all the architectures have
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(spec.read_text().replace("BuildArch: noarch", "BuildArch: noarch\nBuildRequires: toyarch"))
+    assert xcraft("build", "trivial")[0] == 0
+    assert load_lock(Project.find()).sources["toyarch"] == "1-1"
+    assert xcraft("lock", "--outdated", "toyarch") == (0, "up to date\n")
+    # by binary name, of the locked versions only
+    assert xcraft("lock", "--outdated", "toyarch-new")[1].endswith("not locked: toyarch-new")
+    # toyrun, locked in an older version, has a newer one all the architectures have
+    lock = load_lock(Project.find())
+    lock.sources["toyrun"] = "1-1"
+    save_lock(Project.find(), lock)
+    expected = "toyrun 1-1 -> 2-1\n1 to update: xcraft lock --update updates them\n"
+    assert xcraft("lock", "--outdated", "toyarch", "toyrun") == (1, expected)
+    assert load_lock(Project.find()).sources["toyrun"] == "1-1"
+    assert xcraft("lock", "--update", "toyarch", "toyrun") == (0, "toyrun 1-1 -> 2-1\n1 updated\n")
+    assert load_lock(Project.find()).sources["toyrun"] == "2-1"
+
+
 def test_recorded(root: Path) -> None:
     # a requirement rpm generates, of a script, and dynamic BuildRequires
     spec = root / "base/trivial/trivial.spec"
