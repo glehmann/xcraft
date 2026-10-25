@@ -8,6 +8,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 from typing import TYPE_CHECKING
 
@@ -23,7 +24,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable, Iterator
     from pathlib import Path
 
-console = Console(highlight=False, soft_wrap=True)  # no wrapping, for logs and pipes
+# no wrapping, for logs and pipes; the progress and the pager on a terminal only, even when FORCE_COLOR makes the
+# output of CI coloured, like a terminal's: its logs would have each frame of the progress, with cursor movements
+console = Console(highlight=False, soft_wrap=True, force_interactive=None if sys.stdout.isatty() else False)
 
 _STEP_RE = re.compile(r"^Executing\(%(\w+)\):")
 _ERROR_RE = re.compile(r"\b(?:error|errors):|\bFAILED\b", re.IGNORECASE)
@@ -87,7 +90,7 @@ def page_log(lines: Iterable[str]) -> None:
     The lines are sent to the pager as they come, and not read anymore once it is quit.
     """
     pager = shlex.split(os.environ.get("PAGER", "less"))
-    if not console.is_terminal or not pager or not shutil.which(pager[0]):
+    if not console.is_interactive or not pager or not shutil.which(pager[0]):
         for line in lines:
             print_log_line(line)
         return
@@ -197,7 +200,7 @@ def activity(description: str, expected: float | None = None) -> Generator[Calla
 
     With an `expected` duration in seconds, a bar shows the elapsed time over it.
     """
-    if not console.is_terminal:
+    if not console.is_interactive:
         yield lambda _: None
         return
     with Progress(
