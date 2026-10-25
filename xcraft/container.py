@@ -65,6 +65,19 @@ def repo_file(project: Project) -> str:
     )
 
 
+def _local_repos(project: Project) -> list[str]:
+    """Return the volumes of the repositories on this machine, of file:// URLs, at their paths in the containers."""
+    return sorted(
+        {
+            f"{path}:{path}:ro"
+            for platform in project.all_platforms()
+            for repo in platform.repos.values()
+            if (url := repo.baseurl.format(arch=platform.arch)).startswith("file:///")
+            for path in [url.removeprefix("file://").rstrip("/")]
+        }
+    )
+
+
 def _image_files(project: Project) -> dict[str, str]:
     from xcraft.resolution import resolve_image  # noqa: PLC0415, which runs containers
 
@@ -145,7 +158,9 @@ def _podman_build(  # noqa: PLR0913
             process.run(["podman", "volume", "create", volume], capture=True)
         inspect = ["podman", "volume", "inspect", "--format", "{{.Mountpoint}}", volume]
         cache = process.run(inspect, capture=True).stdout.strip()
-        cmd = ["podman", "build", "--platform", project.platform, "--volume", f"{cache}:/var/cache/dnf:O", *build_args]
+        cmd = ["podman", "build", "--platform", project.platform, "--security-opt", "label=disable"]
+        cmd += [a for v in [f"{cache}:/var/cache/dnf:O", *_local_repos(project)] for a in ("--volume", v)]
+        cmd += build_args
         cmd += ["--tag", tag, str(context)]
         log = project.state / f"logs/_{step}.log"
         with activity(f"building {show}") as on_line:
@@ -236,6 +251,7 @@ def run_natively(project: Project, step: str, args: list[str], *, volumes: list[
     with project.work(f"{step}-repos") as repos:
         (repos / "upstream.repo").write_text(repo_file(project))
         mounts = [f"{_dnf_cache(project)}:/var/cache/dnf", f"{BUILDENV}:/xcraft:ro", f"{repos}:/etc/yum.repos.d:ro"]
+        mounts += _local_repos(project)
         cmd = [
             "podman", "run", "--rm", "--replace", "--name", container, "--platform", native.platform,
             "--security-opt", "label=disable", *(a for v in [*mounts, *volumes] for a in ("--volume", v)),
@@ -335,6 +351,7 @@ def run_container(  # noqa: PLR0913
         lock_list.write(versionlock(resolve_image(project).packages))
         lock_list.flush()
         volumes = [*volumes, f"{BUILDENV}:/xcraft:ro", f"{lock_list.name}:/etc/dnf/plugins/versionlock.list:ro"]
+        volumes += _local_repos(project)
         cmd = [
             # replacing a container of a killed xcraft
             "podman", "run", "--rm", "--replace", "--name", container, "--platform", project.platform,
