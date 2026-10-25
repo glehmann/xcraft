@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import re
-import shutil
 import subprocess
 import sys
 import threading
@@ -29,8 +28,7 @@ from xcraft.sources import write_manifest
 runner = CliRunner()
 
 
-# the build environment image is built the first time, which needs the network
-pytestmark = pytest.mark.skipif(not shutil.which("podman"), reason="needs podman")
+# in the build environment, whose image is built the first time, which needs the network: see the podman marker
 
 
 @pytest.fixture

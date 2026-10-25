@@ -92,3 +92,4 @@ fail_under = 80
 # in parallel: -n0 for one process, like with --pdb
 addopts = "-n auto --pdbcls=IPython.terminal.debugger:TerminalPdb"
 testpaths = ["tests"]
+markers = ["podman: needs podman, for containers like those of the build environment: -m 'not podman' leaves them out"]

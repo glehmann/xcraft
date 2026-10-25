@@ -18,11 +18,10 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 needs_gpg = pytest.mark.skipif(not shutil.which("gpg"), reason="needs gpg")
-needs_podman = pytest.mark.skipif(not shutil.which("podman"), reason="needs podman")
 
 
 @pytest.fixture
-def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_environment: None) -> Iterator[Path]:
+def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     root = tmp_path / "project"
     copy_project(root)
     subprocess.run(["git", "init", "-q", str(root)], check=True)
@@ -47,8 +46,7 @@ def test_dev_key(root: Path) -> None:
 
 
 @needs_gpg
-@needs_podman
-def test_test_builds_are_signed(root: Path) -> None:
+def test_test_builds_are_signed(build_environment: None, root: Path) -> None:
     def rpms(*args: str) -> list[Path]:
         code, output = xcraft(*args)
         assert code == 0, output
