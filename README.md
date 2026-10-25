@@ -28,7 +28,7 @@ xcraft --install-completion  # optional
 | `xcraft build <pkg> --no-deps` | Build only the given packages |
 | `xcraft build <pkg> --dependents` | Also build the packages built against them |
 | `xcraft build <pkg> --dry-run` (`-n`) | Show what would be built, and how long it took last time |
-| `xcraft build [<pkg>...] --no-fetch` | Build what is not cached locally, rather than fetch it from the remote storage |
+| `xcraft build [<pkg>...] --fetch=needed\|none` | Only fetch from the remote storage the builds the packages to build need, like CI, which then only builds what the storage misses; or fetch nothing, and build what is not cached locally |
 | `xcraft build <pkg> -v` | Show the build log while building |
 | `xcraft build <pkg> --locked` | Fail the builds that would change the lock: new upstream packages, or what a build found, for CI |
 | `xcraft build <pkg>... --test ID` / `--pre ID` | Test builds, to install on a test host (see [Test builds](#test-builds)) |
@@ -144,7 +144,7 @@ architectures.
 ## Build keys
 
 Each build of a package has a **key**: a SHA-256 of everything that goes into it. xcraft never builds a package whose
-build with the same key it already has, locally or in the [remote storage](#remote-storage), unless `--no-fetch`; it
+build with the same key it already has, locally or in the [remote storage](#remote-storage), unless `--fetch=none`; it
 builds it again as soon as one of its inputs changes. The key is the name of the build in
 `.xcraft/cache/builds/<arch>/<pkg>/<key>/`, and in the storage, `builds/<arch>/<pkg>/<key>/`.
 
@@ -334,8 +334,9 @@ The writes use the credentials of `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY
 - When a package is not built locally, the build downloads its build with the same key, when the storage has it: the
   key covers everything the build depends on, so it is the same everywhere for the same commit. A build is a binary
   people install, so only CI should push builds, after `xcraft build --locked`, which fails when a build would
-  change the lock, and so its key: `xcraft push builds`. Test builds are never pushed.
-- A build without the compiler cache of its package downloads the one of the storage first, unless `--no-fetch`: the
+  change the lock, and so its key: `xcraft push builds`. Test builds are never pushed. With `--fetch=needed`, CI
+  leaves in the storage the builds it has, only fetching those of the dependencies of the packages it builds.
+- A build without the compiler cache of its package downloads the one of the storage first, unless `--fetch=none`: the
   one CI pushes after its builds, with `xcraft push ccache`, so that rebuilding a modified package, like the kernel
   with a patch, mostly finds its objects. The cache of a package is a tarball, in `ccache/<arch>/<package>/`, rather
   than read by ccache from the storage, as the builds run without the network. `xcraft fetch ccache` gets it again.

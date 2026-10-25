@@ -92,13 +92,12 @@ def _push_builds(packages: list[str] | None, arch: str | None) -> list[str]:
     keys = build_keys(project)
     pushed, present, not_built = [], [], []
     for name in packages or sorted(project.packages):
-        build = cached_build(project, name, keys[name])
-        if not build.exists():
-            not_built.append(name)
-            continue
-        path = build_path(project, name, keys[name])
-        if remote.tree_exists(storage, path):
+        # first: a build of xcraft build --fetch=needed may be in the storage only
+        if remote.tree_exists(storage, path := build_path(project, name, keys[name])):
             present.append(name)
+            continue
+        if not (build := cached_build(project, name, keys[name])).exists():
+            not_built.append(name)
             continue
         with activity(f"uploading the build of {name}"):
             remote.upload_tree(storage, path, build, BUILD_FILES)

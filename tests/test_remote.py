@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from tests import ARCH, PLATFORM, TOML, copy_project
-from tests.test_build import write_spec, xcraft
+from tests.test_build import results, write_spec, xcraft
 from xcraft import remote
 from xcraft.container import run
 from xcraft.lock import load_lock
@@ -232,7 +232,7 @@ def test_builds(root: Path) -> None:
     assert xcraft("fetch", "builds") == (0, "↓ trivial\n1 fetched, 0 already cached, 1 not in the remote storage\n")
     shutil.rmtree(root / ".xcraft/cache/builds")
     assert xcraft("build", "with-deps", "--dry-run")[1].splitlines()[:2] == ["fetch    trivial", "build    with-deps"]
-    assert xcraft("build", "with-deps", "--dry-run", "--no-fetch")[1].splitlines()[:2] == [
+    assert xcraft("build", "with-deps", "--dry-run", "--fetch=none")[1].splitlines()[:2] == [
         "build    trivial",
         "build    with-deps",
     ]
@@ -245,9 +245,40 @@ def test_builds(root: Path) -> None:
     )
     # built, even though the storage has it
     shutil.rmtree(root / f".xcraft/cache/builds/{ARCH}/trivial")
-    code, output = xcraft("build", "trivial", "--no-fetch")
+    code, output = xcraft("build", "trivial", "--fetch=none")
     assert code == 0, output
     assert output.splitlines()[-1] == "1 built"
+
+
+def test_fetch_needed(root: Path) -> None:
+    # trivial and other in the storage, with-deps, built against trivial, not yet
+    write_spec(root, "other")
+    assert xcraft("build", "trivial", "other")[0] == 0
+    assert xcraft("push", "builds", "trivial", "other")[0] == 0
+    shutil.rmtree(root / ".xcraft/cache/builds")
+    builds = root / f".xcraft/cache/builds/{ARCH}"
+    # only trivial is fetched, for the build of with-deps
+    code, output = xcraft("build", "--dry-run", "--fetch=needed")
+    assert code == 0, output
+    assert output.splitlines() == [
+        "fetch    trivial",
+        "build    with-deps",
+        "1 to build, 1 to fetch, 1 in the remote storage",
+    ]
+    code, output = xcraft("build", "--fetch=needed")
+    assert code == 0, output
+    assert [line.split(" in ")[0] for line in results(output)] == [
+        "↓ trivial fetched",
+        "✓ with-deps built",
+        "1 built, 1 fetched, 1 stored",
+    ]
+    assert sorted(p.name for p in builds.iterdir()) == ["trivial", "with-deps"]
+    # the build in the storage only is there already
+    assert xcraft("push", "builds") == (0, "↑ with-deps\n1 pushed, 2 already in the remote storage\n")
+    # nothing to fetch, with all in the storage
+    shutil.rmtree(root / ".xcraft/cache/builds")
+    assert xcraft("build", "--fetch=needed") == (0, "3 stored\n")
+    assert not builds.exists() or not list(builds.iterdir())
 
 
 def ccache_hits(cache: Path) -> int:
@@ -276,8 +307,8 @@ def test_ccache(root: Path) -> None:
     shutil.rmtree(cache)
     assert xcraft("fetch", "ccache", "compiled") == (0, "↓ compiled\n1 fetched\n")
     assert sorted(cache.rglob("*R")) == results
-    # a build without a compiler cache gets the one of the remote storage, and uses it, unless --no-fetch
-    for release, options, hits in (("2", ["--no-fetch"], 0), ("3", [], 1)):
+    # a build without a compiler cache gets the one of the remote storage, and uses it, unless --fetch=none
+    for release, options, hits in (("2", ["--fetch=none"], 0), ("3", [], 1)):
         shutil.rmtree(cache)
         spec.write_text(re.sub(r"Release: \d+", f"Release: {release}", spec.read_text()))
         assert xcraft("build", "compiled", *options)[0] == 0

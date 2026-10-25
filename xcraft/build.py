@@ -45,8 +45,11 @@ if TYPE_CHECKING:
 
     from xcraft.project import Project
 
-Status = Literal["cached", "fetched", "built", "failed", "skipped", "again"]
-"""What became of a package in a build: again, to build again."""
+Status = Literal["cached", "stored", "fetched", "built", "failed", "skipped", "again"]
+"""What became of a package in a build: stored, in the remote storage only, see Fetch; again, to build again."""
+Fetch = Literal["all", "needed", "none"]
+"""What the builds fetch from the remote storage rather than build: all they can, or the builds of the dependencies
+of those to build only, or nothing."""
 
 
 @dataclass
@@ -195,18 +198,21 @@ def fetch_build(project: Project, name: str, key: str) -> bool:
         return remote.download_tree(storage, build_path(project, name, key), cached_build(project, name, key), on_line)
 
 
-def _show_plan(project: Project, plan: list[str], keys: dict[str, str], *, fetch: bool) -> None:
-    """Show what is to build or fetch in `plan`, and how long it took last time, with how many are cached."""
+def _show_plan(project: Project, plan: list[str], keys: dict[str, str], *, fetch: Fetch) -> None:
+    """Show what is to build or fetch in `plan`, and how long it took last time, with how many are cached, or only
+    in the remote storage.
+    """  # noqa: D205
     to_build = [name for name in plan if not cached_build(project, name, keys[name]).exists()]
-    if fetch and (storage := project.config.remote):
+    stored = set()
+    if fetch != "none" and (storage := project.config.remote):
         try:
-            fetched = {name for name in to_build if remote.tree_exists(storage, build_path(project, name, keys[name]))}
+            stored = {name for name in to_build if remote.tree_exists(storage, build_path(project, name, keys[name]))}
         except remote.RemoteError as e:
             console.print(f"[yellow]remote storage unavailable[/]: {escape(str(e))}")
-            fetched = set()
-        to_build = [name for name in to_build if name not in fetched]
-    else:
-        fetched = set()
+        to_build = [name for name in to_build if name not in stored]
+    fetched = (
+        stored if fetch == "all" else stored & reachable(project.deps, {d for n in to_build for d in project.deps[n]})
+    )
     for name in plan:
         if name in to_build:
             console.print(f"[bold]build[/]    {name}{_estimate(project, name)}")
@@ -220,7 +226,9 @@ def _show_plan(project: Project, plan: list[str], keys: dict[str, str], *, fetch
         )
     if fetched:
         summary.append(f"{len(fetched)} to fetch")
-    if cached := len(plan) - len(to_build) - len(fetched):
+    if stored - fetched:
+        summary.append(f"{len(stored - fetched)} in the remote storage")
+    if cached := len(plan) - len(to_build) - len(stored):
         summary.append(f"{cached} cached")
     console.print(", ".join(summary))
 
@@ -233,15 +241,17 @@ def build(  # noqa: PLR0913
     dry_run: bool = False,
     verbose: bool = False,
     autorev: dict[str, str] | None = None,
-    fetch: bool = True,
+    fetch: Fetch = "all",
     build_missing: bool = True,
 ) -> tuple[list[Result], dict[str, str]]:
     """Build `targets` and, unless `with_deps` is false, what they need, skipping what is cached, and return how
     it went, with the keys of all the packages, those of their builds.
 
-    `autorev` has the release suffixes of the test builds, by package. Without
-    `fetch`, what is not cached locally is built, even when the remote storage
-    has it. Without `build_missing`, what is neither cached nor in the remote
+    `autorev` has the release suffixes of the test builds, by package. What is
+    not cached locally is fetched from the remote storage when it has it, but
+    only the builds of the dependencies of the packages to build with `fetch`
+    needed, or nothing with none: it is built then. Without `build_missing`,
+    what is neither cached nor in the remote
     storage fails, rather than being built. When builds find what changes the
     build roots of others, the builds are planned again, once. A package whose
     directory, or one of its dependencies', changed since the start fails: the
@@ -301,11 +311,11 @@ def _build_all(  # noqa: PLR0913
     *,
     verbose: bool,
     autorev: dict[str, str],
-    fetch: bool,
+    fetch: Fetch,
     build_missing: bool,
 ) -> tuple[list[Result], dict[str, str]]:
     results: dict[str, Result] = {}
-    use_remote = fetch and project.config.remote is not None
+    use_remote = fetch != "none" and project.config.remote is not None
     recorded = _lock_state(project)
     for i, name in enumerate(plan, 1):
         _queue_file(project).write_text("\n".join([str(os.getpid()), *plan[i:]]) + "\n")
@@ -315,15 +325,11 @@ def _build_all(  # noqa: PLR0913
             continue
         if use_remote and name not in autorev:
             try:
-                fetched = fetch_build(project, name, keys[name])
+                if _from_storage(project, name, keys, results, fetch=fetch):
+                    continue
             except remote.RemoteError as e:
                 console.print(f"[yellow]remote storage unavailable, building locally[/]: {escape(str(e))}")
-                use_remote = fetched = False
-            if fetched:
-                record_built(project, [name], keys, quiet=True)  # see below
-                console.print(f"[green]↓[/] {name} [green]fetched[/]")
-                results[name] = Result(name, "fetched")
-                continue
+                use_remote = False
         if failed := _failed(project, name, results):
             results[name] = Result(name, "skipped")
             console.print(f"[yellow]-[/] {name} [yellow]skipped[/], needs {', '.join(failed)}")
@@ -333,14 +339,53 @@ def _build_all(  # noqa: PLR0913
             _show_failure(project, name, BuildError(f"not in the remote storage, for {project.arch}"), verbose=verbose)
             continue
         status = None if verbose else f"[{i}/{len(plan)}] building {name}{_estimate(project, name)}"
-        if use_remote:  # without a compiler cache, the one of the remote storage
-            ccache.fetch_missing(project, name)
+        if use_remote:
+            _fetch_for(project, name, keys, results)
         results[name] = _build_shown(project, name, keys, hashes, status=status, autorev=autorev, verbose=verbose)
     keys = _current(project, keys, recorded, autorev, hashes)[0]
     # again, what was not recorded when they came, as it needs packages of ours built or fetched after them: a change
     # of the lock changes the keys of the next builds
     record_built(project, [n for n, r in results.items() if r.status in ("built", "fetched")], keys)
     return list(results.values()), keys
+
+
+def _from_storage(
+    project: Project, name: str, keys: dict[str, str], results: dict[str, Result], *, fetch: Fetch
+) -> bool:
+    """Fetch the build of `name` from the remote storage, or only note it is there with `fetch` needed, in `results`,
+    and return whether the storage has it.
+    """  # noqa: D205
+    if fetch == "needed":  # fetched by _fetch_for(), if a build needs it
+        if not (storage := project.config.remote) or not remote.tree_exists(
+            storage, build_path(project, name, keys[name])
+        ):
+            return False
+        results[name] = Result(name, "stored")
+        return True
+    if not fetch_build(project, name, keys[name]):
+        return False
+    _fetched(project, name, keys, results)
+    return True
+
+
+def _fetch_for(project: Project, name: str, keys: dict[str, str], results: dict[str, Result]) -> None:
+    """Fetch from the remote storage what the build of `name` needs: the compiler cache of the storage, without
+    one, and the builds of its dependencies only there, see Fetch.
+    """  # noqa: D205
+    ccache.fetch_missing(project, name)
+    try:
+        for dep in sorted(reachable(project.deps, project.deps[name])):
+            if not cached_build(project, dep, keys[dep]).exists() and fetch_build(project, dep, keys[dep]):
+                _fetched(project, dep, keys, results)
+    except remote.RemoteError as e:
+        console.print(f"[yellow]remote storage unavailable[/]: {escape(str(e))}")
+
+
+def _fetched(project: Project, name: str, keys: dict[str, str], results: dict[str, Result]) -> None:
+    """Record what rpm generated for the build of `name` just fetched, and show it."""
+    record_built(project, [name], keys, quiet=True)  # see _build_all()
+    console.print(f"[green]↓[/] {name} [green]fetched[/]")
+    results[name] = Result(name, "fetched")
 
 
 def _current(
