@@ -44,7 +44,7 @@ def _podman() -> tuple[list[tuple[str, str]], list[str], list[host.Fix]]:
 
 def _storage(project: Project) -> list[tuple[str, str]]:
     """Return the checks of the remote storage, if any."""
-    if not (storage := project.config.remote):
+    if not (storage := project.config.remote.get("main")):
         return []
     try:
         remote.exists(storage, "index.html")

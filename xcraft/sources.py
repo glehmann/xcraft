@@ -77,13 +77,14 @@ def _fetch_source(project: Project, name: str, filename: str, digest: str) -> bo
     urls = (s for s in project.packages[name].sources if "://" in s and archive_name(s) == filename)
     url, origin, error = next(urls, ""), "", None
     with activity(f"downloading {filename}") as on_line:
-        try:
-            if (storage := project.config.remote) and remote.download(
-                storage, source_path(filename, digest), part, on_line
-            ):
-                origin = "the remote storage"
-        except remote.RemoteError as e:
-            error = e
+        for bucket in ("main", "dev"):
+            if source := project.config.remote.get(bucket):
+                try:
+                    if remote.download(source, source_path(filename, digest), part, on_line):
+                        origin = "the remote storage"
+                        break
+                except remote.RemoteError as e:
+                    error = e
         if not origin and url:
             try:
                 process.download(url, part, download_progress(on_line))
@@ -112,6 +113,16 @@ def fetch_sources(project: Project, name: str) -> list[str]:
     return [
         filename
         for filename, digest in (read_manifest(manifest).items() if manifest.exists() else [])
-        if not (project.source_cache / digest / filename).exists()
-        and not _fetch_source(project, name, filename, digest)
+        if not cached_source(project, filename, digest) and not _fetch_source(project, name, filename, digest)
     ]
+
+
+def cached_source(project: Project, filename: str, digest: str) -> bool:
+    """Check cached archives against the committed source manifest too."""
+    archive = project.source_cache / digest / filename
+    if not archive.exists():
+        return False
+    if sha256_of(archive) != digest:
+        msg = f"{filename} in the source cache does not match the sha256 of the manifest"
+        raise SourceError(msg)
+    return True

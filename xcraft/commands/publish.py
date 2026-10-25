@@ -8,10 +8,10 @@ from typing import Annotated
 import typer
 
 from xcraft import publish as publisher
-from xcraft.commands import Key, choose_signer, complete_arch, load
+from xcraft.commands import Key, To, choose_signer, complete_arch, load, remote_storage
 from xcraft.display import console
 from xcraft.iso import make_isos
-from xcraft.project import Project
+from xcraft.project import Destination, Project
 from xcraft.publish import ISO_DIR, REPO, snapshot
 
 app = typer.Typer()
@@ -50,6 +50,7 @@ def everything(  # noqa: PLR0913, PLR0917
     unsigned: Unsigned = False,
     dev_key: DevKey = False,
     key: Key = None,
+    to: To = "dev",
     arch: Arch = None,
 ) -> None:
     """Publish a snapshot of the distribution in the remote storage, as the latest one, for all the architectures.
@@ -60,10 +61,11 @@ def everything(  # noqa: PLR0913, PLR0917
     fetched, built by native builders.
     """
     if ctx.invoked_subcommand:
-        if key:
-            ctx.default_map = {ctx.invoked_subcommand: {"key": key}}
+        ctx.default_map = {ctx.invoked_subcommand: {"to": to, **({"key": key} if key else {})}}
         return
-    _publish(None, locked=locked, local=local, output=output, unsigned=unsigned, dev_key=dev_key, key=key, arch=arch)
+    _publish(
+        None, locked=locked, local=local, output=output, unsigned=unsigned, dev_key=dev_key, key=key, to=to, arch=arch
+    )
 
 
 @app.command()
@@ -74,10 +76,21 @@ def repos(  # noqa: PLR0913, PLR0917
     unsigned: Unsigned = False,
     dev_key: DevKey = False,
     key: Key = None,
+    to: To = "dev",
     arch: Arch = None,
 ) -> None:
     """Publish the repositories of a snapshot, as repos/<release>/<date>/, and as the latest ones."""
-    _publish("repos", locked=locked, local=local, output=output, unsigned=unsigned, dev_key=dev_key, key=key, arch=arch)
+    _publish(
+        "repos",
+        locked=locked,
+        local=local,
+        output=output,
+        unsigned=unsigned,
+        dev_key=dev_key,
+        key=key,
+        to=to,
+        arch=arch,
+    )
 
 
 @app.command()
@@ -88,6 +101,7 @@ def isos(  # noqa: PLR0913, PLR0917
     unsigned: Unsigned = False,
     dev_key: DevKey = False,
     key: Key = None,
+    to: To = "dev",
     arch: Arch = None,
 ) -> None:
     """Publish the ISOs of a snapshot, with the packages and netinstall, signed like it, as isos/<release>/<date>/,
@@ -95,7 +109,9 @@ def isos(  # noqa: PLR0913, PLR0917
 
     They are made for the x86_64 architectures, like xcraft iso, in the ISO directory of the snapshot.
     """  # noqa: D205
-    _publish("isos", locked=locked, local=local, output=output, unsigned=unsigned, dev_key=dev_key, key=key, arch=arch)
+    _publish(
+        "isos", locked=locked, local=local, output=output, unsigned=unsigned, dev_key=dev_key, key=key, to=to, arch=arch
+    )
 
 
 def _iso_platforms(project: Project, platforms: list[Project], only: str | None) -> list[Project]:
@@ -122,6 +138,7 @@ def _publish(  # noqa: PLR0913
     unsigned: bool,
     dev_key: bool,
     key: str | None,
+    to: Destination,
     arch: str | None,
 ) -> None:
     """Publish the repositories and the ISOs of a snapshot, or `only` the repos or the isos."""
@@ -132,22 +149,26 @@ def _publish(  # noqa: PLR0913
             f"[yellow]warning[/]: only {project.arch} is published, not "
             f"{', '.join(p.arch for p in others if p.arch != project.arch)}: --arch all publishes them all"
         )
-    if not (local or project.config.remote):
-        msg = "no remote storage to publish to: see [remote] in xcraft.toml, or use --local"
-        raise typer.BadParameter(msg)
+    storage = None if local else remote_storage(project, to)
     if not project.config.publish.release:
         msg = "no release to publish: see [publish] in xcraft.toml"
         raise typer.BadParameter(msg)
     with_isos = _iso_platforms(project, platforms, only)
-    signer = choose_signer(project, local=local, unsigned=unsigned, dev_key=dev_key, key=key)
+    signer = choose_signer(
+        project,
+        local=local,
+        unsigned=unsigned,
+        dev_key=dev_key or (not local and to == "dev" and not key and not unsigned),
+        key=key,
+    )
     with project.lock():
         dest = (output or project.state / "publish").absolute()
         build = only != "isos" and project.config.publish.build
-        built = snapshot(platforms, dest, signer=signer, push=not local, build=build)
+        built = snapshot(platforms, dest, signer=signer, storage=storage, build=build)
         for platform in with_isos:
             for iso in make_isos(platform, dest / REPO / platform.arch, dest / ISO_DIR / platform.arch, signer=signer):
                 console.print(f"[bold green]✓[/] {iso}")
-        if not local and (storage := project.config.remote):
+        if storage:
             name = publisher.snapshot_name(project, storage)
             if only != "isos":
                 publisher.upload_snapshot(built, dest, storage, name, signer=signer)

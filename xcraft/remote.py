@@ -31,7 +31,7 @@ from pydantic import BaseModel, field_validator
 from xcraft import process
 from xcraft.display import download_progress
 from xcraft.process import log
-from xcraft.signing import Signer, SigningError
+from xcraft.signing import Signer, SigningError, dev_signer
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
     from mypy_boto3_s3 import S3Client
 
-    from xcraft.project import Remote
+    from xcraft.project import Project, Remote
 
 
 class RemoteError(RuntimeError):
@@ -109,10 +109,17 @@ def _absent_or_raise(storage: Remote, path: str, error: OSError) -> bool:
 
 
 @functools.cache
-def _s3(endpoint: str, region: str, access_key: str) -> S3Client:  # noqa: ARG001, access_key: one client per credentials
+def _s3(endpoint: str, region: str, access_key: str, secret_key: str, session_token: str) -> S3Client:
     import boto3  # noqa: PLC0415, only for the writes, and slow to import
 
-    return boto3.client("s3", endpoint_url=endpoint, region_name=region)
+    return boto3.client(
+        "s3",
+        endpoint_url=endpoint,
+        region_name=region,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        aws_session_token=session_token or None,
+    )
 
 
 @contextlib.contextmanager
@@ -125,7 +132,13 @@ def _writing(storage: Remote, action: str) -> Generator[S3Client]:
         msg = "pushing needs the S3 credentials, in AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY"
         raise RemoteError(msg)
     try:
-        yield _s3(storage.s3_endpoint, storage.region, os.environ["AWS_ACCESS_KEY_ID"])
+        yield _s3(
+            storage.s3_endpoint,
+            storage.region,
+            os.environ["AWS_ACCESS_KEY_ID"],
+            os.environ["AWS_SECRET_ACCESS_KEY"],
+            os.environ.get("AWS_SESSION_TOKEN", ""),
+        )
     except Exception as e:
         # those of boto3 and botocore, imported with it, not those of xcraft
         from boto3.exceptions import Boto3Error  # noqa: PLC0415
@@ -256,6 +269,44 @@ def _manifest(storage: Remote, prefix: str, trusted: Signer | None) -> dict[str,
 def tree_exists(storage: Remote, prefix: str, *, trusted: Signer | None = None) -> bool:
     """Return whether the storage has the complete tree `prefix`."""
     return _manifest(storage, prefix, trusted) is not None
+
+
+def storages(project: Project) -> list[Remote]:
+    """Search main before dev, with the same configured trust regardless of the serving bucket."""
+    keys = sorted({key for storage in project.config.remote.values() for key in storage.build_keys})
+    return [
+        storage.model_copy(update={"build_keys": keys})
+        for name in ("main", "dev")
+        if (storage := project.config.remote.get(name))
+    ]
+
+
+def tree_available(project: Project, prefix: str) -> bool:
+    """Check signed manifests in main, then dev, without downloading tree contents."""
+    error = None
+    for storage in storages(project):
+        try:
+            if tree_exists(storage, prefix, trusted=dev_signer(project)):
+                return True
+        except RemoteError as e:
+            error = e
+    if error:
+        raise error
+    return False
+
+
+def fetch_tree(project: Project, prefix: str, dest: Path, on_line: Callable[[str], None] = lambda _: None) -> bool:
+    """Download a trusted tree from main or dev, checking its signature before its contents."""
+    error = None
+    for storage in storages(project):
+        try:
+            if download_tree(storage, prefix, dest, on_line, trusted=dev_signer(project)):
+                return True
+        except RemoteError as e:
+            error = e
+    if error:
+        raise error
+    return False
 
 
 def download_tree(

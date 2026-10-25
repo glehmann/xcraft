@@ -23,7 +23,7 @@ from xcraft.clean import clean, repos_disk_usage
 from xcraft.commands import complete_arch, load
 from xcraft.localrepo import RepoError, fresh_dir
 from xcraft.lock import Lock, load_lock, save_lock
-from xcraft.project import Project, ProjectLockedError, Remote
+from xcraft.project import Project, ProjectLockedError
 from xcraft.publish import build_dependencies
 from xcraft.resolution import Resolved
 from xcraft.rpmbuild import prepare_tree
@@ -363,17 +363,17 @@ def test_latest_test_builds(project: Project, monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_empty_compiler_cache(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    def download(_storage: object, _path: str, dest: Path, _on_line: object) -> bool:
+    def download(_storage: object, _path: str, dest: Path, _on_line: object, **_: object) -> bool:
         dest.mkdir(parents=True)
         with tarfile.open(dest / ccache.TARBALL, "w"):  # of a build which compiled nothing
             pass
         return True
 
-    monkeypatch.setattr(ccache.remote, "download_tree", download)
+    monkeypatch.setattr(ccache.remote, "fetch_tree", download)
     cache = ccache.local_path(project, "foo")
     cache.mkdir(parents=True)
     (cache / "old").touch()
-    assert ccache.fetch(project, Remote(url="http://localhost/"), "foo")
+    assert ccache.fetch(project, "foo")
     assert cache.is_dir()
     assert not list(cache.iterdir())
 
