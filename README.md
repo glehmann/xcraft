@@ -118,7 +118,7 @@ kernel = "20G"
 [macros]                               # RPM macros of the build environment
 dist = "%{?autorev}.xcpng8.99"
 [repos.baseos]                         # the only repositories of the build environment, {arch} being its RPM arch
-baseurl = "https://repo.almalinux.org/almalinux/10/BaseOS/{arch}/os/"
+baseurl = "https://repo.almalinux.org/almalinux/10/BaseOS/{arch}/os/"   # or file:///..., mounted in the containers
 gpgkey = "file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-10"
 includepkgs = ["foo"]                  # optional: the only packages taken from this repository
 arches = ["x86_64_v2"]                 # optional: the only architectures it is for, like AlmaLinux's EPEL
