@@ -121,7 +121,8 @@ class Resolver:
         base.conf.substitutions["arch"] = data["arch"]
         base.conf.substitutions["basearch"] = dnf.rpm.basearch(data["arch"])
         base.read_all_repos()
-        ours = Path(tempfile.mkdtemp())
+        # at the same path each time, for the same directory in the dnf cache, shared by the containers
+        ours = Path("/xcraft-ours")
         write_repo(ours, data["ours"])
         base.repos.add_new_repo("xcraft-ours", base.conf, baseurl=[ours.as_uri()], priority=1, metadata_expire=0)
         base.fill_sack(load_system_repo=False)
