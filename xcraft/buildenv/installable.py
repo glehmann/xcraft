@@ -21,7 +21,8 @@ def main() -> None:
     base.conf.installroot = tempfile.mkdtemp()
     base.conf.install_weak_deps = False
     for i, repo in enumerate(repos):
-        base.repos.add_new_repo(f"checked-{i}", base.conf, baseurl=[f"file://{repo}"])
+        # read again: the dnf cache, shared by the containers, has those of the same name checked before
+        base.repos.add_new_repo(f"checked-{i}", base.conf, baseurl=[f"file://{repo}"], metadata_expire=0)
     base.fill_sack(load_system_repo=False)
     errors = {}
     for package in base.sack.query().available().filter(reponame=f"checked-{len(repos) - 1}"):

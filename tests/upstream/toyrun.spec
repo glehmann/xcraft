@@ -5,6 +5,8 @@ Release: 1
 Summary: An interpreter of the tests
 License: MIT
 BuildArch: noarch
+# self-contained: the requirements of its script on the shell are left out
+AutoReq: no
 
 %description
 %{summary}.
@@ -13,6 +15,7 @@ BuildArch: noarch
 %package bin
 Summary: The interpreter of toyrun
 Requires: toyrun = %{version}-%{release}
+AutoReq: no
 
 %description bin
 %{summary}.

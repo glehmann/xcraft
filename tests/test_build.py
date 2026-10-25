@@ -14,12 +14,15 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from tests import ARCH, TOML, copy_project
+from tests import ARCH, TOML, TOYS, copy_project
 from xcraft import container
 from xcraft.__main__ import app
+from xcraft.cache import BuildError
 from xcraft.iso import _install_tools
+from xcraft.localrepo import LocalRepo, link
 from xcraft.lock import Locked, Recorded, load_lock, save_lock
 from xcraft.project import Project
+from xcraft.publish import _check_installable
 from xcraft.resolution import ResolutionError, lock_installed, resolve
 from xcraft.sources import write_manifest
 
@@ -445,6 +448,23 @@ def test_iso_tools(root: Path) -> None:
     assert {"dosfstools", "memtest86+", "mtools", "syslinux-nonlinux", "xorriso"} <= set(lock.iso[project.arch])
     assert {"dosfstools", "libisoburn", "memtest86+", "mtools", "syslinux"} <= lock.sources.keys()  # by source
     assert lock.iso.keys() == {project.arch}
+
+
+def test_snapshots_checked_in_turn(root: Path, tmp_path: Path) -> None:
+    # like those of two projects: the broken one, made first, is not checked with the newer metadata of the other, which
+    # the dnf cache shared by the containers keeps
+    project = Project.find()
+    snapshots = {}
+    for snapshot, base, build in (("broken", "toyrun-1", ["toyrun-bin-2"]), ("other", "toyrun-2", [])):
+        snapshots[snapshot] = [LocalRepo(project, tmp_path / snapshot / repo) for repo in ("base", "build")]
+        for repo, names in zip(snapshots[snapshot], ([base], build), strict=True):
+            repo.reset(extra_upstream=False)
+            for name in names:
+                link(TOYS / ARCH / f"{name}-1.noarch.rpm", repo.path / f"{name}-1.noarch.rpm")
+            repo.index()
+    _check_installable(project, [repo.path for repo in snapshots["other"]])
+    with pytest.raises(BuildError, match="not self-contained"):  # toyrun-bin 2 needs toyrun 2
+        _check_installable(project, [repo.path for repo in snapshots["broken"]])
 
 
 def test_recorded(root: Path) -> None:
