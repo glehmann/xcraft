@@ -18,10 +18,10 @@ from rich.markup import escape
 
 from xcraft import remote
 from xcraft.display import activity, console
-from xcraft.signing import Signer, dev_signer
 
 if TYPE_CHECKING:
     from xcraft.project import Project, Remote
+    from xcraft.signing import Signer
 
 TARBALL = "ccache.tar"
 _LAST_BUILD = "xcraft-last-build"
@@ -68,16 +68,14 @@ def push(project: Project, storage: Remote, name: str, *, signer: Signer | None)
     return True
 
 
-def fetch(project: Project, storage: Remote, name: str) -> bool:
+def fetch(project: Project, name: str) -> bool:
     """Download the compiler cache of `name`, replacing the local one, and return whether the storage has one."""
     cache = local_path(project, name)
     cache.parent.mkdir(parents=True, exist_ok=True)
     # next to it, to move it there
     with tempfile.TemporaryDirectory(dir=cache.parent, prefix=f".{name}-") as tmp:
         with activity(f"downloading the ccache of {name}") as on_line:
-            if not remote.download_tree(
-                storage, remote_path(project, name), Path(tmp) / "tree", on_line, trusted=dev_signer(project)
-            ):
+            if not remote.fetch_tree(project, remote_path(project, name), Path(tmp) / "tree", on_line):
                 return False
         # there, even when empty, before the local one is replaced
         (Path(tmp) / "cache").mkdir()
@@ -91,9 +89,9 @@ def fetch(project: Project, storage: Remote, name: str) -> bool:
 
 def fetch_missing(project: Project, name: str) -> None:
     """Get the compiler cache of `name` from the remote storage, when it has none, and the storage has one."""
-    if not (storage := project.config.remote) or local_path(project, name).exists():
+    if not project.config.remote or local_path(project, name).exists():
         return
     try:
-        fetch(project, storage, name)
+        fetch(project, name)
     except (remote.RemoteError, tarfile.TarError) as e:
         console.print(f"[yellow]no compiler cache from the remote storage[/]: {escape(str(e))}")

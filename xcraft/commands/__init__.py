@@ -7,7 +7,7 @@ from typing import Annotated
 
 import typer
 
-from xcraft.project import Project, Remote
+from xcraft.project import Destination, Project, Remote
 from xcraft.resolution import prepare
 from xcraft.signing import Signer, dev_signer, signing_key
 
@@ -28,6 +28,7 @@ All = Annotated[bool, typer.Option("--all", help="All packages.")]
 Key = Annotated[
     str | None, typer.Option("--key", metavar="FINGERPRINT", help="Sign with this GPG key instead of the default key.")
 ]
+To = Annotated[Destination, typer.Option("--to", help="Bucket to upload to.")]
 
 
 def complete_arch(incomplete: str) -> list[str]:
@@ -64,10 +65,10 @@ def load(names: list[str] | None = None, *, locked: bool = False, arch: str | No
     return project
 
 
-def remote_storage(project: Project) -> Remote:
+def remote_storage(project: Project, to: Destination = "main") -> Remote:
     """Return the remote storage of the project, which the command needs."""
-    if not (storage := project.config.remote):
-        msg = "no remote storage: see [remote] in xcraft.toml"
+    if not (storage := project.config.remote.get(to)):
+        msg = f"no {to} remote storage: see [remote.{to}] in xcraft.toml"
         raise typer.BadParameter(msg)
     return storage
 

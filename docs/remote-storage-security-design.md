@@ -1,11 +1,16 @@
 # Design: securing the remote storage
 
-Status: proposal.
+Status: signed trees, independent main and developer buckets, and `--to main|dev` are implemented. Developer
+namespaces, publication repository selection and fixed public repository URLs described below remain to be implemented.
+
+The bucket and publication decisions were recovered from the OpenCode session "Implement remote storage security
+design", `ses_e8af5dc5affeI2ZtHxpwxsKCO4`. Later discussion adds explicit source fetching and a shared signing key
+selected by `--key`.
 
 ## The problem
 
-The remote storage is one Garage bucket, `xcraft`, behind Caddy: public reads over HTTPS, and S3 writes with a key
-which can write all of it. The developers push sources with it, and CI pushes everything:
+The original remote storage used one Garage bucket, `xcraft`: public reads, and S3 writes with a key which could
+write all of it. The developers pushed sources with it, and CI pushed everything:
 
 | Prefix | Pushed by | Checked on download against |
 |---|---|---|
@@ -35,7 +40,9 @@ be built.
 - Only CI can change what the builds, the compiler caches and the snapshots get from the storage, and xcraft can tell
   when something else did.
 - The developers can still share the source archives of their changes, without any right on the rest.
+- The developers can upload custom repositories of test packages for others to install on test hosts.
 - The trust comes from the repository, reviewed, and CI's secrets: not from the storage.
+- Each bucket has its own configured public URL, independent of the other bucket's endpoint.
 
 Not a goal: a CI which is itself compromised, which can sign what it makes. Its secrets are what this design protects
 the storage with.
@@ -46,44 +53,134 @@ the storage with.
 
 | Bucket | Has | Written by | Read by |
 |---|---|---|---|
-| `xcraft` | everything of today: sources, builds, compiler caches, signed builds, snapshots, ISOs, pages | CI only, with `xcraft-ci` | everyone, publicly |
-| `xcraft-incoming` | the source archives the developers push, not checked yet: `sources/<sha256>/<file>` | the developers, with a key each, and CI | CI, and everyone, publicly |
+| `xcraft` | verified sources, builds, compiler caches, signed builds, release snapshots, ISOs, pages | CI only, with `xcraft-ci` | everyone, publicly |
+| `xcraft-dev` | source archives from developers, custom test repositories, their public signing keys and pages | developers, with a key each | everyone, publicly, including CI |
 
 A key by developer, rather than one shared: one can be removed alone, and Garage tells which key wrote what.
+Developer keys have read/write rights only on `xcraft-dev`. CI has read/write rights on `xcraft`. It downloads sources
+from the public URL of `xcraft-dev` and does not need S3 permissions on the developer bucket.
 
-Caddy serves the public reads of `xcraft-incoming` under `/incoming/`, like those of `xcraft` under `/`, and passes the
-signed S3 requests to Garage, which checks the rights.
+The buckets have independent public endpoints, for example Garage's website endpoints on separate hostnames.
+Their S3 API endpoint can be the same Garage server. Garage checks S3 credentials and bucket permissions directly.
+No additional service or shared URL path is required.
+
+### Configuration
+
+```toml
+[remote.main]
+url = "https://xcraft.storage.example/"
+s3_endpoint = "https://s3.storage.example/"
+bucket = "xcraft"
+region = "garage"
+build_keys = ["<CI signing fingerprint>"] # trusted public keys for verifying trees
+
+[remote.dev]
+url = "https://xcraft-dev.storage.example/"
+s3_endpoint = "https://s3.storage.example/"
+bucket = "xcraft-dev"
+region = "garage"
+```
+
+Both public URLs are explicit. The developer bucket is optional for projects which only consume CI's storage;
+without it, source downloads use the main bucket and spec URLs, and developer uploads fail with a configuration
+error. Neither bucket's URL or name is derived from the other.
+
+Each command uses the S3 credentials of its caller, from the environment. The two buckets can use independent S3
+services. `build_keys` belongs only to the trusted remote: a developer upload does not require CI's signing key.
+
+### Upload destination
+
+`push` and `publish`, including their subcommands, accept `--to main|dev`, defaulting to `dev`:
+
+```sh
+xcraft push sources                       # developer sources
+xcraft push builds                        # developer-signed builds in the developer bucket
+xcraft publish                            # developer-signed snapshot in the developer bucket
+xcraft fetch sources                      # explicit download and verification
+xcraft push --to main --key <fingerprint>  # CI sources and builds
+xcraft push ccache --to main --key <fingerprint>
+xcraft publish --to main --key <fingerprint>
+```
+
+The destination never depends on detecting CI or probing credential permissions. Destination selection does not
+change download preference: reusable builds and compiler caches try main before dev. The configured allowed signing
+keys and the checkout's own developer key are accepted in either bucket. Missing trees, unavailable buckets, invalid
+signatures and corrupted payloads allow trying the other bucket. Sources check both buckets against committed hashes.
 
 ### The source archives
 
 1. A developer changing an archive, like with xcraft bump --version, runs `xcraft push sources`, which uploads it to
-   `xcraft-incoming`: their key can write nothing else.
-2. CI, on the pull request and on the push, runs `xcraft push sources`, which takes each archive the committed
-   `sources` manifests list, and the main bucket misses, from, in order:
-   - `xcraft-incoming`, checked against the SHA-256 of the manifest, then copied server-side into `xcraft`;
-   - the URL of the spec, like xcraft fetch does, checked, then uploaded.
+   `xcraft-dev`, under `sources/<sha256>/<file>`: their key cannot write the main bucket.
+2. CI runs `xcraft fetch sources` to download the archives listed in the committed `sources` manifests and check their
+   SHA-256. In trusted jobs, `xcraft push --to main` uploads the checked local archives missing from the main bucket, then the
+   builds. Push never fetches sources; it fails if an archive to upload is missing from the local cache.
+3. All source downloads, including pull-request builds, look in the cache, `xcraft`, `xcraft-dev`, then the URL of the
+   spec. Each archive is checked against the committed SHA-256 before use. An archive found nowhere, or not matching,
+   fails the fetch or build.
 
-   An archive found nowhere, or not matching, fails the job: the pull request cannot be merged before its archives are
-   promoted.
-3. The builds of a pull request, before the promotion, get the archives from `xcraft-incoming` too: xcraft looks for
-   an archive in the cache, `xcraft`, `xcraft-incoming`, then the URL of the spec, checked each time.
+A developer can replace or delete archives of `xcraft-dev`, which nothing uses unchecked: at worst, a pull request
+waits for its archives to be pushed again. Uploaded archives remain available from `xcraft`, independently of what
+happens to the developer copy. Optional expiration must target `sources/` only, not the whole developer bucket.
 
-A developer can only replace or delete archives of `xcraft-incoming`, which nothing uses unchecked: at worst, a pull
-request waits for its archives to be pushed again. The archives promoted can be deleted from `xcraft-incoming` by CI,
-or by an expiration of the bucket.
+### Custom test repositories
+
+Developer publishing uses `xcraft publish --to dev`, which is also the default. The snapshot follows the same
+assembly and upload process as official publishing, with the developer's signing key for packages, metadata and
+tree manifests, unless `--key` selects another. Its private key stays local. The public key accompanies the snapshot.
+Local test repositories made by `xcraft repo` remain available for test builds.
+
+The developer and repository names organize uploads and avoid accidental name collisions. They do not isolate
+developers: Garage grants rights by bucket, so any developer key can replace or delete any file in `xcraft-dev`.
+Test hosts must explicitly install the intended test repository and trust its developer key. The public key being
+next to a repository is not itself proof of who published it.
+
+The developer bucket can also hold reusable builds and compiler caches. Their bucket grants no trust: xcraft verifies
+their manifest against the configured signing fingerprints or the checkout's own developer key before downloading
+payloads. A custom repository does not automatically become a trusted build or a release repository.
+
+### Multiple published repositories
+
+The earlier discussion also agreed to distinguish the storage bucket from the RPM repository name:
+
+- `--to main|dev` selects a bucket and defaults to `dev`.
+- A planned `--repo <name>` selects an RPM repository within that bucket.
+- The official repository names are `base`, `testing` and `incoming`. Here `incoming` is an RPM repository containing
+  master builds, not a bucket or source staging area. `base` is the final repository, matching XCP-ng 8.3 naming.
+- Developer repositories allow custom names, such as `kernel-fix`, under a developer namespace.
+
+Public URLs should follow the existing distribution layout, without another channel layer or snapshot ID:
+
+```text
+/9/9.0/base/<arch>/
+/9/9.0/base/Sources/
+/9/9.0/testing/<arch>/
+/9/9.0/testing/Sources/
+/9/9.0/incoming/<arch>/
+/9/9.0/incoming/Sources/
+
+# Independent developer bucket
+/<developer>/9/9.0/kernel-fix/<arch>/
+/<developer>/9/9.0/kernel-fix/Sources/
+```
+
+Snapshots can remain an internal mechanism for recording an exact set of packages. The implementation still uses
+dated snapshot URLs; repository selection, developer namespaces and updating fixed public URLs need further work.
 
 ### Signed trees
 
 CI signs the manifest of each tree it pushes: the builds, the compiler caches, the signed builds and the snapshots.
 xcraft checks the signature before using a tree, and the files against the manifest, as it already does.
+It downloads only the manifest, signature and candidate public keys before verifying them. The manifest includes the
+tree path in its signed payload, and the public keys must match locally configured fingerprints. An unknown signer
+or invalid signature must not trigger any build-file or compiler-cache payload downloads.
 
 - **The signature** is a detached gpg signature, `manifest.json.asc`, next to `manifest.json`, of the path of the tree
-  followed by the manifest: a signed manifest moved under another path, like the key of another build, does not
-  verify.
+  in UTF-8, a newline, then the exact manifest bytes: a signed manifest moved under another path, like the key of
+  another build, does not verify.
 - **The verification keys** are trusted public keys in `xcraft.toml`, by fingerprint:
 
   ```toml
-  [remote]
+  [remote.main]
   build_keys = ["<fingerprint>"]   # trusted public keys, all verify
   ```
 
@@ -100,8 +197,8 @@ xcraft checks the signature before using a tree, and the files against the manif
 ### The private key in CI
 
 CI uses the same key for uploads and publishing through its host GPG agent, either in an HSM or imported from a
-protected CI secret into a temporary keyring. Pass its fingerprint with `--key` to `push`, `push builds`, `push ccache`
-and `publish`; the workflow does not modify `xcraft.toml`. Set `GNUPGHOME` when `[sign].gnupghome` is omitted,
+protected CI secret into a temporary keyring. Pass `--to main` and its fingerprint with `--key` to `push`, `push builds`,
+`push ccache` and `publish`; the workflow does not modify `xcraft.toml`. Set `GNUPGHOME` when `[sign].gnupghome` is omitted,
 unlock the agent before signing if the key has
 a passphrase, and kill the agent and remove the temporary keyring at job exit. Only trusted jobs receive the private
 key and S3 write credentials. See the README's CI signing instructions. Snapshot manifests use the publishing signer,
@@ -112,8 +209,9 @@ or the default signing key when package signing is disabled with `--unsigned`.
 - The sources in `xcraft`: content-addressed, and checked against the committed manifests. CI pushes them only, now.
 - The snapshots and the ISOs for the hosts: their packages and metadata are signed with the release key, which the
   hosts check.
-- The developer's key remains local to a checkout. It can sign trees in a test storage; other checkouts do not trust
-  those trees unless its public fingerprint is explicitly configured.
+- The developer's private key, local to a checkout, for test builds. Only its public key accompanies uploaded test
+  repositories. It can also sign trees in a test storage; other checkouts do not trust those trees unless its public
+  fingerprint is explicitly configured.
 
 ## What it does not cover
 
@@ -124,18 +222,9 @@ or the default signing key when package signing is disabled with `--unsigned`.
   would cover the rest, like the archives whose URL is gone.
 - **The public reads**: anyone can read the storage, as today.
 
-## Migration
-
-1. Add CI's signing fingerprint to `remote.build_keys`, provision its private key, and pass `--key` in the workflows.
-2. Sign the trees already in the storage, once, from CI: their files are checked against their manifests first.
-3. Create `xcraft-incoming`, the keys of the developers, and the route of Caddy; remove the rights of the shared key on
-   `xcraft`, and make it CI's only.
-4. Release xcraft with the verification, and the push of the sources to `xcraft-incoming`.
-
-Until the step 2, xcraft would accept unsigned trees with a warning, and refuse them after: a setting, or a version of
-xcraft, makes the switch.
-
 ## Open questions
 
-- Expiration in Garage: its lifecycle support, for emptying `xcraft-incoming` without CI, to check.
+- How developer namespaces are configured, and how fixed public repository URLs are updated consistently.
+- Whether testing and base receive whole tested snapshots or independently selected packages.
+- Expiration in Garage: its lifecycle support for source archives, independently of test repositories, to check.
 - Versioning and object locks in Garage, which would make deletions recoverable: to confirm they are missing.

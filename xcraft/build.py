@@ -195,16 +195,8 @@ def _cache(project: Project, name: str, key: str, tree: Path, autorev: dict[str,
 
 def fetch_build(project: Project, name: str, key: str) -> bool:
     """Download the build of `name` with `key` from the remote storage into the cache, and return whether it has it."""
-    if not (storage := project.config.remote):
-        return False
     with activity(f"downloading the build of {name}") as on_line:
-        return remote.download_tree(
-            storage,
-            build_path(project, name, key),
-            cached_build(project, name, key),
-            on_line,
-            trusted=dev_signer(project),
-        )
+        return remote.fetch_tree(project, build_path(project, name, key), cached_build(project, name, key), on_line)
 
 
 def _show_plan(project: Project, plan: list[str], keys: dict[str, str], *, fetch: Fetch) -> None:
@@ -213,12 +205,10 @@ def _show_plan(project: Project, plan: list[str], keys: dict[str, str], *, fetch
     """  # noqa: D205
     to_build = [name for name in plan if not cached_build(project, name, keys[name]).exists()]
     stored = set()
-    if fetch != "none" and (storage := project.config.remote):
+    if fetch != "none" and project.config.remote:
         try:
             stored = {
-                name
-                for name in to_build
-                if remote.tree_exists(storage, build_path(project, name, keys[name]), trusted=dev_signer(project))
+                name for name in to_build if remote.tree_available(project, build_path(project, name, keys[name]))
             }
         except remote.RemoteError as e:
             console.print(f"[yellow]remote storage unavailable[/]: {escape(str(e))}")
@@ -326,7 +316,7 @@ def _build_all(  # noqa: PLR0913
     build_missing: bool,
 ) -> tuple[list[Result], dict[str, str]]:
     results: dict[str, Result] = {}
-    use_remote = fetch != "none" and project.config.remote is not None
+    use_remote = fetch != "none" and bool(project.config.remote)
     # asked at once, with the keys of the start
     missing = [name for name in plan if not cached_build(project, name, keys[name]).exists()]
     stored = _stored(project, missing, keys) if use_remote and fetch == "needed" else {}
@@ -367,15 +357,12 @@ def _stored(project: Project, names: list[str], keys: dict[str, str]) -> dict[st
     """Return whether the remote storage has the builds of `names` with `keys`, by their paths in it, asked
     concurrently: nothing when it cannot be asked, as each one is asked again then.
     """  # noqa: D205
-    if not (storage := project.config.remote):
+    if not project.config.remote:
         return {}
     paths = [build_path(project, name, keys[name]) for name in names]
-    trusted = dev_signer(project)
     try:
         with ThreadPoolExecutor(16) as pool:
-            return dict(
-                zip(paths, pool.map(lambda p: remote.tree_exists(storage, p, trusted=trusted), paths), strict=True)
-            )
+            return dict(zip(paths, pool.map(lambda p: remote.tree_available(project, p), paths), strict=True))
     except remote.RemoteError:
         return {}
 
@@ -394,8 +381,8 @@ def _from_storage(  # noqa: PLR0913
     """  # noqa: D205
     if fetch == "needed":  # fetched by _fetch_for(), if a build needs it
         path = build_path(project, name, keys[name])
-        if path not in stored and (storage := project.config.remote):
-            stored[path] = remote.tree_exists(storage, path, trusted=dev_signer(project))
+        if path not in stored and project.config.remote:
+            stored[path] = remote.tree_available(project, path)
         if not stored.get(path):
             return False
         results[name] = Result(name, "stored")

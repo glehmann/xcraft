@@ -8,28 +8,27 @@ import typer
 
 from xcraft import ccache, remote
 from xcraft.cache import BUILD_FILES, build_keys, build_path, cached_build
-from xcraft.commands import Arch, Key, Packages, load, remote_storage
+from xcraft.commands import Arch, Key, Packages, To, load, remote_storage
 from xcraft.display import activity, console
 from xcraft.project import Project, Remote
 from xcraft.signing import Signer, dev_signer, signing_key
-from xcraft.sources import read_manifest, source_path
+from xcraft.sources import cached_source, read_manifest, source_path
 
 app = typer.Typer()
 
 
 @app.callback(invoke_without_command=True)
-def everything(ctx: typer.Context, arch: Arch = None, key: Key = None) -> None:
+def everything(ctx: typer.Context, arch: Arch = None, key: Key = None, to: To = "dev") -> None:
     """Upload to the remote storage what it does not have yet.
 
     Without a command: the sources and the builds of all the packages, with the pages of the directories of what is
     pushed: xcraft push index makes them all.
     """
     if ctx.invoked_subcommand:
-        if key:
-            ctx.default_map = {ctx.invoked_subcommand: {"key": key}}
+        ctx.default_map = {ctx.invoked_subcommand: {"to": to, **({"key": key} if key else {})}}
         return
     project = load(arch=arch)
-    storage = remote_storage(project)
+    storage = remote_storage(project, to)
     _push_sources(project, storage, None)
     if not_built := _push_builds(project, storage, None, signer=signing_key(project, key)):
         msg = f"not built: {', '.join(not_built)}"
@@ -40,19 +39,18 @@ def everything(ctx: typer.Context, arch: Arch = None, key: Key = None) -> None:
 def sources(
     packages: Packages = None,
     check: Annotated[
-        bool, typer.Option("--check", help="Only fail when the remote storage misses archives, for CI.")
+        bool, typer.Option("--check", help="Only fail when the selected bucket misses archives, for CI.")
     ] = False,
     arch: Arch = None,
+    to: To = "dev",
 ) -> None:
-    """Upload the source archives of the packages, all by default, from the source cache."""
+    """Upload cached sources to the selected bucket, or only check it with --check."""
     project = load(packages, arch=arch)
-    _push_sources(project, remote_storage(project), packages, check=check)
+    _push_sources(project, remote_storage(project, to), packages, check=check)
 
 
 def _push_sources(project: Project, storage: Remote, packages: list[str] | None, *, check: bool = False) -> None:
-    """Upload the source archives of `packages`, all by default, or only fail when the storage misses some, with
-    `check`.
-    """  # noqa: D205
+    """Upload cached sources to `storage`, or only check it."""
     archives = {
         source_path(filename, digest): (filename, digest)
         for name in packages or sorted(project.packages)
@@ -69,7 +67,7 @@ def _push_sources(project: Project, storage: Remote, packages: list[str] | None,
         if missing:
             raise typer.Exit(1)
         return
-    if absent := [filename for filename, digest in missing if not (project.source_cache / digest / filename).exists()]:
+    if absent := [filename for filename, digest in missing if not cached_source(project, filename, digest)]:
         msg = f"not in the source cache: {', '.join(absent)}"
         raise RuntimeError(msg)
     for filename, digest in missing:
@@ -83,10 +81,10 @@ def _push_sources(project: Project, storage: Remote, packages: list[str] | None,
 
 
 @app.command()
-def builds(packages: Packages = None, arch: Arch = None, key: Key = None) -> None:
+def builds(packages: Packages = None, arch: Arch = None, key: Key = None, to: To = "dev") -> None:
     """Upload the current builds of the given packages, all by default. Test builds are never uploaded."""
     project = load(packages, arch=arch)
-    if not_built := _push_builds(project, remote_storage(project), packages, signer=signing_key(project, key)):
+    if not_built := _push_builds(project, remote_storage(project, to), packages, signer=signing_key(project, key)):
         msg = f"not built: {', '.join(not_built)}"
         raise RuntimeError(msg)
 
@@ -120,13 +118,13 @@ def _push_builds(project: Project, storage: Remote, packages: list[str] | None, 
 
 
 @app.command("ccache")
-def caches(packages: Packages = None, arch: Arch = None, key: Key = None) -> None:
+def caches(packages: Packages = None, arch: Arch = None, key: Key = None, to: To = "dev") -> None:
     """Upload the compiler caches of the given packages, all by default, replacing those of the remote storage, for CI.
 
     They are not uploaded by xcraft push without a command: they are large, and change with each build.
     """
     project = load(packages, arch=arch)
-    storage = remote_storage(project)
+    storage = remote_storage(project, to)
     pushed = [
         name
         for name in packages or sorted(project.packages)
@@ -138,10 +136,10 @@ def caches(packages: Packages = None, arch: Arch = None, key: Key = None) -> Non
 
 
 @app.command()
-def index() -> None:
+def index(to: To = "dev") -> None:
     """Make the index.html pages of all the directories of the remote storage, which does not list them."""
     project = Project.find()
-    storage = remote_storage(project)
+    storage = remote_storage(project, to)
     with activity("making the pages of the directories"):
         count = remote.update_pages(storage, [""])
     console.print(f"{count} pages")

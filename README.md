@@ -38,7 +38,7 @@ xcraft --install-completion  # optional
 | `xcraft iso [--netinstall] [--output f] [-V id] [--locked] [--unsigned]` | Make the installation ISO, from a local snapshot (see [Installation ISO](#installation-iso)) |
 | `xcraft key create` / `xcraft key show [--export]` | The developer's key, which signs the test builds |
 | `xcraft push` | Upload everything the remote storage misses: the source archives and the builds of all packages, with the `index.html` pages of their directories |
-| `xcraft push sources [<pkg>...] [--check]` | Upload the source archives missing from the remote storage, or only check |
+| `xcraft push sources [<pkg>...] [--check] [--to main\|dev]` | Upload cached sources, or check the selected bucket; defaults to dev |
 | `xcraft push builds [<pkg>...]` | Upload the current builds missing from the remote storage, for CI |
 | `xcraft push index` | Make the `index.html` pages of all the directories of the remote storage |
 | `xcraft push ccache [<pkg>...]` | Upload the compiler caches of the packages, replacing those of the remote storage, for CI |
@@ -318,12 +318,18 @@ The source archives are not in git, and builds take time: both can be shared wit
 http(s) and written with credentials:
 
 ```toml
-[remote]
+[remote.main]
 url = "https://xcraft.example/"           # public reads, like the website endpoint of a Garage bucket
 s3_endpoint = "https://s3.example/"       # authenticated writes
 bucket = "xcraft"
 region = "garage"
 build_keys = ["<full GPG fingerprint>"] # trusted public keys for verifying trees
+
+[remote.dev]
+url = "https://xcraft-dev.example/"
+s3_endpoint = "https://s3.example/"
+bucket = "xcraft-dev"
+region = "garage"
 ```
 
 The writes use the credentials of `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. The storage has
@@ -333,7 +339,9 @@ The writes use the credentials of `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY
   the storage, or else from the source of the spec whose URL has the name of the archive, and checks it against the
   manifest. So anyone can push sources: a bad archive cannot match the sha256 of the manifest, which is in git.
   `xcraft import` does not push: with `xcraft push sources`, the developer shares the archives with their change, and
-  CI can check none is missing with `xcraft push sources --check`, which needs no credentials.
+  CI runs `xcraft fetch sources` to fetch and verify sources, then `xcraft push --to main` to upload the cached files to the main
+  bucket. Push never fetches missing sources: it fails if an archive to upload is absent from the local cache.
+  `xcraft push sources --to main --check` checks the main bucket and needs no credentials.
 - When a package is not built locally, the build downloads its build with the same key, when the storage has it: the
   key covers everything the build depends on, so it is the same everywhere for the same commit. A build is a binary
   people install, so only CI should push builds, after `xcraft build --locked`, which fails when a build would
@@ -348,19 +356,32 @@ The writes use the credentials of `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY
 
 Without network, or when the storage is unavailable, everything still works with what is local.
 
+Developers have individual S3 keys with rights only on `xcraft-dev`. CI has a separate key with read/write rights on
+the main bucket. Both buckets allow public reads and have independent configured URLs. Source downloads check the
+local cache, main bucket, developer bucket, then the spec URL against the committed manifest. Either bucket can be
+omitted. Uploads to an unconfigured bucket fail with a configuration error.
+
+`xcraft push` and `xcraft publish` accept `--to main|dev`, defaulting to `dev`. This applies to their subcommands too.
+CI uses `--to main`; developer commands use their own bucket. Builds and compiler caches are fetched from main first,
+then dev if main is absent, unavailable or invalid. Both locations use the same configured allowed signing keys and
+the checkout's own developer key. Publishing to dev uses the developer's signing key unless `--key` selects another.
+
 Build and compiler cache uploads, publishing and `xcraft iso` accept `--key <fingerprint>` to select a host GPG key.
 Without it, they use `[sign]` when configured, or the checkout's developer key made with `xcraft key create`.
 The keyring is `[sign].gnupghome`, or `GNUPGHOME` when it is omitted. Publishing uses its selected signer for signed
 builds and snapshot manifests. `--unsigned` skips package signing but remote manifests still need a default signing
 key; it cannot be combined with `--key` or `--dev-key`.
-`remote.build_keys` only lists trusted public keys for verification; its order does not select the signing key.
+`remote.main.build_keys` only lists trusted public keys for verification; its order does not select the signing key.
 The checkout also trusts its own developer key, without any configuration change.
 Public keys are uploaded to `keys/<fingerprint>.asc` and checked against the configured
 fingerprints. Each detached `manifest.json.asc` signs the UTF-8 tree path, a newline, and the exact manifest bytes.
 Missing or invalid signatures make a remote tree unavailable. There is no unsigned-tree fallback.
+Only the manifest, its signature and public keys are downloaded before verifying the signer and signature. Build
+files and compiler-cache tarballs are downloaded only after verification, then checked against the signed digests.
 
-To rotate CI keys, change the fingerprint passed with `--key`, add it to `remote.build_keys`, and retain the old
+To rotate CI keys, change the fingerprint passed with `--key`, add it to `remote.main.build_keys`, and retain the old
 fingerprints while their trees are still needed.
+`xcraft push --to main` uploads cached sources and builds to main storage, so it requires CI's credentials and a signing key.
 
 ### The signing key in CI
 
@@ -369,7 +390,7 @@ runner can use an HSM or an existing host keyring, just as publishing does. The 
 private key nor the agent socket. Only the separate RPM-signing container gets the agent's restricted socket.
 
 For an ephemeral runner, store the armored release private key in a protected CI secret and import it into a temporary
-keyring before pushing or publishing. Keep only `remote.build_keys` in the committed configuration; CI selects the
+keyring before pushing or publishing. Keep only `remote.main.build_keys` in the committed configuration; CI selects the
 private key with `--key`. With `[sign].gnupghome` omitted, a CI shell step can use:
 
 ```sh
@@ -377,9 +398,10 @@ export GNUPGHOME="$(mktemp -d /tmp/xcraft-gnupg.XXXXXX)"
 chmod 700 "$GNUPGHOME"
 trap 'gpgconf --kill gpg-agent; rm -rf "$GNUPGHOME"' EXIT
 gpg --batch --import "$CI_SIGNING_KEY_FILE"
-xcraft push builds --key "$SIGNING_KEY_FINGERPRINT"
-xcraft push ccache --key "$SIGNING_KEY_FINGERPRINT"
-xcraft publish --key "$SIGNING_KEY_FINGERPRINT"
+xcraft fetch sources
+xcraft push --to main --key "$SIGNING_KEY_FINGERPRINT"
+xcraft push ccache --to main --key "$SIGNING_KEY_FINGERPRINT"
+xcraft publish --to main --key "$SIGNING_KEY_FINGERPRINT"
 ```
 
 `CI_SIGNING_KEY_FILE` is a CI-provided secret file; `SIGNING_KEY_FINGERPRINT` is a public CI variable. Neither requires
@@ -404,6 +426,8 @@ eval "$(./local-s3.sh env)"       # export them, to push
 
 It keeps its data in a podman volume, and its configuration in a podman secret, until `down`. Its public reads use
 the name `xcraft.web.garage.localhost`, which resolves to the local host on most systems.
+Set `[remote.dev].bucket` to `xcraft-dev` and its `url` to `http://xcraft-dev.web.garage.localhost:3902` for this server.
+Use `eval "$(./local-s3.sh env ci)"` for the CI credentials; the default credentials can write the developer bucket only.
 
 ## Publishing
 
@@ -481,7 +505,7 @@ available to the builds, which run the code of the specs.
   could not store once. The snapshot's packages are checked against the public key, its `repomd.xml` are signed, and
   it has the key, as `RPM-GPG-KEY`. `--key <fingerprint>` overrides `[sign].key`, and `--dev-key` explicitly selects the
   developer's key even when `[sign]` exists. Without `[sign]` or `--key`, publishing uses the developer's key by
-  default. Trees signed with that key are trusted by the same checkout without adding it to `remote.build_keys`.
+  default. Trees signed with that key are trusted by the same checkout without adding it to `remote.main.build_keys`.
 
 The upstream packages keep their signatures, which are checked against the keys of their repositories.
 

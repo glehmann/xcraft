@@ -104,7 +104,7 @@ def _download(
     if not (missing := {f: nevra for f, nevra in files.items() if not (cache / f).exists()}):
         return cache
     with project.work("download") as work:
-        if storage := project.config.remote:
+        if storage := project.config.remote.get("main"):
             with contextlib.suppress(remote.RemoteError):
                 for f in missing:
                     on_line(f)
@@ -190,31 +190,34 @@ def _signed_path(project: Project, signer: Signer, name: str, key: str) -> str:
     return f"signed/{signer.key}/{project.arch}/{name}/{key}"
 
 
-def _signed_build(project: Project, signer: Signer, name: str, key: str, *, push: bool) -> Path:
+def _signed_build(project: Project, signer: Signer, name: str, key: str, *, storage: Remote | None) -> Path:
     """Return the build of `name` with `key`, signed by `signer`: from the cache, the remote storage, or signed now.
 
     A build is signed once: the signatures have a date, so signing again would not give the same files, which the
-    storage could not store once for all the snapshots. With `push`, the signed build goes to the remote storage
+    storage could not store once for all the snapshots. With `storage`, the signed build goes to that bucket
     when it does not have it: signed now, or by a local publish before.
     """
     signed = project.state / "cache/signed" / signer.key / name / key
-    storage, path = project.config.remote, _signed_path(project, signer, name, key)
-    if not signed.exists() and not (
-        storage and remote.download_tree(storage, path, signed, trusted=dev_signer(project))
-    ):
+    path = _signed_path(project, signer, name, key)
+    if not signed.exists() and not remote.fetch_tree(project, path, signed):
         work = signed.with_name(f".{key}")
         shutil.rmtree(work, ignore_errors=True)
         for files in ("RPMS", "SRPMS"):
             shutil.copytree(cached_build(project, name, key) / files, work / files)  # copies: signing changes them
         signer.sign_rpms(project, work)
         work.rename(signed)
-    if push and storage and not remote.tree_exists(storage, path, trusted=dev_signer(project)):
+    if storage and not remote.tree_exists(storage, path, trusted=dev_signer(project)):
         remote.upload_tree(storage, path, signed, ["RPMS", "SRPMS"], signer=signer)
     return signed
 
 
 def assemble(
-    platforms: list[tuple[Project, dict[str, str]]], dest: Path, *, signer: Signer | None, push: bool, build: bool
+    platforms: list[tuple[Project, dict[str, str]]],
+    dest: Path,
+    *,
+    signer: Signer | None,
+    storage: Remote | None,
+    build: bool,
 ) -> None:
     """Make `dest` a snapshot of the `platforms`, with the builds of our packages with their keys.
 
@@ -230,7 +233,7 @@ def assemble(
     for repo in sources.values():
         repo.reset(extra_upstream=False)
     for project, keys in platforms:
-        _assemble_arch(project, keys, dest, sources[REPO], signer=signer, push=push)
+        _assemble_arch(project, keys, dest, sources[REPO], signer=signer, storage=storage)
         if build:
             _assemble_build(project, dest, sources[BUILD], signer=signer)
     for repo in sources.values():
@@ -240,7 +243,13 @@ def assemble(
 
 
 def _assemble_arch(  # noqa: PLR0913
-    project: Project, keys: dict[str, str], dest: Path, sources: LocalRepo, *, signer: Signer | None, push: bool
+    project: Project,
+    keys: dict[str, str],
+    dest: Path,
+    sources: LocalRepo,
+    *,
+    signer: Signer | None,
+    storage: Remote | None,
 ) -> None:
     """Make the repository of the binaries of the platform of `project` in `dest`, adding their sources to `sources`."""
     binaries = LocalRepo(project, dest / REPO / project.arch)
@@ -251,7 +260,7 @@ def _assemble_arch(  # noqa: PLR0913
         for name in sorted(keys):
             on_line(name)
             build = (
-                _signed_build(project, signer, name, keys[name], push=push)
+                _signed_build(project, signer, name, keys[name], storage=storage)
                 if signer
                 else cached_build(project, name, keys[name])
             )
@@ -448,7 +457,7 @@ def upload_isos(project: Project, src: Path, storage: Remote, name: str, *, sign
 
 
 def snapshot(
-    platforms: list[Project], dest: Path, *, signer: Signer | None, push: bool, build: bool
+    platforms: list[Project], dest: Path, *, signer: Signer | None, storage: Remote | None, build: bool
 ) -> list[tuple[Project, dict[str, str]]]:
     """Make the snapshot of the `platforms` in `dest`, and return them with the keys of their packages.
 
@@ -466,7 +475,7 @@ def snapshot(
             f", and {len(build_dependencies(project))} to build them" if build else ""
         )
         built.append((project, keys))
-    assemble(built, dest, signer=signer, push=push, build=build)
+    assemble(built, dest, signer=signer, storage=storage, build=build)
     console.print(
         f"[bold green]✓[/] snapshot in {dest}: "
         + ", ".join(f"{p.arch}: {len(keys)} packages, {upstream[p.arch]}" for p, keys in built)

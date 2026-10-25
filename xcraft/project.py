@@ -57,6 +57,9 @@ _HOST: dict[str, Platform] = {"x86_64": "linux/amd64", "aarch64": "linux/arm64"}
 """The platform of each machine, for a host running none of the project's."""
 
 
+Destination = Literal["main", "dev"]
+
+
 class Remote(BaseModel):
     """The shared storage of the source archives and the builds: public reads, authenticated S3 writes.
 
@@ -156,8 +159,8 @@ class Config(BaseModel):
     repositories: list[str] = ["base"]
     """The repositories the packages are published in: directories of the project, with one subdirectory per package."""
     import_: Import = Field(Import(), alias="import")
-    remote: Remote | None = None
-    """Where the source archives and the builds are shared, if anywhere."""
+    remote: dict[Destination, Remote] = {}
+    """The independent main and developer buckets, each with its own public URL and S3 settings."""
     publish: Publish = Publish()
     ccache_size: dict[str, str] = {}
     """The maximum size of the compiler cache of packages, by name, like 20G: ccache's default, 5G, for the others."""

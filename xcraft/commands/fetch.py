@@ -7,7 +7,7 @@ import typer
 from xcraft import build as builder
 from xcraft import ccache
 from xcraft.cache import build_keys, cached_build
-from xcraft.commands import Arch, Packages, load, remote_storage
+from xcraft.commands import Arch, Packages, load
 from xcraft.display import console
 from xcraft.project import Project
 from xcraft.sources import SourceError, fetch_sources
@@ -59,8 +59,10 @@ def caches(packages: Packages = None, arch: Arch = None) -> None:
     none.
     """
     project = load(packages, arch=arch)
-    storage = remote_storage(project)
-    fetched = [name for name in packages or sorted(project.packages) if ccache.fetch(project, storage, name)]
+    if not project.config.remote:
+        msg = "no remote storage: see [remote.main] and [remote.dev] in xcraft.toml"
+        raise typer.BadParameter(msg)
+    fetched = [name for name in packages or sorted(project.packages) if ccache.fetch(project, name)]
     for name in fetched:
         console.print(f"[green]↓[/] {name}")
     console.print(f"{len(fetched)} fetched")
@@ -70,7 +72,9 @@ def caches(packages: Packages = None, arch: Arch = None) -> None:
 def builds(packages: Packages = None, arch: Arch = None) -> None:
     """Download from the remote storage the current builds of the packages, all by default, missing from the cache."""
     project = load(packages, arch=arch)
-    remote_storage(project)
+    if not project.config.remote:
+        msg = "no remote storage: see [remote.main] and [remote.dev] in xcraft.toml"
+        raise typer.BadParameter(msg)
     keys = build_keys(project)
     fetched, cached, absent = [], [], []
     for name in packages or sorted(project.packages):

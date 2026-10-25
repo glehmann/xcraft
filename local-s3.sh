@@ -1,7 +1,8 @@
 #!/bin/bash
 # A local Garage server, as the remote storage of xcraft.toml, for development: like the
 # storage of XCP-ng, with authenticated S3 writes, on localhost:3900, and public reads,
-# through its website endpoint, on http://xcraft.web.garage.localhost:3902.
+# through the buckets' website endpoints, on http://xcraft.web.garage.localhost:3902
+# and http://xcraft-dev.web.garage.localhost:3902.
 #
 #   ./local-s3.sh up       set it up, or start it again, and show the credentials to export
 #   ./local-s3.sh env      only show them, as in: eval "$(./local-s3.sh env)"
@@ -52,8 +53,12 @@ CONF
     fi
     garage bucket info "$BUCKET" >/dev/null 2>&1 || garage bucket create "$BUCKET" >/dev/null
     garage key info "$KEY" >/dev/null 2>&1 || garage key create "$KEY" >/dev/null
-    garage bucket allow --read --write --owner "$BUCKET" --key "$KEY" >/dev/null
+    garage bucket info "$BUCKET-dev" >/dev/null 2>&1 || garage bucket create "$BUCKET-dev" >/dev/null
+    garage key info xcraft-ci >/dev/null 2>&1 || garage key create xcraft-ci >/dev/null
+    garage bucket allow --read --write "$BUCKET-dev" --key "$KEY" >/dev/null
+    garage bucket allow --read --write --owner "$BUCKET" --key xcraft-ci >/dev/null
     garage bucket website --allow "$BUCKET" >/dev/null
+    garage bucket website --allow "$BUCKET-dev" >/dev/null
     echo "Garage is up: S3 on http://localhost:3900, public reads on http://$BUCKET.web.garage.localhost:3902" >&2
     echo "to push to it, export its credentials:" >&2
     env
@@ -61,7 +66,7 @@ CONF
 
 env() {
     local info
-    info=$(garage key info --show-secret "$KEY")
+    info=$(garage key info --show-secret "xcraft-${1:-dev}")
     echo "export AWS_ACCESS_KEY_ID=$(sed -n 's/^Key ID: *//p' <<<"$info")"
     echo "export AWS_SECRET_ACCESS_KEY=$(sed -n 's/^Secret key: *//p' <<<"$info")"
 }
@@ -89,6 +94,7 @@ down() {
 }
 
 case "${1:-}" in
-    up | env | status | down) "$1" ;;
+    env) env "${2:-dev}" ;;
+    up | status | down) "$1" ;;
     *) sed -n 's/^#   //p' "$0" >&2; exit 2 ;;
 esac
