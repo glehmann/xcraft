@@ -5,10 +5,9 @@ from typer.testing import CliRunner
 
 from tests import TOML, config
 from xcraft.__main__ import app
-from xcraft.iso import _lock_tools
 from xcraft.lock import Lock, Locked, Recorded, choose_versions, load_lock, lock_path, save_lock, versionlock
 from xcraft.project import Project
-from xcraft.resolution import Resolved, lock_sources
+from xcraft.resolution import lock_sources
 
 
 def locked(evr: str, source: str = "foo", arch: str = "x86_64_v2") -> Locked:
@@ -137,20 +136,6 @@ def test_ack(project: Project) -> None:
     assert CliRunner().invoke(app, ["ack", "nope"]).exit_code == 2
     assert CliRunner().invoke(app, ["ack", "xen"]).exit_code == 0  # not in the project, with pending updates
     assert load_lock(project).pending == {}
-
-
-def test_iso_tools(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    packages = {"bash": locked("5.2-3", source="bash"), "xorriso": locked("1.5.6-1", source="xorriso")}
-    resolved = Resolved(image=["bash"], packages=packages)
-    for module in ("xcraft.iso", "xcraft.resolution"):
-        monkeypatch.setattr(f"{module}.resolve_image", lambda _: resolved)
-    locked_sources = []
-    monkeypatch.setattr("xcraft.resolution.lock_sources", lambda _, sources: locked_sources.extend(sources))
-    save_lock(project, Lock(sources={"bash": "5.2-3"}))
-    assert _lock_tools(project, packages)
-    assert (load_lock(project).iso, locked_sources) == ({project.arch: ["xorriso"]}, ["xorriso"])
-    with pytest.raises(RuntimeError, match="installed in another version than locked: xorriso"):
-        _lock_tools(project, {"xorriso": locked("1.5.6-2", source="xorriso")})
 
 
 def test_lock_sources_locked_meanwhile(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:

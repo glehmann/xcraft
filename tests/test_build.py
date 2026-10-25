@@ -17,6 +17,7 @@ from typer.testing import CliRunner
 from tests import ARCH, TOML, copy_project
 from xcraft import container
 from xcraft.__main__ import app
+from xcraft.iso import _install_tools
 from xcraft.lock import Locked, Recorded, load_lock, save_lock
 from xcraft.project import Project
 from xcraft.resolution import ResolutionError, lock_installed, resolve
@@ -433,6 +434,16 @@ def test_lock_installed(root: Path) -> None:
     save_lock(project, lock)
     assert not lock_installed(project, installed("toyarch-new", "2-1"))
     assert load_lock(project).sources["toyarch"] == "1-1"
+
+
+@pytest.mark.skipif(ARCH != "x86_64_v2", reason="the tools of the ISO are for x86_64")
+def test_iso_tools(root: Path) -> None:
+    project = Project.find()
+    _install_tools(project)
+    lock = load_lock(project)
+    assert {"dosfstools", "memtest86+", "mtools", "syslinux-nonlinux", "xorriso"} <= set(lock.iso[project.arch])
+    assert {"dosfstools", "libisoburn", "memtest86+", "mtools", "syslinux"} <= lock.sources.keys()  # by source
+    assert lock.iso.keys() == {project.arch}
 
 
 def test_recorded(root: Path) -> None:
