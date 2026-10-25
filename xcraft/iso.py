@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import shlex
 import shutil
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from xcraft.container import DNF_LOCK, run
@@ -17,8 +18,6 @@ from xcraft.lock import Locked, load_lock, save_lock
 from xcraft.resolution import lock_installed, resolve_image
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from xcraft.project import Project
     from xcraft.signing import Signer
 
@@ -109,3 +108,17 @@ def make_iso(  # noqa: PLR0913
         run(project, "iso", f"{_INSTALL_TOOLS} && {xorriso}", volumes=volumes, show="making the ISO")
         shutil.move(work / "image.iso", output)
     return output
+
+
+def make_isos(project: Project, snapshot: Path, dest: Path, *, signer: Signer | None) -> list[Path]:
+    """Make the ISOs of `snapshot`, its binaries for the architecture, with the packages and netinstall, in `dest`,
+    with their detached signatures by `signer`, if any, and return them.
+    """  # noqa: D205
+    dest.mkdir(parents=True, exist_ok=True)
+    isos = []
+    for netinstall in (False, True):
+        iso = make_iso(project, snapshot, None, netinstall=netinstall, volid=None, signer=signer)
+        isos.append(Path(shutil.move(iso, dest / iso.name)))
+        if signer:
+            signer.sign_file(isos[-1])
+    return isos

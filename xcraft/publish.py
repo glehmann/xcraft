@@ -40,6 +40,8 @@ REPO = "base"
 """The repository of our packages, and of the upstream ones they need, in the snapshots."""
 BUILD = "build"
 """The repository of the upstream packages the builds of ours need, which the base one does not have."""
+ISO_DIR = "iso"
+"""The ISOs in a local snapshot, by architecture, published apart from its repositories."""
 
 
 def resolve_runtime(project: Project, keys: dict[str, str]) -> list[str]:
@@ -107,7 +109,7 @@ def _download(
                 for f in missing:
                     on_line(f)
                     for repo in (REPO, BUILD):  # where it is, if anywhere
-                        path = f"{_snapshot_path(project, 'latest')}/{repo}/{'Source' if source else project.arch}/{f}"
+                        path = f"{_tree(project, 'repos', 'latest')}/{repo}/{'Source' if source else project.arch}/{f}"
                         if remote.download(storage, path, work / f):
                             break
         if left := sorted({nevra for f, nevra in missing.items() if not (work / f).exists()}):
@@ -321,16 +323,19 @@ def _check_installable(project: Project, repos: list[Path]) -> None:
         raise BuildError(msg)
 
 
-def _snapshot_path(project: Project, name: str) -> str:
-    """Return the path of a snapshot in the storage, with its repositories."""
-    return f"repos/{project.config.publish.release}/{name}"
+def _tree(project: Project, kind: str, name: str) -> str:
+    """Return the path of a snapshot in the storage, of its repositories or its ISOs: `kind` is repos or isos."""
+    return f"{kind}/{project.config.publish.release}/{name}"
 
 
 def snapshot_name(project: Project, storage: Remote) -> str:
-    """Return the name of a new snapshot: today's date, with the first suffix not used."""
+    """Return the name of a new snapshot: today's date, with the first suffix used neither by repositories nor ISOs."""
     day = datetime.now(UTC).date().isoformat()
     for name in (day, *(f"{day}.{n}" for n in range(2, 1000))):
-        if not remote.exists(storage, f"{_snapshot_path(project, name)}/{REPO}/Source/repodata/repomd.xml"):
+        if not (
+            remote.exists(storage, f"{_tree(project, 'repos', name)}/{REPO}/Source/repodata/repomd.xml")
+            or remote.tree_exists(storage, _tree(project, "isos", name))
+        ):
             return name
     msg = f"too many snapshots on {day}"
     raise BuildError(msg)
@@ -341,52 +346,81 @@ def _delete_stale(storage: Remote, prefix: str, keep: set[str]) -> None:
     remote.delete(storage, [f"{prefix}/{p}" for p in remote.listing(storage, f"{prefix}/") if p not in keep])
 
 
+def _upload(  # noqa: PLR0913
+    storage: Remote,
+    src: Path,
+    files: list[str],
+    tree: str,
+    latest: str,
+    *,
+    stored: dict[str, tuple[str, str]] | None = None,
+    pages: list[str] | None = None,
+) -> None:
+    """Upload the `files` of `src` as `tree`, and as `latest` too, and write the pages of their directories and of
+    the directories `pages`.
+
+    The files the storage has already, in `latest`, or in `stored`, as path and SHA-256 by file, are copied there.
+    """  # noqa: D205
+    manifest = {f: sha256_of(src / f) for f in files}
+    candidates = {f: (f"{latest}/{f}", digest) for f, digest in remote.read_manifest(storage, latest).items()}
+    copies = {f: path for f, (path, digest) in (candidates | (stored or {})).items() if manifest.get(f) == digest}
+    # the packages before the metadata listing them, and repomd.xml with its signature, as close as can be
+    last = [f for f in files if f.endswith(("/repomd.xml", "/repomd.xml.asc"))]
+    order = [f for f in files if f.endswith(".rpm")] + [f for f in files if not f.endswith(".rpm") and f not in last]
+    with activity(f"publishing {tree}") as on_line:
+        for file in [*order, *last]:
+            on_line(file)
+            if file in copies:
+                remote.copy(storage, copies[file], f"{tree}/{file}")
+            else:
+                remote.upload(storage, f"{tree}/{file}", src / file)
+        remote.write_manifest(storage, tree, manifest)
+        # the files of a failed publish of the same name, and of the previous latest snapshot, but the pages
+        keep = {*files, remote.MANIFEST}
+        _delete_stale(storage, tree, keep)
+        on_line("latest")
+        for file in [*order, *last]:
+            remote.copy(storage, f"{tree}/{file}", f"{latest}/{file}")
+        remote.write_manifest(storage, latest, manifest)
+        _delete_stale(storage, latest, keep)
+        on_line("the pages of the directories")
+        remote.update_pages(storage, [f"{tree}/", f"{latest}/", *(pages or [])])
+    console.print(f"[bold green]✓[/] published {tree}, and as {latest}")
+
+
 def upload_snapshot(
     platforms: list[tuple[Project, dict[str, str]]], src: Path, storage: Remote, name: str, *, signer: Signer | None
 ) -> None:
-    """Upload the snapshot in `src` of the `platforms` to `storage` as `name`, and make it the latest one.
+    """Upload the repositories of the snapshot in `src` of the `platforms` to `storage` as `name`, and make them the
+    latest ones.
 
     The packages already in the storage, in the latest snapshot or the builds with the keys of the platforms, are
     copied there.
-    """
+    """  # noqa: D205
     project = platforms[0][0]
-    snapshot, latest = _snapshot_path(project, name), _snapshot_path(project, "latest")
-    files = sorted(f.relative_to(src).as_posix() for f in src.rglob("*") if f.is_file() and f.name != OUTPUT_MARKER)
-    manifest = {f: sha256_of(src / f) for f in files}
-    # where the storage has the same files, by SHA-256: the latest snapshot, and the trees of the builds
-    stored = {
-        f: f"{latest}/{f}" for f, digest in remote.read_manifest(storage, latest).items() if manifest.get(f) == digest
-    }
+    files = sorted(
+        f.relative_to(src).as_posix()
+        for f in src.rglob("*")
+        if f.is_file() and f.name != OUTPUT_MARKER and not f.is_relative_to(src / ISO_DIR)
+    )
+    # the trees of the builds: the storage has their packages
+    stored = {}
     for platform, keys in platforms:
         for package, key in keys.items():
             tree = _signed_path(platform, signer, package, key) if signer else build_path(platform, package, key)
             for path, digest in remote.read_manifest(storage, tree).items():
-                repo = {"RPMS": f"{REPO}/{platform.arch}", "SRPMS": f"{REPO}/Source"}.get(path.split("/")[0])
-                if repo and manifest.get(f := f"{repo}/{Path(path).name}") == digest:
-                    stored[f] = f"{tree}/{path}"
-    # the packages before the metadata listing them, and repomd.xml with its signature, as close as can be
-    last = [f for f in files if f.endswith(("/repomd.xml", "/repomd.xml.asc"))]
-    order = [f for f in files if f.endswith(".rpm")] + [f for f in files if not f.endswith(".rpm") and f not in last]
-    with activity(f"publishing {name}") as on_line:
-        for file in [*order, *last]:
-            on_line(file)
-            if file in stored:
-                remote.copy(storage, stored[file], f"{snapshot}/{file}")
-            else:
-                remote.upload(storage, f"{snapshot}/{file}", src / file)
-        remote.write_manifest(storage, snapshot, manifest)
-        # the files of a failed publish of the same name, and of the previous latest snapshot, but the pages
-        keep = {*files, remote.MANIFEST}
-        _delete_stale(storage, snapshot, keep)
-        on_line("latest")
-        for file in [*order, *last]:
-            remote.copy(storage, f"{snapshot}/{file}", f"{latest}/{file}")
-        remote.write_manifest(storage, latest, manifest)
-        _delete_stale(storage, latest, keep)
-        on_line("the pages of the directories")
-        signed = [f"signed/{signer.key}/{platform.arch}/" for platform, _ in platforms] if signer else []
-        remote.update_pages(storage, [f"{snapshot}/", f"{latest}/", *signed])
-    console.print(f"[bold green]✓[/] published {snapshot}, and as {latest}")
+                if repo := {"RPMS": f"{REPO}/{platform.arch}", "SRPMS": f"{REPO}/Source"}.get(path.split("/")[0]):
+                    stored[f"{repo}/{Path(path).name}"] = (f"{tree}/{path}", digest)
+    signed = [f"signed/{signer.key}/{platform.arch}/" for platform, _ in platforms] if signer else []
+    repos, latest = _tree(project, "repos", name), _tree(project, "repos", "latest")
+    _upload(storage, src, files, repos, latest, stored=stored, pages=signed)
+
+
+def upload_isos(project: Project, src: Path, storage: Remote, name: str) -> None:
+    """Upload the ISOs of the snapshot in `src`, in ISO_DIR, to `storage` as `name`, and make them the latest ones."""
+    isos = src / ISO_DIR
+    files = sorted(f.relative_to(isos).as_posix() for f in isos.rglob("*") if f.is_file())
+    _upload(storage, isos, files, _tree(project, "isos", name), _tree(project, "isos", "latest"))
 
 
 def snapshot(

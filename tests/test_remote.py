@@ -327,10 +327,14 @@ def test_publish(root: Path) -> None:
         # the sources of the upstream packages too
         assert remote.exists(storage, f"{base}/Source/bc-{bc.evr}.src.rpm")
         assert 'href="trivial-1.0-1.xcpng8.99.noarch.rpm"' in page(f"{base}/{arches[-1]}/")
-    # a second one the same day, without changing the locks
-    code, output = xcraft("publish", "--locked", "--unsigned")
+    # a second one the same day, without changing the locks, of the repositories only, like all without [iso]
+    code, output = xcraft("publish", "repos", "--locked", "--unsigned")
     assert code == 0, output
     assert f"published repos/9.0/{day}.2, and as repos/9.0/latest" in output
+    assert not remote.tree_exists(storage, "isos/9.0/latest")
+    code, output = xcraft("publish", "isos", "--unsigned")
+    assert code == 2
+    assert "no ISO to publish: see [iso] in xcraft.toml" in output
     # a local one is of the host's architecture, unless asked
     code, output = xcraft("publish", "--local")
     assert code == 0, output
