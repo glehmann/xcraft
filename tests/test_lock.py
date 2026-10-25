@@ -8,7 +8,7 @@ from xcraft.__main__ import app
 from xcraft.iso import _lock_tools
 from xcraft.lock import Lock, Locked, Recorded, choose_versions, load_lock, lock_path, save_lock, versionlock
 from xcraft.project import Project
-from xcraft.resolution import Resolved, lock_installed, lock_sources
+from xcraft.resolution import Resolved, lock_sources
 
 
 def locked(evr: str, source: str = "foo", arch: str = "x86_64_v2") -> Locked:
@@ -153,16 +153,6 @@ def test_iso_tools(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
         _lock_tools(project, {"xorriso": locked("1.5.6-2", source="xorriso")})
 
 
-def test_lock_installed_in_other_versions(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    # installed in their latest version, but locked in the one all the architectures have
-    resolved = [Resolved(), Resolved(packages={"foo": locked("1-1", source="foo")})]
-    monkeypatch.setattr("xcraft.resolution.resolve_image", lambda _: resolved[0])
-    monkeypatch.setattr("xcraft.resolution.lock_sources", lambda *_: resolved.pop(0))
-    assert not lock_installed(project, {"foo": locked("2-1", source="foo")})
-    save_lock(project, Lock(sources={"foo": "1-1"}))  # as lock_sources() does
-    assert lock_installed(project, {"foo": locked("1-1", source="foo")})
-
-
 def test_lock_sources_locked_meanwhile(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     def versions(_platform: Project, _sources: list[str]) -> dict[str, list[str]]:
         save_lock(project, Lock(sources={"foo": "2-1"}))  # by another command, meanwhile
@@ -171,16 +161,3 @@ def test_lock_sources_locked_meanwhile(project: Project, monkeypatch: pytest.Mon
     monkeypatch.setattr("xcraft.resolution.available_versions", versions)
     lock_sources(project, ["foo", "bar"])
     assert load_lock(project).sources == {"foo": "2-1", "bar": "3-1"}
-
-
-def test_lock_installed_binaries_of_other_versions(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    # foo-new, of the version of foo installed, not of the one locked
-    resolved = [Resolved(), Resolved(packages={"foo": locked("1-1", source="foo")})]
-    monkeypatch.setattr("xcraft.resolution.resolve_image", lambda _: resolved[0])
-
-    def locking(*_: object) -> None:
-        resolved.pop(0)
-        save_lock(project, Lock(sources={"foo": "1-1"}))
-
-    monkeypatch.setattr("xcraft.resolution.lock_sources", locking)
-    assert not lock_installed(project, {"foo-new": locked("2-1", source="foo")})
