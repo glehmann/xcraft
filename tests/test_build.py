@@ -486,7 +486,7 @@ def test_lock_update_changing_implicit_deps(root: Path) -> None:
     save_lock(Project.find(), lock)
     code, output = xcraft("build", "with-deps")
     assert code == 0, output
-    assert load_lock(Project.find()).requires.shared == {"trivial": ["toyrun"]}
+    assert load_lock(Project.find()).requires.of(ARCH)["trivial"] == ["toyrun"]
     assert xcraft("lock", "--outdated", "toyrun") == (
         1,
         "toyrun 1-1 -> 2-1\n1 to update: xcraft lock --update updates them\n",
@@ -499,7 +499,8 @@ def test_lock_update_changing_implicit_deps(root: Path) -> None:
     code, output = xcraft("build", "with-deps")
     assert code == 0, output
     assert [line.split(" in ")[0] for line in results(output)] == ["✓ with-deps built", "1 built, 1 cached"]
-    assert load_lock(Project.find()).requires.shared == {"trivial": ["toyrun-bin"]}
+    # of the host, which may not be the first architecture, whose entries are shared
+    assert load_lock(Project.find()).requires.of(ARCH)["trivial"] == ["toyrun-bin"]
     assert "toyrun-bin" in resolve(Project.find()).buildroots["with-deps"]
     assert xcraft("build", "with-deps", "--locked")[0] == 0
 
