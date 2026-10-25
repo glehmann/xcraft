@@ -260,8 +260,6 @@ def build(  # noqa: PLR0913
     The lock must be prepared: see resolution.prepare().
     """  # noqa: D205
     autorev = autorev or {}
-    if not dry_run:
-        build_image(project)
     for attempt in range(2):
         keys, hashes = _record_cached(project, autorev)
         plan = build_order(project.deps, targets, with_deps=with_deps)
@@ -316,6 +314,9 @@ def _build_all(  # noqa: PLR0913
 ) -> tuple[list[Result], dict[str, str]]:
     results: dict[str, Result] = {}
     use_remote = fetch != "none" and project.config.remote is not None
+    # asked at once, with the keys of the start
+    missing = [name for name in plan if not cached_build(project, name, keys[name]).exists()]
+    stored = _stored(project, missing, keys) if use_remote and fetch == "needed" else {}
     recorded = _lock_state(project)
     for i, name in enumerate(plan, 1):
         _queue_file(project).write_text("\n".join([str(os.getpid()), *plan[i:]]) + "\n")
@@ -325,7 +326,7 @@ def _build_all(  # noqa: PLR0913
             continue
         if use_remote and name not in autorev:
             try:
-                if _from_storage(project, name, keys, results, fetch=fetch):
+                if _from_storage(project, name, keys, results, stored, fetch=fetch):
                     continue
             except remote.RemoteError as e:
                 console.print(f"[yellow]remote storage unavailable, building locally[/]: {escape(str(e))}")
@@ -349,16 +350,37 @@ def _build_all(  # noqa: PLR0913
     return list(results.values()), keys
 
 
-def _from_storage(
-    project: Project, name: str, keys: dict[str, str], results: dict[str, Result], *, fetch: Fetch
+def _stored(project: Project, names: list[str], keys: dict[str, str]) -> dict[str, bool]:
+    """Return whether the remote storage has the builds of `names` with `keys`, by their paths in it, asked
+    concurrently: nothing when it cannot be asked, as each one is asked again then.
+    """  # noqa: D205
+    if not (storage := project.config.remote):
+        return {}
+    paths = [build_path(project, name, keys[name]) for name in names]
+    try:
+        found = remote.existing(storage, [f"{path}/{remote.MANIFEST}" for path in paths])
+    except remote.RemoteError:
+        return {}
+    return {path: f"{path}/{remote.MANIFEST}" in found for path in paths}
+
+
+def _from_storage(  # noqa: PLR0913
+    project: Project,
+    name: str,
+    keys: dict[str, str],
+    results: dict[str, Result],
+    stored: dict[str, bool],
+    *,
+    fetch: Fetch,
 ) -> bool:
     """Fetch the build of `name` from the remote storage, or only note it is there with `fetch` needed, in `results`,
-    and return whether the storage has it.
+    and return whether the storage has it: as `stored` says, by path, or asked now.
     """  # noqa: D205
     if fetch == "needed":  # fetched by _fetch_for(), if a build needs it
-        if not (storage := project.config.remote) or not remote.tree_exists(
-            storage, build_path(project, name, keys[name])
-        ):
+        path = build_path(project, name, keys[name])
+        if path not in stored and (storage := project.config.remote):
+            stored[path] = remote.tree_exists(storage, path)
+        if not stored.get(path):
             return False
         results[name] = Result(name, "stored")
         return True
@@ -429,6 +451,7 @@ def _build_shown(  # noqa: PLR0913
     verbose: bool,
 ) -> Result:
     """Build `name` with _build_one(), and show how it went."""
+    build_image(project)  # only when a package is to build, rather than cached, fetched or stored: failing them all
     start = time.monotonic()
     try:
         _build_one(project, name, keys, hashes, status=status, autorev=autorev)
