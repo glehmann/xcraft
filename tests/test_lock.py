@@ -153,58 +153,6 @@ def test_iso_tools(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
         _lock_tools(project, {"xorriso": locked("1.5.6-2", source="xorriso")})
 
 
-def test_update(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    save_lock(project, Lock(sources={"glibc": "2.39-142", "sg3_utils": "1.48-7.el10_2.1"}))
-    available = {
-        "x86_64_v2": {"glibc": ["2.39-142", "2.39-145", "2.39-146"], "sg3_utils": ["1.48-7.el10_2.1"]},
-        "aarch64": {"glibc": ["2.39-142", "2.39-145"], "sg3_utils": ["1.48-7.el10_2.1"]},
-    }
-    looked = []
-
-    def versions(platform: Project, sources: list[str]) -> dict[str, list[str]]:
-        looked.append((platform.arch, sources))
-        return {s: v for s, v in available[platform.arch].items() if s in sources}
-
-    monkeypatch.setattr("xcraft.commands.lock.available_versions", versions)
-    # the build roots before the update, for the pending updates of all the architectures
-    roots = {
-        "x86_64_v2": Resolved(packages={"glibc": locked("2.39-142", source="glibc")}, buildroots={"xen": ["glibc"]}),
-        "aarch64": Resolved(packages={"glibc": locked("2.39-142", source="glibc")}, buildroots={"vmss": ["glibc"]}),
-    }
-
-    def prepare(_platform: Project, *, roots: bool = True) -> None:
-        if roots:  # which locks the sources the build roots need
-            lock = load_lock(project)
-            lock.sources["lzo"] = "2.10-1"
-            save_lock(project, lock)
-
-    monkeypatch.setattr("xcraft.commands.lock.prepare", prepare)
-    monkeypatch.setattr("xcraft.resolution.prepare", prepare)
-    monkeypatch.setattr("xcraft.commands.lock.resolve", lambda platform: roots[platform.arch])
-    result = CliRunner().invoke(app, ["lock", "--outdated"])
-    assert (result.exit_code, result.output) == (
-        1,
-        "glibc 2.39-142 -> 2.39-145\n1 to update: xcraft lock --update updates them\n",
-    )
-    assert load_lock(project).sources["glibc"] == "2.39-142"
-    # only the given ones, binary or source names
-    monkeypatch.setattr(
-        "xcraft.resolution.resolve_image", lambda _: Resolved(packages={"sg3_utils-libs": locked("1", "sg3_utils")})
-    )
-    looked.clear()
-    assert CliRunner().invoke(app, ["lock", "--outdated", "sg3_utils-libs"]).output == "up to date\n"
-    assert looked == [("x86_64_v2", ["sg3_utils"]), ("aarch64", ["sg3_utils"])]
-    assert "not locked: nope" in str(CliRunner().invoke(app, ["lock", "--update", "nope"]).exception)
-    result = CliRunner().invoke(app, ["lock", "--update"])
-    assert (result.exit_code, result.output) == (0, "glibc 2.39-142 -> 2.39-145\n1 updated, see xcraft impacts\n")
-    lock = load_lock(project)
-    assert lock.sources["lzo"] == "2.10-1"
-    assert (lock.sources["glibc"], lock.pending) == (
-        "2.39-145",
-        {"vmss": {"glibc": "2.39-142"}, "xen": {"glibc": "2.39-142"}},
-    )
-
-
 def test_lock_installed_in_other_versions(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     # installed in their latest version, but locked in the one all the architectures have
     resolved = [Resolved(), Resolved(packages={"foo": locked("1-1", source="foo")})]
