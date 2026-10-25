@@ -196,7 +196,7 @@ def fetch_build(project: Project, name: str, key: str) -> bool:
 
 
 def _show_plan(project: Project, plan: list[str], keys: dict[str, str], *, fetch: bool) -> None:
-    """Show what is to build in `plan`, and how long it took last time."""
+    """Show what is to build or fetch in `plan`, and how long it took last time, with how many are cached."""
     to_build = [name for name in plan if not cached_build(project, name, keys[name]).exists()]
     if fetch and (storage := project.config.remote):
         try:
@@ -210,14 +210,18 @@ def _show_plan(project: Project, plan: list[str], keys: dict[str, str], *, fetch
     for name in plan:
         if name in to_build:
             console.print(f"[bold]build[/]    {name}{_estimate(project, name)}")
-        else:
-            console.print(f"[dim]{'fetch' if name in fetched else 'cached':<9}[/]{name}")
+        elif name in fetched:
+            console.print(f"[dim]fetch[/]    {name}")
     durations = [d for name in to_build if (d := previous_duration(project, name))]
     summary = [f"{len(to_build)} to build"]
     if durations:
         summary.append(
             f"~{duration(sum(durations))}" + (" for the ones built before" if len(durations) < len(to_build) else "")
         )
+    if fetched:
+        summary.append(f"{len(fetched)} to fetch")
+    if cached := len(plan) - len(to_build) - len(fetched):
+        summary.append(f"{cached} cached")
     console.print(", ".join(summary))
 
 
@@ -355,8 +359,7 @@ def _done(project: Project, name: str, keys: dict[str, str], hashes: dict[str, s
         error = BuildError(f"{', '.join(edited)} changed since the builds started: build again")
         _show_failure(project, name, error, verbose=verbose)
         return Result(name, "failed")
-    if cached_build(project, name, keys[name]).exists():
-        console.print(f"[dim]·[/] {name} [dim]cached[/]")
+    if cached_build(project, name, keys[name]).exists():  # nothing to show: only the counts
         return Result(name, "cached")
     return None
 

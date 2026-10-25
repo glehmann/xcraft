@@ -40,7 +40,7 @@ def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_environment: Non
 
 def results(output: str) -> list[str]:
     """Return the lines of the results of a build, without its errors and warnings."""
-    return [line for line in output.splitlines() if line.startswith(("✓", "·", "✗", "-", "↓")) or line[:1].isdigit()]
+    return [line for line in output.splitlines() if line.startswith(("✓", "✗", "-", "↓")) or line[:1].isdigit()]
 
 
 def xcraft(*args: str) -> tuple[int, str]:
@@ -67,7 +67,8 @@ def test_build_uses_local_builds_and_cache(root: Path) -> None:
     ]
     code, output = xcraft("build", "with-deps")
     assert code == 0
-    assert output.splitlines() == ["· trivial cached", "· with-deps cached", "2 cached"]
+    assert output.splitlines() == ["2 cached"]  # nothing to do: no package shown
+    assert xcraft("build", "with-deps", "--dry-run") == (0, "0 to build, 2 cached\n")
     assert list((root / f".xcraft/cache/builds/{ARCH}/with-deps").glob("*/RPMS/noarch/with-deps-1.0-*.noarch.rpm"))
 
     # a change in trivial changes the key of with-deps too
@@ -391,7 +392,7 @@ def test_lock(root: Path) -> None:
     assert "lzo" not in load_lock(Project.find()).sources
     assert xcraft("build", "trivial")[0] == 0
     assert "lzo" in load_lock(Project.find()).sources
-    assert xcraft("build", "trivial", "--locked") == (0, "· trivial cached\n1 cached\n")
+    assert xcraft("build", "trivial", "--locked") == (0, "1 cached\n")
     assert xcraft("lock", "--update", "lzo-devel")[1] == "0 updated\n"
     assert xcraft("lock", "--outdated", "lzo") == (0, "up to date\n")
 
@@ -497,10 +498,7 @@ def test_lock_update_changing_implicit_deps(root: Path) -> None:
     # trivial stays cached, but toyrun-bin has its interpreter now: with-deps is built against it
     code, output = xcraft("build", "with-deps")
     assert code == 0, output
-    assert [line.split()[:3] for line in results(output)[:2]] == [
-        ["·", "trivial", "cached"],
-        ["✓", "with-deps", "built"],
-    ]
+    assert [line.split(" in ")[0] for line in results(output)] == ["✓ with-deps built", "1 built, 1 cached"]
     assert load_lock(Project.find()).requires.shared == {"trivial": ["toyrun-bin"]}
     assert "toyrun-bin" in resolve(Project.find()).buildroots["with-deps"]
     assert xcraft("build", "with-deps", "--locked")[0] == 0

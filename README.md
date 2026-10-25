@@ -184,7 +184,8 @@ which stays in the keys.
 Not the packages, nor the image: what a package directory has goes in its source RPM, and what the image has can change
 the builds. `test_recipe` fails on a change to the recipe in the keys, giving the new hash, to choose between both.
 
-`xcraft build --dry-run` shows what would be built, fetched, or is cached, before building anything.
+`xcraft build --dry-run` shows what would be built or fetched, with how many packages are cached, before building
+anything. The builds only show the packages they build or fetch, with how many are cached.
 
 **The build root is resolved.** The key is known before building, on every architecture: it covers the build root
 dnf resolves from the `BuildRequires` and the lock, without building. When a build finds what changes the build roots,
