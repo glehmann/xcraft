@@ -209,7 +209,9 @@ def test_push_everything(root: Path, tmp_path: Path) -> None:
     # all that can be pushed, and then what could not
     assert code == 1
     assert f"↑ {archive.name}\n1 pushed, 0 already in the remote storage\n↑ trivial\n1 pushed, 0 already" in output
-    assert re.search(r"\n\d+ pages\nnot built: with-deps$", output)
+    # the pages of what was pushed only: xcraft push index makes them all
+    assert output.endswith("1 pushed, 0 already in the remote storage\nnot built: with-deps")
+    assert f'href="{archive.name}"' in page(f"sources/{sha256_of(archive)}/")
     assert xcraft("push", "sources", "--check")[0] == 0
 
 

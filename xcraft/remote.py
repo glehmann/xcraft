@@ -20,6 +20,7 @@ import socket
 import tempfile
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from html import escape
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
@@ -71,6 +72,16 @@ def exists(storage: Remote, path: str) -> bool:
             return True
     except OSError as e:
         return _absent_or_raise(storage, path, e)
+
+
+_REQUESTS = 16
+"""The requests at the same time to the storage, many of which are only small: the time is in their round trips."""
+
+
+def existing(storage: Remote, paths: list[str]) -> set[str]:
+    """Return those of `paths` the shared storage has, asking for them concurrently."""
+    with ThreadPoolExecutor(_REQUESTS) as pool:
+        return {path for path, found in zip(paths, pool.map(lambda p: exists(storage, p), paths), strict=True) if found}
 
 
 def download(storage: Remote, path: str, dest: Path, on_line: Callable[[str], None] = lambda _: None) -> bool:
@@ -338,7 +349,9 @@ def update_pages(storage: Remote, prefixes: list[str]) -> int:
                 },
                 files,
             )
-        for prefix, (dirs, files) in pages.items():
+
+        def write(prefix: str) -> None:
+            dirs, files = pages[prefix]
             size, newest = _total(dirs, files)
             log.debug("writing %s", _s3_url(storage, prefix + INDEX))
             s3.put_object(
@@ -350,4 +363,7 @@ def update_pages(storage: Remote, prefixes: list[str]) -> int:
                 CacheControl="no-cache",
                 Metadata={"size": str(size), **({"newest": newest.isoformat()} if newest else {})},
             )
+
+        with ThreadPoolExecutor(_REQUESTS) as pool:
+            list(pool.map(write, pages))
     return len(pages)

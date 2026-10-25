@@ -37,7 +37,7 @@ xcraft --install-completion  # optional
 | `xcraft publish [repos\|isos] [--locked] [--local] [--unsigned] [--dev-key] [--arch a]` | Publish a snapshot of the distribution, its repositories and its ISOs, or only those given, for all the architectures or `--arch`, as the latest one; a `--local` one is of the host's architecture by default |
 | `xcraft iso [--netinstall] [--output f] [-V id] [--locked] [--unsigned]` | Make the installation ISO, from a local snapshot (see [Installation ISO](#installation-iso)) |
 | `xcraft key create` / `xcraft key show [--export]` | The developer's key, which signs the test builds |
-| `xcraft push` | Upload everything the remote storage misses: the source archives and the builds of all packages, then make all the `index.html` pages |
+| `xcraft push` | Upload everything the remote storage misses: the source archives and the builds of all packages, with the `index.html` pages of their directories |
 | `xcraft push sources [<pkg>...] [--check]` | Upload the source archives missing from the remote storage, or only check |
 | `xcraft push builds [<pkg>...]` | Upload the current builds missing from the remote storage, for CI |
 | `xcraft push index` | Make the `index.html` pages of all the directories of the remote storage |
