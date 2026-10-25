@@ -7,7 +7,7 @@ from typing import Annotated
 
 import typer
 
-from xcraft.commands import Arch, choose_signer, load
+from xcraft.commands import Arch, Key, choose_signer, load
 from xcraft.display import console
 from xcraft.iso import make_iso
 from xcraft.publish import REPO, snapshot
@@ -33,6 +33,7 @@ def iso(  # noqa: PLR0913, PLR0917
         ),
     ] = False,
     arch: Arch = None,
+    key: Key = None,
 ) -> None:
     """Make the installation ISO, from a local snapshot of the distribution, as xcraft publish --local makes it.
 
@@ -40,7 +41,7 @@ def iso(  # noqa: PLR0913, PLR0917
     repository of the ISO, with xcp-ng-deps and what it needs.
     """
     project = load(locked=locked, arch=arch)
-    signer = choose_signer(project, local=True, unsigned=unsigned, dev_key=False)
+    signer = choose_signer(project, local=True, unsigned=unsigned, dev_key=False, key=key)
     with project.lock():
         dest = (project.state / "publish").absolute()
         snapshot([project], dest, signer=signer, push=False, build=False)

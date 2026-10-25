@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
@@ -197,7 +198,13 @@ def fetch_build(project: Project, name: str, key: str) -> bool:
     if not (storage := project.config.remote):
         return False
     with activity(f"downloading the build of {name}") as on_line:
-        return remote.download_tree(storage, build_path(project, name, key), cached_build(project, name, key), on_line)
+        return remote.download_tree(
+            storage,
+            build_path(project, name, key),
+            cached_build(project, name, key),
+            on_line,
+            trusted=dev_signer(project),
+        )
 
 
 def _show_plan(project: Project, plan: list[str], keys: dict[str, str], *, fetch: Fetch) -> None:
@@ -208,7 +215,11 @@ def _show_plan(project: Project, plan: list[str], keys: dict[str, str], *, fetch
     stored = set()
     if fetch != "none" and (storage := project.config.remote):
         try:
-            stored = {name for name in to_build if remote.tree_exists(storage, build_path(project, name, keys[name]))}
+            stored = {
+                name
+                for name in to_build
+                if remote.tree_exists(storage, build_path(project, name, keys[name]), trusted=dev_signer(project))
+            }
         except remote.RemoteError as e:
             console.print(f"[yellow]remote storage unavailable[/]: {escape(str(e))}")
         to_build = [name for name in to_build if name not in stored]
@@ -359,11 +370,14 @@ def _stored(project: Project, names: list[str], keys: dict[str, str]) -> dict[st
     if not (storage := project.config.remote):
         return {}
     paths = [build_path(project, name, keys[name]) for name in names]
+    trusted = dev_signer(project)
     try:
-        found = remote.existing(storage, [f"{path}/{remote.MANIFEST}" for path in paths])
+        with ThreadPoolExecutor(16) as pool:
+            return dict(
+                zip(paths, pool.map(lambda p: remote.tree_exists(storage, p, trusted=trusted), paths), strict=True)
+            )
     except remote.RemoteError:
         return {}
-    return {path: f"{path}/{remote.MANIFEST}" in found for path in paths}
 
 
 def _from_storage(  # noqa: PLR0913
@@ -381,7 +395,7 @@ def _from_storage(  # noqa: PLR0913
     if fetch == "needed":  # fetched by _fetch_for(), if a build needs it
         path = build_path(project, name, keys[name])
         if path not in stored and (storage := project.config.remote):
-            stored[path] = remote.tree_exists(storage, path)
+            stored[path] = remote.tree_exists(storage, path, trusted=dev_signer(project))
         if not stored.get(path):
             return False
         results[name] = Result(name, "stored")

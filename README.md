@@ -323,6 +323,7 @@ url = "https://xcraft.example/"           # public reads, like the website endpo
 s3_endpoint = "https://s3.example/"       # authenticated writes
 bucket = "xcraft"
 region = "garage"
+build_keys = ["<full GPG fingerprint>"] # trusted public keys for verifying trees
 ```
 
 The writes use the credentials of `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. The storage has
@@ -346,6 +347,47 @@ The writes use the credentials of `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY
   dates of their last use: not those of the older builds, which the local cache keeps.
 
 Without network, or when the storage is unavailable, everything still works with what is local.
+
+Build and compiler cache uploads, publishing and `xcraft iso` accept `--key <fingerprint>` to select a host GPG key.
+Without it, they use `[sign]` when configured, or the checkout's developer key made with `xcraft key create`.
+The keyring is `[sign].gnupghome`, or `GNUPGHOME` when it is omitted. Publishing uses its selected signer for signed
+builds and snapshot manifests. `--unsigned` skips package signing but remote manifests still need a default signing
+key; it cannot be combined with `--key` or `--dev-key`.
+`remote.build_keys` only lists trusted public keys for verification; its order does not select the signing key.
+The checkout also trusts its own developer key, without any configuration change.
+Public keys are uploaded to `keys/<fingerprint>.asc` and checked against the configured
+fingerprints. Each detached `manifest.json.asc` signs the UTF-8 tree path, a newline, and the exact manifest bytes.
+Missing or invalid signatures make a remote tree unavailable. There is no unsigned-tree fallback.
+
+To rotate CI keys, change the fingerprint passed with `--key`, add it to `remote.build_keys`, and retain the old
+fingerprints while their trees are still needed.
+
+### The signing key in CI
+
+Builds, ccache uploads and publishing use the same private key through the runner's GPG agent. A persistent signing
+runner can use an HSM or an existing host keyring, just as publishing does. The build containers receive neither the
+private key nor the agent socket. Only the separate RPM-signing container gets the agent's restricted socket.
+
+For an ephemeral runner, store the armored release private key in a protected CI secret and import it into a temporary
+keyring before pushing or publishing. Keep only `remote.build_keys` in the committed configuration; CI selects the
+private key with `--key`. With `[sign].gnupghome` omitted, a CI shell step can use:
+
+```sh
+export GNUPGHOME="$(mktemp -d /tmp/xcraft-gnupg.XXXXXX)"
+chmod 700 "$GNUPGHOME"
+trap 'gpgconf --kill gpg-agent; rm -rf "$GNUPGHOME"' EXIT
+gpg --batch --import "$CI_SIGNING_KEY_FILE"
+xcraft push builds --key "$SIGNING_KEY_FINGERPRINT"
+xcraft push ccache --key "$SIGNING_KEY_FINGERPRINT"
+xcraft publish --key "$SIGNING_KEY_FINGERPRINT"
+```
+
+`CI_SIGNING_KEY_FILE` is a CI-provided secret file; `SIGNING_KEY_FINGERPRINT` is a public CI variable. Neither requires
+changing `xcraft.toml` in CI. If `[sign].gnupghome` is set, import into that
+keyring instead. A passphrase-protected key needs its GPG agent unlocked before these commands, with a CI secret and
+`gpg-preset-passphrase` on a runner configured with `allow-preset-passphrase`. xcraft uses batch GPG and does not prompt
+for a passphrase. Give the key and S3 write credentials only to trusted jobs; pull-request builds can fetch and build
+without them. Disable shell tracing while handling secrets.
 
 The storage does not list its directories: xcraft writes the `index.html` page of each directory it changes, and of
 their parents, to browse it. `xcraft push index` makes all of them, for what was not written by xcraft.
@@ -437,9 +479,9 @@ available to the builds, which run the code of the specs.
   Each build is signed once, and kept in `.xcraft/cache/signed/<fingerprint>/` and in the remote storage, in
   `signed/<fingerprint>/`: signatures have a date, so signing again would not give the same files, which the storage
   could not store once. The snapshot's packages are checked against the public key, its `repomd.xml` are signed, and
-  it has the key, as `RPM-GPG-KEY`. Without `[sign]`, `xcraft publish --local` signs with the developer's key, with a
-  warning, and so does `xcraft publish` to a storage on this machine, whose URLs resolve to loopback addresses only,
-  like the one of `local-s3.sh`; to another storage, it needs `--unsigned`, or `--dev-key` for a test storage.
+  it has the key, as `RPM-GPG-KEY`. `--key <fingerprint>` overrides `[sign].key`, and `--dev-key` explicitly selects the
+  developer's key even when `[sign]` exists. Without `[sign]` or `--key`, publishing uses the developer's key by
+  default. Trees signed with that key are trusted by the same checkout without adding it to `remote.build_keys`.
 
 The upstream packages keep their signatures, which are checked against the keys of their repositories.
 

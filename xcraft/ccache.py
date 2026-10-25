@@ -18,6 +18,7 @@ from rich.markup import escape
 
 from xcraft import remote
 from xcraft.display import activity, console
+from xcraft.signing import Signer, dev_signer
 
 if TYPE_CHECKING:
     from xcraft.project import Project, Remote
@@ -45,7 +46,7 @@ def note_build(project: Project, name: str, start: float) -> None:
     (local_path(project, name) / _LAST_BUILD).write_text(f"{start}\n")
 
 
-def push(project: Project, storage: Remote, name: str) -> bool:
+def push(project: Project, storage: Remote, name: str, *, signer: Signer | None) -> bool:
     """Upload the compiler cache of `name`, replacing the one of the storage, and return whether it has one.
 
     Only the entries its last successful build used or made are uploaded, if it was built: not those of the older
@@ -63,7 +64,7 @@ def push(project: Project, storage: Remote, name: str) -> bool:
             for path in sorted(cache.iterdir()):
                 if path.name not in _LOCAL:
                     tar.add(path, path.name, filter=used)
-        remote.upload_tree(storage, remote_path(project, name), Path(tmp), [TARBALL])
+        remote.upload_tree(storage, remote_path(project, name), Path(tmp), [TARBALL], signer=signer)
     return True
 
 
@@ -74,7 +75,9 @@ def fetch(project: Project, storage: Remote, name: str) -> bool:
     # next to it, to move it there
     with tempfile.TemporaryDirectory(dir=cache.parent, prefix=f".{name}-") as tmp:
         with activity(f"downloading the ccache of {name}") as on_line:
-            if not remote.download_tree(storage, remote_path(project, name), Path(tmp) / "tree", on_line):
+            if not remote.download_tree(
+                storage, remote_path(project, name), Path(tmp) / "tree", on_line, trusted=dev_signer(project)
+            ):
                 return False
         # there, even when empty, before the local one is replaced
         (Path(tmp) / "cache").mkdir()

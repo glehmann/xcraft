@@ -26,7 +26,7 @@ from xcraft.display import activity, console
 from xcraft.localrepo import OUTPUT_MARKER, LocalRepo, extra_rpms, fresh_dir, link
 from xcraft.lock import Locked, load_lock, save_lock
 from xcraft.resolution import lock_installed, prepare, resolve, resolve_image
-from xcraft.signing import Signer, check_signatures
+from xcraft.signing import Signer, check_signatures, dev_signer, signing_key
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
@@ -199,15 +199,17 @@ def _signed_build(project: Project, signer: Signer, name: str, key: str, *, push
     """
     signed = project.state / "cache/signed" / signer.key / name / key
     storage, path = project.config.remote, _signed_path(project, signer, name, key)
-    if not signed.exists() and not (storage and remote.download_tree(storage, path, signed)):
+    if not signed.exists() and not (
+        storage and remote.download_tree(storage, path, signed, trusted=dev_signer(project))
+    ):
         work = signed.with_name(f".{key}")
         shutil.rmtree(work, ignore_errors=True)
         for files in ("RPMS", "SRPMS"):
             shutil.copytree(cached_build(project, name, key) / files, work / files)  # copies: signing changes them
         signer.sign_rpms(project, work)
         work.rename(signed)
-    if push and storage and not remote.tree_exists(storage, path):
-        remote.upload_tree(storage, path, signed, ["RPMS", "SRPMS"])
+    if push and storage and not remote.tree_exists(storage, path, trusted=dev_signer(project)):
+        remote.upload_tree(storage, path, signed, ["RPMS", "SRPMS"], signer=signer)
     return signed
 
 
@@ -334,7 +336,7 @@ def snapshot_name(project: Project, storage: Remote) -> str:
     for name in (day, *(f"{day}.{n}" for n in range(2, 1000))):
         if not (
             remote.exists(storage, f"{_tree(project, 'repos', name)}/{REPO}/Source/repodata/repomd.xml")
-            or remote.tree_exists(storage, _tree(project, "isos", name))
+            or remote.tree_exists(storage, _tree(project, "isos", name), trusted=dev_signer(project))
         ):
             return name
     msg = f"too many snapshots on {day}"
@@ -353,6 +355,8 @@ def _upload(  # noqa: PLR0913
     tree: str,
     latest: str,
     *,
+    signer: Signer | None,
+    trusted: Signer | None,
     stored: dict[str, tuple[str, str]] | None = None,
     pages: list[str] | None = None,
 ) -> None:
@@ -362,7 +366,9 @@ def _upload(  # noqa: PLR0913
     The files the storage has already, in `latest`, or in `stored`, as path and SHA-256 by file, are copied there.
     """  # noqa: D205
     manifest = {f: sha256_of(src / f) for f in files}
-    candidates = {f: (f"{latest}/{f}", digest) for f, digest in remote.read_manifest(storage, latest).items()}
+    candidates = {
+        f: (f"{latest}/{f}", digest) for f, digest in remote.read_manifest(storage, latest, trusted=trusted).items()
+    }
     copies = {f: path for f, (path, digest) in (candidates | (stored or {})).items() if manifest.get(f) == digest}
     # the packages before the metadata listing them, and repomd.xml with its signature, as close as can be
     last = [f for f in files if f.endswith(("/repomd.xml", "/repomd.xml.asc"))]
@@ -371,17 +377,17 @@ def _upload(  # noqa: PLR0913
         for file in [*order, *last]:
             on_line(file)
             if file in copies:
-                remote.copy(storage, copies[file], f"{tree}/{file}")
+                remote.copy_checked(storage, copies[file], f"{tree}/{file}", manifest[file])
             else:
                 remote.upload(storage, f"{tree}/{file}", src / file)
-        remote.write_manifest(storage, tree, manifest)
+        remote.write_manifest(storage, tree, manifest, signer=signer)
         # the files of a failed publish of the same name, and of the previous latest snapshot, but the pages
-        keep = {*files, remote.MANIFEST}
+        keep = {*files, remote.MANIFEST, remote.SIGNATURE}
         _delete_stale(storage, tree, keep)
         on_line("latest")
         for file in [*order, *last]:
-            remote.copy(storage, f"{tree}/{file}", f"{latest}/{file}")
-        remote.write_manifest(storage, latest, manifest)
+            remote.copy_checked(storage, f"{tree}/{file}", f"{latest}/{file}", manifest[file])
+        remote.write_manifest(storage, latest, manifest, signer=signer)
         _delete_stale(storage, latest, keep)
         on_line("the pages of the directories")
         remote.update_pages(storage, [f"{tree}/", f"{latest}/", *(pages or [])])
@@ -408,19 +414,37 @@ def upload_snapshot(
     for platform, keys in platforms:
         for package, key in keys.items():
             tree = _signed_path(platform, signer, package, key) if signer else build_path(platform, package, key)
-            for path, digest in remote.read_manifest(storage, tree).items():
+            for path, digest in remote.read_manifest(storage, tree, trusted=dev_signer(project)).items():
                 if repo := {"RPMS": f"{REPO}/{platform.arch}", "SRPMS": f"{REPO}/Source"}.get(path.split("/")[0]):
                     stored[f"{repo}/{Path(path).name}"] = (f"{tree}/{path}", digest)
     signed = [f"signed/{signer.key}/{platform.arch}/" for platform, _ in platforms] if signer else []
     repos, latest = _tree(project, "repos", name), _tree(project, "repos", "latest")
-    _upload(storage, src, files, repos, latest, stored=stored, pages=signed)
+    _upload(
+        storage,
+        src,
+        files,
+        repos,
+        latest,
+        signer=signer or signing_key(project),
+        trusted=dev_signer(project),
+        stored=stored,
+        pages=signed,
+    )
 
 
-def upload_isos(project: Project, src: Path, storage: Remote, name: str) -> None:
+def upload_isos(project: Project, src: Path, storage: Remote, name: str, *, signer: Signer | None) -> None:
     """Upload the ISOs of the snapshot in `src`, in ISO_DIR, to `storage` as `name`, and make them the latest ones."""
     isos = src / ISO_DIR
     files = sorted(f.relative_to(isos).as_posix() for f in isos.rglob("*") if f.is_file())
-    _upload(storage, isos, files, _tree(project, "isos", name), _tree(project, "isos", "latest"))
+    _upload(
+        storage,
+        isos,
+        files,
+        _tree(project, "isos", name),
+        _tree(project, "isos", "latest"),
+        signer=signer or signing_key(project),
+        trusted=dev_signer(project),
+    )
 
 
 def snapshot(
