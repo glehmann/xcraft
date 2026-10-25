@@ -38,9 +38,9 @@ def resolver(packages: list[str] | None = None) -> dnf.Base:
     base = dnf.Base()
     base.conf.read()
     base.conf.installroot = tempfile.mkdtemp()
+    base.conf.cachedir = tempfile.mkdtemp()  # see installable.py
     base.conf.install_weak_deps = False
-    # read again: the dnf cache, shared by the containers, has the snapshots of the ISOs made before
-    base.repos.add_new_repo("snapshot", base.conf, baseurl=[f"file://{snapshot}"], metadata_expire=0)
+    base.repos.add_new_repo("snapshot", base.conf, baseurl=[f"file://{snapshot}"])
     base.fill_sack(load_system_repo=False)
     for name in packages or []:
         base.install(name)
@@ -90,13 +90,13 @@ def prune_firmware(root: Path) -> None:
 
 def install_img(dest: Path) -> None:
     """Make the installer's root filesystem, as a cpio archive compressed with zstd."""
-    root = Path(tempfile.mkdtemp())
+    root, cache = Path(tempfile.mkdtemp()), tempfile.mkdtemp()  # a cache of its own, see installable.py
     sh(
         "dnf", "-q", "-y", f"--installroot={root}", "--disableplugin=*", "--disablerepo=*",
         f"--repofrompath=snapshot,{snapshot}", f"--releasever={dnf.rpm.detect_releasever('/')}",
         # the packages are checked when the snapshot is made
-        "--setopt=snapshot.gpgcheck=0", "--setopt=snapshot.metadata_expire=0", "--setopt=install_weak_deps=False",
-        "--setopt=tsflags=nodocs",
+        "--setopt=snapshot.gpgcheck=0", "--setopt=install_weak_deps=False", "--setopt=tsflags=nodocs",
+        f"--setopt=cachedir={cache}", f"--setopt=system_cachedir={cache}",
         "install", *config["installer"],
     )  # fmt: skip
     shadow = root / "etc/shadow"
