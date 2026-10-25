@@ -8,3 +8,4 @@ dist/
 .xcraft/
 /repo/
 /repo-*/
+/tests/upstream/repos/

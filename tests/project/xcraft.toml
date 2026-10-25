@@ -54,3 +54,7 @@ baseurl = "https://dl.fedoraproject.org/pub/epel/10/Everything/{arch}/"
 gpgkey = "https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-10"
 source_baseurl = "https://dl.fedoraproject.org/pub/epel/10/Everything/source/tree/"
 arches = ["x86_64", "aarch64"]
+
+# the upstream packages of the tests, from tests/upstream/, in versions to update to: see conftest.py
+[repos.toys]
+baseurl = "file://@TOYS@/{arch}/"
