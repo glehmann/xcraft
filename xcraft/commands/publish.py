@@ -10,48 +10,114 @@ import typer
 from xcraft import publish as publisher
 from xcraft.commands import choose_signer, complete_arch, load
 from xcraft.display import console
-from xcraft.publish import snapshot
+from xcraft.iso import make_isos
+from xcraft.project import Project
+from xcraft.publish import ISO_DIR, REPO, snapshot
+
+app = typer.Typer()
+
+Locked = Annotated[bool, typer.Option("--locked", help="Fail when publishing would change the lock, for CI.")]
+Local = Annotated[
+    bool, typer.Option("--local", help="Only make the snapshot locally, in --output, without publishing it.")
+]
+Output = Annotated[Path | None, typer.Option(help="Directory of the local snapshot. .xcraft/publish/ by default.")]
+Unsigned = Annotated[
+    bool,
+    typer.Option(
+        "--unsigned",
+        help="Publish without signing. The packages are signed with the release key of xcraft.toml by default, "
+        "or with the developer's key with --local, or to a storage on this machine.",
+    ),
+]
+DevKey = Annotated[bool, typer.Option("--dev-key", help="Sign with the developer's key, for a test storage.")]
+Arch = Annotated[
+    str | None,
+    typer.Option(
+        help="RPM architecture to publish, like aarch64, or all. By default, all of them, but for a --local "
+        "snapshot, the one of $XCRAFT_ARCH, or the host's.",
+        show_default=False,
+        autocompletion=lambda incomplete: [a for a in [*complete_arch(incomplete), "all"] if a.startswith(incomplete)],
+    ),
+]
 
 
-def publish(  # noqa: PLR0913, PLR0917
-    locked: Annotated[
-        bool, typer.Option("--locked", help="Fail when publishing would change the lock, for CI.")
-    ] = False,
-    local: Annotated[
-        bool, typer.Option("--local", help="Only make the snapshot locally, in --output, without publishing it.")
-    ] = False,
-    output: Annotated[
-        Path | None, typer.Option(help="Directory of the local snapshot. .xcraft/publish/ by default.")
-    ] = None,
-    unsigned: Annotated[
-        bool,
-        typer.Option(
-            "--unsigned",
-            help="Publish without signing. The packages are signed with the release key of xcraft.toml by default, "
-            "or with the developer's key with --local, or to a storage on this machine.",
-        ),
-    ] = False,
-    dev_key: Annotated[
-        bool, typer.Option("--dev-key", help="Sign with the developer's key, for a test storage.")
-    ] = False,
-    arch: Annotated[
-        str | None,
-        typer.Option(
-            help="RPM architecture to publish, like aarch64, or all. By default, all of them, but for a --local "
-            "snapshot, the one of $XCRAFT_ARCH, or the host's.",
-            show_default=False,
-            autocompletion=lambda incomplete: [
-                a for a in [*complete_arch(incomplete), "all"] if a.startswith(incomplete)
-            ],
-        ),
-    ] = None,
+@app.callback(invoke_without_command=True)
+def everything(  # noqa: PLR0913, PLR0917
+    ctx: typer.Context,
+    locked: Locked = False,
+    local: Local = False,
+    output: Output = None,
+    unsigned: Unsigned = False,
+    dev_key: DevKey = False,
+    arch: Arch = None,
 ) -> None:
     """Publish a snapshot of the distribution in the remote storage, as the latest one, for all the architectures.
 
-    It has all our packages, built or fetched first, and the upstream packages they need at runtime, and the extra
-    ones of xcraft.toml, as locked, and it must be self-contained. Those of the architectures the host emulates are
-    only fetched, built by native builders.
+    Without a command: its repositories, and its ISOs, when [iso] in xcraft.toml has the installer's packages. It has
+    all our packages, built or fetched first, and the upstream packages they need at runtime, and the extra ones of
+    xcraft.toml, as locked, and it must be self-contained. Those of the architectures the host emulates are only
+    fetched, built by native builders.
     """
+    if not ctx.invoked_subcommand:
+        _publish(None, locked=locked, local=local, output=output, unsigned=unsigned, dev_key=dev_key, arch=arch)
+
+
+@app.command()
+def repos(  # noqa: PLR0913, PLR0917
+    locked: Locked = False,
+    local: Local = False,
+    output: Output = None,
+    unsigned: Unsigned = False,
+    dev_key: DevKey = False,
+    arch: Arch = None,
+) -> None:
+    """Publish the repositories of a snapshot, as repos/<release>/<date>/, and as the latest ones."""
+    _publish("repos", locked=locked, local=local, output=output, unsigned=unsigned, dev_key=dev_key, arch=arch)
+
+
+@app.command()
+def isos(  # noqa: PLR0913, PLR0917
+    locked: Locked = False,
+    local: Local = False,
+    output: Output = None,
+    unsigned: Unsigned = False,
+    dev_key: DevKey = False,
+    arch: Arch = None,
+) -> None:
+    """Publish the ISOs of a snapshot, with the packages and netinstall, signed like it, as isos/<release>/<date>/,
+    and as the latest ones.
+
+    They are made for the x86_64 architectures, like xcraft iso, in the ISO directory of the snapshot.
+    """  # noqa: D205
+    _publish("isos", locked=locked, local=local, output=output, unsigned=unsigned, dev_key=dev_key, arch=arch)
+
+
+def _iso_platforms(project: Project, platforms: list[Project], only: str | None) -> list[Project]:
+    """Return the `platforms` of the ISOs to publish, unless `only` the repos: those of x86_64, for their boot loaders,
+    when [iso] has the installer's packages.
+    """  # noqa: D205
+    if only == "isos" and not project.config.iso.installer:
+        msg = "no ISO to publish: see [iso] in xcraft.toml"
+        raise typer.BadParameter(msg)
+    if only == "repos" or not project.config.iso.installer:
+        return []
+    if not (found := [p for p in platforms if p.arch.startswith("x86_64")]) and only == "isos":
+        msg = f"the ISOs are for x86_64, not {', '.join(p.arch for p in platforms)}"
+        raise typer.BadParameter(msg)
+    return found
+
+
+def _publish(  # noqa: PLR0913
+    only: str | None,
+    *,
+    locked: bool,
+    local: bool,
+    output: Path | None,
+    unsigned: bool,
+    dev_key: bool,
+    arch: str | None,
+) -> None:
+    """Publish the repositories and the ISOs of a snapshot, or `only` the repos or the isos."""
     project = load(locked=locked, arch=None if arch == "all" else arch)
     platforms = project.all_platforms() if arch == "all" or (arch is None and not local) else [project]
     if arch is None and len(platforms) < len(others := project.all_platforms()):
@@ -65,9 +131,18 @@ def publish(  # noqa: PLR0913, PLR0917
     if not project.config.publish.release:
         msg = "no release to publish: see [publish] in xcraft.toml"
         raise typer.BadParameter(msg)
+    with_isos = _iso_platforms(project, platforms, only)
     signer = choose_signer(project, local=local, unsigned=unsigned, dev_key=dev_key)
     with project.lock():
         dest = (output or project.state / "publish").absolute()
-        built = snapshot(platforms, dest, signer=signer, push=not local, build=project.config.publish.build)
+        build = only != "isos" and project.config.publish.build
+        built = snapshot(platforms, dest, signer=signer, push=not local, build=build)
+        for platform in with_isos:
+            for iso in make_isos(platform, dest / REPO / platform.arch, dest / ISO_DIR / platform.arch, signer=signer):
+                console.print(f"[bold green]✓[/] {iso}")
         if not local and (storage := project.config.remote):
-            publisher.upload_snapshot(built, dest, storage, publisher.snapshot_name(project, storage), signer=signer)
+            name = publisher.snapshot_name(project, storage)
+            if only != "isos":
+                publisher.upload_snapshot(built, dest, storage, name, signer=signer)
+            if with_isos:
+                publisher.upload_isos(project, dest, storage, name)

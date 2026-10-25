@@ -34,7 +34,7 @@ xcraft --install-completion  # optional
 | `xcraft build <pkg>... --test ID` / `--pre ID` | Test builds, to install on a test host (see [Test builds](#test-builds)) |
 | `xcraft repo <pkg>... --test ID` / `--pre ID` | A repository of new test builds, for test hosts |
 | `xcraft repo <pkg>... --test ID --host h [--upgrade]` | The same, copied to test hosts over ssh, and upgraded there |
-| `xcraft publish [--locked] [--local] [--unsigned] [--dev-key] [--arch a]` | Publish a snapshot of the distribution, for all the architectures or `--arch`, as the latest one; a `--local` one is of the host's architecture by default |
+| `xcraft publish [repos\|isos] [--locked] [--local] [--unsigned] [--dev-key] [--arch a]` | Publish a snapshot of the distribution, its repositories and its ISOs, or only those given, for all the architectures or `--arch`, as the latest one; a `--local` one is of the host's architecture by default |
 | `xcraft iso [--netinstall] [--output f] [-V id] [--locked] [--unsigned]` | Make the installation ISO, from a local snapshot (see [Installation ISO](#installation-iso)) |
 | `xcraft key create` / `xcraft key show [--export]` | The developer's key, which signs the test builds |
 | `xcraft push` | Upload everything the remote storage misses: the source archives and the builds of all packages, then make all the `index.html` pages |
@@ -307,6 +307,8 @@ does, from a snapshot like `xcraft publish --local` makes, of its architecture o
 
 The tools making it, like xorriso and syslinux, are installed in the containers making it, in the versions of the
 lock, which records them in `iso`. The ISO is `.xcraft/iso/xcp-ng-<version>[-netinstall].iso` by default.
+`xcraft publish` publishes both ISOs, with the packages and netinstall, with the snapshot: see
+[Publishing](#publishing).
 
 ## Remote storage
 
@@ -367,6 +369,8 @@ repos/<release>/<date>[.<n>]/base/Source/    the source RPMs of all of them
 repos/<release>/<date>[.<n>]/build/<arch>/   the upstream RPMs our builds need, but those of base/<arch>/
 repos/<release>/<date>[.<n>]/build/Source/   their source RPMs
 repos/<release>/latest/...                   a copy of the latest snapshot
+isos/<release>/<date>[.<n>]/<arch>/          the ISOs, with the packages and netinstall, and their signatures (.asc)
+isos/<release>/latest/...                    a copy of the latest ISOs
 ```
 
 `<release>` is `[publish] release` of `xcraft.toml`, like `9.0`.
@@ -391,10 +395,15 @@ repos/<release>/latest/...                   a copy of the latest snapshot
   `xcraft iso`, which does not need it.
 - Our source RPMs are those of the first architecture: built from the same sources, those of the others differ by
   their build times only.
+- The ISOs are made like `xcraft iso` makes them, from the snapshot, for its x86_64 architectures, when `[iso]
+  installer` is configured: their boot loaders are for x86_64. They are signed like the snapshot: their repository,
+  and their files, with a detached signature.
 - All snapshots are kept. The storage stores identical files once: our packages are copies of the pushed builds, and
   the upstream ones and the sources of the previous snapshot, so a snapshot only costs what changed.
 
-`xcraft publish --local` only makes the snapshot in `.xcraft/publish/`, of one architecture, like the other commands,
+`xcraft publish repos` only publishes the repositories, and `xcraft publish isos` the ISOs, under a snapshot name
+used by neither. `xcraft publish --local` only makes the snapshot in `.xcraft/publish/`, its ISOs in its `iso/`, of one
+architecture, like the other commands,
 unless `--arch all` is given. A snapshot published to the storage is of all the architectures, unless `--arch` is
 given: it replaces the latest one, whose other architectures would be gone. In CI, after `xcraft push builds`,
 `xcraft publish --locked` fails rather than change the lock.

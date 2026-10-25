@@ -44,7 +44,7 @@ for panel, commands in {
     "Building": [build.build, repo.repo, shell.shell, log.log, graph.graph, status.status, clean.clean],
     "Packages": [bump.bump, patchset.patchset],
     "Upstream packages": [lock.lock, impacts.impacts, ack.ack],
-    "Publishing": [publish.publish, iso.iso],
+    "Publishing": [iso.iso],
     "Host": [doctor.doctor],
 }.items():
     for command in commands:
@@ -53,6 +53,7 @@ app.command("st", hidden=True)(status.status)
 app.command("import", rich_help_panel="Packages")(import_.import_)
 app.add_typer(push.app, name="push", rich_help_panel="Sharing")
 app.add_typer(fetch.app, name="fetch", rich_help_panel="Sharing")
+app.add_typer(publish.app, name="publish", rich_help_panel="Publishing")
 app.add_typer(key.app, name="key", rich_help_panel="Publishing")
 
 
