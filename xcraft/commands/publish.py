@@ -8,7 +8,7 @@ from typing import Annotated
 import typer
 
 from xcraft import publish as publisher
-from xcraft.commands import choose_signer, complete_arch, load
+from xcraft.commands import Key, choose_signer, complete_arch, load
 from xcraft.display import console
 from xcraft.iso import make_isos
 from xcraft.project import Project
@@ -25,8 +25,8 @@ Unsigned = Annotated[
     bool,
     typer.Option(
         "--unsigned",
-        help="Publish without signing. The packages are signed with the release key of xcraft.toml by default, "
-        "or with the developer's key with --local, or to a storage on this machine.",
+        help="Publish without package signing. By default, use --key, [sign], or the developer's key. "
+        "Remote manifests still need a signing key.",
     ),
 ]
 DevKey = Annotated[bool, typer.Option("--dev-key", help="Sign with the developer's key, for a test storage.")]
@@ -49,6 +49,7 @@ def everything(  # noqa: PLR0913, PLR0917
     output: Output = None,
     unsigned: Unsigned = False,
     dev_key: DevKey = False,
+    key: Key = None,
     arch: Arch = None,
 ) -> None:
     """Publish a snapshot of the distribution in the remote storage, as the latest one, for all the architectures.
@@ -58,8 +59,11 @@ def everything(  # noqa: PLR0913, PLR0917
     xcraft.toml, as locked, and it must be self-contained. Those of the architectures the host emulates are only
     fetched, built by native builders.
     """
-    if not ctx.invoked_subcommand:
-        _publish(None, locked=locked, local=local, output=output, unsigned=unsigned, dev_key=dev_key, arch=arch)
+    if ctx.invoked_subcommand:
+        if key:
+            ctx.default_map = {ctx.invoked_subcommand: {"key": key}}
+        return
+    _publish(None, locked=locked, local=local, output=output, unsigned=unsigned, dev_key=dev_key, key=key, arch=arch)
 
 
 @app.command()
@@ -69,10 +73,11 @@ def repos(  # noqa: PLR0913, PLR0917
     output: Output = None,
     unsigned: Unsigned = False,
     dev_key: DevKey = False,
+    key: Key = None,
     arch: Arch = None,
 ) -> None:
     """Publish the repositories of a snapshot, as repos/<release>/<date>/, and as the latest ones."""
-    _publish("repos", locked=locked, local=local, output=output, unsigned=unsigned, dev_key=dev_key, arch=arch)
+    _publish("repos", locked=locked, local=local, output=output, unsigned=unsigned, dev_key=dev_key, key=key, arch=arch)
 
 
 @app.command()
@@ -82,6 +87,7 @@ def isos(  # noqa: PLR0913, PLR0917
     output: Output = None,
     unsigned: Unsigned = False,
     dev_key: DevKey = False,
+    key: Key = None,
     arch: Arch = None,
 ) -> None:
     """Publish the ISOs of a snapshot, with the packages and netinstall, signed like it, as isos/<release>/<date>/,
@@ -89,7 +95,7 @@ def isos(  # noqa: PLR0913, PLR0917
 
     They are made for the x86_64 architectures, like xcraft iso, in the ISO directory of the snapshot.
     """  # noqa: D205
-    _publish("isos", locked=locked, local=local, output=output, unsigned=unsigned, dev_key=dev_key, arch=arch)
+    _publish("isos", locked=locked, local=local, output=output, unsigned=unsigned, dev_key=dev_key, key=key, arch=arch)
 
 
 def _iso_platforms(project: Project, platforms: list[Project], only: str | None) -> list[Project]:
@@ -115,6 +121,7 @@ def _publish(  # noqa: PLR0913
     output: Path | None,
     unsigned: bool,
     dev_key: bool,
+    key: str | None,
     arch: str | None,
 ) -> None:
     """Publish the repositories and the ISOs of a snapshot, or `only` the repos or the isos."""
@@ -132,7 +139,7 @@ def _publish(  # noqa: PLR0913
         msg = "no release to publish: see [publish] in xcraft.toml"
         raise typer.BadParameter(msg)
     with_isos = _iso_platforms(project, platforms, only)
-    signer = choose_signer(project, local=local, unsigned=unsigned, dev_key=dev_key)
+    signer = choose_signer(project, local=local, unsigned=unsigned, dev_key=dev_key, key=key)
     with project.lock():
         dest = (output or project.state / "publish").absolute()
         build = only != "isos" and project.config.publish.build
@@ -145,4 +152,4 @@ def _publish(  # noqa: PLR0913
             if only != "isos":
                 publisher.upload_snapshot(built, dest, storage, name, signer=signer)
             if with_isos:
-                publisher.upload_isos(project, dest, storage, name)
+                publisher.upload_isos(project, dest, storage, name, signer=signer)

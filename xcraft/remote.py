@@ -26,9 +26,12 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 from urllib.parse import quote, urlparse
 
+from pydantic import BaseModel, field_validator
+
 from xcraft import process
 from xcraft.display import download_progress
 from xcraft.process import log
+from xcraft.signing import Signer, SigningError
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
@@ -148,6 +151,16 @@ def copy(storage: Remote, src: str, dest: str) -> None:
         s3.copy_object(Bucket=storage.bucket, Key=dest, CopySource={"Bucket": storage.bucket, "Key": src})
 
 
+def copy_checked(storage: Remote, src: str, dest: str, digest: str) -> None:
+    """Copy a file, checking its bytes before a publisher signs a new manifest."""
+    copy(storage, src, dest)
+    with tempfile.TemporaryDirectory(prefix="xcraft-copy-") as tmp:
+        file = Path(tmp) / "file"
+        if not download(storage, dest, file) or sha256_of(file) != digest:
+            msg = f"{src} is missing or corrupted in the storage"
+            raise RemoteError(msg)
+
+
 def listing(storage: Remote, prefix: str) -> list[str]:
     """Return the files below the directory `prefix`, relative to it, but the pages of the directories, with the S3
     credentials, as the public reads cannot list.
@@ -167,26 +180,102 @@ def delete(storage: Remote, paths: list[str]) -> None:
 
 MANIFEST = "manifest.json"
 """The files of a tree in the storage, with their SHA-256, uploaded last: a tree without it is incomplete."""
+SIGNATURE = f"{MANIFEST}.asc"
 
 
-def tree_exists(storage: Remote, prefix: str) -> bool:
+class TreeManifest(BaseModel):
+    """Validate paths and digests from a signed remote manifest."""
+
+    files: dict[str, str]
+
+    @field_validator("files")
+    @classmethod
+    def valid_files(cls, files: dict[str, str]) -> dict[str, str]:
+        """Reject paths outside the tree and malformed digests."""
+        for name, digest in files.items():
+            path = PurePosixPath(name)
+            if path.is_absolute() or ".." in path.parts or not path.parts or path.as_posix() != name:
+                msg = f"invalid tree path: {name}"
+                raise ValueError(msg)
+            if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):  # noqa: PLR2004
+                msg = f"invalid SHA-256: {name}"
+                raise ValueError(msg)
+        return files
+
+
+def _payload(prefix: str, manifest: bytes) -> bytes:
+    return prefix.encode() + b"\n" + manifest
+
+
+def _manifest(storage: Remote, prefix: str, trusted: Signer | None) -> dict[str, str] | None:
+    fingerprints = {*storage.build_keys, *([trusted.key.upper()] if trusted else [])}
+    if not fingerprints:
+        return None
+    with tempfile.TemporaryDirectory(prefix="xcraft-manifest-") as tmp:
+        work = Path(tmp)
+        manifest, signature = work / MANIFEST, work / SIGNATURE
+        if not download(storage, f"{prefix}/{MANIFEST}", manifest) or not download(
+            storage, f"{prefix}/{SIGNATURE}", signature
+        ):
+            return None
+        payload = work / "payload"
+        payload.write_bytes(_payload(prefix, manifest.read_bytes()))
+        keyring = work / "keys"
+        keyring.mkdir(mode=0o700)
+        verifier = Signer(key="", gnupghome=keyring)
+        if trusted:
+            key = work / "local.asc"
+            key.write_text(trusted.public_key())
+            verifier.gpg("--import", str(key))
+        for fingerprint in storage.build_keys:
+            key = work / "key.asc"
+            if not download(storage, f"keys/{fingerprint}.asc", key):
+                continue
+            try:
+                shown = verifier.gpg("--with-colons", "--show-keys", str(key))
+                shown_fingerprints = [line.split(":")[9] for line in shown.splitlines() if line.startswith("fpr:")]
+                if not shown_fingerprints or shown_fingerprints[0] != fingerprint:
+                    continue
+                verifier.gpg("--import", str(key))
+            except SigningError:
+                continue
+        try:
+            status = verifier.gpg("--status-fd", "1", "--verify", str(signature), str(payload))
+            if not any(
+                line.startswith("[GNUPG:] VALIDSIG ")
+                and (line.split()[2] in fingerprints or line.split()[-1] in fingerprints)
+                for line in status.splitlines()
+            ):
+                return None
+            return TreeManifest(files=json.loads(manifest.read_bytes())).files
+        except (SigningError, ValueError):
+            log.warning("ignoring invalid remote tree %s", prefix)
+            return None
+
+
+def tree_exists(storage: Remote, prefix: str, *, trusted: Signer | None = None) -> bool:
     """Return whether the storage has the complete tree `prefix`."""
-    return exists(storage, f"{prefix}/{MANIFEST}")
+    return _manifest(storage, prefix, trusted) is not None
 
 
-def download_tree(storage: Remote, prefix: str, dest: Path, on_line: Callable[[str], None] = lambda _: None) -> bool:
+def download_tree(
+    storage: Remote,
+    prefix: str,
+    dest: Path,
+    on_line: Callable[[str], None] = lambda _: None,
+    *,
+    trusted: Signer | None = None,
+) -> bool:
     """Download the tree `prefix` as the new directory `dest`, and return whether the storage has it."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     # next to it, to move it there
     with tempfile.TemporaryDirectory(dir=dest.parent, prefix=".download-") as tmp:
         tree = Path(tmp) / "tree"
-        if not download(storage, f"{prefix}/{MANIFEST}", Path(tmp) / MANIFEST):
+        manifest = _manifest(storage, prefix, trusted)
+        if manifest is None:
             return False
-        for name, digest in json.loads((Path(tmp) / MANIFEST).read_text()).items():
-            path = PurePosixPath(name)
-            if path.is_absolute() or ".." in path.parts or not path.parts:
-                msg = f"{prefix}/{MANIFEST} has a path out of its tree: {name}"
-                raise RemoteError(msg)
+        tree.mkdir()
+        for name, digest in manifest.items():
             if not download(storage, f"{prefix}/{name}", tree / name, on_line) or sha256_of(tree / name) != digest:
                 msg = f"{prefix}/{name} is missing or corrupted in the storage"
                 raise RemoteError(msg)
@@ -194,34 +283,42 @@ def download_tree(storage: Remote, prefix: str, dest: Path, on_line: Callable[[s
     return True
 
 
-def upload_tree(storage: Remote, prefix: str, src: Path, names: list[str]) -> dict[str, str]:
+def upload_tree(storage: Remote, prefix: str, src: Path, names: list[str], *, signer: Signer | None) -> dict[str, str]:
     """Upload the entries `names` of the directory `src` as the tree `prefix`, and return its files' SHA-256."""
+    if signer is None:
+        msg = "no key to sign uploads: run xcraft key create, configure [sign], or use --key"
+        raise RemoteError(msg)
     files = sorted(f for name in names for f in [src / name, *(src / name).rglob("*")] if f.is_file())
     manifest = {f.relative_to(src).as_posix(): sha256_of(f) for f in files}
     for name in manifest:
         upload(storage, f"{prefix}/{name}", src / name)
-    write_manifest(storage, prefix, manifest)
+    write_manifest(storage, prefix, manifest, signer=signer)
     return manifest
 
 
-def read_manifest(storage: Remote, prefix: str) -> dict[str, str]:
+def read_manifest(storage: Remote, prefix: str, *, trusted: Signer | None = None) -> dict[str, str]:
     """Return the SHA-256 of the files of the tree `prefix`, by path in it, or nothing without its manifest."""
-    with tempfile.TemporaryDirectory(prefix="xcraft-manifest-") as tmp:
-        if not download(storage, f"{prefix}/{MANIFEST}", Path(tmp) / MANIFEST):
-            return {}
-        return json.loads((Path(tmp) / MANIFEST).read_text())
+    return _manifest(storage, prefix, trusted) or {}
 
 
-def write_manifest(storage: Remote, prefix: str, manifest: dict[str, str]) -> None:
+def write_manifest(storage: Remote, prefix: str, manifest: dict[str, str], *, signer: Signer | None) -> None:
     """Write the manifest of the tree `prefix`, which completes it."""
-    log.debug("writing %s", _s3_url(storage, f"{prefix}/{MANIFEST}"))
-    with _writing(storage, f"write {prefix}/{MANIFEST}") as s3:
-        s3.put_object(
-            Bucket=storage.bucket,
-            Key=f"{prefix}/{MANIFEST}",
-            Body=json.dumps(manifest, indent=1, sort_keys=True).encode(),
-            ContentType="application/json",
-        )
+    if signer is None:
+        msg = "no key to sign uploads: run xcraft key create, configure [sign], or use --key"
+        raise RemoteError(msg)
+    TreeManifest(files=manifest)
+    with tempfile.TemporaryDirectory(prefix="xcraft-sign-") as tmp:
+        work = Path(tmp)
+        file = work / MANIFEST
+        file.write_text(json.dumps(manifest, indent=1, sort_keys=True))
+        payload = work / "payload"
+        payload.write_bytes(_payload(prefix, file.read_bytes()))
+        signature = signer.sign_file(payload)
+        key = work / "key.asc"
+        key.write_text(signer.public_key())
+        upload(storage, f"keys/{signer.key}.asc", key)
+        upload(storage, f"{prefix}/{SIGNATURE}", signature)
+        upload(storage, f"{prefix}/{MANIFEST}", file)
 
 
 INDEX = "index.html"

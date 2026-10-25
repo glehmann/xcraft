@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -24,7 +25,7 @@ from xcraft.lock import load_lock
 from xcraft.project import Project
 from xcraft.resolution import resolve_image
 from xcraft.rpmbuild import prepare_tree
-from xcraft.signing import check_signatures, create_dev_key
+from xcraft.signing import Signer, check_signatures, create_dev_key, release_signer
 from xcraft.sources import SourceError, cache_source, sha256_of, source_path, write_manifest
 
 if TYPE_CHECKING:
@@ -99,11 +100,40 @@ REMOTE = (
 )
 
 
+@pytest.fixture(scope="module")
+def build_signer(tmp_path_factory: pytest.TempPathFactory) -> tuple[str, Path]:
+    home = tmp_path_factory.mktemp("build-key")
+    home.chmod(0o700)
+    signer = Signer("", home)
+    signer.gpg("--passphrase", "", "--quick-generate-key", "CI test", "rsa2048", "sign", "never")
+    fingerprint = next(
+        line.split(":")[9]
+        for line in signer.gpg("--with-colons", "--list-secret-keys").splitlines()
+        if line.startswith("fpr:")
+    )
+    return fingerprint, home
+
+
 @pytest.fixture
-def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, s3: dict[str, str], build_environment: None) -> Path:
+def root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    s3: dict[str, str],
+    build_environment: None,
+    build_signer: tuple[str, Path],
+) -> Path:
     root = tmp_path / "project"
     copy_project(root)
+    monkeypatch.setattr(
+        "tests.test_remote.REMOTE",
+        REMOTE.replace(
+            "[remote]",
+            f'[sign]\nkey = "{build_signer[0]}"\ngnupghome = "{build_signer[1]}"\n'
+            f'[remote]\nbuild_keys = ["{build_signer[0]}"]',
+        ),
+    )
     (root / "xcraft.toml").write_text(REMOTE)
+    monkeypatch.setenv("GNUPGHOME", str(tmp_path / "unused-keyring"))
     monkeypatch.setenv("XCRAFT_PROJECT", str(root))
     for name, value in s3.items():
         monkeypatch.setenv(name, value)
@@ -180,12 +210,57 @@ def test_sources_from_the_spec(root: Path, tmp_path: Path) -> None:
     assert not (Project.find().source_cache / ("0" * 64)).exists()
 
 
-def test_builds_shared_by_checkouts(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_signed_trees(root: Path, tmp_path: Path) -> None:
+    storage = Project.find().config.remote
+    assert storage
+    src = tmp_path / "tree"
+    src.mkdir()
+    (src / "file").write_text("trusted")
+    prefix = f"builds/security/{secrets.token_hex(4)}"
+    signer = release_signer(Project.find())
+    assert signer
+    with pytest.raises(remote.RemoteError, match="no key to sign uploads"):
+        remote.upload_tree(storage, prefix, src, ["file"], signer=None)
+    # Verification keys neither select the signer nor need to be configured for uploads.
+    remote.upload_tree(storage.model_copy(update={"build_keys": []}), prefix, src, ["file"], signer=signer)
+    assert remote.download_tree(storage, prefix, tmp_path / "valid")
+    assert (tmp_path / "valid/file").read_text() == "trusted"
+    assert remote.tree_exists(storage.model_copy(update={"build_keys": ["0" * 40, *storage.build_keys]}), prefix)
+    assert not remote.tree_exists(storage.model_copy(update={"build_keys": []}), prefix)
+    key = tmp_path / "key.asc"
+    key.write_text(signer.public_key())
+    remote.upload(storage, f"keys/{'0' * 40}.asc", key)
+    assert not remote.tree_exists(storage.model_copy(update={"build_keys": ["0" * 40]}), prefix)
+    # A signed manifest cannot be transplanted to another build key.
+    for file in ("file", remote.MANIFEST, remote.SIGNATURE):
+        remote.copy(storage, f"{prefix}/{file}", f"{prefix}-other/{file}")
+    assert not remote.download_tree(storage, f"{prefix}-other", tmp_path / "wrong-path")
+    # Changed bytes fail even when the manifest is authentic.
+    (src / "file").write_text("tampered")
+    remote.upload(storage, f"{prefix}/file", src / "file")
+    with pytest.raises(remote.RemoteError, match="corrupted"):
+        remote.download_tree(storage, prefix, tmp_path / "corrupt")
+    assert not (tmp_path / "corrupt").exists()
+    # Replacing both bytes and manifest still cannot forge the signature.
+    (src / remote.MANIFEST).write_text('{"file": "' + sha256_of(src / "file") + '"}')
+    remote.upload(storage, f"{prefix}/{remote.MANIFEST}", src / remote.MANIFEST)
+    assert not remote.tree_exists(storage, prefix)
+    remote.delete(storage, [f"{prefix}/{remote.SIGNATURE}"])
+    assert not remote.tree_exists(storage, prefix)
+
+
+def test_builds_shared_by_checkouts(
+    root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_signer: tuple[str, Path]
+) -> None:
+    # CI selects its key without a private-key setting in the project.
+    (root / "xcraft.toml").write_text(re.sub(r"\[sign\]\n.*?(?=\[remote\])", "", REMOTE, flags=re.DOTALL))
+    monkeypatch.setenv("GNUPGHOME", str(build_signer[1]))
     # a key of its own, not to find the builds of the other tests in the storage
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
     assert xcraft("build", "trivial")[0] == 0
-    assert xcraft("push", "builds", "trivial")[0] == 0
+    assert xcraft("push", "builds", "trivial", "--key", build_signer[0])[0] == 0
+    assert xcraft("push", "--key", build_signer[0], "builds", "trivial")[0] == 0
     # another checkout, elsewhere, with what is committed: the same keys, whatever the path
     other = tmp_path / "elsewhere" / "xcraft"
     shutil.copytree(root, other, ignore=shutil.ignore_patterns(".xcraft"))
@@ -291,7 +366,18 @@ def ccache_hits(cache: Path) -> int:
     return stats["direct_cache_hit"] + stats["preprocessed_cache_hit"]
 
 
-def test_ccache(root: Path) -> None:
+@pytest.mark.parametrize("developer", [False, True])
+def test_ccache(
+    root: Path, monkeypatch: pytest.MonkeyPatch, build_signer: tuple[str, Path], *, developer: bool
+) -> None:
+    config = re.sub(r"\[sign\]\n.*?(?=\[remote\])", "", REMOTE, flags=re.DOTALL)
+    if developer:
+        config = re.sub(r"build_keys = \[.*?\]", "build_keys = []", config)
+    (root / "xcraft.toml").write_text(config)
+    if developer:
+        create_dev_key(Project.find(), "Developer <dev@example.com>")
+    else:
+        monkeypatch.setenv("GNUPGHOME", str(build_signer[1]))
     write_spec(root, "compiled", files="/usr/lib/compiled/t.o")
     spec = root / "base/compiled/compiled.spec"
     build = "%build\necho 'int f(void) { return 0; }' > t.c\ngcc -c t.c -o t.o\n"
@@ -305,7 +391,8 @@ def test_ccache(root: Path) -> None:
     cache = root / ".xcraft/ccache/compiled"
     results = sorted(cache.rglob("*R"))  # the results of the compilations
     assert results
-    assert xcraft("push", "ccache", "compiled") == (0, "↑ compiled\n1 pushed\n")
+    options = [] if developer else ["--key", build_signer[0]]
+    assert xcraft("push", "ccache", "compiled", *options) == (0, "↑ compiled\n1 pushed\n")
     shutil.rmtree(cache)
     assert xcraft("fetch", "ccache", "compiled") == (0, "↓ compiled\n1 fetched\n")
     assert sorted(cache.rglob("*R")) == results
@@ -424,6 +511,10 @@ def test_publish(root: Path) -> None:
 
 @pytest.mark.skipif(not shutil.which("gpg"), reason="needs gpg")
 def test_signed_publish(root: Path) -> None:
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
+    unsigned = re.sub(r"\[sign\]\n.*?(?=\[remote\])", "", REMOTE, flags=re.DOTALL)
+    (root / "xcraft.toml").write_text(unsigned)
     code, output = xcraft("publish")
     assert code == 2
     assert "no key to sign the packages" in " ".join(output.replace("│", "").split())
@@ -432,19 +523,25 @@ def test_signed_publish(root: Path) -> None:
         # the developer's key, without a release one
         code, output = xcraft("publish", "--local")
         assert code == 0, output
-        assert f"warning: no release key in xcraft.toml, signing with the developer's key {signer.key}" in output
         assert (root / ".xcraft/publish/RPM-GPG-KEY").read_text() == signer.public_key()
-        # nor for a storage on another machine, unless asked
-        (root / "xcraft.toml").write_text(REMOTE.replace(f"localhost:{S3_PORT}", f"192.0.2.1:{S3_PORT}"))
-        code, output = xcraft("publish")
-        assert code == 2
-        assert "or use --dev-key or --unsigned" in " ".join(output.replace("│", "").split())
-        # but for one on this machine
-        (root / "xcraft.toml").write_text(REMOTE)
+        # Its remote builds and snapshots are trusted without adding the developer key to the config.
+        code, output = xcraft("push", "builds")
+        assert code == 0, output
+        shutil.rmtree(root / ".xcraft/cache/builds")
+        code, output = xcraft("fetch", "builds")
+        assert code == 0, output
+        assert "fetched" in output
         code, output = xcraft("publish")
         assert code == 0, output
-        assert f"signing with the developer's key {signer.key}, the storage being on this machine" in output
-        (root / "xcraft.toml").write_text(f'{REMOTE}[sign]\nkey = "{signer.key}"\ngnupghome = "{signer.gnupghome}"\n')
+        storage = Project.find().config.remote
+        assert storage
+        assert remote.tree_exists(storage, "repos/9.0/latest", trusted=signer)
+        assert not remote.tree_exists(storage, "repos/9.0/latest")
+        assert xcraft("publish")[0] == 0
+        (root / "xcraft.toml").write_text(
+            re.sub(r"build_keys = \[.*?\]", f'build_keys = ["{signer.key}"]', unsigned)
+            + f'[sign]\nkey = "{signer.key}"\ngnupghome = "{signer.gnupghome}"\n'
+        )
         code, output = xcraft("publish")
         assert code == 0, output
         snapshot = root / ".xcraft/publish"
@@ -463,6 +560,10 @@ def test_signed_publish(root: Path) -> None:
         before = rpm.read_bytes()
         assert xcraft("publish")[0] == 0
         assert rpm.read_bytes() == before
+        config = root / "xcraft.toml"
+        config.write_text(config.read_text().replace(f'key = "{signer.key}"', f'key = "{"0" * 40}"'))
+        code, output = xcraft("publish", "--key", signer.key, "repos", "--locked")
+        assert code == 0, output
     finally:
         subprocess.run(["gpgconf", "--homedir", str(signer.gnupghome), "--kill", "gpg-agent"], check=False)
 
@@ -488,9 +589,18 @@ def test_manifest_paths_stay_in_their_tree(root: Path, tmp_path: Path) -> None:
     storage = Project.find().config.remote
     assert storage
     for name in ("../escaped", "/var/escaped", "a/../../escaped"):
-        remote.write_manifest(storage, "trees/bad", {name: "0" * 64})
-        with pytest.raises(remote.RemoteError, match="has a path out of its tree"):
-            remote.download_tree(storage, "trees/bad", tmp_path / "tree")
+        manifest = tmp_path / remote.MANIFEST
+        manifest.write_text(json.dumps({name: "0" * 64}))
+        payload = tmp_path / "payload"
+        payload.write_bytes(b"trees/bad\n" + manifest.read_bytes())
+        signer = release_signer(Project.find())
+        assert signer
+        key = tmp_path / "key.asc"
+        key.write_text(signer.public_key())
+        remote.upload(storage, f"keys/{signer.key}.asc", key)
+        remote.upload(storage, "trees/bad/manifest.json", manifest)
+        remote.upload(storage, "trees/bad/manifest.json.asc", signer.sign_file(payload))
+        assert not remote.download_tree(storage, "trees/bad", tmp_path / "tree")
     assert not list(tmp_path.glob("**/escaped"))
 
 

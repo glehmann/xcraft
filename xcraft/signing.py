@@ -107,6 +107,14 @@ def release_signer(project: Project) -> Signer | None:
     return Signer(key=sign.key, gnupghome=Path(sign.gnupghome).expanduser() if sign.gnupghome else None)
 
 
+def signing_key(project: Project, key: str | None = None) -> Signer | None:
+    """Select an explicit key, the configured release key, or the checkout's developer key."""
+    signer = release_signer(project)
+    if key:
+        return Signer(key, signer.gnupghome if signer else None)
+    return signer or dev_signer(project)
+
+
 def dev_keyring(project: Project) -> Path:
     """Return the keyring of the developer's key for test builds."""
     return project.state / "key"

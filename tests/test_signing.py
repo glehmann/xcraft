@@ -7,11 +7,13 @@ import subprocess
 from typing import TYPE_CHECKING
 
 import pytest
+import typer
 
 from tests import copy_project
 from tests.test_build import xcraft
-from xcraft.project import Project
-from xcraft.signing import SigningError, check_signatures, dev_keyring, dev_signer
+from xcraft.commands import choose_signer
+from xcraft.project import Project, Sign
+from xcraft.signing import Signer, SigningError, check_signatures, create_dev_key, dev_keyring, dev_signer, signing_key
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -43,6 +45,23 @@ def test_dev_key(root: Path) -> None:
     assert xcraft("key", "show")[1].startswith(f"{signer.key}\n")
     assert xcraft("key", "show", "--export")[1].startswith("-----BEGIN PGP PUBLIC KEY BLOCK-----")
     assert xcraft("key", "create")[1] == f"there is already a key in {dev_keyring(Project.find())}"
+
+
+@needs_gpg
+def test_signer_selection(root: Path) -> None:
+    project = Project.find()
+    developer = create_dev_key(project, "Developer")
+    assert signing_key(project) == developer
+    assert choose_signer(project, local=False, unsigned=False, dev_key=False) == developer
+    assert signing_key(project, "A" * 40) == Signer("A" * 40)
+    project.config.sign = Sign(key="B" * 40, gnupghome=str(root / "release-keyring"))
+    assert signing_key(project) == Signer("B" * 40, root / "release-keyring")
+    assert signing_key(project, "A" * 40) == Signer("A" * 40, root / "release-keyring")
+    assert choose_signer(project, local=True, unsigned=False, dev_key=True) == developer
+    assert choose_signer(project, local=True, unsigned=True, dev_key=False) is None
+    for unsigned, dev_key, key in ((False, True, "A" * 40), (True, False, "A" * 40), (True, True, None)):
+        with pytest.raises(typer.BadParameter, match="cannot be used"):
+            choose_signer(project, local=True, unsigned=unsigned, dev_key=dev_key, key=key)
 
 
 @needs_gpg

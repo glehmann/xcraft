@@ -80,31 +80,44 @@ xcraft checks the signature before using a tree, and the files against the manif
 - **The signature** is a detached gpg signature, `manifest.json.asc`, next to `manifest.json`, of the path of the tree
   followed by the manifest: a signed manifest moved under another path, like the key of another build, does not
   verify.
-- **The keys** are those of CI, in `xcraft.toml`, by fingerprint:
+- **The verification keys** are trusted public keys in `xcraft.toml`, by fingerprint:
 
   ```toml
   [remote]
-  build_keys = ["<fingerprint>"]   # the keys of CI signing what it pushes: the first signs, all verify
+  build_keys = ["<fingerprint>"]   # trusted public keys, all verify
   ```
 
   The public keys are in the storage, `keys/<fingerprint>.asc`, which is safe: xcraft checks their fingerprints.
-  Several keys are for a rotation: the new one first, the old one until the trees it signed are not used anymore.
+  Several keys allow rotation: retain the old fingerprints until their trees are not used anymore. Order is irrelevant.
+  A checkout also trusts its own developer key, without adding it to this list.
 - **The private key** is a secret of the repository's CI, apart from the S3 credentials: the storage alone is not enough
-  to forge a tree. It is not the release key, `[sign]`, which signs what the hosts install, and can stay out of CI.
+  to forge a tree. CI selects the same key for uploads and publishing with `--key <fingerprint>`, through the host GPG
+  agent. `[sign]` remains an optional default; without either, a developer uses the checkout's developer key.
 - **Where xcraft verifies:** xcraft fetch and xcraft build, for the builds and the compiler caches, and xcraft publish,
   for the builds it signs with the release key and the snapshots it copies files from. A tree without a valid
   signature is as if the storage did not have it: it is built again, or fails to publish.
+
+### The private key in CI
+
+CI uses the same key for uploads and publishing through its host GPG agent, either in an HSM or imported from a
+protected CI secret into a temporary keyring. Pass its fingerprint with `--key` to `push`, `push builds`, `push ccache`
+and `publish`; the workflow does not modify `xcraft.toml`. Set `GNUPGHOME` when `[sign].gnupghome` is omitted,
+unlock the agent before signing if the key has
+a passphrase, and kill the agent and remove the temporary keyring at job exit. Only trusted jobs receive the private
+key and S3 write credentials. See the README's CI signing instructions. Snapshot manifests use the publishing signer,
+or the default signing key when package signing is disabled with `--unsigned`.
 
 ### What stays as it is
 
 - The sources in `xcraft`: content-addressed, and checked against the committed manifests. CI pushes them only, now.
 - The snapshots and the ISOs for the hosts: their packages and metadata are signed with the release key, which the
   hosts check.
-- The developer's key, local to a checkout, for the test builds, never pushed.
+- The developer's key remains local to a checkout. It can sign trees in a test storage; other checkouts do not trust
+  those trees unless its public fingerprint is explicitly configured.
 
 ## What it does not cover
 
-- **A compromised CI**: it has the key of the trees and the S3 credentials of `xcraft`. Who can change the workflows can
+- **A compromised CI**: it has access to the release key and the S3 credentials of `xcraft`. Who can change the workflows can
   get them: the protection of the branches and the review of the workflows matter as much.
 - **Deletions by CI's key**: Garage seems to have neither versioning nor objects which cannot be deleted (see below). The
   builds can be made again, and the sources fetched again from their URLs or the developers; a backup of the storage
@@ -113,7 +126,7 @@ xcraft checks the signature before using a tree, and the files against the manif
 
 ## Migration
 
-1. Make the key of the trees, put its fingerprint in xcp-ng-dist's `xcraft.toml`, its private key in CI's secrets.
+1. Add CI's signing fingerprint to `remote.build_keys`, provision its private key, and pass `--key` in the workflows.
 2. Sign the trees already in the storage, once, from CI: their files are checked against their manifests first.
 3. Create `xcraft-incoming`, the keys of the developers, and the route of Caddy; remove the rights of the shared key on
    `xcraft`, and make it CI's only.
@@ -126,7 +139,3 @@ xcraft, makes the switch.
 
 - Expiration in Garage: its lifecycle support, for emptying `xcraft-incoming` without CI, to check.
 - Versioning and object locks in Garage, which would make deletions recoverable: to confirm they are missing.
-- Signing in CI with gpg, the key coming from a secret, in a temporary keyring: xcraft's Signer already supports a
-  keyring of its own, like the developer's.
-- The signature of the snapshots: by the key of the trees, like the others, or by the release key, which already signs
-  their metadata.

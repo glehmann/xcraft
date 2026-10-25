@@ -14,7 +14,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -72,6 +72,17 @@ class Remote(BaseModel):
     """S3 API, for the writes."""
     bucket: str = ""
     region: str = "garage"
+    build_keys: list[str] = []
+    """Trusted fingerprints for verifying remote trees, including older release keys. Order does not matter."""
+
+    @field_validator("build_keys")
+    @classmethod
+    def fingerprints(cls, keys: list[str]) -> list[str]:
+        """Require full fingerprints, normalized for GPG's status output."""
+        if any(len(key) not in (40, 64) or any(c not in "0123456789abcdefABCDEF" for c in key) for key in keys):
+            msg = "build_keys must contain full GPG fingerprints"
+            raise ValueError(msg)
+        return [key.upper() for key in keys]
 
 
 class Sign(BaseModel):

@@ -7,11 +7,9 @@ from typing import Annotated
 
 import typer
 
-from xcraft import remote
-from xcraft.display import console
 from xcraft.project import Project, Remote
 from xcraft.resolution import prepare
-from xcraft.signing import Signer, dev_signer, release_signer
+from xcraft.signing import Signer, dev_signer, signing_key
 
 
 def complete_package(incomplete: str) -> list[str]:
@@ -27,6 +25,9 @@ Packages = Annotated[
 ]
 OnePackage = Annotated[str, typer.Argument(help="Package.", show_default=False, autocompletion=complete_package)]
 All = Annotated[bool, typer.Option("--all", help="All packages.")]
+Key = Annotated[
+    str | None, typer.Option("--key", metavar="FINGERPRINT", help="Sign with this GPG key instead of the default key.")
+]
 
 
 def complete_arch(incomplete: str) -> list[str]:
@@ -119,24 +120,21 @@ def pending_packages(names: list[str] | None, pending: dict[str, dict[str, str]]
     return sorted(selected)
 
 
-def choose_signer(project: Project, *, local: bool, unsigned: bool, dev_key: bool) -> Signer | None:
-    """Return the signer of a snapshot: the release key, or the developer's.
-
-    That is with `dev_key`, or without release key, for a `local` snapshot, or one published to a storage on this
-    machine.
-    """
-    signer = None if unsigned else dev_signer(project) if dev_key else release_signer(project)
+def choose_signer(
+    project: Project, *, local: bool, unsigned: bool, dev_key: bool, key: str | None = None
+) -> Signer | None:
+    """Select the explicit, release or developer key for a snapshot."""
+    if key and dev_key:
+        msg = "--key and --dev-key cannot be used together"
+        raise typer.BadParameter(msg)
+    if unsigned and (key or dev_key):
+        msg = "--unsigned cannot be used with --key or --dev-key"
+        raise typer.BadParameter(msg)
+    signer = None if unsigned else dev_signer(project) if dev_key else signing_key(project, key)
     if dev_key and not signer:
         msg = "no developer's key: run xcraft key create"
         raise typer.BadParameter(msg)
-    # a snapshot that stays on this machine, like in the storage of local-s3.sh, can do with the developer's key
-    nearby = local or bool((storage := project.config.remote) and remote.on_this_machine(storage))
-    if not (signer or unsigned) and nearby and (signer := dev_signer(project)):
-        console.print(
-            f"[yellow]warning[/]: no release key in xcraft.toml, signing with the developer's key {signer.key}"
-            + ("" if local else ", the storage being on this machine")
-        )
     if not (signer or local or unsigned):
-        msg = "no key to sign the packages: see [sign] in xcraft.toml, or use --dev-key or --unsigned"
+        msg = "no key to sign the packages: run xcraft key create, configure [sign], or use --key or --unsigned"
         raise typer.BadParameter(msg)
     return signer
