@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -135,3 +137,16 @@ def test_diagnostics_header() -> None:
     for line in ["error: one", "error: two"]:
         on_line(line)
     assert shown == ["[1/2] building foo", "error: one", "error: two"]
+
+
+def test_progress_in_ci() -> None:
+    # coloured, but without the frames of the progress: the logs of CI are not terminals
+    code = (
+        "from xcraft.display import activity, console\n"
+        "with activity('building') as on_line:\n"
+        "    on_line('a line')\n"
+        "console.print('[green]built[/]')\n"
+    )
+    env = {**os.environ, "FORCE_COLOR": "1"}
+    output = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True).stdout
+    assert output == "\x1b[32mbuilt\x1b[0m\n"
