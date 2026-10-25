@@ -30,7 +30,6 @@ from xcraft.sources import SourceError, cache_source, sha256_of, source_path, wr
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-pytestmark = pytest.mark.skipif(not shutil.which("podman"), reason="needs podman")
 
 GARAGE = "docker.io/dxflrs/garage:v2.1.0"
 # a garage for each worker of pytest-xdist, with its name and ports

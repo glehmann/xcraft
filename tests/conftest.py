@@ -46,14 +46,21 @@ def make_toys(root: Path) -> None:
             shutil.rmtree(old)
 
 
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Mark the tests in the build environment as needing podman, and skip those needing it without it."""
+    for item in items:
+        if "build_environment" in getattr(item, "fixturenames", ()):
+            item.add_marker(pytest.mark.podman)
+        if item.get_closest_marker("podman") and not shutil.which("podman"):
+            item.add_marker(pytest.mark.skip(reason="needs podman"))
+
+
 @pytest.fixture(scope="session")
 def build_environment(tmp_path_factory: pytest.TempPathFactory) -> None:
     """Build the image of the build environment of the test projects first, and resolve their lock, once for all the
     workers of pytest-xdist, rather than all of them at once: the tests in containers copy that template, the others
     do not need it.
     """  # noqa: D205
-    if not shutil.which("podman"):
-        return
     basetemp = tmp_path_factory.getbasetemp()
     shared = basetemp.parent if "PYTEST_XDIST_WORKER" in os.environ else basetemp  # of all the workers of the session
     with (shared / "build-environment.lock").open("w") as f:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import shutil
 import subprocess
 from typing import TYPE_CHECKING
 
@@ -150,7 +149,7 @@ def source_rpm(tmp_path: Path, name: str, version: str) -> Path:
     return next((top / "SRPMS").glob("*.src.rpm"))
 
 
-@pytest.mark.skipif(not shutil.which("podman"), reason="needs podman")
+@pytest.mark.podman
 def test_import_srpm(root: Path, upstream: Path, tmp_path: Path) -> None:
     assert runner.invoke(app, ["import", "foo", "--url", f"file://{upstream}"]).exit_code == 0
     before = git(root, "rev-parse", "import/foo/XS-9.0")
