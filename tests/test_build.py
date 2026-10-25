@@ -17,9 +17,9 @@ from typer.testing import CliRunner
 from tests import ARCH, TOML, copy_project
 from xcraft import container
 from xcraft.__main__ import app
-from xcraft.lock import Recorded, load_lock, save_lock
+from xcraft.lock import Locked, Recorded, load_lock, save_lock
 from xcraft.project import Project
-from xcraft.resolution import resolve
+from xcraft.resolution import ResolutionError, lock_installed, resolve
 from xcraft.sources import write_manifest
 
 runner = CliRunner()
@@ -413,6 +413,26 @@ def test_lock_versions_of_all_the_architectures(root: Path) -> None:
     assert load_lock(Project.find()).sources["toyrun"] == "1-1"
     assert xcraft("lock", "--update", "toyarch", "toyrun") == (0, "toyrun 1-1 -> 2-1\n1 updated\n")
     assert load_lock(Project.find()).sources["toyrun"] == "2-1"
+
+
+def test_lock_installed(root: Path) -> None:
+    project = Project.find()
+
+    def installed(name: str, evr: str) -> dict[str, Locked]:
+        return {name: Locked(evr=evr, arch=ARCH.removesuffix("_v2"), source="toyarch", repo="toys", sha256="")}
+
+    # installed in its latest version, but locked in the one all the architectures have: to install again
+    assert not lock_installed(project, installed("toyarch", "2-1"))
+    assert load_lock(project).sources["toyarch"] == "1-1"
+    assert lock_installed(project, installed("toyarch", "1-1"))
+    with pytest.raises(ResolutionError, match="installed in another version than locked: toyarch"):
+        lock_installed(project, installed("toyarch", "2-1"))
+    # a package of the version installed only, once toyarch is locked
+    lock = load_lock(project)
+    del lock.sources["toyarch"]
+    save_lock(project, lock)
+    assert not lock_installed(project, installed("toyarch-new", "2-1"))
+    assert load_lock(project).sources["toyarch"] == "1-1"
 
 
 def test_recorded(root: Path) -> None:
