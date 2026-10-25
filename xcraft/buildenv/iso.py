@@ -39,7 +39,8 @@ def resolver(packages: list[str] | None = None) -> dnf.Base:
     base.conf.read()
     base.conf.installroot = tempfile.mkdtemp()
     base.conf.install_weak_deps = False
-    base.repos.add_new_repo("snapshot", base.conf, baseurl=[f"file://{snapshot}"])
+    # read again: the dnf cache, shared by the containers, has the snapshots of the ISOs made before
+    base.repos.add_new_repo("snapshot", base.conf, baseurl=[f"file://{snapshot}"], metadata_expire=0)
     base.fill_sack(load_system_repo=False)
     for name in packages or []:
         base.install(name)
@@ -94,7 +95,8 @@ def install_img(dest: Path) -> None:
         "dnf", "-q", "-y", f"--installroot={root}", "--disableplugin=*", "--disablerepo=*",
         f"--repofrompath=snapshot,{snapshot}", f"--releasever={dnf.rpm.detect_releasever('/')}",
         # the packages are checked when the snapshot is made
-        "--setopt=snapshot.gpgcheck=0", "--setopt=install_weak_deps=False", "--setopt=tsflags=nodocs",
+        "--setopt=snapshot.gpgcheck=0", "--setopt=snapshot.metadata_expire=0", "--setopt=install_weak_deps=False",
+        "--setopt=tsflags=nodocs",
         "install", *config["installer"],
     )  # fmt: skip
     shadow = root / "etc/shadow"
