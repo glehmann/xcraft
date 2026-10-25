@@ -419,6 +419,42 @@ def test_recorded(root: Path) -> None:
     assert xcraft("build", "with-deps", "--locked")[0] == 0
 
 
+def test_lock_update_changing_implicit_deps(root: Path) -> None:
+    # a script run by toyrun, upstream, which rpm generates a requirement on
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(
+        spec.read_text()
+        .replace('echo "hello" > hello.txt', 'printf "#!/usr/bin/toyrun\\necho hello\\n" > hello.sh')
+        .replace("cp %{name}-%{version}/hello.txt %{buildroot}/usr/share/%{name}/",
+                 "install -m 755 %{name}-%{version}/hello.sh %{buildroot}/usr/share/%{name}/")
+        .replace("/usr/share/%{name}/hello.txt", "/usr/share/%{name}/hello.sh")
+    )  # fmt: skip
+    lock = load_lock(Project.find())
+    lock.sources["toyrun"] = "1-1"  # locked before its update
+    save_lock(Project.find(), lock)
+    code, output = xcraft("build", "with-deps")
+    assert code == 0, output
+    assert load_lock(Project.find()).requires.shared == {"trivial": ["toyrun"]}
+    assert xcraft("lock", "--outdated", "toyrun") == (
+        1,
+        "toyrun 1-1 -> 2-1\n1 to update: xcraft lock --update updates them\n",
+    )
+    assert xcraft("lock", "--update", "toyrun") == (0, "toyrun 1-1 -> 2-1\n1 updated, see xcraft impacts\n")
+    # through trivial, with-deps was built against toyrun
+    assert load_lock(Project.find()).pending == {"with-deps": {"toyrun": "1-1"}}
+
+    # trivial stays cached, but toyrun-bin has its interpreter now: with-deps is built against it
+    code, output = xcraft("build", "with-deps")
+    assert code == 0, output
+    assert [line.split()[:3] for line in results(output)[:2]] == [
+        ["·", "trivial", "cached"],
+        ["✓", "with-deps", "built"],
+    ]
+    assert load_lock(Project.find()).requires.shared == {"trivial": ["toyrun-bin"]}
+    assert "toyrun-bin" in resolve(Project.find()).buildroots["with-deps"]
+    assert xcraft("build", "with-deps", "--locked")[0] == 0
+
+
 def test_doctor(root: Path) -> None:
     code, output = xcraft("doctor")
     assert code == 0, output
