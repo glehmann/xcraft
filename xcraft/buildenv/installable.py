@@ -19,10 +19,12 @@ def main() -> None:
     base = dnf.Base()
     base.conf.read()
     base.conf.installroot = tempfile.mkdtemp()
+    # a cache of their own: the one shared by the containers has those of the same names checked before, which dnf
+    # keeps, even expired, when their metadata has the same revision, made in the same second
+    base.conf.cachedir = tempfile.mkdtemp()
     base.conf.install_weak_deps = False
     for i, repo in enumerate(repos):
-        # read again: the dnf cache, shared by the containers, has those of the same name checked before
-        base.repos.add_new_repo(f"checked-{i}", base.conf, baseurl=[f"file://{repo}"], metadata_expire=0)
+        base.repos.add_new_repo(f"checked-{i}", base.conf, baseurl=[f"file://{repo}"])
     base.fill_sack(load_system_repo=False)
     errors = {}
     for package in base.sack.query().available().filter(reponame=f"checked-{len(repos) - 1}"):
