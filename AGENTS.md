@@ -23,3 +23,9 @@
 # Runtime Validation
 
 - Use `pydantic.BaseModel` for config, state, and data crossing the CLI/file boundary.
+
+# Tests
+
+- Avoid mocks when possible: test on the test project, its packages and the upstream ones of `tests/upstream/`, in the
+  real build environment. Add toy upstream packages there for the versions or architectures a test needs.
+- Mock only what cannot happen for real in a test, like a race between two commands, or a file edited during a build.
