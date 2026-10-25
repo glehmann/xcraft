@@ -161,7 +161,7 @@ def _build_one(  # noqa: PLR0913
         for output in ("RPMS", "SRPMS"):
             signer.sign_rpms(project, tree / output)
     _cache(project, name, keys[name], tree, autorev)
-    record_built(project, [name], keys)
+    record_built(project, [name], keys, quiet=True)  # see _build_all()
 
 
 def _cache(project: Project, name: str, key: str, tree: Path, autorev: dict[str, str]) -> Path:
@@ -320,7 +320,7 @@ def _build_all(  # noqa: PLR0913
                 console.print(f"[yellow]remote storage unavailable, building locally[/]: {escape(str(e))}")
                 use_remote = fetched = False
             if fetched:
-                record_built(project, [name], keys)
+                record_built(project, [name], keys, quiet=True)  # see below
                 console.print(f"[green]↓[/] {name} [green]fetched[/]")
                 results[name] = Result(name, "fetched")
                 continue
@@ -336,7 +336,11 @@ def _build_all(  # noqa: PLR0913
         if use_remote:  # without a compiler cache, the one of the remote storage
             ccache.fetch_missing(project, name)
         results[name] = _build_shown(project, name, keys, hashes, status=status, autorev=autorev, verbose=verbose)
-    return list(results.values()), _current(project, keys, recorded, autorev, hashes)[0]
+    keys = _current(project, keys, recorded, autorev, hashes)[0]
+    # again, what was not recorded when they came, as it needs packages of ours built or fetched after them: a change
+    # of the lock changes the keys of the next builds
+    record_built(project, [n for n, r in results.items() if r.status in ("built", "fetched")], keys)
+    return list(results.values()), keys
 
 
 def _current(

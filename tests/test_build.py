@@ -467,6 +467,31 @@ def test_snapshots_checked_in_turn(root: Path, tmp_path: Path) -> None:
         _check_installable(project, [repo.path for repo in snapshots["broken"]])
 
 
+def test_recorded_once_all_built(root: Path) -> None:
+    # a script of trivial run by xtool, of ours too, built after it: recorded once xtool is built, without warning
+    (root / "base/xtool").mkdir()
+    (root / "base/xtool/xtool.spec").write_text(
+        "Name: xtool\nVersion: 1.0\nRelease: 1%{?dist}\nSummary: An interpreter\nLicense: MIT\nBuildArch: noarch\n"
+        "%description\nAn interpreter.\n%install\nmkdir -p %{buildroot}/usr/bin\n"
+        "printf '#!/bin/sh\\nexec sh \"$@\"\\n' > %{buildroot}/usr/bin/xtool\nchmod 755 %{buildroot}/usr/bin/xtool\n"
+        "%files\n/usr/bin/xtool\n"
+    )
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(
+        spec.read_text()
+        .replace('echo "hello" > hello.txt', 'printf "#!/usr/bin/xtool\\necho hello\\n" > hello.sh')
+        .replace("cp %{name}-%{version}/hello.txt %{buildroot}/usr/share/%{name}/",
+                 "install -m 755 %{name}-%{version}/hello.sh %{buildroot}/usr/share/%{name}/")
+        .replace("/usr/share/%{name}/hello.txt", "/usr/share/%{name}/hello.sh")
+    )  # fmt: skip
+    code, output = xcraft("build", "trivial", "xtool")
+    assert code == 0, output
+    assert [line.split(" in ")[0] for line in results(output)] == ["✓ trivial built", "✓ xtool built", "2 built"]
+    assert "cannot record" not in output
+    assert load_lock(Project.find()).requires.of(ARCH)["trivial"] == ["xtool"]
+    assert xcraft("build", "trivial", "xtool", "--locked") == (0, "2 cached\n")
+
+
 def test_recorded(root: Path) -> None:
     # a requirement rpm generates, of a script, and dynamic BuildRequires
     spec = root / "base/trivial/trivial.spec"

@@ -113,44 +113,50 @@ def _rpms(build: Path) -> list[Path]:
     return [p for p in (build / "RPMS").rglob("*.rpm") if not is_debug(p.name.rsplit("-", 2)[0])]
 
 
-def record_built(project: Project, names: list[str], keys: dict[str, str]) -> bool:
+def _record_new(project: Project, builds: dict[str, Path], keys: dict[str, str], context: str, *, quiet: bool) -> None:
+    """Keep with the `builds` what rpm generated for their binary packages, in `context`, but for those which cannot
+    be recorded yet, shown unless `quiet`: they are recorded again next time, once what they need is there.
+    """  # noqa: D205
+    current = [rpm for n, k in keys.items() if (build := cached_build(project, n, k)).exists() for rpm in _rpms(build)]
+    binaries = {name: [rpm.name.rsplit("-", 2)[0] for rpm in _rpms(build)] for name, build in builds.items()}
+    parsed = {b.name for p in project.parsed.values() for b in p.binaries}
+    result = record(project, sorted(b for bs in binaries.values() for b in bs if b in parsed), current)
+    for name, build in builds.items():
+        if failed := sorted(set(binaries[name]) & result.errors.keys()):
+            for binary in [] if quiet else failed:
+                console.print(
+                    f"[yellow]cannot record what rpm generated for {binary}[/]: {escape(result.errors[binary])}"
+                )
+            continue
+        recorded = {
+            "context": context,
+            "requires": {b: result.requires[b] for b in binaries[name] if b in result.requires},
+            "provides": {b: result.provides[b] for b in binaries[name] if b in result.provides},
+        }
+        write_atomically(build / "recorded.json", json.dumps(recorded))
+
+
+def record_built(project: Project, names: list[str], keys: dict[str, str], *, quiet: bool = False) -> bool:
     """Record in the lock what rpm generated for the binary packages of the cached builds of `names`, with `keys`,
     and return whether the lock changed.
 
-    What a build generated is kept with it, for the same locked versions and requirements of our specs.
+    What a build generated is kept with it, for the same locked versions and requirements of our specs. What cannot
+    be recorded yet is shown, unless `quiet`.
     """  # noqa: D205
+    if not (builds := {n: build for n in names if (build := cached_build(project, n, keys[n])).exists()}):
+        return False
     lock = load_lock(project)
     wanted = sorted({r for p in project.parsed.values() for r in p.requirements})
     context = hashlib.sha256(
         json.dumps([(BUILDENV / "resolve.py").read_text(), lock.sources, wanted]).encode()
     ).hexdigest()
-    builds = {name: cached_build(project, name, keys[name]) for name in names}
 
     def found(build: Path) -> dict | None:
         recorded = json.loads(path.read_text()) if (path := build / "recorded.json").exists() else {}
         return recorded if recorded.get("context") == context else None
 
-    if new := [name for name, build in builds.items() if not found(build)]:
-        current = [
-            rpm for n, k in keys.items() if (build := cached_build(project, n, k)).exists() for rpm in _rpms(build)
-        ]
-        binaries = {name: [rpm.name.rsplit("-", 2)[0] for rpm in _rpms(builds[name])] for name in new}
-        parsed = {b.name for p in project.parsed.values() for b in p.binaries}
-        result = record(project, sorted(b for bs in binaries.values() for b in bs if b in parsed), current)
-        for name in new:
-            # not kept: recorded again next time, once what they need is there
-            if failed := sorted(set(binaries[name]) & result.errors.keys()):
-                for binary in failed:
-                    console.print(
-                        f"[yellow]cannot record what rpm generated for {binary}[/]: {escape(result.errors[binary])}"
-                    )
-                continue
-            recorded = {
-                "context": context,
-                "requires": {b: result.requires[b] for b in binaries[name] if b in result.requires},
-                "provides": {b: result.provides[b] for b in binaries[name] if b in result.provides},
-            }
-            write_atomically(builds[name] / "recorded.json", json.dumps(recorded))
+    if new := {name: build for name, build in builds.items() if not found(build)}:
+        _record_new(project, new, keys, context, quiet=quiet)
     # what dry runs do too, without the lock of the project otherwise
     with project.lock():
         lock = load_lock(project)
