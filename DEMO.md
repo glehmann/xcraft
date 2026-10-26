@@ -12,7 +12,7 @@ cd ../xcp-ng-dist
 uv sync && source .venv/bin/activate.fish     # xcraft, in the version xcp-ng-dist pins; in bash: .venv/bin/activate
 ../xcraft/local-s3.sh up         # the local remote storage
 ../xcraft/local-s3.sh env | source  # its credentials, to push; in bash: eval "$(../xcraft/local-s3.sh env)"
-xcraft doctor                    # what the host needs: --fix for the emulation of aarch64
+xcraft doctor                    # what the host needs: --fix installs and configures it
 xcraft build
 xcraft push                      # the builds and the sources, like CI
 xcraft key show                  # or xcraft key create: the developer's key, for step 12
