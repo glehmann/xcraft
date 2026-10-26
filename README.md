@@ -69,8 +69,10 @@ xcraft --install-completion  # optional
 ## How it works
 
 **Project.** Like git, xcraft works on the project of the current directory: the first of it and its parents with an
-`xcraft.toml`. `XCRAFT_PROJECT` can point to another one, like in the tests. XCP-ng's is xcp-ng-dist, which pins the
-version of xcraft it uses: run `uv sync` there, then `uv run xcraft`, or `xcraft` in its activated `.venv`.
+`xcraft.toml`. If none is found, it searches the parents of the xcraft executable, so an installation in a project's
+virtualenv can find that project from elsewhere. `XCRAFT_PROJECT` can point to another one, like in the tests.
+XCP-ng's is xcp-ng-dist, which pins the version of xcraft it uses: run `uv sync` there, then `uv run xcraft`, or
+`xcraft` in its activated `.venv`.
 
 **Packages.** The packages are grouped by the repository they are published in: `<repo>/<pkg>/`, like `base/xen/`,
 for the `repositories` of `xcraft.toml`, `["base"]` by default. Their names are unique across the repositories. Each

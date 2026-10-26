@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import os
 import shutil
+import sys
 import tomllib
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -173,7 +174,7 @@ class Project:
 
     @classmethod
     def find(cls, arch: str | None = None) -> Project:
-        """Return the project of $XCRAFT_PROJECT, or else the first of the current directory and its parents.
+        """Find $XCRAFT_PROJECT, or search upward from the current directory, then the xcraft executable.
 
         It works on the platform of the RPM architecture `arch`, $XCRAFT_ARCH, or the host's, like x86_64 for
         x86_64_v2, or else on the first one of the configuration.
@@ -181,10 +182,12 @@ class Project:
         candidates = (
             [Path(os.environ["XCRAFT_PROJECT"])]
             if "XCRAFT_PROJECT" in os.environ
-            else [Path.cwd(), *Path.cwd().parents]
+            else [Path.cwd(), *Path.cwd().parents, *Path(sys.argv[0]).resolve().parents]
         )
         if not (root := next((d for d in candidates if (d / "xcraft.toml").exists()), None)):
             msg = f"no xcraft.toml in {candidates[0]}" + ("" if "XCRAFT_PROJECT" in os.environ else " or its parents")
+            if "XCRAFT_PROJECT" not in os.environ:
+                msg += f", or the parents of {Path(sys.argv[0]).resolve()}"
             raise RuntimeError(msg)
         with (root / "xcraft.toml").open("rb") as f:
             config = Config.model_validate(tomllib.load(f))
