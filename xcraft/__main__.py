@@ -10,6 +10,7 @@ from typing import Annotated
 
 import typer
 from rich.logging import RichHandler
+from typer import rich_utils
 
 from xcraft import process
 from xcraft.commands import (
@@ -34,6 +35,9 @@ from xcraft.commands import (
     status,
 )
 from xcraft.display import console
+
+# Typer's Rich help does not use Click's max_content_width.
+rich_utils.MAX_WIDTH = min(120, console.width, rich_utils.MAX_WIDTH or 120)
 
 app = typer.Typer(
     help="Build the XCP-ng distribution.",
