@@ -62,7 +62,7 @@ xcraft --install-completion  # optional
 | `xcraft clean [<pkg>...] [--builds] [--ccache]` | Remove the build trees and outdated builds, and optionally all builds and compiler caches, of the given packages or all; the source archives are kept |
 | `xcraft patchset [--package p] [--base ref] [--first n]` | Update the patches of a package with the commits of the current git branch, from the developer's repository |
 | `xcraft import <pkg or srpm>... [--branch b] [--url u] [--repo r]` | Import the history of packages from their packaging repositories, or source RPMs, as the git branches `import/<pkg>/<branch>` to merge, new packages into `base/`, or `<r>/` |
-| `xcraft doctor [--fix]` | Check that the host has what xcraft needs, and with `--fix`, configure the emulation of the other architectures, with sudo, after showing the commands and asking |
+| `xcraft doctor [--fix]` | Check that the host has what xcraft needs, and show the commands fixing what it misses; with `--fix`, run them, with sudo, after showing them and asking: the installs of the missing tools, with the package manager of Debian, Fedora/RHEL, SUSE, Arch, Alpine, Gentoo or Slackware and their derivatives, the subordinate ids of rootless podman, and the emulation of the other architectures |
 | `xcraft import --all` | Import again the packages which have import branches of histories, not of source RPMs only |
 | `xcraft --trace <command>` | Show stack traces on errors |
 
@@ -133,7 +133,7 @@ the project they copy.
 `aarch64`, or in `$XCRAFT_ARCH`, or else the host's, `x86_64_v2` on an x86_64 host. So `xcraft build foo` builds `foo`
 for one architecture only. Another architecture is built under emulation, with podman and qemu-user-static, whose
 registration needs the `C` flag for `sudo` in the containers, which Fedora's has not: `xcraft doctor` checks it, and
-`xcraft doctor --fix` registers it in `/etc/binfmt.d/`. The emulation is fine for the small packages, but their builds
+`xcraft doctor --fix` installs the emulator and registers it in `/etc/binfmt.d/`, with systemd-binfmt, or else directly. The emulation is fine for the small packages, but their builds
 keep the network: qemu-user cannot isolate them, while the large ones are for native builders, which share their builds
 through the [remote storage](#remote-storage). xcraft solves the metadata of the repositories of an emulated
 architecture natively, in its dnf cache: under emulation, that takes most of the time of dnf. Each architecture has its
