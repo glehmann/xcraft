@@ -229,9 +229,10 @@ def import_history(root: Path, pkg_dir: Path, url: str, branches: list[str]) -> 
     )  # fmt: skip
     try:
         tips = {b: git("-C", repo, "rev-parse", ref).encode() for b, ref in fetched.items()}
+        # Commit signatures are stripped by default; --signed-commits needs Git 2.50.
         commits = _parse(process.run_bytes([
             "git", "-C", repo, "fast-export", "--no-data", "--full-tree", "--show-original-ids", "--reencode=yes",
-            "--signed-commits=strip", "--signed-tags=strip", *fetched.values(),
+            "--signed-tags=strip", *fetched.values(),
         ]))  # fmt: skip
         pointers = _lfs_pointers(repo, {blob for c in commits for _, blob in c.files.values()})
         # the rewritten commits: their trees and ancestors, and the one each commit maps to
