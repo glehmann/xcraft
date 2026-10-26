@@ -124,7 +124,10 @@ class Resolver:
         # at the same path each time, for the same directory in the dnf cache, shared by the containers
         ours = Path("/xcraft-ours")
         write_repo(ours, data["ours"])
-        base.repos.add_new_repo("xcraft-ours", base.conf, baseurl=[ours.as_uri()], priority=1, metadata_expire=0)
+        repo = base.repos.add_new_repo("xcraft-ours", base.conf, baseurl=[ours.as_uri()], priority=1)
+        # read again, even when cached in the same second, like that of another project resolved just before: dnf
+        # keeps it then, even with metadata_expire=0
+        repo._repo.expire()  # noqa: SLF001, like dnf expire-cache
         base.fill_sack(load_system_repo=False)
         self.built = {p.name: p for p in base.add_remote_rpms(data["rpms"])}
         upstream = base.sack.query().available().filter(reponame__neq=OURS)
