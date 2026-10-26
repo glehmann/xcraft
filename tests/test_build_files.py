@@ -6,6 +6,8 @@ import fcntl
 import json
 import os
 import re
+import subprocess
+import sys
 import tarfile
 from typing import TYPE_CHECKING
 
@@ -185,6 +187,33 @@ def test_find(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path))
     with pytest.raises(RuntimeError, match=r"no xcraft.toml in \S+$"):
         Project.find()
+
+
+@pytest.mark.parametrize("location", ["outside", "cwd", "override", "missing"])
+def test_find_from_executable(tmp_path: Path, location: str) -> None:
+    executable = tmp_path / "installed/.venv/bin/xcraft"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("from xcraft.project import Project\nprint(Project.find().root)\n")
+    for name in ("installed", "cwd", "override"):
+        (tmp_path / name).mkdir(exist_ok=True)
+        (tmp_path / name / "xcraft.toml").write_text(TOML)
+    env = {k: v for k, v in os.environ.items() if k != "XCRAFT_PROJECT"}
+    if location in {"override", "missing"}:
+        env["XCRAFT_PROJECT"] = str(tmp_path / location)
+    result = subprocess.run(
+        [sys.executable, str(executable)],
+        cwd=tmp_path / "cwd" if location == "cwd" else tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if location == "missing":
+        assert result.returncode != 0
+        assert f"no xcraft.toml in {tmp_path / 'missing'}" in result.stderr
+    else:
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == str(tmp_path / ("installed" if location == "outside" else location))
 
 
 def test_platforms(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
