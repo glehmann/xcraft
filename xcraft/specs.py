@@ -53,6 +53,7 @@ class Package(BaseModel):
     """What xcraft knows about a package directory, from its spec."""
 
     name: str = ""
+    version: str = ""
     binaries: list[Binary] = []
     buildrequires: list[str] = []
     dist: str = ""

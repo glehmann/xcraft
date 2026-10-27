@@ -29,6 +29,7 @@ def parse(spec_file: str, target: str) -> dict:
             or "cannot parse spec"
         }
     return {
+        "version": spec.sourceHeader[rpm.RPMTAG_VERSION],
         "binaries": [
             {
                 "name": h[rpm.RPMTAG_NAME],
