@@ -34,7 +34,7 @@ xcraft --install-completion  # optional
 | `xcraft build <pkg>... --test ID` / `--pre ID` | Test builds, to install on a test host (see [Test builds](#test-builds)) |
 | `xcraft repo <pkg>... --test ID` / `--pre ID` | A repository of new test builds, for test hosts |
 | `xcraft repo <pkg>... --test ID --host h [--upgrade]` | The same, copied to test hosts over ssh, and upgraded there |
-| `xcraft publish [repos\|isos] [--locked] [--local] [--unsigned] [--dev-key] [--arch a]` | Publish a snapshot of the distribution, its repositories and its ISOs, or only those given, for all the architectures or `--arch`, as the latest one; a `--local` one is of the host's architecture by default |
+| `xcraft publish [repos\|isos] [--stage s] [--locked] [--local] [--unsigned] [--dev-key] [--arch a]` | Publish a snapshot of the distribution, its repositories and its ISOs, or only those given, for all the architectures or `--arch`, as the stage's latest one; a `--local` one is of the host's architecture by default |
 | `xcraft iso [--netinstall] [--output f] [-V id] [--locked] [--unsigned]` | Make the installation ISO, from a local snapshot (see [Installation ISO](#installation-iso)) |
 | `xcraft key create` / `xcraft key show [--export]` | The developer's key, which signs the test builds |
 | `xcraft push` | Upload everything the remote storage misses: the source archives and the builds of all packages, with the `index.html` pages of their directories |
@@ -435,16 +435,24 @@ Use `eval "$(./local-s3.sh env ci)"` for the CI credentials; the default credent
 ones they need at runtime, in the remote storage, laid out like the repositories of XCP-ng 8.3:
 
 ```
-repos/<release>/<date>[.<n>]/base/<arch>/    our RPMs and the upstream ones, with their repodata, for each architecture
-repos/<release>/<date>[.<n>]/base/Source/    the source RPMs of all of them
-repos/<release>/<date>[.<n>]/build/<arch>/   the upstream RPMs our builds need, but those of base/<arch>/
-repos/<release>/<date>[.<n>]/build/Source/   their source RPMs
-repos/<release>/latest/...                   a copy of the latest snapshot
-isos/<release>/<date>[.<n>]/<arch>/          the ISOs, with the packages and netinstall, and their signatures (.asc)
-isos/<release>/latest/...                    a copy of the latest ISOs
+repos/<release>/<stage>/<date>[.<n>]/base/<arch>/   our RPMs and upstream packages, with repodata
+repos/<release>/<stage>/<date>[.<n>]/base/Source/   the source RPMs of all architectures
+repos/<release>/<stage>/<date>[.<n>]/build/<arch>/  upstream build dependencies absent from base/<arch>/
+repos/<release>/<stage>/<date>[.<n>]/build/Source/  their source RPMs
+repos/<release>/<stage>/latest/...                 a copy of this stage's latest snapshot
+isos/<release>/<stage>/<date>[.<n>]/<arch>/         packages and netinstall ISOs, with signatures (.asc)
+isos/<release>/<stage>/latest/...                  a copy of this stage's latest ISOs
 ```
 
 `<release>` is `[publish] release` of `xcraft.toml`, like `9.0`.
+`--stage` selects the stage subdirectory for both repositories and ISOs. It defaults to the current OS user name,
+keeping developer publications separate, and can also be set as `[publish] stage`. Each stage has its own dated
+snapshots and `latest`; publishing one stage does not replace another. For example:
+
+```sh
+xcraft publish --to main --stage incoming --arch x86_64_v2 --key <fingerprint>
+xcraft publish --stage kernel-fix  # developer bucket, custom stage
+```
 
 - Our packages are built or fetched, but only fetched for the architectures the host emulates: those are built by
   native builders, which push them. The publish fails when the remote storage misses one of their builds.
@@ -473,9 +481,9 @@ isos/<release>/latest/...                    a copy of the latest ISOs
   the upstream ones and the sources of the previous snapshot, so a snapshot only costs what changed.
 
 `xcraft publish repos` only publishes the repositories, and `xcraft publish isos` the ISOs, under a snapshot name
-used by neither. `xcraft publish --local` only makes the snapshot in `.xcraft/publish/`, its ISOs in its `iso/`, of one
-architecture, like the other commands,
-unless `--arch all` is given. A snapshot published to the storage is of all the architectures, unless `--arch` is
+used by neither within the selected stage. `xcraft publish --local` only makes the snapshot in `.xcraft/publish/`,
+its ISOs in its `iso/`, of one architecture, like the other commands, unless `--arch all` is given.
+A snapshot published to the storage is of all the architectures, unless `--arch` is
 given: it replaces the latest one, whose other architectures would be gone. In CI, after `xcraft push builds`,
 `xcraft publish --locked` fails rather than change the lock.
 

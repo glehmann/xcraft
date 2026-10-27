@@ -205,12 +205,12 @@ xcraft publish --local                      # in .xcraft/publish/, of this archi
 ls .xcraft/publish/ .xcraft/publish/*/      # base/ and build/, with <arch>/ and Source/, and RPM-GPG-KEY
 rpm -qpi .xcraft/publish/base/x86_64_v2/xen-4*.rpm | grep Signature     # ours: the developer's key
 rpm -qpi .xcraft/publish/base/x86_64_v2/glibc-2*.rpm | grep Signature   # upstream: AlmaLinux's, as is
-xcraft publish --dev-key --arch x86_64_v2   # to the storage, as the latest snapshot: all the architectures by
+xcraft publish --stage demo --arch x86_64_v2 # to the dev bucket, as this stage's latest snapshot: all architectures by
                                             # default, but aarch64 has no native builder yet
 ```
 
-- <http://xcraft.web.garage.localhost:3902/repos/9.0/>: a directory per snapshot, by date, and `latest/`
-- <http://xcraft.web.garage.localhost:3902/repos/9.0/latest/base/>: `x86_64_v2/` and `Source/`, like in XCP-ng 8.3
-- <http://xcraft.web.garage.localhost:3902/repos/9.0/latest/base/x86_64_v2/repodata/>: `repomd.xml`, and its
+- <http://xcraft-dev.web.garage.localhost:3902/repos/9.0/demo/>: a directory per snapshot, by date, and `latest/`
+- <http://xcraft-dev.web.garage.localhost:3902/repos/9.0/demo/latest/base/>: `x86_64_v2/` and `Source/`, like in XCP-ng 8.3
+- <http://xcraft-dev.web.garage.localhost:3902/repos/9.0/demo/latest/base/x86_64_v2/repodata/>: `repomd.xml`, and its
   signature `repomd.xml.asc`
-- <http://xcraft.web.garage.localhost:3902/signed/>: our builds signed by each key, once, shared by the snapshots
+- <http://xcraft-dev.web.garage.localhost:3902/signed/>: our builds signed by each key, once, shared by the snapshots

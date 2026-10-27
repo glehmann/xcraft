@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import getpass
 import hashlib
 import os
 import shutil
@@ -106,6 +107,8 @@ class Publish(BaseModel):
 
     release: str = ""
     """Name of the release, in the paths of its repositories: needed to publish."""
+    stage: str = Field(default_factory=getpass.getuser, pattern=r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
+    """Subdirectory of the release's repositories and ISOs; the current user by default."""
     extra: list[str] = []
     """Upstream packages to publish too, for convenience, like mc, with what they need."""
     build: bool = True
@@ -161,7 +164,7 @@ class Config(BaseModel):
     import_: Import = Field(Import(), alias="import")
     remote: dict[Destination, Remote] = {}
     """The independent main and developer buckets, each with its own public URL and S3 settings."""
-    publish: Publish = Publish()
+    publish: Publish = Field(default_factory=Publish)
     ccache_size: dict[str, str] = {}
     """The maximum size of the compiler cache of packages, by name, like 20G: ccache's default, 5G, for the others."""
     same_version: list[list[str]] = []
