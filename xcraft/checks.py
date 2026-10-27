@@ -17,7 +17,7 @@ from xcraft.container import BUILDENV
 from xcraft.display import changes, console
 from xcraft.lock import Locked, load_lock, save_lock
 from xcraft.project import write_atomically
-from xcraft.resolution import Resolved, prepare, record, resolve
+from xcraft.resolution import Resolved, prepare, resolve, resolve_rpm_deps
 from xcraft.specs import is_debug
 
 if TYPE_CHECKING:
@@ -113,14 +113,16 @@ def _rpms(build: Path) -> list[Path]:
     return [p for p in (build / "RPMS").rglob("*.rpm") if not is_debug(p.name.rsplit("-", 2)[0])]
 
 
-def _record_new(project: Project, builds: dict[str, Path], keys: dict[str, str], context: str, *, quiet: bool) -> None:
+def _record_new_rpm_deps(
+    project: Project, builds: dict[str, Path], keys: dict[str, str], context: str, *, quiet: bool
+) -> None:
     """Keep with the `builds` what rpm generated for their binary packages, in `context`, but for those which cannot
     be recorded yet, shown unless `quiet`: they are recorded again next time, once what they need is there.
     """  # noqa: D205
     current = [rpm for n, k in keys.items() if (build := cached_build(project, n, k)).exists() for rpm in _rpms(build)]
     binaries = {name: [rpm.name.rsplit("-", 2)[0] for rpm in _rpms(build)] for name, build in builds.items()}
     parsed = {b.name for p in project.parsed.values() for b in p.binaries}
-    result = record(project, sorted(b for bs in binaries.values() for b in bs if b in parsed), current)
+    result = resolve_rpm_deps(project, sorted(b for bs in binaries.values() for b in bs if b in parsed), current)
     for name, build in builds.items():
         if failed := sorted(set(binaries[name]) & result.errors.keys()):
             for binary in [] if quiet else failed:
@@ -133,10 +135,10 @@ def _record_new(project: Project, builds: dict[str, Path], keys: dict[str, str],
             "requires": {b: result.requires[b] for b in binaries[name] if b in result.requires},
             "provides": {b: result.provides[b] for b in binaries[name] if b in result.provides},
         }
-        write_atomically(build / "recorded.json", json.dumps(recorded))
+        write_atomically(build / "rpm-deps.json", json.dumps(recorded))
 
 
-def record_built(project: Project, names: list[str], keys: dict[str, str], *, quiet: bool = False) -> bool:
+def record_rpm_deps(project: Project, names: list[str], keys: dict[str, str], *, quiet: bool = False) -> bool:
     """Record in the lock what rpm generated for the binary packages of the cached builds of `names`, with `keys`,
     and return whether the lock changed.
 
@@ -152,11 +154,11 @@ def record_built(project: Project, names: list[str], keys: dict[str, str], *, qu
     ).hexdigest()
 
     def found(build: Path) -> dict | None:
-        recorded = json.loads(path.read_text()) if (path := build / "recorded.json").exists() else {}
+        recorded = json.loads(path.read_text()) if (path := build / "rpm-deps.json").exists() else {}
         return recorded if recorded.get("context") == context else None
 
     if new := {name: build for name, build in builds.items() if not found(build)}:
-        _record_new(project, new, keys, context, quiet=quiet)
+        _record_new_rpm_deps(project, new, keys, context, quiet=quiet)
     # what dry runs do too, without the lock of the project otherwise
     with project.lock():
         lock = load_lock(project)
