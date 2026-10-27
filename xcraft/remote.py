@@ -403,10 +403,28 @@ def _objects(s3: S3Client, bucket: str, prefix: str, *, below: bool) -> tuple[se
 
 _STYLE = """
 <style>
-body { font-family: monospace }
-td, th { padding: 0.1em 1em; text-align: left }
-td:nth-child(2), th:nth-child(2) { text-align: right }
-th { cursor: pointer }
+:root { color-scheme: light dark }
+body { margin: 0 auto; padding: 2.5rem 1.5rem 6rem; max-width: 64rem;
+       font-family: system-ui, sans-serif; font-size: .9rem; color: #22222c; background: #fff }
+img { display: block; width: 10rem; margin-bottom: 1.5rem }
+h1 { font-size: 1.1rem; font-weight: 600; margin: 0 0 1.25rem }
+a { color: inherit; text-decoration: none }
+table { border-collapse: collapse; width: 100% }
+th { font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .08em;
+     color: #8b8b94; cursor: pointer; user-select: none }
+td { border-top: 1px solid #ececf1; color: #6d6d76 }
+th, td { padding: .4rem 0; text-align: left }
+th + th, td + td { padding-left: 1.5rem }
+th:nth-child(n+2), td:nth-child(n+2) { text-align: right; white-space: nowrap }
+td:first-child { color: inherit }
+tbody tr:hover { background: #f6f6f9 }
+tbody a:hover { text-decoration: underline }
+@media (prefers-color-scheme: dark) {
+  body { color: #e4e4ec; background: #14141a }
+  th { color: #9797a3 }
+  td { border-color: #26262f; color: #ababb6 }
+  tbody tr:hover { background: #1d1d25 }
+}
 </style>"""
 
 # sorts the rows by the data-k of the cells of a column, at a click on its header, then in reverse
@@ -453,19 +471,20 @@ def _row(name: str, href: str, size: int, date: dt.datetime | None) -> str:
     )
 
 
-def _page(prefix: str, dirs: _Dirs, files: dict[str, _Entry]) -> str:
+def _page(prefix: str, dirs: _Dirs, files: dict[str, _Entry], logo: str | None) -> str:
     rows = [_row(d, f"{d}/", *total) for d, total in sorted(dirs.items())]
     rows += [_row(f, f, *entry) for f, entry in sorted(files.items())]
     parent = '<tr><td><a href="../">../</a></td></tr>' if prefix else ""
     title = escape(f"/{prefix}")
+    img = f'<img src="{escape(logo)}" alt="">\n' if logo else ""
     return (
         f'<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>{title}</title>{_STYLE}</head><body>\n'
-        f"<h1>{title}</h1>\n<table>\n<thead><tr><th>Name</th><th>Size</th><th>Date</th></tr>{parent}</thead>\n"
+        f"{img}<h1>{title}</h1>\n<table>\n<thead><tr><th>Name</th><th>Size</th><th>Date</th></tr>{parent}</thead>\n"
         "<tbody>\n" + "\n".join(rows) + f"\n</tbody>\n</table>\n{_SORT}\n</body></html>\n"
     )
 
 
-def update_pages(storage: Remote, prefixes: list[str]) -> int:
+def update_pages(project: Project, storage: Remote, prefixes: list[str]) -> int:
     """Write the pages of the directories under the directories `prefixes`, and of their parents; return how many.
 
     The directories are the prefixes ending with ``/``, and ``""`` is the root.
@@ -505,7 +524,7 @@ def update_pages(storage: Remote, prefixes: list[str]) -> int:
             s3.put_object(
                 Bucket=storage.bucket,
                 Key=prefix + INDEX,
-                Body=_page(prefix, dirs, files).encode(),
+                Body=_page(prefix, dirs, files, project.config.logo).encode(),
                 ContentType="text/html; charset=utf-8",
                 # revalidated by the browsers, by their ETag: they change with each push, under the same name
                 CacheControl="no-cache",

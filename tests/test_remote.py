@@ -807,10 +807,22 @@ def test_manifest_paths_stay_in_their_tree(root: Path, tmp_path: Path) -> None:
 
 
 def test_pages_of_nested_directories(root: Path, tmp_path: Path) -> None:
-    storage = Project.find().config.remote.get("main")
-    assert storage
+    storage = Project.find().config.remote["main"]
     (tmp_path / "file").write_bytes(b"x" * 1000)
     remote.upload(storage, "nested/a/b/file", tmp_path / "file")
-    remote.update_pages(storage, ["nested/a/", "nested/"])
+    remote.update_pages(Project.find(), storage, ["nested/a/", "nested/"])
     assert 'href="b/">b/</a></td><td data-k="1000"' in page("nested/a/")
     assert 'href="a/">a/</a></td><td data-k="1000"' in page("nested/")
+    assert "<img" not in page("nested/")
+
+
+def test_logo_on_the_pages(root: Path, tmp_path: Path) -> None:
+    storage = Project.find().config.remote["main"]
+    (tmp_path / "file").write_bytes(b"x" * 1000)
+    remote.upload(storage, "nested/x", tmp_path / "file")
+    remote.update_pages(Project.find(), storage, ["nested/"])
+    assert "<img" not in page("nested/")
+    before, sep, after = (root / "xcraft.toml").read_text().partition("\n[")
+    (root / "xcraft.toml").write_text(f'{before}logo = "https://xcp-ng.org/assets/img/mainlogo.png"\n{sep}{after}')
+    remote.update_pages(Project.find(), Project.find().config.remote["main"], ["nested/"])
+    assert '<img src="https://xcp-ng.org/assets/img/mainlogo.png" alt="">' in page("nested/")

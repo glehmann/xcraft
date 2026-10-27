@@ -412,7 +412,8 @@ for a passphrase. Give the key and S3 write credentials only to trusted jobs; pu
 without them. Disable shell tracing while handling secrets.
 
 The storage does not list its directories: xcraft writes the `index.html` page of each directory it changes, and of
-their parents, to browse it. `xcraft push index` makes all of them, for what was not written by xcraft.
+their parents, to browse it. `xcraft push index` makes all of them, for what was not written by xcraft. A project shows
+its logo at their top, as its `logo` in `xcraft.toml`, when it has one: a link, not a copy in the storage.
 
 For development, `local-s3.sh` runs such a storage locally, with Garage in a container, and the `xcraft.toml` of xcp-ng-dist uses
 it:

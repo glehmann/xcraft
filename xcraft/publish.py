@@ -364,6 +364,7 @@ def _upload(  # noqa: PLR0913
     tree: str,
     latest: str,
     *,
+    project: Project,
     signer: Signer | None,
     trusted: Signer | None,
     stored: dict[str, tuple[str, str]] | None = None,
@@ -399,7 +400,7 @@ def _upload(  # noqa: PLR0913
         remote.write_manifest(storage, latest, manifest, signer=signer)
         _delete_stale(storage, latest, keep)
         on_line("the pages of the directories")
-        remote.update_pages(storage, [f"{tree}/", f"{latest}/", *(pages or [])])
+        remote.update_pages(project, storage, [f"{tree}/", f"{latest}/", *(pages or [])])
     console.print(f"[bold green]✓[/] published {tree}, and as {latest}")
 
 
@@ -434,6 +435,7 @@ def upload_snapshot(
         files,
         repos,
         latest,
+        project=project,
         signer=signer or signing_key(project),
         trusted=dev_signer(project),
         stored=stored,
@@ -451,6 +453,7 @@ def upload_isos(project: Project, src: Path, storage: Remote, name: str, *, sign
         files,
         _tree(project, "isos", name),
         _tree(project, "isos", "latest"),
+        project=project,
         signer=signer or signing_key(project),
         trusted=dev_signer(project),
     )
