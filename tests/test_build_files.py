@@ -18,7 +18,7 @@ from tests import TOML, config
 from xcraft import build, cache, ccache, testbuilds
 from xcraft.build import queued
 from xcraft.cache import BuildError, build_keys, previous_duration, recipe_key
-from xcraft.checks import _check_made, record_built
+from xcraft.checks import _check_made, record_rpm_deps
 from xcraft.clean import clean, repos_disk_usage
 from xcraft.commands import complete_arch, load
 from xcraft.localrepo import RepoError, fresh_dir
@@ -320,21 +320,23 @@ def test_check_made(project: Project, tmp_path: Path) -> None:
     _check_made(project, "foo", tmp_path, test=True)
 
 
-def test_record_built(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_record_rpm_deps(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     build = project.state / "cache/builds/x86_64_v2/foo/key"
     (build / "RPMS/x86_64").mkdir(parents=True)
     (build / "RPMS/x86_64/foo-1.0-1.x86_64.rpm").touch()
     binary = Binary(name="foo", evr="1.0-1", arch="x86_64", provides=[], requires=[])
     project.parsed = {"foo": Package(name="foo", binaries=[binary])}
     # what cannot be recorded yet is not kept, to record it again next time
-    monkeypatch.setattr("xcraft.checks.record", lambda *_: Resolved(errors={"foo": "nothing provides libbar.so.1"}))
-    assert not record_built(project, ["foo"], {"foo": "key"})
-    assert not (build / "recorded.json").exists()
-    monkeypatch.setattr("xcraft.checks.record", lambda *_: Resolved(requires={"foo": ["bar"]}))
-    assert record_built(project, ["foo"], {"foo": "key"})
+    monkeypatch.setattr(
+        "xcraft.checks.resolve_rpm_deps", lambda *_: Resolved(errors={"foo": "nothing provides libbar.so.1"})
+    )
+    assert not record_rpm_deps(project, ["foo"], {"foo": "key"})
+    assert not (build / "rpm-deps.json").exists()
+    monkeypatch.setattr("xcraft.checks.resolve_rpm_deps", lambda *_: Resolved(requires={"foo": ["bar"]}))
+    assert record_rpm_deps(project, ["foo"], {"foo": "key"})
     assert load_lock(project).requires.shared == {"foo": ["bar"]}
-    monkeypatch.setattr("xcraft.checks.record", lambda *_: pytest.fail("recorded again"))
-    assert not record_built(project, ["foo"], {"foo": "key"})
+    monkeypatch.setattr("xcraft.checks.resolve_rpm_deps", lambda *_: pytest.fail("recorded again"))
+    assert not record_rpm_deps(project, ["foo"], {"foo": "key"})
 
 
 def test_builds_still_to_build_again_fail(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -405,7 +407,7 @@ def test_packages_edited_while_building(project: Project, monkeypatch: pytest.Mo
 
 def test_recordings_not_converging(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(build, "build_keys", lambda *_: {})
-    monkeypatch.setattr(build, "record_built", lambda *_: True)
+    monkeypatch.setattr(build, "record_rpm_deps", lambda *_: True)
     monkeypatch.setattr(build, "prepare", lambda _: None)
     with pytest.raises(BuildError, match="keeps changing the keys"):
         build._record_cached(project, {})  # noqa: SLF001

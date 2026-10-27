@@ -30,7 +30,7 @@ from xcraft.cache import (
     inputs,
     previous_duration,
 )
-from xcraft.checks import BuildRootChangedError, check_build, check_resolved, record_built, record_dynamic
+from xcraft.checks import BuildRootChangedError, check_build, check_resolved, record_dynamic, record_rpm_deps
 from xcraft.container import DNF_LOCK, ContainerError, build_image, run
 from xcraft.display import activity, console, diagnostics, duration, log_step, print_log_line, read_tail
 from xcraft.graph import build_order, reachable
@@ -167,7 +167,7 @@ def _build_one(  # noqa: PLR0913
         for output in ("RPMS", "SRPMS"):
             signer.sign_rpms(project, tree / output)
     _cache(project, name, keys[name], tree, autorev)
-    record_built(project, [name], keys, quiet=True)  # see _build_all()
+    record_rpm_deps(project, [name], keys, quiet=True)  # see _build_all()
 
 
 def _cache(project: Project, name: str, key: str, tree: Path, autorev: dict[str, str]) -> Path:
@@ -297,7 +297,7 @@ def _record_cached(project: Project, autorev: dict[str, str]) -> tuple[dict[str,
     hashes = inputs(project)
     for _ in range(5):
         keys = build_keys(project, autorev, hashes)
-        if not record_built(project, [n for n, k in keys.items() if cached_build(project, n, k).exists()], keys):
+        if not record_rpm_deps(project, [n for n, k in keys.items() if cached_build(project, n, k).exists()], keys):
             return keys, hashes
         prepare(project)  # for what they recorded
     msg = "what the cached builds recorded keeps changing the keys"
@@ -349,7 +349,7 @@ def _build_all(  # noqa: PLR0913
     keys = _current(project, keys, recorded, autorev, hashes)[0]
     # again, what was not recorded when they came, as it needs packages of ours built or fetched after them: a change
     # of the lock changes the keys of the next builds
-    record_built(project, [n for n, r in results.items() if r.status in ("built", "fetched")], keys)
+    record_rpm_deps(project, [n for n, r in results.items() if r.status in ("built", "fetched")], keys)
     return list(results.values()), keys
 
 
@@ -408,7 +408,7 @@ def _fetch_for(project: Project, name: str, keys: dict[str, str], results: dict[
 
 def _fetched(project: Project, name: str, keys: dict[str, str], results: dict[str, Result]) -> None:
     """Record what rpm generated for the build of `name` just fetched, and show it."""
-    record_built(project, [name], keys, quiet=True)  # see _build_all()
+    record_rpm_deps(project, [name], keys, quiet=True)  # see _build_all()
     console.print(f"[green]↓[/] {name} [green]fetched[/]")
     results[name] = Result(name, "fetched")
 
