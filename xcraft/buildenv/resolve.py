@@ -191,10 +191,12 @@ class Resolver:
         base.reset(goal=True)
         base.conf.install_weak_deps = weak
         base.conf.exclude_from_weak = [str(p) for p in exclude_from_weak]  # which resolve() takes
-        for p in installed:
-            base.package_install(p, strict=False)
-        for p in packages:
-            base.package_install(p)
+        # There is no system repository: these packages are available, never already installed.
+        for items, optional in ((installed, True), (packages, False)):
+            for p in items:
+                selector = dnf.selector.Selector(base.sack)
+                selector.set(pkg=[p])
+                base._goal.install(select=selector, optional=optional)  # noqa: SLF001, like dnf package_install
         for dep in deps:
             self.add(dep)
         base.resolve()
