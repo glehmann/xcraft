@@ -11,12 +11,14 @@ import pytest
 
 import tests
 from tests import PROJECT, TOML, TOYS, UPSTREAM, config
+from xcraft import container, process
 from xcraft.cache import build_keys
 from xcraft.container import build_image, run_natively
 from xcraft.project import Project
 from xcraft.resolution import prepare
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 
@@ -56,7 +58,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
 
 @pytest.fixture(scope="session")
-def build_environment(tmp_path_factory: pytest.TempPathFactory) -> None:
+def build_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
     """Build the image of the build environment of the test projects first, and resolve their lock, once for all the
     workers of pytest-xdist, rather than all of them at once: the tests in containers copy that template, the others
     do not need it.
@@ -76,3 +78,38 @@ def build_environment(tmp_path_factory: pytest.TempPathFactory) -> None:
             build_image(native)
             build_keys(native)
     tests.TEMPLATE = root
+    if "PYTEST_XDIST_WORKER" not in os.environ:
+        yield
+        return
+    # Workers run real dnf transactions, with separate caches so their locks do not serialize the tests.
+    cache_name = container._dnf_cache  # noqa: SLF001
+    volumes: dict[str, tuple[str, Path]] = {}
+
+    def worker_cache(project: Project) -> str:
+        source = cache_name(project)
+        if source not in volumes:
+            volume = f"{source}-test-{os.getpid()}"
+            directory = tmp_path_factory.mktemp(f"dnf-{project.arch}")
+            process.run(
+                ["podman", "volume", "create", "--opt", "type=none", "--opt", f"device={directory}",
+                 "--opt", "o=bind", volume],
+                capture=True,
+            )  # fmt: skip
+            volumes[source] = volume, directory
+            process.run(
+                ["podman", "run", "--rm", "--security-opt", "label=disable", "--volume", f"{source}:/from",
+                 "--volume", f"{volume}:/to", container.base_image(project.on_host()), "flock", "--shared",
+                 "/from/.xcraft.lock", "cp", "-a", "--reflink=auto", "/from/.", "/to"],
+                capture=True,
+            )  # fmt: skip
+        return volumes[source][0]
+
+    try:
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(container, "_dnf_cache", worker_cache)
+            worker_cache(Project(root, config()).on_host())
+            yield
+    finally:
+        for volume, directory in volumes.values():
+            process.run(["podman", "volume", "rm", volume], check=False, capture=True)
+            process.run(["podman", "unshare", "rm", "-rf", str(directory)], capture=True)
