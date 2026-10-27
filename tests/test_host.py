@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from tests.test_build import xcraft
 from xcraft import host
 from xcraft.host import Fix
 
@@ -101,6 +102,65 @@ def test_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, os_release: st
     (tmp_path / "os-release").write_text(os_release)
     monkeypatch.setattr(host, "_OS_RELEASE", tmp_path / "os-release")
     assert [str(fix) for fix in host.install(["podman", "gpg", "qemu-x86_64_v2", "qemu-aarch64"])] == commands
+
+
+@pytest.mark.parametrize(
+    ("distro", "commands"),
+    [
+        ("debian", ["sudo apt-get install -y qemu-system-x86 qemu-utils ovmf qemu-user-static"]),
+        ("fedora", ["sudo dnf install -y qemu-system-x86-core qemu-img edk2-ovmf qemu-user-static"]),
+        ("rhel", ["sudo dnf install -y qemu-img edk2-ovmf"]),
+        ("suse", ["sudo zypper install -y qemu-x86 qemu-tools qemu-ovmf-x86_64 qemu-linux-user"]),
+        (
+            "arch",
+            [
+                (
+                    "sudo pacman -S --needed --noconfirm qemu-system-x86 qemu-img edk2-ovmf "
+                    "qemu-user-static qemu-user-static-binfmt"
+                )
+            ],
+        ),
+        ("alpine", ["sudo apk add qemu-system-x86_64 qemu-img ovmf qemu-aarch64"]),
+        ("gentoo", ["sudo emerge --noreplace app-emulation/qemu sys-firmware/edk2-ovmf"]),
+        ("slackware", ["sudo sboinstall -r qemu"]),
+    ],
+)
+def test_install_vm_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, distro: str, commands: list[str]) -> None:
+    (tmp_path / "os-release").write_text(f"ID={distro}\n")
+    monkeypatch.setattr(host, "_OS_RELEASE", tmp_path / "os-release")
+    tools = ["qemu-system-x86_64", "qemu-img", "ovmf", "qemu-aarch64"]
+    assert [str(fix) for fix in host.install(tools)] == commands
+
+
+@pytest.mark.parametrize("missing_tools", [False, True])
+def test_doctor_outside_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, missing_tools: bool) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("XCRAFT_PROJECT", raising=False)
+    if missing_tools:
+        monkeypatch.setenv("PATH", "")
+    code, output = xcraft("doctor")
+    assert code in {0, 1}, output
+    assert "no xcraft.toml" not in output
+    assert "qemu-system-x86_64:" in output
+    assert "qemu-img:" in output
+    assert "UEFI firmware:" in output
+    assert "KVM:" in output
+    assert "remote storage" not in output
+    if missing_tools:
+        assert "qemu-system-x86_64: not found" in output
+        assert "qemu-img: not found" in output
+
+
+def test_doctor_invalid_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path))
+    code, output = xcraft("doctor")
+    assert code == 1
+    assert "no xcraft.toml" in output
+    (tmp_path / "xcraft.toml").write_text("base_image = 123\n")
+    code, output = xcraft("doctor")
+    assert code == 1
+    assert "validation error" in output
+    assert "base_image" in output
 
 
 def test_subids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

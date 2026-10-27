@@ -34,6 +34,10 @@ class ProjectLockedError(RuntimeError):
     """Raised when the lock of a project is held by another command."""
 
 
+class ProjectNotFoundError(RuntimeError):
+    """Raised when no project configuration can be found."""
+
+
 class Repo(BaseModel):
     """A repository of the build environment."""
 
@@ -207,7 +211,7 @@ class Project:
             msg = f"no xcraft.toml in {candidates[0]}" + ("" if "XCRAFT_PROJECT" in os.environ else " or its parents")
             if "XCRAFT_PROJECT" not in os.environ:
                 msg += f", or the parents of {Path(sys.argv[0]).resolve()}"
-            raise RuntimeError(msg)
+            raise ProjectNotFoundError(msg)
         with (root / "xcraft.toml").open("rb") as f:
             config = Config.model_validate(tomllib.load(f))
         platforms = {ARCHES[p]: p for p in config.platforms}

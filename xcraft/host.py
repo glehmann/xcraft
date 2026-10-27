@@ -40,21 +40,59 @@ _DISTROS = {
     "debian": [
         (
             "apt-get install -y",
-            {"gpg": "gnupg", "ssh": "openssh-client", "newuidmap": "uidmap", "qemu": "qemu-user-static"},
+            {
+                "gpg": "gnupg",
+                "ssh": "openssh-client",
+                "newuidmap": "uidmap",
+                "qemu": "qemu-user-static",
+                "qemu-system-x86_64": "qemu-system-x86",
+                "qemu-img": "qemu-utils",
+                "ovmf": "ovmf",
+            },
         )
     ],
     "fedora": [
         (
             "dnf install -y",
-            {"gpg": "gnupg2", "ssh": "openssh-clients", "newuidmap": "shadow-utils", "qemu": "qemu-user-static"},
+            {
+                "gpg": "gnupg2",
+                "ssh": "openssh-clients",
+                "newuidmap": "shadow-utils",
+                "qemu": "qemu-user-static",
+                "qemu-system-x86_64": "qemu-system-x86-core",
+                "qemu-img": "qemu-img",
+                "ovmf": "edk2-ovmf",
+            },
         )
     ],
     # RHEL and its rebuilds, which have no qemu-user, not even in EPEL
-    "rhel": [("dnf install -y", {"gpg": "gnupg2", "ssh": "openssh-clients", "newuidmap": "shadow-utils", "qemu": ""})],
+    "rhel": [
+        (
+            "dnf install -y",
+            {
+                "gpg": "gnupg2",
+                "ssh": "openssh-clients",
+                "newuidmap": "shadow-utils",
+                "qemu": "",
+                # qemu-kvm installs /usr/libexec/qemu-kvm rather than the executable boot uses.
+                "qemu-system-x86_64": "",
+                "qemu-img": "qemu-img",
+                "ovmf": "edk2-ovmf",
+            },
+        )
+    ],
     "suse": [
         (
             "zypper install -y",
-            {"gpg": "gpg2", "ssh": "openssh-clients", "newuidmap": "shadow", "qemu": "qemu-linux-user"},
+            {
+                "gpg": "gpg2",
+                "ssh": "openssh-clients",
+                "newuidmap": "shadow",
+                "qemu": "qemu-linux-user",
+                "qemu-system-x86_64": "qemu-x86",
+                "qemu-img": "qemu-tools",
+                "ovmf": "qemu-ovmf-x86_64",
+            },
         )
     ],
     "arch": [
@@ -65,11 +103,25 @@ _DISTROS = {
                 "ssh": "openssh",
                 "newuidmap": "shadow",
                 "qemu": "qemu-user-static qemu-user-static-binfmt",
+                "qemu-system-x86_64": "qemu-system-x86",
+                "qemu-img": "qemu-img",
+                "ovmf": "edk2-ovmf",
             },
         )
     ],
     "alpine": [
-        ("apk add", {"gpg": "gnupg", "ssh": "openssh-client", "newuidmap": "shadow-uidmap", "qemu": "qemu-{arch}"})
+        (
+            "apk add",
+            {
+                "gpg": "gnupg",
+                "ssh": "openssh-client",
+                "newuidmap": "shadow-uidmap",
+                "qemu": "qemu-{arch}",
+                "qemu-system-x86_64": "qemu-system-x86_64",
+                "qemu-img": "qemu-img",
+                "ovmf": "ovmf",
+            },
+        )
     ],
     "gentoo": [
         (
@@ -83,13 +135,26 @@ _DISTROS = {
                 "ssh": "net-misc/openssh",
                 "newuidmap": "sys-apps/shadow",
                 "qemu": "app-emulation/qemu",
+                "qemu-system-x86_64": "app-emulation/qemu",
+                "qemu-img": "app-emulation/qemu",
+                "ovmf": "sys-firmware/edk2-ovmf",
             },
         )
     ],
     # podman, git-lfs and qemu are not in Slackware, but in SlackBuilds.org
     "slackware": [
         ("slackpkg install", {"gpg": "gnupg2", "ssh": "openssh", "newuidmap": "shadow"}),
-        ("sboinstall -r", {"podman": "podman", "git-lfs": "git-lfs", "qemu": "qemu"}),
+        (
+            "sboinstall -r",
+            {
+                "podman": "podman",
+                "git-lfs": "git-lfs",
+                "qemu": "qemu",
+                "qemu-system-x86_64": "qemu",
+                "qemu-img": "qemu",
+                "ovmf": "",
+            },
+        ),
     ],
 }
 
@@ -124,7 +189,8 @@ def install(tools: list[str]) -> list[Fix]:
     installers = _DISTROS.get(distribution(), [])
     commands: dict[str, list[str]] = {}
     for tool in tools if installers else []:
-        name, _, arch = tool.partition("-") if tool.startswith("qemu-") else (tool, "", "")
+        arch = tool.removeprefix("qemu-") if tool.startswith("qemu-") else ""
+        name, arch = ("qemu", arch) if arch in _QEMU else (tool, "")
         cmd, packages = next(((cmd, p[name]) for cmd, p in installers if name in p), (installers[0][0], name))
         if packages:
             commands.setdefault(cmd, []).extend(packages.format(arch=_QEMU.get(arch, "")).split())

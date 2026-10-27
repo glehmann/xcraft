@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from xcraft.container import DNF_LOCK, run
 from xcraft.lock import Locked, load_lock, save_lock
+from xcraft.publish import REPO, snapshot
 from xcraft.resolution import lock_installed, resolve_image
 
 if TYPE_CHECKING:
@@ -25,6 +26,21 @@ TOOLS = ["dosfstools", "memtest86+", "mtools", "syslinux-nonlinux", "xorriso"]
 _INSTALL_TOOLS = f"{DNF_LOCK} dnf -q -y --setopt=install_weak_deps=False install {' '.join(TOOLS)}"
 KEY_FILE = "RPM-GPG-KEY-xcpng"
 """The public key of the signed repository of the ISO, as named in its .treeinfo."""
+
+
+def build_iso(
+    project: Project,
+    output: Path | None = None,
+    *,
+    netinstall: bool = False,
+    volid: str | None = None,
+    signer: Signer | None = None,
+) -> Path:
+    """Build or fetch the current packages, assemble a local snapshot, and make its installation ISO."""
+    with project.lock():
+        dest = (project.state / "publish").absolute()
+        snapshot([project], dest, signer=signer, storage=None, build=False)
+        return make_iso(project, dest / REPO / project.arch, output, netinstall=netinstall, volid=volid, signer=signer)
 
 
 def _lock_tools(project: Project, recorded: dict[str, Locked]) -> bool:
@@ -93,7 +109,8 @@ def make_iso(  # noqa: PLR0913
         tree = work / "tree"
         if signer and not netinstall:
             signer.sign_file(tree / "repodata/repomd.xml")
-            (tree / KEY_FILE).write_text(signer.public_key())
+            keys = tree / KEY_FILE
+            keys.write_text(signer.public_key() + "\n" + keys.read_text())
         info = json.loads((work / "info.json").read_text())
         suffix = "-netinstall" if netinstall else ""
         output = (output or project.state / "iso" / f"xcp-ng-{info['version']}{suffix}.iso").absolute()

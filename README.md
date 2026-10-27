@@ -10,6 +10,7 @@ container made only of AlmaLinux 10 packages, in the versions of a committed loc
 - git and git-lfs, to import packages
 - ssh and rsync, to copy repositories of test builds to test hosts
 - gpg, to sign packages
+- qemu-system-x86_64, qemu-img, and OVMF firmware, to boot installer VMs with `xcraft boot`
 
 Everything else, rpm and dnf included, runs in the build environment.
 
@@ -36,6 +37,9 @@ xcraft --install-completion  # optional
 | `xcraft repo <pkg>... --test ID --host h [--upgrade]` | The same, copied to test hosts over ssh, and upgraded there |
 | `xcraft publish [repos\|isos] [--stage s] [--locked] [--local] [--unsigned] [--dev-key] [--arch a]` | Publish a snapshot of the distribution, its repositories and its ISOs, or only those given, for all the architectures or `--arch`, as the stage's latest one; a `--local` one is of the host's architecture by default |
 | `xcraft iso [--netinstall] [--output f] [-V id] [--locked] [--unsigned]` | Make the installation ISO, from a local snapshot (see [Installation ISO](#installation-iso)) |
+| `xcraft boot [--iso f] [--disk f] [--headless] [--unsigned]` | Build the ISO and boot its installer in a local QEMU VM, creating a virtual disk if missing |
+| `xcraft boot --installed [--disk f]` | Boot the installed virtual disk without making or attaching an ISO |
+| `xcraft vm <command>` | Inspect a VM, read its console, send input, save diagnostics, or stop it |
 | `xcraft key create` / `xcraft key show [--export]` | The developer's key, which signs the test builds |
 | `xcraft push` | Upload everything the remote storage misses: the source archives and the builds of all packages, with the `index.html` pages of their directories |
 | `xcraft push sources [<pkg>...] [--check] [--to main\|dev]` | Upload cached sources, or check the selected bucket; defaults to dev |
@@ -62,7 +66,7 @@ xcraft --install-completion  # optional
 | `xcraft clean [<pkg>...] [--builds] [--ccache]` | Remove the build trees and outdated builds, and optionally all builds and compiler caches, of the given packages or all; the source archives are kept |
 | `xcraft patchset [--package p] [--base ref] [--first n]` | Update the patches of a package with the commits of the current git branch, from the developer's repository |
 | `xcraft import <pkg or srpm>... [--branch b] [--url u] [--repo r]` | Import the history of packages from their packaging repositories, or source RPMs, as the git branches `import/<pkg>/<branch>` to merge, new packages into `base/`, or `<r>/` |
-| `xcraft doctor [--fix]` | Check that the host has what xcraft needs, and show the commands fixing what it misses; with `--fix`, run them, with sudo, after showing them and asking: the installs of the missing tools, with the package manager of Debian, Fedora/RHEL, SUSE, Arch, Alpine, Gentoo or Slackware and their derivatives, the subordinate ids of rootless podman, and the emulation of the other architectures |
+| `xcraft doctor [--fix]` | Check host prerequisites, including QEMU, UEFI firmware and KVM, even outside a project. Inside a project, also check architecture emulation and remote storage. With `--fix`, show and confirm commands to install missing tools and configure rootless podman and emulation, using the host distribution's package manager |
 | `xcraft import --all` | Import again the packages which have import branches of histories, not of source RPMs only |
 | `xcraft --trace <command>` | Show stack traces on errors |
 
@@ -311,6 +315,69 @@ The tools making it, like xorriso and syslinux, are installed in the containers 
 lock, which records them in `iso`. The ISO is `.xcraft/iso/xcp-ng-<version>[-netinstall].iso` by default.
 `xcraft publish` publishes both ISOs, with the packages and netinstall, with the snapshot: see
 [Publishing](#publishing).
+
+### Booting the installer locally
+
+`xcraft boot` builds or fetches the current packages, makes the ISO through the same pipeline as `xcraft iso`, and
+boots it in QEMU/KVM. It currently supports x86_64 and x86_64_v2, with UEFI boot, 8 GiB of RAM, four virtual CPUs,
+and an 80 GiB sparse qcow2 disk in `.xcraft/vm/<arch>/disk.qcow2`.
+
+```bash
+xcraft patchset --repo /path/to/host-installer --package host-installer --base <ref>
+xcraft boot --unsigned                 # rebuild what changed, make the ISO, and run the installer
+xcraft boot --installed                # boot the resulting installation, without rebuilding
+xcraft boot --iso /path/to/image.iso   # boot an existing ISO
+```
+
+The disk persists between runs and is never resized or recreated automatically. Use `--disk /path/to/new.qcow2`
+for a fresh installation, with `--disk-size 100G` to change the size of a new disk. The installer VM exits when it
+requests a reboot; `--installed` then boots the disk. The project lock covers startup, then is released so packages
+can be edited and rebuilt while the VM runs.
+
+OVMF firmware is detected in common distribution locations. Use `--firmware-code` and `--firmware-vars` together
+to supply another CODE image and VARS template. The template is copied only once to the session's `OVMF_VARS.fd`;
+that writable copy persists across installer and installed-disk boots. `--bios` selects legacy BIOS explicitly.
+
+`--memory` sets RAM in MiB, and `--cpus` sets the CPU count. `--headless` disables the display window; use `xcraft vm`
+for console access. `--background` also disables the window and returns once the control monitor is ready. A foreground
+VM stops on Ctrl-C. The default accelerator is KVM, which needs access to `/dev/kvm`; `--accel tcg` uses slower
+software emulation. With KVM, QEMU exposes the host CPU, including nested virtualization when enabled on the host.
+
+Networking uses NAT with an emulated e1000 NIC. Once SSH is running in the installed host, connect with
+`ssh -p 2222 root@127.0.0.1`. `--ssh-port` changes the forwarded localhost port, or disables forwarding with `0`.
+Extra QEMU arguments can be supplied individually, like `--qemu-arg=-display --qemu-arg=gtk`.
+
+#### Controlling a session
+
+Each session retains `session.json`, `qmp.sock`, the `serial.in` input FIFO, `serial.log`, and `qemu.log` alongside
+its disk and firmware variables. Serial capture starts with QEMU and continues while no agent is connected. A new
+launch archives the previous transcripts. A second launch in a running session is rejected.
+
+```sh
+xcraft boot --background --iso /path/to/image.iso
+xcraft vm status                       # JSON launch details and live QEMU status
+xcraft vm console --wait 'Select Keymap' --timeout 90
+xcraft vm text --escape '\t\r'         # serial input, interpreting backslash escapes
+xcraft vm text --enter 'some text'     # literal UTF-8 followed by Enter
+xcraft vm key ctrl alt f2              # physical QEMU key-code chord
+xcraft vm text --physical --enter 'tail -60 /tmp/install-log'
+xcraft vm screenshot /tmp/installer.png
+xcraft vm logs /tmp/installer-diagnostics
+xcraft vm stop
+xcraft boot --background --installed
+```
+
+`console` renders the current 80-by-24 serial screen and waits for output stability. A wait timeout prints the screen,
+saves a diagnostics bundle in the session directory, and fails. Physical typing uses the US keyboard layout, which
+is useful for diagnostic shells that do not read serial input.
+
+Use `boot --vm-dir /tmp/my-vm` for a separate session, then `xcraft vm --vm-dir /tmp/my-vm <command>` to attach,
+even outside the project. Otherwise both commands select `.xcraft/vm/<arch>`; use `--arch` before the VM subcommand
+to select another architecture. A custom `--disk` changes the disk path, not the session directory.
+
+`vm logs` creates a new directory with the launch details, raw logs, rendered console, and a screenshot/status when
+the VM is reachable. It also works after QEMU exits. Guest files such as `/tmp/install-log` require access inside the
+guest; the `installer-vm` skill in `xcp-ng-dist` includes a retrieval helper. SSH forwarding does not enable guest SSH.
 
 ## Remote storage
 

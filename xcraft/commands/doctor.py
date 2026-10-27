@@ -9,9 +9,9 @@ from typing import Annotated
 
 import typer
 
-from xcraft import host, process, remote
+from xcraft import host, process, remote, vm
 from xcraft.display import console
-from xcraft.project import Project
+from xcraft.project import Project, ProjectNotFoundError
 
 _MARKS = {"ok": "[green]✓[/]", "warning": "[yellow]![/]", "error": "[red]✗[/]"}
 _TOOLS = {
@@ -21,6 +21,8 @@ _TOOLS = {
     "gpg": ("to sign the packages", False),
     "rsync": ("by xcraft repo --host", False),
     "ssh": ("by xcraft repo --host", False),
+    "qemu-system-x86_64": ("by xcraft boot, to run installer VMs", False),
+    "qemu-img": ("by xcraft boot, to create virtual disks", False),
 }
 
 
@@ -56,7 +58,25 @@ def _storage(project: Project) -> list[tuple[str, str]]:
     return [*checks, ("warning", "no S3 credentials in AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, for xcraft push")]
 
 
-def _checks(project: Project) -> tuple[list[tuple[str, str]], list[host.Fix]]:
+def _vm() -> tuple[list[tuple[str, str]], list[str]]:
+    """Check UEFI firmware and acceleration for the x86 installer VMs."""
+    missing = []
+    try:
+        code, _ = vm.firmware(None, None)
+        checks = [("ok", f"UEFI firmware: {code}")]
+    except RuntimeError as exc:
+        checks = [("warning", f"UEFI firmware: {exc}")]
+        missing.append("ovmf")
+    if os.uname().machine != "x86_64":
+        checks.append(("warning", "KVM: x86 installer VMs need an x86 host; use xcraft boot --accel tcg"))
+    elif os.access("/dev/kvm", os.R_OK | os.W_OK):
+        checks.append(("ok", "KVM: /dev/kvm is accessible"))
+    else:
+        checks.append(("warning", "KVM: enable it and grant access to /dev/kvm, or use xcraft boot --accel tcg"))
+    return checks, missing
+
+
+def _checks(project: Project | None) -> tuple[list[tuple[str, str]], list[host.Fix]]:
     """Return the checks of the host, as their state, ok, warning or error, and what they found, and their fixes."""
     checks, missing, fixes = _podman()
     for tool, (needed, required) in _TOOLS.items():
@@ -65,15 +85,19 @@ def _checks(project: Project) -> tuple[list[tuple[str, str]], list[host.Fix]]:
         else:
             checks.append(("error" if required else "warning", f"{tool}: not found, needed {needed}"))
             missing.append(tool)
-    for arch in (p.arch for p in project.all_platforms() if not p.native):
-        if problem := host.emulation_problem(arch):
-            checks.append(("warning", problem))
-            if not host.emulator(arch):
-                missing.append(f"qemu-{arch}")
-            fixes += host.emulation_fix(arch)
-        else:
-            checks.append(("ok", f"emulation of {arch}"))
-    checks += _storage(project)
+    vm_checks, vm_missing = _vm()
+    checks += vm_checks
+    missing += vm_missing
+    if project:
+        for arch in (p.arch for p in project.all_platforms() if not p.native):
+            if problem := host.emulation_problem(arch):
+                checks.append(("warning", problem))
+                if not host.emulator(arch):
+                    missing.append(f"qemu-{arch}")
+                fixes += host.emulation_fix(arch)
+            else:
+                checks.append(("ok", f"emulation of {arch}"))
+        checks += _storage(project)
     install = host.install(missing)
     if missing and not install:
         checks.append(("warning", f"install {', '.join(missing)} with the package manager of the distribution"))
@@ -87,7 +111,12 @@ def doctor(
     ] = False,
 ) -> None:
     """Check that the host has what xcraft needs, and tell how to get what it misses."""
-    project = Project.find()
+    try:
+        project = Project.find()
+    except ProjectNotFoundError:
+        if "XCRAFT_PROJECT" in os.environ:
+            raise
+        project = None
     checks, fixes = _checks(project)
     done: set[str] = set()
     # an install can make other fixes possible, like registering the emulator it installs

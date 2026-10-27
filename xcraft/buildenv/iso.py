@@ -149,6 +149,10 @@ def repository(branding: dict[str, str]) -> None:
     if not config["signed"]:
         # the installer looks for the keys even without checking the signatures
         text = text.replace("\nkey", "\n#key")
+    else:
+        # The installer reads only the first key file, so bundle the upstream keys with ours.
+        with (tree / "RPM-GPG-KEY-xcpng").open("wb") as out:
+            sh("rpm", "-qa", "gpg-pubkey*", "--qf", "%{DESCRIPTION}\n", stdout=out)
     treeinfo.write_text(text)
     packages = tree / "Packages"
     packages.mkdir()
