@@ -6,12 +6,13 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from pydantic import ValidationError
 
 from xcraft import publish as publisher
 from xcraft.commands import Key, To, choose_signer, complete_arch, load, remote_storage
 from xcraft.display import console
 from xcraft.iso import make_isos
-from xcraft.project import Destination, Project
+from xcraft.project import Destination, Project, Publish
 from xcraft.publish import ISO_DIR, REPO, snapshot
 
 app = typer.Typer()
@@ -30,6 +31,10 @@ Unsigned = Annotated[
     ),
 ]
 DevKey = Annotated[bool, typer.Option("--dev-key", help="Sign with the developer's key, for a test storage.")]
+Stage = Annotated[
+    str | None,
+    typer.Option("--stage", help="Stage subdirectory for repositories and ISOs. Defaults to the current user name."),
+]
 Arch = Annotated[
     str | None,
     typer.Option(
@@ -51,6 +56,7 @@ def everything(  # noqa: PLR0913, PLR0917
     dev_key: DevKey = False,
     key: Key = None,
     to: To = "dev",
+    stage: Stage = None,
     arch: Arch = None,
 ) -> None:
     """Publish a snapshot of the distribution in the remote storage, as the latest one, for all the architectures.
@@ -61,10 +67,25 @@ def everything(  # noqa: PLR0913, PLR0917
     fetched, built by native builders.
     """
     if ctx.invoked_subcommand:
-        ctx.default_map = {ctx.invoked_subcommand: {"to": to, **({"key": key} if key else {})}}
+        ctx.default_map = {
+            ctx.invoked_subcommand: {
+                "to": to,
+                **({"key": key} if key else {}),
+                **({"stage": stage} if stage is not None else {}),
+            }
+        }
         return
     _publish(
-        None, locked=locked, local=local, output=output, unsigned=unsigned, dev_key=dev_key, key=key, to=to, arch=arch
+        None,
+        locked=locked,
+        local=local,
+        output=output,
+        unsigned=unsigned,
+        dev_key=dev_key,
+        key=key,
+        to=to,
+        stage=stage,
+        arch=arch,
     )
 
 
@@ -77,9 +98,10 @@ def repos(  # noqa: PLR0913, PLR0917
     dev_key: DevKey = False,
     key: Key = None,
     to: To = "dev",
+    stage: Stage = None,
     arch: Arch = None,
 ) -> None:
-    """Publish the repositories of a snapshot, as repos/<release>/<date>/, and as the latest ones."""
+    """Publish repositories as repos/<release>/<stage>/<date>/, and as the stage's latest snapshot."""
     _publish(
         "repos",
         locked=locked,
@@ -89,6 +111,7 @@ def repos(  # noqa: PLR0913, PLR0917
         dev_key=dev_key,
         key=key,
         to=to,
+        stage=stage,
         arch=arch,
     )
 
@@ -102,15 +125,24 @@ def isos(  # noqa: PLR0913, PLR0917
     dev_key: DevKey = False,
     key: Key = None,
     to: To = "dev",
+    stage: Stage = None,
     arch: Arch = None,
 ) -> None:
-    """Publish the ISOs of a snapshot, with the packages and netinstall, signed like it, as isos/<release>/<date>/,
-    and as the latest ones.
+    """Publish signed packages and netinstall ISOs as isos/<release>/<stage>/<date>/, and as the stage's latest ones.
 
     They are made for the x86_64 architectures, like xcraft iso, in the ISO directory of the snapshot.
-    """  # noqa: D205
+    """
     _publish(
-        "isos", locked=locked, local=local, output=output, unsigned=unsigned, dev_key=dev_key, key=key, to=to, arch=arch
+        "isos",
+        locked=locked,
+        local=local,
+        output=output,
+        unsigned=unsigned,
+        dev_key=dev_key,
+        key=key,
+        to=to,
+        stage=stage,
+        arch=arch,
     )
 
 
@@ -139,10 +171,17 @@ def _publish(  # noqa: PLR0913
     dev_key: bool,
     key: str | None,
     to: Destination,
+    stage: str | None,
     arch: str | None,
 ) -> None:
     """Publish the repositories and the ISOs of a snapshot, or `only` the repos or the isos."""
     project = load(locked=locked, arch=None if arch == "all" else arch)
+    if stage is not None:
+        try:
+            project.config.publish = Publish.model_validate(project.config.publish.model_dump() | {"stage": stage})
+        except ValidationError as e:
+            msg = "stage must start with a letter, digit or underscore and contain only letters, digits, _, - or ."
+            raise typer.BadParameter(msg, param_hint="--stage") from e
     platforms = project.all_platforms() if arch == "all" or (arch is None and not local) else [project]
     if arch is None and len(platforms) < len(others := project.all_platforms()):
         console.print(

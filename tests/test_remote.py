@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import getpass
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ import pytest
 
 from tests import ARCH, PLATFORM, TOML, copy_project
 from tests.test_build import results, write_spec, xcraft
+from xcraft import publish as publisher
 from xcraft import remote
 from xcraft.container import run
 from xcraft.lock import load_lock
@@ -38,6 +40,7 @@ WORKER = int(os.environ.get("PYTEST_XDIST_WORKER", "gw0").removeprefix("gw"))
 CONTAINER = f"xcraft-test-garage-{WORKER}"
 S3_PORT, WEB_PORT = 13900 + 10 * WORKER, 13902 + 10 * WORKER
 WEB = f"http://xcraft.web.garage.localhost:{WEB_PORT}"
+STAGE = getpass.getuser()
 
 
 def garage(*args: str) -> str:
@@ -623,7 +626,7 @@ def test_publish(root: Path) -> None:
     assert storage
     day = datetime.now(UTC).date().isoformat()
     for name in (day, "latest"):
-        base = f"repos/9.0/{name}/base"
+        base = f"repos/9.0/{STAGE}/{name}/base"
         for repo in (*arches, "Source"):
             assert remote.exists(storage, f"{base}/{repo}/repodata/repomd.xml")
             assert remote.exists(
@@ -635,8 +638,14 @@ def test_publish(root: Path) -> None:
     # a second one the same day, without changing the locks, of the repositories only, like all without [iso]
     code, output = xcraft("publish", "repos", "--to", "main", "--locked", "--unsigned")
     assert code == 0, output
-    assert f"published repos/9.0/{day}.2, and as repos/9.0/latest" in output
-    assert not remote.tree_exists(storage, "isos/9.0/latest")
+    assert f"published repos/9.0/{STAGE}/{day}.2, and as repos/9.0/{STAGE}/latest" in output
+    assert not remote.tree_exists(storage, f"isos/9.0/{STAGE}/latest")
+    # An explicit stage has an independent snapshot sequence and latest tree.
+    code, output = xcraft("publish", "--to", "main", "--stage", "incoming", "repos", "--locked", "--unsigned")
+    assert code == 0, output
+    assert f"published repos/9.0/incoming/{day}, and as repos/9.0/incoming/latest" in output
+    assert remote.tree_exists(storage, f"repos/9.0/{STAGE}/latest")
+    assert remote.tree_exists(storage, "repos/9.0/incoming/latest")
     code, output = xcraft("publish", "isos", "--to", "main", "--unsigned")
     assert code == 2
     assert "no ISO to publish: see [iso] in xcraft.toml" in output
@@ -691,8 +700,8 @@ def test_signed_publish(root: Path) -> None:  # noqa: PLR0915
         assert code == 0, output
         storage = Project.find().config.remote.get("main")
         assert storage
-        assert remote.tree_exists(storage, "repos/9.0/latest", trusted=signer)
-        assert not remote.tree_exists(storage, "repos/9.0/latest")
+        assert remote.tree_exists(storage, f"repos/9.0/{STAGE}/latest", trusted=signer)
+        assert not remote.tree_exists(storage, f"repos/9.0/{STAGE}/latest")
         assert xcraft("publish", "--to", "main")[0] == 0
         (root / "xcraft.toml").write_text(
             re.sub(r"build_keys = \[.*?\]", f'build_keys = ["{signer.key}"]', unsigned)
@@ -708,7 +717,7 @@ def test_signed_publish(root: Path) -> None:  # noqa: PLR0915
         check_signatures(Project.find(), snapshot, ours, what="packages of ours", public_key=signer.public_key())
         storage = Project.find().config.remote.get("main")
         assert storage
-        assert remote.exists(storage, f"repos/9.0/latest/base/{ARCH}/repodata/repomd.xml.asc")
+        assert remote.exists(storage, f"repos/9.0/{STAGE}/latest/base/{ARCH}/repodata/repomd.xml.asc")
         signed = list((root / ".xcraft/cache/signed" / signer.key / "trivial").iterdir())
         assert remote.tree_exists(storage, f"signed/{signer.key}/{ARCH}/trivial/{signed[0].name}")
         # signed once: the next snapshots have the same files
@@ -724,8 +733,8 @@ def test_signed_publish(root: Path) -> None:  # noqa: PLR0915
         code, output = xcraft("publish", "repos", "--locked")
         assert code == 0, output
         dev_storage = Project.find().config.remote["dev"]
-        assert remote.tree_exists(dev_storage, "repos/9.0/latest", trusted=signer)
-        assert not remote.tree_exists(dev_storage, "repos/9.0/latest")
+        assert remote.tree_exists(dev_storage, f"repos/9.0/{STAGE}/latest", trusted=signer)
+        assert not remote.tree_exists(dev_storage, f"repos/9.0/{STAGE}/latest")
         assert remote.tree_exists(dev_storage, f"signed/{signer.key}/{ARCH}/trivial/{signed[0].name}", trusted=signer)
     finally:
         subprocess.run(["gpgconf", "--homedir", str(signer.gnupghome), "--kill", "gpg-agent"], check=False)
@@ -742,10 +751,40 @@ def test_publish_rebuilt_package(root: Path, tmp_path: Path) -> None:
     assert storage
     rpm = f"base/{ARCH}/trivial-1.0-1.xcpng8.99.noarch.rpm"
     local = root / ".xcraft/publish" / rpm
-    for name in (re.search(r"published (repos/\S+),", output)[1], "repos/9.0/latest"):  # ty: ignore[not-subscriptable]
+    for name in (re.search(r"published (repos/\S+),", output)[1], f"repos/9.0/{STAGE}/latest"):  # ty: ignore[not-subscriptable]
         assert remote.read_manifest(storage, name)[rpm] == sha256_of(local)
         assert remote.download(storage, f"{name}/{rpm}", tmp_path / name.replace("/", "_"))
         assert sha256_of(tmp_path / name.replace("/", "_")) == sha256_of(local)
+
+
+@pytest.mark.parametrize("command", [[], ["repos"], ["isos"]])
+@pytest.mark.parametrize("stage", ["", ".", "..", "../other", "/absolute", "a/b"])
+def test_invalid_publish_stage(root: Path, command: list[str], stage: str) -> None:
+    code, output = xcraft("publish", *command, "--local", "--stage", stage)
+    assert code == 2
+    assert "stage must start" in " ".join(output.split())
+
+
+def test_iso_stages(root: Path, tmp_path: Path) -> None:
+    project = Project.find()
+    storage = project.config.remote["main"]
+    signer = release_signer(project)
+    assert signer
+    isos = tmp_path / "iso" / ARCH
+    isos.mkdir(parents=True)
+    image = isos / "install.iso"
+    day = datetime.now(UTC).date().isoformat()
+    for stage in ("incoming", "testing"):
+        project.config.publish.stage = stage
+        assert publisher.snapshot_name(project, storage) == day
+        image.write_text(stage)
+        publisher.upload_isos(project, tmp_path, storage, day, signer=signer)
+        assert publisher.snapshot_name(project, storage) == f"{day}.2"
+    for stage in ("incoming", "testing"):
+        for name in (day, "latest"):
+            prefix = f"isos/9.0/{stage}/{name}"
+            assert remote.download_tree(storage, prefix, tmp_path / stage / name)
+            assert (tmp_path / stage / name / ARCH / "install.iso").read_text() == stage
 
 
 def test_manifest_paths_stay_in_their_tree(root: Path, tmp_path: Path) -> None:

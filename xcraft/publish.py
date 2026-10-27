@@ -2,9 +2,9 @@
 
 A snapshot covers all the architectures, like the repositories of XCP-ng 8.3: its repository ``base/`` has the
 binaries of each architecture, self-contained, in ``base/<arch>/``, and the sources of all of them in
-``base/Source/``. It is published as ``repos/<release>/<date>[.<n>]/`` in the remote storage, and copied as
-``repos/<release>/latest/``. All snapshots are kept: the storage stores identical files once, and the files already
-in the storage are copied there rather than uploaded.
+``base/Source/``. It is published as ``repos/<release>/<stage>/<date>[.<n>]/`` in the remote storage, and copied as
+``repos/<release>/<stage>/latest/``. All snapshots are kept: the storage stores identical files once, and files
+already in the storage are copied there rather than uploaded.
 """
 
 from __future__ import annotations
@@ -336,7 +336,7 @@ def _check_installable(project: Project, repos: list[Path]) -> None:
 
 def _tree(project: Project, kind: str, name: str) -> str:
     """Return the path of a snapshot in the storage, of its repositories or its ISOs: `kind` is repos or isos."""
-    return f"{kind}/{project.config.publish.release}/{name}"
+    return f"{kind}/{project.config.publish.release}/{project.config.publish.stage}/{name}"
 
 
 def snapshot_name(project: Project, storage: Remote) -> str:

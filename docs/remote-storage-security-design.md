@@ -1,7 +1,7 @@
 # Design: securing the remote storage
 
-Status: signed trees, independent main and developer buckets, and `--to main|dev` are implemented. Developer
-namespaces, publication repository selection and fixed public repository URLs described below remain to be implemented.
+Status: signed trees, independent main and developer buckets, `--to main|dev` and publication stages are implemented.
+The current stage layout is described below; flat public RPM-repository URLs remain a separate design question.
 
 The bucket and publication decisions were recovered from the OpenCode session "Implement remote storage security
 design", `ses_e8af5dc5affeI2ZtHxpwxsKCO4`. Later discussion adds explicit source fetching and a shared signing key
@@ -138,33 +138,31 @@ The developer bucket can also hold reusable builds and compiler caches. Their bu
 their manifest against the configured signing fingerprints or the checkout's own developer key before downloading
 payloads. A custom repository does not automatically become a trusted build or a release repository.
 
-### Multiple published repositories
+### Publication stages
 
-The earlier discussion also agreed to distinguish the storage bucket from the RPM repository name:
+The current interface distinguishes storage from publication stage:
 
 - `--to main|dev` selects a bucket and defaults to `dev`.
-- A planned `--repo <name>` selects an RPM repository within that bucket.
-- The official repository names are `base`, `testing` and `incoming`. Here `incoming` is an RPM repository containing
-  master builds, not a bucket or source staging area. `base` is the final repository, matching XCP-ng 8.3 naming.
-- Developer repositories allow custom names, such as `kernel-fix`, under a developer namespace.
+- `--stage <name>` selects the publication subdirectory for repositories and ISOs. It defaults to the OS user name,
+  so developers do not overwrite each other's `latest` snapshots unless they explicitly select the same stage.
+- The master workflow publishes the `incoming` stage to main for x86 only while arm64 builds are broken.
+- Developer stages allow custom names, such as `kernel-fix`. A stage is organizational, not an access-control boundary.
 
-Public URLs should follow the existing distribution layout, without another channel layer or snapshot ID:
+The latest repository and ISO URLs are:
 
 ```text
-/9/9.0/base/<arch>/
-/9/9.0/base/Sources/
-/9/9.0/testing/<arch>/
-/9/9.0/testing/Sources/
-/9/9.0/incoming/<arch>/
-/9/9.0/incoming/Sources/
+/repos/9.0/incoming/latest/base/<arch>/
+/repos/9.0/incoming/latest/base/Source/
+/isos/9.0/incoming/latest/<arch>/
 
 # Independent developer bucket
-/<developer>/9/9.0/kernel-fix/<arch>/
-/<developer>/9/9.0/kernel-fix/Sources/
+/repos/9.0/<username>/latest/base/<arch>/
+/isos/9.0/<username>/latest/<arch>/
 ```
 
-Snapshots can remain an internal mechanism for recording an exact set of packages. The implementation still uses
-dated snapshot URLs; repository selection, developer namespaces and updating fixed public URLs need further work.
+Each stage also retains dated snapshots under the same parent, with an independent suffix sequence. Signatures bind
+manifests to the complete path, including stage. The earlier proposed flat XCP-ng repository layout and `--repo`
+option are superseded here by the requested stage layout; flattening public URLs is not part of this implementation.
 
 ### Signed trees
 
@@ -224,7 +222,7 @@ or the default signing key when package signing is disabled with `--unsigned`.
 
 ## Open questions
 
-- How developer namespaces are configured, and how fixed public repository URLs are updated consistently.
+- Whether a future flat public RPM-repository layout should coexist with the stage snapshot URLs.
 - Whether testing and base receive whole tested snapshots or independently selected packages.
 - Expiration in Garage: its lifecycle support for source archives, independently of test repositories, to check.
 - Versioning and object locks in Garage, which would make deletions recoverable: to confirm they are missing.
