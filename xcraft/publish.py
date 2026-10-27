@@ -10,6 +10,7 @@ already in the storage are copied there rather than uploaded.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import shutil
 from datetime import UTC, datetime
@@ -21,7 +22,7 @@ from rich.markup import escape
 from xcraft import build as builder
 from xcraft import remote
 from xcraft.cache import BuildError, build_path, builds_repo, cached_build
-from xcraft.container import DNF_LOCK, run
+from xcraft.container import BUILDENV, DNF_LOCK, image_tag, run
 from xcraft.display import activity, console
 from xcraft.localrepo import OUTPUT_MARKER, LocalRepo, extra_rpms, fresh_dir, link
 from xcraft.lock import Locked, load_lock, save_lock
@@ -317,6 +318,13 @@ def _add_upstream(project: Project, names: list[str], dest: Path, binaries: Loca
 
 def _check_installable(project: Project, repos: list[Path]) -> None:
     """Check each package of the last repository of `repos` can be installed from them alone."""
+    inputs = [[(p.relative_to(repo).as_posix(), sha256_of(p)) for p in sorted(repo.rglob("*.rpm"))] for repo in repos]
+    key = hashlib.sha256(
+        json.dumps([image_tag(project), (BUILDENV / "installable.py").read_text(), inputs]).encode()
+    ).hexdigest()
+    checked = project.state / "cache/checks/installable" / key
+    if checked.exists():
+        return
     with project.work("snapshot") as work:
         run(
             project,
@@ -332,6 +340,8 @@ def _check_installable(project: Project, repos: list[Path]) -> None:
             console.print(f"[red]✗[/] {escape(f'{package}: {error}')}")
         msg = f"the snapshot is not self-contained: {len(errors)} packages cannot be installed from it"
         raise BuildError(msg)
+    checked.parent.mkdir(parents=True, exist_ok=True)
+    checked.touch()
 
 
 def _tree(project: Project, kind: str, name: str) -> str:

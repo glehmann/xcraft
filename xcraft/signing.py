@@ -8,6 +8,8 @@ for test hosts.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import subprocess
 from dataclasses import dataclass
@@ -17,8 +19,9 @@ from typing import TYPE_CHECKING
 from rich.markup import escape
 
 from xcraft import process
-from xcraft.container import ContainerError, run, signing_image
+from xcraft.container import ContainerError, image_tag, run, signing_image
 from xcraft.display import console
+from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
     from xcraft.project import Project
@@ -158,6 +161,12 @@ def check_signatures(
         return
     # all: a package without signature fails too
     check = "xargs -a /work/packages rpmkeys --checksig --define '_pkgverify_level all'"
+    context = hashlib.sha256(json.dumps([image_tag(project), check, public_key]).encode()).hexdigest()
+    cache = project.state / "cache/checks/signatures" / context
+    digests = {f: sha256_of(root / f) for f in files}
+    files = [f for f in files if not (cache / digests[f]).exists()]
+    if not files:
+        return
     with project.work("signatures") as work:
         (work / "packages").write_text("".join(f"/checked/{f}\n" for f in files))
         if public_key:
@@ -179,3 +188,7 @@ def check_signatures(
                     console.print(f"[red]✗[/] {escape(line.removeprefix('/checked/'))}")
             msg = f"some {what} are not signed with {'their key' if public_key else 'the keys of the repositories'}"
             raise SigningError(msg) from None
+    cache.mkdir(parents=True, exist_ok=True)
+    for file in files:
+        if sha256_of(root / file) == digests[file]:
+            (cache / digests[file]).touch()
