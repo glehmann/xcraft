@@ -367,6 +367,31 @@ def test_bump_version(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert (root / "base/with-deps/with-deps.spec").read_text() == before
 
 
+@pytest.mark.parametrize("version", ["1.9", "1.10", "1.010", "1.10~rc1"])
+def test_bump_version_must_increase(root: Path, monkeypatch: pytest.MonkeyPatch, version: str) -> None:
+    gitconfig = root / "gitconfig"
+    gitconfig.write_text("[user]\n\tname = Me\n\temail = me@example.com\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(gitconfig))
+    twin = root / "base/twin"
+    twin.mkdir()
+    spec = root / "base/trivial/trivial.spec"
+    (twin / "twin.spec").write_text(
+        spec.read_text()
+        .replace("Name: trivial", "Name: twin")
+        .replace("Version: 1.0", "%global upver 1.10\nVersion: %{upver}")
+    )
+    (root / "xcraft.toml").write_text(f'same_version = [["trivial", "twin"]]\n{TOML}')
+    lock = load_lock(Project.find())
+    lock.pending = {"trivial": {"zlib-ng": "1.2-1"}}
+    save_lock(Project.find(), lock)
+    paths = [spec, twin / "twin.spec", root / "base/trivial/sources", root / "xcraft.lock"]
+    before = {path: path.read_bytes() for path in paths}
+    code, output = xcraft("bump", "trivial", "--version", version)
+    assert code == 1
+    assert f"twin: --version {version} must be greater than current version 1.10" in output
+    assert {path: path.read_bytes() for path in paths} == before
+
+
 def test_runaway_log_stops_the_build(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(container, "MAX_LOG_SIZE", 2**20)
     spec = root / "base/trivial/trivial.spec"

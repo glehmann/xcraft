@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated
 
 import typer
+from rpm_version import evr_compare  # ty: ignore[unresolved-import]
 
 from xcraft import process
 from xcraft.commands import Dep, Packages, load, pending_packages
@@ -37,6 +38,15 @@ def _evr(package: Package) -> str:
 def same_version(groups: list[list[str]], name: str) -> list[str]:
     """Return `name` and the packages of the same version, from the groups of same_version in xcraft.toml."""
     return sorted({name, *(other for group in groups if name in group for other in group)})
+
+
+def _check_version(packages: dict[str, Package], names: list[str], version: str) -> None:
+    """Require a newer RPM version for every package being updated."""
+    _check_parsed(packages, names)
+    for name in names:
+        if evr_compare(version, packages[name].version) <= 0:
+            msg = f"{name}: --version {version} must be greater than current version {packages[name].version}"
+            raise ValueError(msg)
 
 
 def _new_archives(project: Project, before: dict[str, Package], after: dict[str, Package], names: list[str]) -> None:
@@ -138,6 +148,7 @@ def bump(
         lock = load_lock(project)
         if version:
             names = same_version(project.config.same_version, (packages or [])[0])
+            _check_version(before, names, version)
         else:
             names = pending_packages(packages, lock.pending, sources)
         message = message or (f"Update to {version}" if version else "")
