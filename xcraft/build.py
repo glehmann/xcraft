@@ -297,7 +297,9 @@ def _record_cached(project: Project, autorev: dict[str, str]) -> tuple[dict[str,
     hashes = inputs(project)
     for _ in range(5):
         keys = build_keys(project, autorev, hashes)
-        if not record_rpm_deps(project, [n for n, k in keys.items() if cached_build(project, n, k).exists()], keys):
+        if not record_rpm_deps(
+            project, [n for n, k in keys.items() if cached_build(project, n, k).exists()], keys, quiet=True
+        ):
             return keys, hashes
         prepare(project)  # for what they recorded
     msg = "what the cached builds recorded keeps changing the keys"
@@ -347,9 +349,8 @@ def _build_all(  # noqa: PLR0913
             _fetch_for(project, name, keys, results)
         results[name] = _build_shown(project, name, keys, hashes, status=status, autorev=autorev, verbose=verbose)
     keys = _current(project, keys, recorded, autorev, hashes)[0]
-    # again, what was not recorded when they came, as it needs packages of ours built or fetched after them: a change
-    # of the lock changes the keys of the next builds
-    record_rpm_deps(project, [n for n, r in results.items() if r.status in ("built", "fetched")], keys)
+    # Retry cached builds too: packages built or fetched now may provide what they could not resolve before.
+    record_rpm_deps(project, [n for n, k in keys.items() if cached_build(project, n, k).exists()], keys)
     return list(results.values()), keys
 
 
