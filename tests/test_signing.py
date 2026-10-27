@@ -80,6 +80,21 @@ def test_test_builds_are_signed(build_environment: None, root: Path) -> None:
     check_signatures(
         Project.find(), root, [str(p.relative_to(root)) for p in signed], what="test", public_key=signer.public_key()
     )
+    log = Project.find().log("_signatures")
+    checked = log.stat().st_mtime_ns
+    moved = root / "moved"
+    moved.mkdir()
+    for rpm in signed:
+        shutil.copy2(rpm, moved / rpm.name)
+    check_signatures(Project.find(), moved, [p.name for p in signed], what="test", public_key=signer.public_key())
+    assert log.stat().st_mtime_ns == checked
+    check_signatures(
+        Project.find(), moved, [p.name for p in signed], what="test", public_key=signer.public_key() + "\n"
+    )
+    assert log.stat().st_mtime_ns != checked
+    shutil.copy2(unsigned[0], moved / signed[0].name)
+    with pytest.raises(SigningError, match="some test are not signed with their key"):
+        check_signatures(Project.find(), moved, [signed[0].name], what="test", public_key=signer.public_key())
     with pytest.raises(SigningError, match="some test are not signed with their key"):
         check_signatures(
             Project.find(),

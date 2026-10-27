@@ -486,6 +486,9 @@ def test_snapshots_checked_in_turn(root: Path, tmp_path: Path) -> None:
                 link(TOYS / ARCH / f"{name}-1.noarch.rpm", repo.path / f"{name}-1.noarch.rpm")
             repo.index()
     _check_installable(project, [repo.path for repo in snapshots["other"]])
+    checked = project.log("_snapshot").stat().st_mtime_ns
+    _check_installable(project, [repo.path for repo in snapshots["other"]])
+    assert project.log("_snapshot").stat().st_mtime_ns == checked
     with pytest.raises(BuildError, match="not self-contained"):  # toyrun-bin 2 needs toyrun 2
         _check_installable(project, [repo.path for repo in snapshots["broken"]])
 
