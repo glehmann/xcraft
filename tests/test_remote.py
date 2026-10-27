@@ -20,9 +20,11 @@ import pytest
 
 from tests import ARCH, PLATFORM, TOML, copy_project
 from tests.test_build import results, write_spec, xcraft
+from tests.test_iso import cache_image
 from xcraft import publish as publisher
 from xcraft import remote
 from xcraft.container import run
+from xcraft.iso import build_iso, iso_key, iso_path
 from xcraft.lock import load_lock
 from xcraft.project import Project
 from xcraft.resolution import resolve_image
@@ -146,6 +148,33 @@ def root(
     for name, value in s3.items():
         monkeypatch.setenv(name, value)
     return root
+
+
+def test_iso_cache(root: Path, tmp_path: Path) -> None:
+    project = Project.find()
+    signer = release_signer(project)
+    assert signer
+    image = tmp_path / "test.iso"
+    image.write_bytes(secrets.token_bytes(2048))
+    tree = cache_image(project, image, signer=signer)
+    code, output = xcraft("push", "isos")
+    assert code == 0, output
+    assert "1 ISOs pushed" in output
+    assert "0 ISOs pushed, 1 already" in xcraft("push", "isos")[1]
+    shutil.rmtree(project.state / "cache")
+    # No snapshot, RPMs, prepared container state or signing operations are needed to fetch the image.
+    project.frozen = True
+    assert build_iso(project, signer=signer).read_bytes() == image.read_bytes()
+    assert tree.exists()
+    assert not (project.state / "publish").exists()
+    assert not (project.state / "cache/builds").exists()
+    shutil.rmtree(tree)
+    key = iso_key(project, netinstall=False, volid=None, signer=signer)
+    remote.upload(project.config.remote["dev"], f"{iso_path(project, key)}/image.iso", root / "xcraft.toml")
+    with pytest.raises(remote.RemoteError, match="missing or corrupted"):
+        # The transport rejects the changed payload before installing its cache directory.
+        remote.fetch_tree(project, iso_path(project, key), tree)
+    assert not tree.exists()
 
 
 def test_sources(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:

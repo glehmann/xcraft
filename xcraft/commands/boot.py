@@ -10,7 +10,7 @@ from typing import Annotated
 import typer
 
 from xcraft import process, vm
-from xcraft.commands import Arch, Key, choose_signer, load
+from xcraft.commands import Arch, Key, choose_signer
 from xcraft.display import console
 from xcraft.iso import build_iso
 from xcraft.project import Project
@@ -91,7 +91,7 @@ def boot(  # noqa: PLR0913, PLR0917
     ovmf = None if bios else vm.firmware(firmware_code, firmware_vars)
     vm.check_stopped(vm_dir)
     if not (iso or installed):
-        project = load(locked=locked, arch=project.arch)
+        project.frozen = locked
         signer = choose_signer(project, local=True, unsigned=unsigned, dev_key=False, key=key)
         iso = build_iso(project, signer=signer)
         console.print(f"[bold green]✓[/] {iso}")

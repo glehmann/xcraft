@@ -10,6 +10,7 @@ from xcraft import ccache, remote
 from xcraft.cache import BUILD_FILES, build_keys, build_path, cached_build
 from xcraft.commands import Arch, Key, Packages, To, load, remote_storage
 from xcraft.display import activity, console
+from xcraft.iso import push_isos
 from xcraft.project import Project, Remote
 from xcraft.signing import Signer, dev_signer, signing_key
 from xcraft.sources import cached_source, read_manifest, source_path
@@ -87,6 +88,26 @@ def builds(packages: Packages = None, arch: Arch = None, key: Key = None, to: To
     if not_built := _push_builds(project, remote_storage(project, to), packages, signer=signing_key(project, key)):
         msg = f"not built: {', '.join(not_built)}"
         raise RuntimeError(msg)
+
+
+@app.command()
+def isos(
+    arch: Arch = None,
+    key: Key = None,
+    to: To = "dev",
+    unsigned: Annotated[
+        bool, typer.Option("--unsigned", help="Upload cached ISOs made without package signing.")
+    ] = False,
+) -> None:
+    """Upload cached full and netinstall ISOs matching the checkout, without building them."""
+    project = Project.find(arch)
+    with project.lock():
+        push_isos(
+            project,
+            remote_storage(project, to),
+            signer=None if unsigned else signing_key(project, key),
+            upload_signer=signing_key(project, key),
+        )
 
 
 def _push_builds(project: Project, storage: Remote, packages: list[str] | None, *, signer: Signer | None) -> list[str]:
