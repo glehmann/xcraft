@@ -47,4 +47,6 @@ def patchset(
         f"[bold]{package}[/]: patchset from {escape(base)}, {len(result.added)} added, {len(result.removed)} removed"
     )
     if result.replaced:
-        console.print(f"replaced previous exports of the same commits: {escape(', '.join(result.replaced))}")
+        console.print(f"replaced {len(result.replaced)} previous exports of the same commits:")
+        for patch in result.replaced:
+            console.print(f"  {patch}", markup=False)
