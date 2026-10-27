@@ -579,8 +579,9 @@ def test_doctor(root: Path) -> None:
     assert output.startswith("✓ podman ")
     assert "✓ git: " in output
     # with the commands it runs
-    cmd = [sys.executable, "-m", "xcraft", "--debug", "doctor"]
-    assert "running podman info --format" in subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+    for args in (["--debug", "doctor"], ["doctor", "--debug"]):
+        cmd = [sys.executable, "-m", "xcraft", *args]
+        assert "running podman info --format" in subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
 
 
 def test_graph(root: Path) -> None:

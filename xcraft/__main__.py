@@ -73,13 +73,15 @@ def options(
 def main() -> None:
     """Run the command line, showing errors without a stack trace unless --trace is given."""
     socket.setdefaulttimeout(60)  # the downloads, from servers not answering anymore: boto3 has its own
-    if "--debug" in sys.argv:
+    args = sys.argv[1:]
+    end = args.index("--") if "--" in args else len(args)
+    if "--debug" in args[:end]:
         # above the progress of the activities, like the other messages
         handler = RichHandler(console=console, show_time=False, show_level=False, show_path=False, markup=False)
         process.log.addHandler(handler)
         process.log.setLevel(logging.DEBUG)
     try:
-        app()
+        app(args=[arg for arg in args[:end] if arg != "--debug"] + args[end:])
     except KeyboardInterrupt:
         sys.exit(130)
     except Exception as exc:
