@@ -76,7 +76,7 @@ def _push_sources(project: Project, storage: Remote, packages: list[str] | None,
         console.print(f"[green]↑[/] {filename}")
     if missing:
         with activity("making the pages of the directories"):
-            remote.update_pages(storage, [f"{source_path(f, d).rsplit('/', 1)[0]}/" for f, d in missing])
+            remote.update_pages(project, storage, [f"{source_path(f, d).rsplit('/', 1)[0]}/" for f, d in missing])
     console.print(f"{len(missing)} pushed, {len(archives) - len(missing)} already in the remote storage")
 
 
@@ -112,7 +112,7 @@ def _push_builds(project: Project, storage: Remote, packages: list[str] | None, 
         console.print(f"[green]↑[/] {name}")
     if pushed:
         with activity("making the pages of the directories"):
-            remote.update_pages(storage, [f"{paths[name]}/" for name in pushed])
+            remote.update_pages(project, storage, [f"{paths[name]}/" for name in pushed])
     console.print(f"{len(pushed)} pushed, {len(present)} already in the remote storage")
     return not_built
 
@@ -141,5 +141,5 @@ def index(to: To = "dev") -> None:
     project = Project.find()
     storage = remote_storage(project, to)
     with activity("making the pages of the directories"):
-        count = remote.update_pages(storage, [""])
+        count = remote.update_pages(project, storage, [""])
     console.print(f"{count} pages")

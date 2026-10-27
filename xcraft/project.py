@@ -164,6 +164,8 @@ class Config(BaseModel):
     import_: Import = Field(Import(), alias="import")
     remote: dict[Destination, Remote] = {}
     """The independent main and developer buckets, each with its own public URL and S3 settings."""
+    logo: str | None = None
+    """Link to the logo image of the project, shown at the top of the pages of the remote storage."""
     publish: Publish = Field(default_factory=Publish)
     ccache_size: dict[str, str] = {}
     """The maximum size of the compiler cache of packages, by name, like 20G: ccache's default, 5G, for the others."""
