@@ -6,6 +6,7 @@ dependencies = [
     "typer>=0.12",
     "rich>=13.0",
     "pydantic>=2.0",
+    "pyte>=0.8.2",
     "boto3>=1.35",
     "rpm-version>=0.5.1",
 ]

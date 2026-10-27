@@ -15,6 +15,7 @@ from typer import rich_utils
 from xcraft import process
 from xcraft.commands import (
     ack,
+    boot,
     build,
     bump,
     clean,
@@ -33,6 +34,7 @@ from xcraft.commands import (
     repo,
     shell,
     status,
+    vm,
 )
 from xcraft.display import console
 
@@ -48,7 +50,7 @@ for panel, commands in {
     "Building": [build.build, repo.repo, shell.shell, log.log, graph.graph, status.status, clean.clean],
     "Packages": [bump.bump, patchset.patchset],
     "Upstream packages": [lock.lock, impacts.impacts, ack.ack],
-    "Publishing": [iso.iso],
+    "Publishing": [iso.iso, boot.boot],
     "Host": [doctor.doctor],
 }.items():
     for command in commands:
@@ -59,6 +61,7 @@ app.add_typer(push.app, name="push", rich_help_panel="Sharing")
 app.add_typer(fetch.app, name="fetch", rich_help_panel="Sharing")
 app.add_typer(publish.app, name="publish", rich_help_panel="Publishing")
 app.add_typer(key.app, name="key", rich_help_panel="Publishing")
+app.add_typer(vm.app, name="vm", rich_help_panel="Host")
 
 
 @app.callback()
