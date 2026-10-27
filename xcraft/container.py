@@ -107,8 +107,16 @@ def image_tag(project: Project) -> str:
     return _image(project)[0]
 
 
+_existing: set[str] = set()
+
+
 def _exists(tag: str) -> bool:
-    return not process.run(["podman", "image", "exists", tag], check=False).returncode
+    if tag in _existing:
+        return True
+    if process.run(["podman", "image", "exists", tag], check=False).returncode:
+        return False
+    _existing.add(tag)
+    return True
 
 
 def build_image(project: Project) -> str:
@@ -139,6 +147,7 @@ def _build_image(project: Project, tag: str, args: dict[str, str], files: dict[s
     resolved = {f"{n}-{p.evr}.{p.arch}" for n, p in resolve_image(project).image_packages().items()}
     if differences := changes(resolved, {f"{n}-{p.evr}.{p.arch}" for n, p in image_packages(project, tag).items()}):
         process.run(["podman", "rmi", tag], capture=True)
+        _existing.discard(tag)
         msg = f"the build environment image does not have the packages resolved for it: {', '.join(differences)}"
         raise ContainerError(msg)
 
