@@ -490,7 +490,8 @@ def test_snapshots_checked_in_turn(root: Path, tmp_path: Path) -> None:
         _check_installable(project, [repo.path for repo in snapshots["broken"]])
 
 
-def test_recorded_once_all_built(root: Path) -> None:
+@pytest.mark.parametrize("cached", [False, True])
+def test_recorded_once_all_built(root: Path, *, cached: bool) -> None:
     # a script of trivial run by xtool, of ours too, built after it: recorded once xtool is built, without warning
     (root / "base/xtool").mkdir()
     (root / "base/xtool/xtool.spec").write_text(
@@ -507,9 +508,15 @@ def test_recorded_once_all_built(root: Path) -> None:
                  "install -m 755 %{name}-%{version}/hello.sh %{buildroot}/usr/share/%{name}/")
         .replace("/usr/share/%{name}/hello.txt", "/usr/share/%{name}/hello.sh")
     )  # fmt: skip
+    if cached:
+        code, output = xcraft("build", "trivial")
+        assert code == 0, output
+        assert "cannot record what rpm generated for trivial" in output
     code, output = xcraft("build", "trivial", "xtool")
     assert code == 0, output
-    assert [line.split(" in ")[0] for line in results(output)] == ["✓ trivial built", "✓ xtool built", "2 built"]
+    assert [line.split(" in ")[0] for line in results(output)] == (
+        ["✓ xtool built", "1 built, 1 cached"] if cached else ["✓ trivial built", "✓ xtool built", "2 built"]
+    )
     assert "cannot record" not in output
     assert load_lock(Project.find()).requires.of(ARCH)["trivial"] == ["xtool"]
     assert xcraft("build", "trivial", "xtool", "--locked") == (0, "2 cached\n")

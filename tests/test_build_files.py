@@ -381,6 +381,7 @@ def test_empty_compiler_cache(project: Project, monkeypatch: pytest.MonkeyPatch)
 
 
 def test_packages_edited_while_building(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(build, "record_rpm_deps", lambda *_: False)
     for name in ("a", "b", "c"):
         (project.root / "base" / name).mkdir(parents=True)
         (project.root / "base" / name / f"{name}.spec").write_text(name)
@@ -407,7 +408,7 @@ def test_packages_edited_while_building(project: Project, monkeypatch: pytest.Mo
 
 def test_recordings_not_converging(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(build, "build_keys", lambda *_: {})
-    monkeypatch.setattr(build, "record_rpm_deps", lambda *_: True)
+    monkeypatch.setattr(build, "record_rpm_deps", lambda *_, **__: True)
     monkeypatch.setattr(build, "prepare", lambda _: None)
     with pytest.raises(BuildError, match="keeps changing the keys"):
         build._record_cached(project, {})  # noqa: SLF001
