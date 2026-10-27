@@ -43,6 +43,7 @@ extend-exclude = ["tests/project/"]
 [tool.typos.default.extend-words]
 fpr = "fpr"  # the fingerprint records of gpg --with-colons
 ba = "ba"    # rpmbuild -ba
+OPF = "OPF"  # binfmt_misc flags
 
 [tool.ruff]
 line-length = 120
