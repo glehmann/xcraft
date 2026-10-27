@@ -7,9 +7,10 @@ from typing import Annotated
 
 import typer
 
-from xcraft.commands import Arch, Key, choose_signer, load
+from xcraft.commands import Arch, Key, choose_signer
 from xcraft.display import console
 from xcraft.iso import build_iso
+from xcraft.project import Project
 
 
 def iso(  # noqa: PLR0913, PLR0917
@@ -39,7 +40,8 @@ def iso(  # noqa: PLR0913, PLR0917
     The installer's root filesystem, install.img, comes from the snapshot, which has its packages, and so does the
     repository of the ISO, with xcp-ng-deps and what it needs.
     """
-    project = load(locked=locked, arch=arch)
+    project = Project.find(arch)
+    project.frozen = locked
     signer = choose_signer(project, local=True, unsigned=unsigned, dev_key=False, key=key)
     path = build_iso(project, output, netinstall=netinstall, volid=volid, signer=signer)
     console.print(f"[bold green]✓[/] {path}")

@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from xcraft import publish as publisher
 from xcraft.commands import Key, To, choose_signer, complete_arch, load, remote_storage
 from xcraft.display import console
-from xcraft.iso import make_isos
+from xcraft.iso import make_isos, push_isos
 from xcraft.project import Destination, Project, Publish
 from xcraft.publish import ISO_DIR, REPO, snapshot
 
@@ -161,7 +161,7 @@ def _iso_platforms(project: Project, platforms: list[Project], only: str | None)
     return found
 
 
-def _publish(  # noqa: PLR0913
+def _publish(  # noqa: C901, PLR0913
     only: str | None,
     *,
     locked: bool,
@@ -208,6 +208,8 @@ def _publish(  # noqa: PLR0913
             for iso in make_isos(platform, dest / REPO / platform.arch, dest / ISO_DIR / platform.arch, signer=signer):
                 console.print(f"[bold green]✓[/] {iso}")
         if storage:
+            for platform in with_isos:
+                push_isos(platform, storage, signer=signer)
             name = publisher.snapshot_name(project, storage)
             if only != "isos":
                 publisher.upload_snapshot(built, dest, storage, name, signer=signer)

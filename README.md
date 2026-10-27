@@ -44,6 +44,7 @@ xcraft --install-completion  # optional
 | `xcraft push` | Upload everything the remote storage misses: the source archives and the builds of all packages, with the `index.html` pages of their directories |
 | `xcraft push sources [<pkg>...] [--check] [--to main\|dev]` | Upload cached sources, or check the selected bucket; defaults to dev |
 | `xcraft push builds [<pkg>...]` | Upload the current builds missing from the remote storage, for CI |
+| `xcraft push isos [--unsigned] [--to main\|dev]` | Upload cached full and netinstall ISOs matching the checkout |
 | `xcraft push index` | Make the `index.html` pages of all the directories of the remote storage |
 | `xcraft push ccache [<pkg>...]` | Upload the compiler caches of the packages, replacing those of the remote storage, for CI |
 | `xcraft fetch` | Download everything the caches miss: the current builds of all packages, then their source archives |
@@ -313,18 +314,32 @@ does, from a snapshot like `xcraft publish --local` makes, of its architecture o
 
 The tools making it, like xorriso and syslinux, are installed in the containers making it, in the versions of the
 lock, which records them in `iso`. The ISO is `.xcraft/iso/xcp-ng-<version>[-netinstall].iso` by default.
+Images are cached in `.xcraft/cache/isos/<arch>/<key>/`. Both `xcraft iso` and `xcraft boot` reuse the matching local
+image, then try the trusted remote storage, and only assemble a snapshot and build an ISO on a cache miss. A cache
+hit needs no build containers or signing secrets. The key covers package inputs and locked dependencies, ISO
+templates and configuration, the build recipe, architecture, netinstall and volume-id options, and signing identity.
+Local edits invalidate it; the publish stage, remote credentials and output path do not affect it.
+
+`xcraft push isos` uploads cached images matching the checkout, with signed manifests like RPM builds. Use
+`xcraft push isos --unsigned` for images built with `--unsigned`; the upload manifest still needs a signing key.
+Publishing ISOs also populates this keyed remote cache, independently of the dated snapshots.
+
+Repository assembly caches successful RPM signature and installability checks locally. Signature checks are keyed
+by the RPM's bytes, trusted keys and verification environment. Installability checks are keyed by the ordered
+repositories' RPM contents and checker environment. Changed packages, keys or verification recipes are checked again.
+
 `xcraft publish` publishes both ISOs, with the packages and netinstall, with the snapshot: see
 [Publishing](#publishing).
 
 ### Booting the installer locally
 
-`xcraft boot` builds or fetches the current packages, makes the ISO through the same pipeline as `xcraft iso`, and
+`xcraft boot` reuses or downloads the ISO matching the checkout, building it on a cache miss, and
 boots it in QEMU/KVM. It currently supports x86_64 and x86_64_v2, with UEFI boot, 8 GiB of RAM, four virtual CPUs,
 and an 80 GiB sparse qcow2 disk in `.xcraft/vm/<arch>/disk.qcow2`.
 
 ```bash
 xcraft patchset --repo /path/to/host-installer --package host-installer --base <ref>
-xcraft boot --unsigned                 # rebuild what changed, make the ISO, and run the installer
+xcraft boot --unsigned                 # reuse, fetch or build the matching ISO, then run the installer
 xcraft boot --installed                # boot the resulting installation, without rebuilding
 xcraft boot --iso /path/to/image.iso   # boot an existing ISO
 ```
