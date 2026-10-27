@@ -153,9 +153,12 @@ def command(  # noqa: PLR0913
 ) -> list[str]:
     """Build the QEMU command and preserve the VM's writable firmware variables."""
     network = "user,model=e1000" + (f",hostfwd=tcp:127.0.0.1:{ssh_port}-:22" if ssh_port else "")
+    # OVMF exposes modes that fit in VRAM; limit it so the installer cannot select a huge framebuffer.
     cmd = [
         "qemu-system-x86_64", "-name", f"xcraft-{name}", "-accel", accel, "-machine", "q35",
         "-cpu", "host" if accel == "kvm" else "max", "-smp", str(cpus), "-m", str(memory),
+        "-vga", "std", "-global", "VGA.xres=1024", "-global", "VGA.yres=768",
+        "-global", "VGA.vgamem_mb=4",
         "-drive", f"file={str(disk).replace(',', ',,')},format=qcow2,if=ide", "-nic", network,
         "-qmp", "unix:qmp.sock,server=on,wait=off", "-monitor", "none",
         "-chardev", "stdio,id=serial,signal=off",
