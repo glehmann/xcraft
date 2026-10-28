@@ -15,7 +15,7 @@ from xcraft.specs import main_spec
 
 
 def patchset(
-    repo: Annotated[Path, typer.Option(help="Git repository of the patchset, on its branch.")] = Path(),
+    repo: Annotated[Path, typer.Argument(help="Git repository of the patchset, on its branch.")] = Path(),
     package: Annotated[
         str | None, typer.Option(help="Package of the patchset. Guessed from the name of the repository by default.")
     ] = None,
