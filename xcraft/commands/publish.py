@@ -203,8 +203,10 @@ def _publish(  # noqa: C901, PLR0913
     with project.lock():
         dest = (output or project.state / "publish").absolute()
         build = only != "isos" and project.config.publish.build
+        console.print("assembling the snapshot")
         built = snapshot(platforms, dest, signer=signer, storage=storage, build=build)
         for platform in with_isos:
+            console.print(f"getting the ISOs for {platform.arch}")
             for iso in make_isos(platform, dest / REPO / platform.arch, dest / ISO_DIR / platform.arch, signer=signer):
                 console.print(f"[bold green]✓[/] {iso}")
         if storage:

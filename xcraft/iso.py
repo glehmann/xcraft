@@ -144,7 +144,7 @@ def push_isos(project: Project, storage: Remote, *, signer: Signer | None, uploa
         if remote.tree_exists(storage, path, trusted=upload_signer or signer or signing_key(project)):
             present += 1
             continue
-        with activity("uploading the ISO"):
+        with activity("uploading the ISO", log=True):
             remote.upload_tree(
                 storage, path, tree, ["image.iso", "image.json"], signer=upload_signer or signer or signing_key(project)
             )

@@ -12,12 +12,26 @@ from typer.testing import CliRunner
 
 from tests import TOML
 from xcraft.__main__ import app
-from xcraft.display import diagnostics, read_tail
+from xcraft.display import activity, diagnostics, read_tail
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 runner = CliRunner()
+
+
+def test_activity_logs_are_throttled(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    clock = iter([0, 31, 31, 31, 62])
+    monkeypatch.setattr("xcraft.display.time.monotonic", lambda: next(clock))
+    with activity("publishing", log=True) as update:
+        update("first.rpm")
+        update("second.rpm")
+    output = capsys.readouterr().out
+    assert "publishing\n" in output
+    assert "publishing: first.rpm" in output
+    assert "second.rpm" not in output
+    assert "publishing finished in" in output
+
 
 LOG = """\
 Installing build dependencies
