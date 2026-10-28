@@ -455,7 +455,15 @@ def upload_snapshot(
     )
 
 
-def upload_isos(project: Project, src: Path, storage: Remote, name: str, *, signer: Signer | None) -> None:
+def upload_isos(  # noqa: PLR0913
+    project: Project,
+    src: Path,
+    storage: Remote,
+    name: str,
+    *,
+    signer: Signer | None,
+    stored: dict[str, tuple[str, str]] | None = None,
+) -> None:
     """Upload the ISOs of the snapshot in `src`, in ISO_DIR, to `storage` as `name`, and make them the latest ones."""
     isos = src / ISO_DIR
     files = sorted(f.relative_to(isos).as_posix() for f in isos.rglob("*") if f.is_file())
@@ -468,6 +476,7 @@ def upload_isos(project: Project, src: Path, storage: Remote, name: str, *, sign
         project=project,
         signer=signer or signing_key(project),
         trusted=dev_signer(project),
+        stored=stored,
     )
 
 

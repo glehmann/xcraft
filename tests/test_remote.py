@@ -28,7 +28,7 @@ from tests.test_iso import cache_image
 from xcraft import publish as publisher
 from xcraft import remote
 from xcraft.container import run
-from xcraft.iso import build_iso, iso_key, iso_path
+from xcraft.iso import build_iso, iso_key, iso_path, push_isos
 from xcraft.lock import load_lock
 from xcraft.project import Project
 from xcraft.resolution import resolve_image
@@ -154,7 +154,7 @@ def root(
     return root
 
 
-def test_iso_cache(root: Path, tmp_path: Path) -> None:
+def test_iso_cache(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     project = Project.find()
     signer = release_signer(project)
     assert signer
@@ -165,6 +165,18 @@ def test_iso_cache(root: Path, tmp_path: Path) -> None:
     assert code == 0, output
     assert "1 ISOs pushed" in output
     assert "0 ISOs pushed, 1 already" in xcraft("push", "isos")[1]
+    storage = project.config.remote["dev"]
+    snapshot = tmp_path / "snapshot"
+    published = snapshot / "iso" / project.arch / image.name
+    published.parent.mkdir(parents=True)
+    shutil.copy2(image, published)
+    with caplog.at_level(logging.DEBUG, logger="xcraft"):
+        stored = {
+            f"{project.arch}/{file}": source for file, source in push_isos(project, storage, signer=signer).items()
+        }
+        publisher.upload_isos(project, snapshot, storage, "cache-reuse", signer=signer, stored=stored)
+    assert any(m.startswith("copying ") and "/image.iso to " in m for m in caplog.messages)
+    assert not any(m.startswith(f"uploading {published} ") for m in caplog.messages)
     shutil.rmtree(project.state / "cache")
     # No snapshot, RPMs, prepared container state or signing operations are needed to fetch the image.
     project.frozen = True
