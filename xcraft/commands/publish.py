@@ -161,7 +161,7 @@ def _iso_platforms(project: Project, platforms: list[Project], only: str | None)
     return found
 
 
-def _publish(  # noqa: PLR0913
+def _publish(  # noqa: C901, PLR0913
     only: str | None,
     *,
     locked: bool,
@@ -203,6 +203,12 @@ def _publish(  # noqa: PLR0913
     with project.lock():
         dest = (output or project.state / "publish").absolute()
         build = only != "isos" and project.config.publish.build
+        if (
+            storage
+            and output is None
+            and publisher.reuse_published(platforms, storage, signer=signer, build=build, only=only, isos=with_isos)
+        ):
+            return
         console.print("assembling the snapshot")
         built = snapshot(platforms, dest, signer=signer, storage=storage, build=build)
         for platform in with_isos:
