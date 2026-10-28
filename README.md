@@ -65,7 +65,7 @@ xcraft --install-completion  # optional
 | `xcraft bump <pkg>... [--dep <upstream>] [-m message]` | Bump the release of packages, with a changelog entry, empty to fill in without `-m`, and clear their pending updates; `--dep` selects the packages with a pending update of an upstream package |
 | `xcraft bump <pkg> --version v [-m message]` | Update a package to a new version, with the archive of its `Source0`, and the packages of the same version; the changelog entry is `Update to <v>` by default |
 | `xcraft clean [<pkg>...] [--builds] [--ccache]` | Remove the build trees and outdated builds, and optionally all builds and compiler caches, of the given packages or all; the source archives are kept |
-| `xcraft patchset [--package p] [--base ref] [--first n]` | Update the patches of a package with the commits of the current git branch, from the developer's repository |
+| `xcraft patchset [repo] [--package p] [--base ref] [--first n]` | Update the patches of a package with the commits of the current git branch, from the developer's repository |
 | `xcraft import <pkg or srpm>... [--branch b] [--url u] [--repo r]` | Import the history of packages from their packaging repositories, or source RPMs, as the git branches `import/<pkg>/<branch>` to merge, new packages into `base/`, or `<r>/` |
 | `xcraft doctor [--fix]` | Check host prerequisites, including QEMU, UEFI firmware and KVM, even outside a project. Inside a project, also check architecture emulation and remote storage. With `--fix`, show and confirm commands to install missing tools and configure rootless podman and emulation, using the host distribution's package manager |
 | `xcraft import --all` | Import again the packages which have import branches of histories, not of source RPMs only |
@@ -338,7 +338,7 @@ boots it in QEMU/KVM. It currently supports x86_64 and x86_64_v2, with UEFI boot
 and an 80 GiB sparse qcow2 disk in `.xcraft/vm/<arch>/disk.qcow2`.
 
 ```bash
-xcraft patchset --repo /path/to/host-installer --package host-installer --base <ref>
+xcraft patchset /path/to/host-installer --package host-installer --base <ref>
 xcraft boot --unsigned                 # reuse, fetch or build the matching ISO, then run the installer
 xcraft boot --installed                # boot the resulting installation, without rebuilding
 xcraft boot --iso /path/to/image.iso   # boot an existing ISO
