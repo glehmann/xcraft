@@ -845,6 +845,21 @@ def test_pages_of_nested_directories(root: Path, tmp_path: Path) -> None:
     assert "<img" not in page("nested/")
 
 
+def test_signing_keys_have_a_directory_page(root: Path, tmp_path: Path) -> None:
+    project = Project.find()
+    storage = project.config.remote["main"]
+    signer = release_signer(project)
+    assert signer
+    file = tmp_path / "file"
+    file.write_text("signed tree")
+    remote.upload_tree(storage, "pages-with-key", tmp_path, ["file"], signer=signer)
+    remote.update_pages(project, storage, ["pages-with-key/"])
+    assert f'href="{signer.key}.asc"' in page("keys/")
+    root_page = page("")
+    assert 'href="keys/"' in root_page
+    assert re.search(r'href="keys/".*?<td data-k="[1-9][0-9]*">', root_page)
+
+
 def test_logo_on_the_pages(root: Path, tmp_path: Path) -> None:
     storage = Project.find().config.remote["main"]
     (tmp_path / "file").write_bytes(b"x" * 1000)
