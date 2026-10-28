@@ -563,6 +563,10 @@ xcraft publish --stage kernel-fix  # developer bucket, custom stage
 - All snapshots are kept. The storage stores identical files once: our packages are copies of the pushed builds, and
   the upstream ones and the sources of the previous snapshot, so a snapshot only costs what changed.
 
+Publication signs the hashes of the locally checked snapshot. Files are reused by server-side S3 copy only when a
+trusted remote manifest has hashes matching the local snapshot. Those copies are not downloaded again during publication;
+downloads still check each payload against its signed manifest.
+
 `xcraft publish repos` only publishes the repositories, and `xcraft publish isos` the ISOs, under a snapshot name
 used by neither within the selected stage. `xcraft publish --local` only makes the snapshot in `.xcraft/publish/`,
 its ISOs in its `iso/`, of one architecture, like the other commands, unless `--arch all` is given.

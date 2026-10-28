@@ -177,6 +177,7 @@ def test_iso_cache(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture)
         publisher.upload_isos(project, snapshot, storage, "cache-reuse", signer=signer, stored=stored)
     assert any(m.startswith("copying ") and "/image.iso to " in m for m in caplog.messages)
     assert not any(m.startswith(f"uploading {published} ") for m in caplog.messages)
+    assert not any(m.startswith("downloading ") and f"/{image.name} to " in m for m in caplog.messages)
     shutil.rmtree(project.state / "cache")
     # No snapshot, RPMs, prepared container state or signing operations are needed to fetch the image.
     project.frozen = True

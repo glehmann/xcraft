@@ -192,6 +192,10 @@ or invalid signature must not trigger any build-file or compiler-cache payload d
   for the builds it signs with the release key and the snapshots it copies files from. A tree without a valid
   signature is as if the storage did not have it: it is built again, or fails to publish.
 
+Publication computes its signed manifest from the locally checked snapshot. A remote object is reused by S3 copy
+only when its trusted manifest has the same hash. Publication does not download the copied payload again; signed-tree
+downloads still verify payload hashes before accepting them.
+
 ### The private key in CI
 
 CI uses the same key for uploads and publishing through its host GPG agent, either in an HSM or imported from a

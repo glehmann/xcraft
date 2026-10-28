@@ -399,7 +399,7 @@ def _upload(  # noqa: PLR0913
         for file in [*order, *last]:
             on_line(file)
             if file in copies:
-                remote.copy_checked(storage, copies[file], f"{tree}/{file}", manifest[file])
+                remote.copy(storage, copies[file], f"{tree}/{file}")
             else:
                 remote.upload(storage, f"{tree}/{file}", src / file)
         remote.write_manifest(storage, tree, manifest, signer=signer)
@@ -408,7 +408,8 @@ def _upload(  # noqa: PLR0913
         _delete_stale(storage, tree, keep)
         on_line("latest")
         for file in [*order, *last]:
-            remote.copy_checked(storage, f"{tree}/{file}", f"{latest}/{file}", manifest[file])
+            on_line(f"latest/{file}")
+            remote.copy(storage, f"{tree}/{file}", f"{latest}/{file}")
         remote.write_manifest(storage, latest, manifest, signer=signer)
         _delete_stale(storage, latest, keep)
         on_line("the pages of the directories")
