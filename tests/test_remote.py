@@ -26,7 +26,7 @@ from tests import ARCH, PLATFORM, TOML, copy_project
 from tests.test_build import results, write_spec, xcraft
 from tests.test_iso import cache_image
 from xcraft import publish as publisher
-from xcraft import remote
+from xcraft import remote, repodata
 from xcraft.container import run
 from xcraft.iso import build_iso, iso_key, iso_path, push_isos
 from xcraft.lock import load_lock
@@ -801,6 +801,43 @@ def test_publish_rebuilt_package(root: Path, tmp_path: Path) -> None:
         assert remote.read_manifest(storage, name)[rpm] == sha256_of(local)
         assert remote.download(storage, f"{name}/{rpm}", tmp_path / name.replace("/", "_"))
         assert sha256_of(tmp_path / name.replace("/", "_")) == sha256_of(local)
+
+
+def test_publish_from_latest_metadata(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """A snapshot has the metadata of the packages of the latest one, without downloading them."""
+    stage = f"metadata-{secrets.token_hex(4)}"
+    (root / "xcraft.toml").write_text(f'{REMOTE}extra = ["bc"]\n')
+    assert xcraft("publish", "repos", "--to", "main", "--unsigned", "--stage", stage)[0] == 0
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(spec.read_text().replace('echo "hello"', 'echo "hello, rebuilt"'))
+    with caplog.at_level(logging.DEBUG, logger="xcraft"):
+        code, output = xcraft("publish", "repos", "--to", "main", "--unsigned", "--stage", stage)
+    assert code == 0, output
+    assert not [m for m in caplog.messages if "downloading " in m and ".rpm to " in m]
+    # only those rebuilt, trivial and the package built against it, not the upstream ones
+    local = {p.name for p in root.glob(".xcraft/publish/**/*.rpm")}
+    assert local
+    assert all(name.startswith(("trivial-", "with-deps-")) for name in local)
+    storage = Project.find().config.remote["main"]
+    latest = f"repos/9.0/{stage}/latest"
+    manifest = remote.read_manifest(storage, latest)
+    bc = resolve_image(Project.find()).packages["bc"]
+    assert {f"base/{ARCH}/bc-{bc.evr}.{bc.arch}.rpm", f"base/Source/bc-{bc.evr}.src.rpm"} <= manifest.keys()
+    for repo in (f"base/{ARCH}", "base/Source"):
+        assert remote.download(storage, f"{latest}/{repo}/repodata/repomd.xml", tmp_path / repo / "repodata/repomd.xml")
+        for href in repodata.files((tmp_path / repo / "repodata/repomd.xml").read_bytes()).values():
+            assert remote.download(storage, f"{latest}/{repo}/{href}", tmp_path / repo / href)
+        entries = repodata.read(tmp_path / repo)
+        assert entries
+        assert {f"{repo}/{repodata.location(e)}": pkgid for pkgid, e in entries.items()} == {
+            f: digest for f, digest in manifest.items() if f.startswith(f"{repo}/") and f.endswith(".rpm")
+        }
+    # the packages of a repository, for its ISO
+    rpms = {f: (f"{latest}/{f}", digest) for f, digest in manifest.items() if f.endswith(".rpm")}
+    publisher.materialize(storage, tmp_path / "packages", rpms, f"base/{ARCH}")
+    assert {p.relative_to(tmp_path / "packages").as_posix() for p in (tmp_path / "packages").rglob("*.rpm")} == {
+        f for f in rpms if f.startswith(f"base/{ARCH}/")
+    }
 
 
 def test_publish_reuses_remote_snapshot(root: Path, caplog: pytest.LogCaptureFixture) -> None:

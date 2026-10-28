@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from xcraft import publish as publisher
 from xcraft.commands import Key, To, choose_signer, complete_arch, load, remote_storage
 from xcraft.display import console
-from xcraft.iso import make_isos, push_isos
+from xcraft.iso import isos_available, make_isos, push_isos
 from xcraft.project import Destination, Project, Publish
 from xcraft.publish import ISO_DIR, REPO, snapshot
 
@@ -161,7 +161,7 @@ def _iso_platforms(project: Project, platforms: list[Project], only: str | None)
     return found
 
 
-def _publish(  # noqa: C901, PLR0913
+def _publish(  # noqa: C901, PLR0912, PLR0913
     only: str | None,
     *,
     locked: bool,
@@ -210,19 +210,24 @@ def _publish(  # noqa: C901, PLR0913
         ):
             return
         console.print("assembling the snapshot")
-        built = snapshot(platforms, dest, signer=signer, storage=storage, build=build)
+        if storage and output is None:
+            built, stored = publisher.remote_snapshot(platforms, dest, signer=signer, storage=storage, build=build)
+        else:
+            built, stored = snapshot(platforms, dest, signer=signer, storage=storage, build=build), {}
         for platform in with_isos:
             console.print(f"getting the ISOs for {platform.arch}")
+            if storage and stored and not isos_available(platform, signer=signer):  # made from its packages
+                publisher.materialize(storage, dest, stored, f"{REPO}/{platform.arch}")
             for iso in make_isos(platform, dest / REPO / platform.arch, dest / ISO_DIR / platform.arch, signer=signer):
                 console.print(f"[bold green]✓[/] {iso}")
         if storage:
-            stored = {
+            isos = {
                 f"{platform.arch}/{file}": source
                 for platform in with_isos
                 for file, source in push_isos(platform, storage, signer=signer).items()
             }
             name = publisher.snapshot_name(project, storage)
             if only != "isos":
-                publisher.upload_snapshot(built, dest, storage, name, signer=signer)
+                publisher.upload_snapshot(built, dest, storage, name, signer=signer, stored=stored)
             if with_isos:
-                publisher.upload_isos(project, dest, storage, name, signer=signer, stored=stored)
+                publisher.upload_isos(project, dest, storage, name, signer=signer, stored=isos)
