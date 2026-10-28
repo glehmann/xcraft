@@ -11,17 +11,19 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import inspect
 import json
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from pydantic import BaseModel
 from rich.markup import escape
 
 from xcraft import build as builder
 from xcraft import remote
-from xcraft.cache import BuildError, build_path, builds_repo, cached_build
+from xcraft.cache import BuildError, build_keys, build_path, builds_repo, cached_build
 from xcraft.container import BUILDENV, DNF_LOCK, image_tag, run
 from xcraft.display import activity, console
 from xcraft.localrepo import OUTPUT_MARKER, LocalRepo, extra_rpms, fresh_dir, link
@@ -29,6 +31,7 @@ from xcraft.lock import Locked, load_lock, save_lock
 from xcraft.resolution import lock_installed, prepare, resolve, resolve_image
 from xcraft.signing import Signer, check_signatures, dev_signer, signing_key
 from xcraft.sources import sha256_of
+from xcraft.specs import hash_dir
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -43,6 +46,84 @@ BUILD = "build"
 """The repository of the upstream packages the builds of ours need, which the base one does not have."""
 ISO_DIR = "iso"
 """The ISOs in a local snapshot, by architecture, published apart from its repositories."""
+INPUTS = "xcraft-inputs.json"
+"""Checkout input keys, covered by the snapshot's signed manifest."""
+
+
+class SnapshotInputs(BaseModel):
+    """Input keys of the architectures or ISO variants of a published snapshot."""
+
+    keys: dict[str, str]
+
+
+def snapshot_key(project: Project, keys: dict[str, str], *, signer: Signer | None, build: bool) -> str:
+    """Identify a snapshot without fetching its RPMs or building containers."""
+    lock = load_lock(project)
+    data = [
+        project.platform, project.config.platforms, keys, lock.sources, lock.runtime.get(project.arch, []),
+        project.config.publish.extra, project.config.iso.installer, project.config.extra_upstream,
+        {n: repo.model_dump() for n, repo in project.repos.items()},
+        {n: p.model_dump() for n, p in resolve_image(project).packages.items()},
+        signer.key if signer else None, build, hash_dir(BUILDENV),
+        [inspect.getsource(f) for f in
+         (assemble, _assemble_arch, _assemble_build, _add_upstream, _upstream_rpms, _upstream_srpms,
+          _signed_build, _runtime, _check_installable, LocalRepo)],
+    ]  # fmt: skip
+    return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+
+
+def _reusable(
+    project: Project, storage: Remote, kind: str, keys: dict[str, str], signer: Signer | None
+) -> dict[str, str]:
+    prefix = _tree(project, kind, "latest")
+    manifest = remote.read_manifest(storage, prefix, trusted=signer or dev_signer(project))
+    if INPUTS not in manifest:
+        return {}
+    with project.work("snapshot-inputs") as work:
+        path = work / INPUTS
+        if not remote.download(storage, f"{prefix}/{INPUTS}", path) or sha256_of(path) != manifest[INPUTS]:
+            return {}
+        try:
+            return manifest if SnapshotInputs.model_validate_json(path.read_bytes()).keys == keys else {}
+        except ValueError:
+            return {}
+
+
+def reuse_published(  # noqa: PLR0913
+    platforms: list[Project],
+    storage: Remote,
+    *,
+    signer: Signer | None,
+    build: bool,
+    only: str | None,
+    isos: list[Project],
+) -> bool:
+    """Republish matching trusted snapshots by server-side copies, without reconstructing their payloads."""
+    from xcraft.iso import iso_inputs  # noqa: PLC0415, iso imports snapshot assembly
+
+    project = platforms[0]
+    wanted = {}
+    if only != "isos":
+        wanted["repos"] = {p.arch: snapshot_key(p, build_keys(p), signer=signer, build=build) for p in platforms}
+    if isos:
+        wanted["isos"] = {name: key for p in isos for name, key in iso_inputs(p, signer=signer).items()}
+    manifests = {kind: _reusable(project, storage, kind, keys, signer) for kind, keys in wanted.items()}
+    if not manifests or not all(manifests.values()):
+        return False
+    name = snapshot_name(project, storage)
+    for kind, manifest in manifests.items():
+        latest, target = _tree(project, kind, "latest"), _tree(project, kind, name)
+        with activity(f"reusing the published {kind} as {target}", log=True) as on_line:
+            for file in sorted(
+                manifest, key=lambda f: (not f.endswith(".rpm"), f.endswith(("/repomd.xml", "/repomd.xml.asc")), f)
+            ):
+                on_line(file)
+                remote.copy(storage, f"{latest}/{file}", f"{target}/{file}")
+            remote.write_manifest(storage, target, manifest, signer=signer or signing_key(project))
+            _delete_stale(storage, target, {*manifest, remote.MANIFEST, remote.SIGNATURE})
+            remote.update_pages(project, storage, [f"{target}/", f"{latest}/"])
+        console.print(f"[bold green]✓[/] published {target}, and as {latest} (reused the matching snapshot)")
+    return True
 
 
 def resolve_runtime(project: Project, keys: dict[str, str]) -> list[str]:
@@ -427,6 +508,9 @@ def upload_snapshot(
     copied there.
     """  # noqa: D205
     project = platforms[0][0]
+    (src / INPUTS).write_text(SnapshotInputs(keys={
+        p.arch: snapshot_key(p, keys, signer=signer, build=(src / BUILD).is_dir()) for p, keys in platforms
+    }).model_dump_json())  # fmt: skip
     files = sorted(
         f.relative_to(src).as_posix()
         for f in src.rglob("*")
@@ -466,7 +550,13 @@ def upload_isos(  # noqa: PLR0913
     stored: dict[str, tuple[str, str]] | None = None,
 ) -> None:
     """Upload the ISOs of the snapshot in `src`, in ISO_DIR, to `storage` as `name`, and make them the latest ones."""
+    from xcraft.iso import iso_inputs  # noqa: PLC0415, iso imports snapshot assembly
+
     isos = src / ISO_DIR
+    (isos / INPUTS).write_text(SnapshotInputs(keys={
+        name: key for p in project.all_platforms() if (isos / p.arch).is_dir()
+        for name, key in iso_inputs(p, signer=signer).items()
+    }).model_dump_json())  # fmt: skip
     files = sorted(f.relative_to(isos).as_posix() for f in isos.rglob("*") if f.is_file())
     _upload(
         storage,

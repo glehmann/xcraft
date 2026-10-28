@@ -88,6 +88,16 @@ def cached_iso(project: Project, key: str) -> Path:
     return project.state / "cache/isos" / project.arch / key
 
 
+def iso_inputs(project: Project, *, signer: Signer | None) -> dict[str, str]:
+    """Return the checkout keys of the full and netinstall ISOs."""
+    return {
+        f"{project.arch}/{'netinstall' if netinstall else 'full'}": iso_key(
+            project, netinstall=netinstall, volid=None, signer=signer
+        )
+        for netinstall in (False, True)
+    }
+
+
 def iso_path(project: Project, key: str) -> str:
     """Return the input-keyed ISO tree's path in remote storage."""
     return f"isos/builds/{project.arch}/{key}"

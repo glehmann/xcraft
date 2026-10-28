@@ -803,6 +803,43 @@ def test_publish_rebuilt_package(root: Path, tmp_path: Path) -> None:
         assert sha256_of(tmp_path / name.replace("/", "_")) == sha256_of(local)
 
 
+def test_publish_reuses_remote_snapshot(root: Path, caplog: pytest.LogCaptureFixture) -> None:
+    stage = f"reuse-{secrets.token_hex(4)}"
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
+    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
+    assert code == 0, output
+    project = Project.find()
+    project.config.publish.stage = stage
+    for name in ("publish", "cache/builds", "cache/signed", "cache/rpms", "cache/srpms", "cache/checks"):
+        shutil.rmtree(project.state / name, ignore_errors=True)
+    with caplog.at_level(logging.DEBUG, logger="xcraft"):
+        code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage, "--locked")
+    assert code == 0, output
+    assert "reused the matching snapshot" in output
+    assert not (project.state / "publish").exists()
+    assert not (project.state / "cache/builds").exists()
+    assert not any(
+        "podman " in message or ("downloading " in message and ".rpm to " in message) for message in caplog.messages
+    )
+    storage = project.config.remote["main"]
+    prefix = f"repos/9.0/{stage}"
+    day = datetime.now(UTC).date().isoformat()
+    manifest = remote.read_manifest(storage, f"{prefix}/{day}.2")
+    assert manifest
+    assert manifest == remote.read_manifest(storage, f"{prefix}/latest")
+
+    project.config.publish.extra.append("bc")
+    assert not publisher.reuse_published(
+        [project], storage, signer=release_signer(project), build=False, only="repos", isos=[]
+    )
+    project.config.publish.extra.clear()
+    remote.upload(storage, f"{prefix}/latest/{publisher.INPUTS}", root / "xcraft.toml")
+    assert not publisher.reuse_published(
+        [project], storage, signer=release_signer(project), build=False, only="repos", isos=[]
+    )
+
+
 @pytest.mark.parametrize("command", [[], ["repos"], ["isos"]])
 @pytest.mark.parametrize("stage", ["", ".", "..", "../other", "/absolute", "a/b"])
 def test_invalid_publish_stage(root: Path, command: list[str], stage: str) -> None:

@@ -567,6 +567,13 @@ Publication signs the hashes of the locally checked snapshot. Files are reused b
 trusted remote manifest has hashes matching the local snapshot. Those copies are not downloaded again during publication;
 downloads still check each payload against its signed manifest.
 
+Published snapshots include `xcraft-inputs.json`, covered by their signed manifest. On a matching checkout,
+`xcraft publish` reuses the latest snapshot by server-side copies into a new dated snapshot, without downloading
+RPMs, assembling repositories or rebuilding ISOs. Its input keys cover package builds, locked upstream packages,
+assembly recipes, architecture, signing identity and relevant repository/ISO configuration. Changed inputs take the
+normal assembly path. Older snapshots need one full publication to acquire the input record.
+`--local` and an explicit `--output` still materialize the snapshot locally.
+
 `xcraft publish repos` only publishes the repositories, and `xcraft publish isos` the ISOs, under a snapshot name
 used by neither within the selected stage. `xcraft publish --local` only makes the snapshot in `.xcraft/publish/`,
 its ISOs in its `iso/`, of one architecture, like the other commands, unless `--arch all` is given.
