@@ -15,6 +15,7 @@ import inspect
 import json
 import shutil
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -23,7 +24,7 @@ from pydantic import BaseModel
 from rich.markup import escape
 
 from xcraft import build as builder
-from xcraft import remote
+from xcraft import remote, repodata
 from xcraft.cache import BuildError, build_keys, build_path, builds_repo, cached_build
 from xcraft.container import BUILDENV, DNF_LOCK, image_tag, run
 from xcraft.display import activity, console
@@ -35,9 +36,11 @@ from xcraft.sources import sha256_of
 from xcraft.specs import hash_dir
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator
 
+    from xcraft.build import Fetch
     from xcraft.project import Project, Remote
+    from xcraft.repodata import Entry
 
 KEY_FILE = "RPM-GPG-KEY"
 """The public key of the signed snapshots, in them."""
@@ -67,8 +70,9 @@ def snapshot_key(project: Project, keys: dict[str, str], *, signer: Signer | Non
         {n: p.model_dump() for n, p in resolve_image(project).packages.items()},
         signer.key if signer else None, build, hash_dir(BUILDENV),
         [inspect.getsource(f) for f in
-         (assemble, _assemble_arch, _assemble_build, _add_upstream, _upstream_rpms, _upstream_srpms,
-          _signed_build, _runtime, _check_installable, LocalRepo)],
+         (assemble, _assemble_arch, _assemble_build, _add_upstream, _upstream_rpms, _upstream_srpms, _srpm_names,
+          _signed_build, _runtime, _check_installable, LocalRepo, remote_snapshot, _Plan, _add_ours,
+          _add_stored_upstream, repodata)],
     ]  # fmt: skip
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
@@ -124,12 +128,12 @@ def reuse_published(  # noqa: PLR0913
     return True
 
 
-def resolve_runtime(project: Project, keys: dict[str, str]) -> list[str]:
-    """Add to the lock the upstream packages our builds need, the extra ones and the installer's, and return them.
+def resolve_runtime(project: Project, repo: LocalRepo) -> list[str]:
+    """Add to the lock the upstream packages our builds of `repo` need, the extra ones and the installer's, and
+    return them.
 
     They are resolved again when they need upstream source packages not locked yet, which get other versions.
-    """
-    repo = builds_repo(project, keys)
+    """  # noqa: D205
     for _ in range(3):
         if lock_installed(project, needed := _runtime(project, repo)):
             break
@@ -237,10 +241,18 @@ def _upstream_srpms(project: Project, names: list[str], on_line: Callable[[str],
 
     They are those of the packages' metadata: binaries may not have the versions of their sources.
     """
-    if not names:  # dnf repoquery would list everything
+    if not names:
         return []
     locked = resolve_image(project).packages
-    nevras = {name: _nevra(locked, name) for name in names}
+    with _sources(project) as (work, volumes):
+        files = {srpm: _nevra(locked, name) for name, srpm in _srpm_names(project, names, work, volumes).items()}
+        cache = _download(project, files, on_line, source=True, volumes=volumes)
+    return [cache / srpm for srpm in sorted(files)]
+
+
+@contextlib.contextmanager
+def _sources(project: Project) -> Generator[tuple[Path, list[str]]]:
+    """Return a work directory, and the volumes of the repositories of the upstream source packages."""
     with project.work("srpms") as work:
         # only for these downloads, not to change the build environment
         (work / "sources.repo").write_text(
@@ -250,24 +262,30 @@ def _upstream_srpms(project: Project, names: list[str], on_line: Callable[[str],
                 if repo.source_baseurl
             )
         )
-        volumes = [f"{work / 'sources.repo'}:/etc/yum.repos.d/xcraft-sources.repo:ro"]
-        run(
-            project,
-            "srpms",
-            f"{DNF_LOCK} dnf -q repoquery --qf '%{{name}} %{{sourcerpm}}' {' '.join(nevras.values())} > /work/srpms",
-            volumes=[f"{work}:/work", *volumes],
-        )
-        srpms = {
-            n: srpm
-            for n, srpm in (line.split() for line in (work / "srpms").read_text().splitlines() if line)
-            if n in nevras
-        }
-        if unknown := sorted(set(names) - srpms.keys()):
-            msg = f"no source package for: {', '.join(unknown)}"
-            raise BuildError(msg)
-        files = {srpm: nevras[name] for name, srpm in srpms.items()}
-        cache = _download(project, files, on_line, source=True, volumes=volumes)
-    return [cache / srpm for srpm in sorted(files)]
+        yield work, [f"{work / 'sources.repo'}:/etc/yum.repos.d/xcraft-sources.repo:ro"]
+
+
+def _srpm_names(project: Project, names: list[str], work: Path, volumes: list[str]) -> dict[str, str]:
+    """Return the source packages of the locked upstream packages `names`, as in the metadata of the repositories."""
+    if not names:  # dnf repoquery would list everything
+        return {}
+    locked = resolve_image(project).packages
+    nevras = {name: _nevra(locked, name) for name in names}
+    run(
+        project,
+        "srpms",
+        f"{DNF_LOCK} dnf -q repoquery --qf '%{{name}} %{{sourcerpm}}' {' '.join(nevras.values())} > /work/srpms",
+        volumes=[f"{work}:/work", *volumes],
+    )
+    srpms = {
+        n: srpm
+        for n, srpm in (line.split() for line in (work / "srpms").read_text().splitlines() if line)
+        if n in nevras
+    }
+    if unknown := sorted(set(names) - srpms.keys()):
+        msg = f"no source package for: {', '.join(unknown)}"
+        raise BuildError(msg)
+    return srpms
 
 
 def _signed_path(project: Project, signer: Signer, name: str, key: str) -> str:
@@ -403,8 +421,14 @@ def _add_upstream(project: Project, names: list[str], dest: Path, binaries: Loca
 
 
 def _check_installable(project: Project, repos: list[Path]) -> None:
-    """Check each package of the last repository of `repos` can be installed from them alone."""
-    inputs = [[(p.relative_to(repo).as_posix(), sha256_of(p)) for p in sorted(repo.rglob("*.rpm"))] for repo in repos]
+    """Check each package of the last repository of `repos` can be installed from them alone.
+
+    That only needs their metadata: those of a remote snapshot do not have all their packages.
+    """
+    # named after their checksums
+    inputs = [
+        sorted(p.name for p in (repo / "repodata").iterdir() if not p.name.startswith("repomd.xml")) for repo in repos
+    ]
     key = hashlib.sha256(
         json.dumps([image_tag(project), (BUILDENV / "installable.py").read_text(), inputs]).encode()
     ).hexdigest()
@@ -477,13 +501,16 @@ def _upload(  # noqa: PLR0913
     trusted: Signer | None,
     stored: dict[str, tuple[str, str]] | None = None,
     pages: list[str] | None = None,
+    remote_files: dict[str, str] | None = None,
 ) -> None:
     """Upload the `files` of `src` as `tree`, and as `latest` too, and write the pages of their directories and of
     the directories `pages`.
 
-    The files the storage has already, in `latest`, or in `stored`, as path and SHA-256 by file, are copied there.
+    The files the storage has already, in `latest`, or in `stored`, as path and SHA-256 by file, are copied there,
+    like `remote_files`, which are not in `src`, with their SHA-256.
     """  # noqa: D205
-    manifest = {f: sha256_of(src / f) for f in files}
+    manifest = {f: sha256_of(src / f) for f in files} | (remote_files or {})
+    files = sorted(manifest)
     candidates = {
         f: (f"{latest}/{f}", digest) for f, digest in remote.read_manifest(storage, latest, trusted=trusted).items()
     }
@@ -504,14 +531,21 @@ def _upload(  # noqa: PLR0913
     console.print(f"[bold green]✓[/] published {tree}, and as {latest}")
 
 
-def upload_snapshot(
-    platforms: list[tuple[Project, dict[str, str]]], src: Path, storage: Remote, name: str, *, signer: Signer | None
+def upload_snapshot(  # noqa: PLR0913
+    platforms: list[tuple[Project, dict[str, str]]],
+    src: Path,
+    storage: Remote,
+    name: str,
+    *,
+    signer: Signer | None,
+    stored: dict[str, tuple[str, str]] | None = None,
 ) -> None:
     """Upload the repositories of the snapshot in `src` of the `platforms` to `storage` as `name`, and make them the
     latest ones.
 
     The packages already in the storage, in the latest snapshot or the builds with the keys of the platforms, are
-    copied there.
+    copied there, and so are those of `stored`, which are not in `src`, by path in the snapshot, with their paths in
+    the storage and SHA-256.
     """  # noqa: D205
     project = platforms[0][0]
     (src / INPUTS).write_text(SnapshotInputs(keys={
@@ -523,7 +557,7 @@ def upload_snapshot(
         if f.is_file() and f.name != OUTPUT_MARKER and not f.is_relative_to(src / ISO_DIR)
     )
     # the trees of the builds: the storage has their packages
-    stored = {}
+    stored = dict(stored or {})
     for platform, keys in platforms:
         for package, key in keys.items():
             tree = _signed_path(platform, signer, package, key) if signer else build_path(platform, package, key)
@@ -543,6 +577,7 @@ def upload_snapshot(
         trusted=dev_signer(project),
         stored=stored,
         pages=signed,
+        remote_files={f: digest for f, (_, digest) in stored.items() if f not in files},
     )
 
 
@@ -577,6 +612,27 @@ def upload_isos(  # noqa: PLR0913
     )
 
 
+def _built(project: Project, *, fetch: Fetch) -> dict[str, str]:
+    """Build or fetch our packages, but only fetch them on the platforms the host emulates, and return their keys."""
+    prepare(project)
+    results, keys = builder.build(project, sorted(project.packages), build_missing=project.native, fetch=fetch)
+    if failed := [r.name for r in results if r.failed]:
+        msg = f"not built for {project.arch}: {', '.join(failed)}"
+        raise RuntimeError(msg)
+    return keys
+
+
+def _summary(dest: Path, built: list[tuple[Project, dict[str, str]]], *, build: bool) -> None:
+    console.print(
+        f"[bold green]✓[/] snapshot in {dest}: "
+        + ", ".join(
+            f"{p.arch}: {len(keys)} packages, {len(load_lock(p).runtime.get(p.arch, []))} upstream ones"
+            + (f", and {len(build_dependencies(p))} to build them" if build else "")
+            for p, keys in built
+        )
+    )
+
+
 def snapshot(
     platforms: list[Project], dest: Path, *, signer: Signer | None, storage: Remote | None, build: bool
 ) -> list[tuple[Project, dict[str, str]]]:
@@ -585,20 +641,228 @@ def snapshot(
     Our packages are built or fetched first, but only fetched for the platforms the host emulates. With `build`, the
     snapshot has the build repository too.
     """
-    built, upstream = [], {}
+    built = []
     for project in platforms:
-        prepare(project)
-        results, keys = builder.build(project, sorted(project.packages), build_missing=project.native)
-        if failed := [r.name for r in results if r.failed]:
-            msg = f"not built for {project.arch}: {', '.join(failed)}"
-            raise RuntimeError(msg)
-        upstream[project.arch] = f"{len(resolve_runtime(project, keys))} upstream ones" + (
-            f", and {len(build_dependencies(project))} to build them" if build else ""
-        )
+        keys = _built(project, fetch="all")
+        resolve_runtime(project, builds_repo(project, keys))
         built.append((project, keys))
     assemble(built, dest, signer=signer, storage=storage, build=build)
-    console.print(
-        f"[bold green]✓[/] snapshot in {dest}: "
-        + ", ".join(f"{p.arch}: {len(keys)} packages, {upstream[p.arch]}" for p, keys in built)
-    )
+    _summary(dest, built, build=build)
     return built
+
+
+@dataclass
+class _Plan:
+    """A snapshot made with the packages the storage misses only, and the metadata of all of them."""
+
+    project: Project
+    dest: Path
+    known: dict[str, tuple[Entry, str]]
+    """The metadata of the packages of the latest snapshot, by SHA-256, with their paths in the storage."""
+    sources: dict[str, str]
+    """The SHA-256 of the source packages of the latest snapshot, by file name."""
+    stored: dict[str, dict[str, tuple[str, str]]] = field(default_factory=dict)
+    """The packages the storage has, by repository and file name, with their paths there and SHA-256."""
+
+    def has(self, repo: str, name: str) -> bool:
+        """Return whether the repository `repo` of the snapshot has the package `name`."""
+        return name in self.stored.get(repo, {}) or (self.dest / repo / name).exists()
+
+    def reuse(self, repo: str, name: str, digest: str, path: str | None = None) -> bool:
+        """Add the package `name` with `digest` to `repo`, and return whether the storage has it, as `path` or in the
+        latest snapshot, with its metadata: otherwise, it must be put in the directory of the repository.
+        """  # noqa: D205
+        if digest not in self.known:
+            return False
+        self.stored.setdefault(repo, {})[name] = (path or self.known[digest][1], digest)
+        return True
+
+    def index(self, repo: str, signer: Signer | None) -> Path:
+        """Write the metadata of `repo`, signed by `signer`, if any, and return its directory."""
+        path = self.dest / repo
+        path.mkdir(parents=True, exist_ok=True)
+        entries = {name: self.known[digest][0] for name, (_, digest) in self.stored.get(repo, {}).items()}
+        if rpms := sorted(path.glob("*.rpm")):
+            run(
+                self.project,
+                "repo",
+                "createrepo_c -q --general-compress-type=gz /repo",
+                volumes=[f"{path}:/repo"],
+                show=f"indexing the new packages of {repo}",
+                network=False,
+            )
+            local = repodata.read(path) or {}
+            entries |= {rpm.name: local[sha256_of(rpm)] for rpm in rpms}
+        repodata.write(path, entries)
+        if signer:
+            signer.sign_file(path / "repodata/repomd.xml")
+        return path
+
+    def files(self) -> dict[str, tuple[str, str]]:
+        """Return the packages the storage has, by path in the snapshot, with their paths there and SHA-256."""
+        return {f"{repo}/{name}": stored for repo, files in self.stored.items() for name, stored in files.items()}
+
+
+def _previous(project: Project, storage: Remote) -> tuple[dict[str, tuple[Entry, str]], dict[str, str]]:
+    """Return the metadata of the packages of the latest snapshot, by SHA-256, with their paths in the storage, and
+    the SHA-256 of its source packages, by file name.
+
+    Only the metadata matching its trusted manifest is read, for the packages with the SHA-256 of the manifest: none
+    of a repository whose metadata Python cannot decompress, like zstd before Python 3.14.
+    """  # noqa: D205
+    latest = _tree(project, "repos", "latest")
+    manifest = remote.read_manifest(storage, latest, trusted=dev_signer(project))
+    known = {}
+    with project.work("previous") as work, activity("reading the metadata of the latest snapshot", log=True):
+
+        def fetch(path: str) -> bool:
+            return remote.download(storage, f"{latest}/{path}", work / path) and sha256_of(work / path) == manifest.get(
+                path
+            )
+
+        for repomd in (f for f in manifest if f.endswith("/repodata/repomd.xml")):
+            repo = repomd.removesuffix("/repodata/repomd.xml")
+            if not fetch(repomd):
+                continue
+            hrefs = repodata.files((work / repomd).read_bytes()).values()
+            with ThreadPoolExecutor(remote.REQUESTS) as pool:
+                if not all(pool.map(fetch, [f"{repo}/{href}" for href in hrefs])):
+                    continue
+            for digest, entry in (repodata.read(work / repo) or {}).items():
+                if manifest.get(path := f"{repo}/{repodata.location(entry)}") == digest:
+                    known[digest] = (entry, f"{latest}/{path}")
+    sources = {
+        Path(f).name: digest for f, digest in manifest.items() if f.startswith((f"{REPO}/Source/", f"{BUILD}/Source/"))
+    }
+    return known, sources
+
+
+def _stored_build(project: Project, signer: Signer | None, name: str, key: str, storage: Remote) -> Path | str:
+    """Return the tree of the build of `name` with `key`, signed by `signer`, if any, in `storage`, or the local
+    one when the storage misses it: signed now, and pushed there.
+    """  # noqa: D205
+    tree = _signed_path(project, signer, name, key) if signer else build_path(project, name, key)
+    if remote.tree_exists(storage, tree, trusted=dev_signer(project)):
+        return tree
+    if not cached_build(project, name, key).exists() and not builder.fetch_build(project, name, key):
+        msg = f"the build of {name} is neither cached nor in the remote storage"
+        raise BuildError(msg)
+    return _signed_build(project, signer, name, key, storage=storage) if signer else cached_build(project, name, key)
+
+
+def _put(storage: Remote, tree: Path | str, path: str, dest: Path, digest: str) -> None:
+    """Put the file `path` of the local or remote `tree` as `dest`, checking its SHA-256."""
+    if isinstance(tree, Path):
+        link(tree / path, dest)
+    elif not remote.download(storage, f"{tree}/{path}", dest) or sha256_of(dest) != digest:
+        msg = f"{tree}/{path} is missing or corrupted in the storage"
+        raise BuildError(msg)
+
+
+def _add_ours(plan: _Plan, project: Project, keys: dict[str, str], *, signer: Signer | None, storage: Remote) -> None:
+    """Add our packages to the base repository of the platform of `project`, and their sources."""
+    arch, source = f"{REPO}/{project.arch}", f"{REPO}/Source"
+    for repo in (arch, source):
+        (plan.dest / repo).mkdir(parents=True, exist_ok=True)
+    local = []
+    with activity(
+        f"signing our packages for {project.arch}" if signer else "getting our packages", log=True
+    ) as on_line:
+        for name in sorted(keys):
+            on_line(name)
+            tree = _stored_build(project, signer, name, keys[name], storage)
+            if isinstance(tree, Path):
+                files = {p.relative_to(tree).as_posix(): sha256_of(p) for p in tree.rglob("*.rpm")}
+            else:
+                files = remote.read_manifest(storage, tree, trusted=dev_signer(project))
+            for path, digest in sorted(files.items()):
+                repo, file = {"RPMS": arch, "SRPMS": source}.get(path.split("/")[0]), Path(path).name
+                if not repo or (repo == source and plan.has(repo, file)):
+                    continue
+                if not plan.reuse(repo, file, digest, None if isinstance(tree, Path) else f"{tree}/{path}"):
+                    _put(storage, tree, path, plan.dest / repo / file, digest)
+                    local.append(f"{repo}/{file}")
+    # those of the storage are in trees it trusts: checked when signed
+    if signer:
+        check_signatures(project, plan.dest, local, what="packages of ours", public_key=signer.public_key())
+    for rpm in extra_rpms(project):  # neither ours nor from the repositories: as they are
+        if not plan.reuse(arch, rpm.name, sha256_of(rpm)):
+            link(rpm, plan.dest / arch / rpm.name)
+
+
+def _add_stored_upstream(plan: _Plan, project: Project, names: list[str], repo: str, source: str) -> None:
+    """Add the upstream packages `names` to `repo`, and their sources to `source`, checking the signatures of those
+    the storage misses: those it has were when added.
+    """  # noqa: D205
+    locked = resolve_image(project).packages
+    rpms = {name: f"{name}-{locked[name].evr.split(':')[-1]}.{locked[name].arch}.rpm" for name in names}
+    missing = [name for name in names if not plan.reuse(repo, rpms[name], locked[name].sha256)]
+    with activity(f"getting the upstream packages for {repo}", log=True) as on_line:
+        (plan.dest / repo).mkdir(parents=True, exist_ok=True)
+        for rpm in _upstream_rpms(project, missing, on_line):
+            link(rpm, plan.dest / repo / rpm.name)
+    added = [f"{repo}/{rpms[name]}" for name in missing]
+    srpms = {name: repodata.sourcerpm(plan.known[locked[name].sha256][0]) for name in names if name not in missing}
+    with activity(f"getting their sources, for {source}", log=True) as on_line, _sources(project) as (work, volumes):
+        srpms |= _srpm_names(project, [name for name in names if not srpms.get(name)], work, volumes)
+        new = {
+            srpm: _nevra(locked, name)
+            for name, srpm in srpms.items()
+            if not plan.has(source, srpm) and not plan.reuse(source, srpm, plan.sources.get(srpm, ""))
+        }
+        cache = _download(project, new, on_line, source=True, volumes=volumes)
+        (plan.dest / source).mkdir(parents=True, exist_ok=True)
+        for srpm in new:
+            link(cache / srpm, plan.dest / source / srpm)
+            added.append(f"{source}/{srpm}")
+    check_signatures(project, plan.dest, added, what="upstream packages")
+
+
+def remote_snapshot(
+    platforms: list[Project], dest: Path, *, signer: Signer | None, storage: Remote, build: bool
+) -> tuple[list[tuple[Project, dict[str, str]]], dict[str, tuple[str, str]]]:
+    """Make the snapshot of the `platforms` in `dest` like snapshot(), but only with the packages `storage` misses,
+    and return the platforms with the keys of their packages, and the packages it has, by path in the snapshot,
+    with their paths there and SHA-256.
+
+    The metadata of the packages of the latest snapshot are those of its own metadata, and our packages are only
+    fetched when the storage misses their builds: neither is downloaded. The repositories are checked with their
+    metadata only.
+    """  # noqa: D205
+    project = platforms[0]
+    fresh_dir(project, dest)
+    plan = _Plan(project, dest, *_previous(project, storage))
+    built = []
+    for platform in platforms:
+        keys = _built(platform, fetch="needed")
+        arch = f"{REPO}/{platform.arch}"
+        _add_ours(plan, platform, keys, signer=signer, storage=storage)
+        resolve_runtime(platform, LocalRepo(platform, plan.index(arch, None), up_to_date=True))
+        _add_stored_upstream(plan, platform, load_lock(platform).runtime.get(platform.arch, []), arch, f"{REPO}/Source")
+        _check_installable(platform, [plan.index(arch, signer)])
+        if build:
+            _add_stored_upstream(
+                plan, platform, build_dependencies(platform), f"{BUILD}/{platform.arch}", f"{BUILD}/Source"
+            )
+            _check_installable(platform, [plan.dest / arch, plan.index(f"{BUILD}/{platform.arch}", signer)])
+        built.append((platform, keys))
+    for repo in (REPO, BUILD) if build else (REPO,):
+        plan.index(f"{repo}/Source", signer)
+    if signer:
+        (dest / KEY_FILE).write_text(signer.public_key())
+    _summary(dest, built, build=build)
+    return built, plan.files()
+
+
+def materialize(storage: Remote, dest: Path, files: dict[str, tuple[str, str]], repo: str) -> None:
+    """Download to `dest` the packages of `repo` the storage has, `files`, as remote_snapshot() returns them."""
+    wanted = {f: stored for f, stored in files.items() if f.startswith(f"{repo}/") and not (dest / f).exists()}
+
+    def fetch(f: str) -> None:
+        path, digest = wanted[f]
+        if not remote.download(storage, path, dest / f) or sha256_of(dest / f) != digest:
+            msg = f"{path} is missing or corrupted in the storage"
+            raise BuildError(msg)
+
+    with activity(f"downloading the packages of {repo}", log=True), ThreadPoolExecutor(remote.REQUESTS) as pool:
+        list(pool.map(fetch, wanted))

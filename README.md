@@ -567,6 +567,15 @@ Publication signs the hashes of the locally checked snapshot. Files are reused b
 trusted remote manifest has hashes matching the local snapshot. Those copies are not downloaded again during publication;
 downloads still check each payload against its signed manifest.
 
+A snapshot published to the storage is assembled without the packages the storage has: the latest snapshot's, whose
+metadata entries are reused by SHA-256 (the lock's for the upstream binaries, its trusted manifest's for the others),
+and our signed builds, in `signed/`, of which only those missing there are fetched, signed and pushed. Only the other
+packages are downloaded, have their signatures checked and are indexed: those of the storage were when they entered
+it. The checks of what our packages need at runtime, and of self-contained repositories, use their metadata only. Our
+snapshots' metadata is compressed with gzip; an older snapshot's zstd one is only read from Python 3.14, so the first
+publication after it may download everything once. The packages of an ISO's architecture are downloaded only when the
+ISO must be made, neither cached nor in the storage.
+
 Published snapshots include `xcraft-inputs.json`, covered by their signed manifest. On a matching checkout,
 `xcraft publish` reuses the latest snapshot by server-side copies into a new dated snapshot, without downloading
 RPMs, assembling repositories or rebuilding ISOs. Its input keys cover package builds, locked upstream packages,

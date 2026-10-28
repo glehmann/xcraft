@@ -111,6 +111,17 @@ def iso_inputs(project: Project, *, signer: Signer | None) -> dict[str, str]:
     }
 
 
+def isos_available(project: Project, *, signer: Signer | None) -> bool:
+    """Return whether the full and netinstall ISOs of the checkout are cached, or in the remote storage."""
+    try:
+        return all(
+            cached_iso(project, key).exists() or remote.tree_available(project, iso_path(project, key))
+            for key in iso_inputs(project, signer=signer).values()
+        )
+    except remote.RemoteError:
+        return False
+
+
 def iso_path(project: Project, key: str) -> str:
     """Return the input-keyed ISO tree's path in remote storage."""
     return f"isos/builds/{project.arch}/{key}"
