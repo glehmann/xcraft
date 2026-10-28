@@ -161,7 +161,7 @@ def _iso_platforms(project: Project, platforms: list[Project], only: str | None)
     return found
 
 
-def _publish(  # noqa: C901, PLR0913
+def _publish(  # noqa: PLR0913
     only: str | None,
     *,
     locked: bool,
@@ -210,10 +210,13 @@ def _publish(  # noqa: C901, PLR0913
             for iso in make_isos(platform, dest / REPO / platform.arch, dest / ISO_DIR / platform.arch, signer=signer):
                 console.print(f"[bold green]✓[/] {iso}")
         if storage:
-            for platform in with_isos:
-                push_isos(platform, storage, signer=signer)
+            stored = {
+                f"{platform.arch}/{file}": source
+                for platform in with_isos
+                for file, source in push_isos(platform, storage, signer=signer).items()
+            }
             name = publisher.snapshot_name(project, storage)
             if only != "isos":
                 publisher.upload_snapshot(built, dest, storage, name, signer=signer)
             if with_isos:
-                publisher.upload_isos(project, dest, storage, name, signer=signer)
+                publisher.upload_isos(project, dest, storage, name, signer=signer, stored=stored)

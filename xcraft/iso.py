@@ -132,15 +132,19 @@ def _find(project: Project, key: str, output: Path | None) -> Path | None:
     return None
 
 
-def push_isos(project: Project, storage: Remote, *, signer: Signer | None, upload_signer: Signer | None = None) -> None:
-    """Upload locally cached ISOs matching the current checkout."""
+def push_isos(
+    project: Project, storage: Remote, *, signer: Signer | None, upload_signer: Signer | None = None
+) -> dict[str, tuple[str, str]]:
+    """Upload cached ISOs matching the checkout and return their remote paths and digests by output name."""
     count = present = 0
+    stored = {}
     for netinstall in (False, True):
         key = iso_key(project, netinstall=netinstall, volid=None, signer=signer)
         tree, path = cached_iso(project, key), iso_path(project, key)
         if not tree.exists():
             continue
-        _image(tree)
+        image = _image(tree)
+        stored[image.name] = (f"{path}/image.iso", image.sha256)
         if remote.tree_exists(storage, path, trusted=upload_signer or signer or signing_key(project)):
             present += 1
             continue
@@ -151,6 +155,7 @@ def push_isos(project: Project, storage: Remote, *, signer: Signer | None, uploa
         remote.update_pages(project, storage, [f"{path}/"])
         count += 1
     console.print(f"{count} ISOs pushed, {present} already in the remote storage")
+    return stored
 
 
 def build_iso(
