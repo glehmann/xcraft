@@ -492,6 +492,8 @@ def update_pages(project: Project, storage: Remote, prefixes: list[str]) -> int:
     pages: dict[str, tuple[_Dirs, dict[str, _Entry]]] = {}
     parents: set[str] = set()
     with _writing(storage, "make the directory pages") as s3:
+        if _objects(s3, storage.bucket, "keys/", below=True)[1]:
+            prefixes = [*prefixes, "keys/"]
         # those under another one are in its listing
         for prefix in sorted(p for p in set(prefixes) if not any(p != q and p.startswith(q) for q in prefixes)):
             pages.setdefault(prefix, ({}, {}))
