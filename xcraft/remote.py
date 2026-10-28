@@ -447,7 +447,9 @@ def _stored_total(s3: S3Client, bucket: str, prefix: str) -> tuple[int, dt.datet
     """Return the size of all that is below `prefix`, and the date of its newest file, which its page keeps."""
     log.debug("checking s3://%s/%s%s", bucket, prefix, INDEX)
     try:
-        metadata = s3.head_object(Bucket=bucket, Key=prefix + INDEX)["Metadata"]
+        metadata = {
+            key.lower(): value for key, value in s3.head_object(Bucket=bucket, Key=prefix + INDEX)["Metadata"].items()
+        }
     except s3.exceptions.ClientError:  # no page yet
         return 0, None
     newest = metadata.get("newest")
