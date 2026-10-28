@@ -164,16 +164,6 @@ def copy(storage: Remote, src: str, dest: str) -> None:
         s3.copy_object(Bucket=storage.bucket, Key=dest, CopySource={"Bucket": storage.bucket, "Key": src})
 
 
-def copy_checked(storage: Remote, src: str, dest: str, digest: str) -> None:
-    """Copy a file, checking its bytes before a publisher signs a new manifest."""
-    copy(storage, src, dest)
-    with tempfile.TemporaryDirectory(prefix="xcraft-copy-") as tmp:
-        file = Path(tmp) / "file"
-        if not download(storage, dest, file) or sha256_of(file) != digest:
-            msg = f"{src} is missing or corrupted in the storage"
-            raise RemoteError(msg)
-
-
 def listing(storage: Remote, prefix: str) -> list[str]:
     """Return the files below the directory `prefix`, relative to it, but the pages of the directories, with the S3
     credentials, as the public reads cannot list.
