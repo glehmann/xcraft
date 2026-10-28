@@ -77,13 +77,13 @@ def exists(storage: Remote, path: str) -> bool:
         return _absent_or_raise(storage, path, e)
 
 
-_REQUESTS = 16
+REQUESTS = 16
 """The requests at the same time to the storage, many of which are only small: the time is in their round trips."""
 
 
 def existing(storage: Remote, paths: list[str]) -> set[str]:
     """Return those of `paths` the shared storage has, asking for them concurrently."""
-    with ThreadPoolExecutor(_REQUESTS) as pool:
+    with ThreadPoolExecutor(REQUESTS) as pool:
         return {path for path, found in zip(paths, pool.map(lambda p: exists(storage, p), paths), strict=True) if found}
 
 
@@ -110,7 +110,9 @@ def _absent_or_raise(storage: Remote, path: str, error: OSError) -> bool:
 
 @functools.cache
 def _s3(endpoint: str, region: str, access_key: str, secret_key: str, session_token: str) -> S3Client:
+    """Return the client of the storage, made once: a new one opens new connections, for each request."""
     import boto3  # noqa: PLC0415, only for the writes, and slow to import
+    from botocore.config import Config  # noqa: PLC0415
 
     return boto3.client(
         "s3",
@@ -119,6 +121,8 @@ def _s3(endpoint: str, region: str, access_key: str, secret_key: str, session_to
         aws_access_key_id=access_key,
         aws_secret_access_key=secret_key,
         aws_session_token=session_token or None,
+        # the concurrent requests, and the parts of the uploads of large files
+        config=Config(max_pool_connections=4 * REQUESTS),
     )
 
 
@@ -162,6 +166,24 @@ def copy(storage: Remote, src: str, dest: str) -> None:
     log.debug("copying %s to %s", _s3_url(storage, src), _s3_url(storage, dest))
     with _writing(storage, f"copy {src} to {dest}") as s3:
         s3.copy_object(Bucket=storage.bucket, Key=dest, CopySource={"Bucket": storage.bucket, "Key": src})
+
+
+def transfer(storage: Remote, files: dict[str, str | Path], on_line: Callable[[str], None] = lambda _: None) -> None:
+    """Write the paths of `files` concurrently: copies of the paths of the storage, or uploads of the local files."""
+    with _writing(storage, f"write {len(files)} files") as s3:
+
+        def write(dest: str, src: str | Path) -> str:
+            if isinstance(src, Path):
+                log.debug("uploading %s to %s", src, _s3_url(storage, dest))
+                s3.upload_file(str(src), storage.bucket, dest)
+            else:
+                log.debug("copying %s to %s", _s3_url(storage, src), _s3_url(storage, dest))
+                s3.copy_object(Bucket=storage.bucket, Key=dest, CopySource={"Bucket": storage.bucket, "Key": src})
+            return dest
+
+        with ThreadPoolExecutor(REQUESTS) as pool:
+            for dest in pool.map(write, files, files.values()):
+                on_line(dest)
 
 
 def listing(storage: Remote, prefix: str) -> list[str]:
@@ -316,10 +338,14 @@ def download_tree(
         if manifest is None:
             return False
         tree.mkdir()
-        for name, digest in manifest.items():
+
+        def fetch(name: str, digest: str) -> None:
             if not download(storage, f"{prefix}/{name}", tree / name, on_line) or sha256_of(tree / name) != digest:
                 msg = f"{prefix}/{name} is missing or corrupted in the storage"
                 raise RemoteError(msg)
+
+        with ThreadPoolExecutor(REQUESTS) as pool:
+            list(pool.map(fetch, manifest, manifest.values()))
         tree.rename(dest)
     return True
 
@@ -525,6 +551,6 @@ def update_pages(project: Project, storage: Remote, prefixes: list[str]) -> int:
                 Metadata={"size": str(size), **({"newest": newest.isoformat()} if newest else {})},
             )
 
-        with ThreadPoolExecutor(_REQUESTS) as pool:
+        with ThreadPoolExecutor(REQUESTS) as pool:
             list(pool.map(write, pages))
     return len(pages)
