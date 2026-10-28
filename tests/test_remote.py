@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import getpass
+import http.client
+import http.server
 import json
 import logging
 import os
@@ -10,8 +12,10 @@ import re
 import secrets
 import shutil
 import subprocess
+import threading
 import time
 import urllib.request
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -843,6 +847,41 @@ def test_pages_of_nested_directories(root: Path, tmp_path: Path) -> None:
     assert 'href="b/">b/</a></td><td data-k="1000"' in page("nested/a/")
     assert 'href="a/">a/</a></td><td data-k="1000"' in page("nested/")
     assert "<img" not in page("nested/")
+
+
+def test_directory_totals_behind_proxy(root: Path, tmp_path: Path) -> None:
+    project = Project.find()
+    storage = project.config.remote["main"]
+    file = tmp_path / "file"
+    file.write_bytes(b"x" * 1000)
+    remote.upload(storage, "cased/file", file)
+    remote.update_pages(project, storage, ["cased/"])
+
+    class Proxy(http.server.BaseHTTPRequestHandler):
+        def do_HEAD(self) -> None:
+            with closing(http.client.HTTPConnection("localhost", S3_PORT)) as connection:
+                connection.request("HEAD", self.path, headers=dict(self.headers.items()))
+                response = connection.getresponse()
+                self.send_response(response.status)
+                for key, value in response.getheaders():
+                    self.send_header(key.title(), value)
+                self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+            pass
+
+    with http.server.ThreadingHTTPServer(("localhost", 0), Proxy) as proxy:
+        thread = threading.Thread(target=proxy.serve_forever)
+        thread.start()
+        try:
+            proxied = storage.model_copy(update={"s3_endpoint": f"http://localhost:{proxy.server_port}"})
+            with remote._writing(proxied, "read cached totals") as s3:  # noqa: SLF001
+                size, newest = remote._stored_total(s3, storage.bucket, "cased/")  # noqa: SLF001
+            assert size == 1000
+            assert newest
+        finally:
+            proxy.shutdown()
+            thread.join()
 
 
 def test_signing_keys_have_a_directory_page(root: Path, tmp_path: Path) -> None:
