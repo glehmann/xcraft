@@ -46,6 +46,19 @@ class Image(BaseModel):
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+def _templates(project: Project) -> str:
+    """Hash template files and symlink destinations, including masked units pointing to /dev/null."""
+    root = project.root / "iso"
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            digest.update(f"{path.relative_to(root)}\0link\0{path.readlink()}\0".encode())
+        elif path.is_file():
+            digest.update(f"{path.relative_to(root)}\0file\0{bool(path.stat().st_mode & 0o111)}\0".encode())
+            digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
+
+
 def iso_key(project: Project, *, netinstall: bool, volid: str | None, signer: Signer | None) -> str:
     """Hash checkout inputs without preparing containers or accessing signing secrets."""
     lock = load_lock(project)
@@ -57,7 +70,7 @@ def iso_key(project: Project, *, netinstall: bool, volid: str | None, signer: Si
         project.platform,
         config,
         inputs(project),
-        hash_dir(project.root / "iso"),
+        _templates(project),
         lock.sources,
         *[getattr(lock, f).of(project.arch) for f in ("requires", "provides", "buildrequires")],
         lock.runtime.get(project.arch, []),
@@ -104,7 +117,7 @@ def iso_path(project: Project, key: str) -> str:
 
 
 def _checkout(project: Project) -> tuple[dict[str, str], str, str]:
-    return inputs(project), hash_dir(project.root / "iso"), sha256_of(project.root / "xcraft.toml")
+    return inputs(project), _templates(project), sha256_of(project.root / "xcraft.toml")
 
 
 def _image(tree: Path) -> Image:

@@ -76,6 +76,23 @@ def test_iso_lookup_before_preparation(project: Project, tmp_path: Path) -> None
         build_iso(project)
 
 
+def test_iso_masked_units_invalidate_cache(project: Project) -> None:
+    def key() -> str:
+        return iso_key(project, netinstall=False, volid=None, signer=None)
+
+    original = key()
+    unit = project.root / "iso/installimg/etc/systemd/system/masked.service"
+    unit.parent.mkdir(parents=True)
+    unit.symlink_to("/dev/null")
+    masked = key()
+    assert masked != original
+    unit.unlink()
+    unit.symlink_to("/another/missing/target")
+    assert key() != masked
+    unit.unlink()
+    assert key() == original
+
+
 def test_iso_metadata_path(project: Project, tmp_path: Path) -> None:
     image = tmp_path / "test.iso"
     image.write_bytes(b"image")
