@@ -9,6 +9,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from typing import TYPE_CHECKING
 
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
 # no wrapping, for logs and pipes; the progress and the pager on a terminal only, even when FORCE_COLOR makes the
 # output of CI coloured, like a terminal's: its logs would have each frame of the progress, with cursor movements
 console = Console(highlight=False, soft_wrap=True, force_interactive=None if sys.stdout.isatty() else False)
+_LOG_INTERVAL = 30
 
 _STEP_RE = re.compile(r"^Executing\(%(\w+)\):")
 _ERROR_RE = re.compile(r"\b(?:error|errors):|\bFAILED\b", re.IGNORECASE)
@@ -195,13 +197,29 @@ class _ExpectedBar(ProgressColumn):
 
 
 @contextlib.contextmanager
-def activity(description: str, expected: float | None = None) -> Generator[Callable[[str], None]]:
+def activity(description: str, expected: float | None = None, *, log: bool = False) -> Generator[Callable[[str], None]]:
     """Show `description` with the elapsed time, and the last line given to the returned function.
 
-    With an `expected` duration in seconds, a bar shows the elapsed time over it.
+    With an `expected` duration in seconds, a bar shows the elapsed time over it. With `log`, non-interactive output
+    shows the phase and progress at most every 30 seconds.
     """
     if not console.is_interactive:
-        yield lambda _: None
+        if not log:
+            yield lambda _: None
+            return
+        started = last = time.monotonic()
+        lock = threading.Lock()
+        console.print(description)
+
+        def update(line: str) -> None:
+            nonlocal last
+            with lock:
+                if time.monotonic() - last >= _LOG_INTERVAL:
+                    console.print(f"{description}: {Text.from_ansi(line).plain.strip()}", markup=False)
+                    last = time.monotonic()
+
+        yield update
+        console.print(f"{description} finished in {duration(time.monotonic() - started)}")
         return
     with Progress(
         SpinnerColumn(),

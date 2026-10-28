@@ -257,7 +257,9 @@ def _assemble_arch(  # noqa: PLR0913
     binaries.reset(extra_upstream=False)
     arch, source = f"{REPO}/{project.arch}", f"{REPO}/Source"
     ours = []
-    with activity(f"signing our packages for {project.arch}" if signer else "getting our packages") as on_line:
+    with activity(
+        f"signing our packages for {project.arch}" if signer else "getting our packages", log=True
+    ) as on_line:
         for name in sorted(keys):
             on_line(name)
             build = (
@@ -303,12 +305,12 @@ def _assemble_build(project: Project, dest: Path, sources: LocalRepo, *, signer:
 
 def _add_upstream(project: Project, names: list[str], dest: Path, binaries: LocalRepo, sources: LocalRepo) -> None:
     """Add the upstream packages `names` to `binaries`, and their sources to `sources`, checking their signatures."""
-    with activity(f"getting the upstream packages for {binaries.path.relative_to(dest)}") as on_line:
+    with activity(f"getting the upstream packages for {binaries.path.relative_to(dest)}", log=True) as on_line:
         rpms = _upstream_rpms(project, names, on_line)
         for rpm in rpms:
             link(rpm, binaries.path / rpm.name)
     added = [(binaries.path / rpm.name).relative_to(dest).as_posix() for rpm in rpms]
-    with activity(f"getting their sources, for {sources.path.relative_to(dest)}") as on_line:
+    with activity(f"getting their sources, for {sources.path.relative_to(dest)}", log=True) as on_line:
         for srpm in _upstream_srpms(project, names, on_line):
             if not (sources.path / srpm.name).exists():  # the source of several binaries, or architectures
                 link(srpm, sources.path / srpm.name)
@@ -393,7 +395,7 @@ def _upload(  # noqa: PLR0913
     # the packages before the metadata listing them, and repomd.xml with its signature, as close as can be
     last = [f for f in files if f.endswith(("/repomd.xml", "/repomd.xml.asc"))]
     order = [f for f in files if f.endswith(".rpm")] + [f for f in files if not f.endswith(".rpm") and f not in last]
-    with activity(f"publishing {tree}") as on_line:
+    with activity(f"publishing {tree}", log=True) as on_line:
         for file in [*order, *last]:
             on_line(file)
             if file in copies:
