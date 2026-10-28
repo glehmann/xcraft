@@ -870,6 +870,20 @@ def test_iso_stages(root: Path, tmp_path: Path) -> None:
             assert (tmp_path / stage / name / ARCH / "install.iso").read_text() == stage
 
 
+def test_iso_snapshot_names_with_an_unconfigured_signer(root: Path) -> None:
+    project = Project.find()
+    project.config.publish.stage = f"snapshot-name-{secrets.token_hex(4)}"
+    storage = project.config.remote["dev"]
+    signer = release_signer(project)
+    assert signer
+    assert not storage.build_keys
+    day = datetime.now(UTC).date().isoformat()
+    prefix = f"isos/9.0/{project.config.publish.stage}/{day}"
+    remote.write_manifest(storage, prefix, {}, signer=signer)
+    assert not remote.tree_exists(storage, prefix)
+    assert publisher.snapshot_name(project, storage) == f"{day}.2"
+
+
 def test_manifest_paths_stay_in_their_tree(root: Path, tmp_path: Path) -> None:
     storage = Project.find().config.remote.get("main")
     assert storage

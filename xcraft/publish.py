@@ -438,7 +438,7 @@ def snapshot_name(project: Project, storage: Remote) -> str:
     for name in (day, *(f"{day}.{n}" for n in range(2, 1000))):
         if not (
             remote.exists(storage, f"{_tree(project, 'repos', name)}/{REPO}/Source/repodata/repomd.xml")
-            or remote.tree_exists(storage, _tree(project, "isos", name), trusted=dev_signer(project))
+            or remote.exists(storage, f"{_tree(project, 'isos', name)}/{remote.MANIFEST}")
         ):
             return name
     msg = f"too many snapshots on {day}"
