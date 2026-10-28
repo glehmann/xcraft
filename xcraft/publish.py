@@ -14,6 +14,7 @@ import hashlib
 import inspect
 import json
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -114,11 +115,8 @@ def reuse_published(  # noqa: PLR0913
     for kind, manifest in manifests.items():
         latest, target = _tree(project, kind, "latest"), _tree(project, kind, name)
         with activity(f"reusing the published {kind} as {target}", log=True) as on_line:
-            for file in sorted(
-                manifest, key=lambda f: (not f.endswith(".rpm"), f.endswith(("/repomd.xml", "/repomd.xml.asc")), f)
-            ):
-                on_line(file)
-                remote.copy(storage, f"{latest}/{file}", f"{target}/{file}")
+            for files in _batches(list(manifest)):
+                remote.transfer(storage, {f"{target}/{f}": f"{latest}/{f}" for f in files}, on_line)
             remote.write_manifest(storage, target, manifest, signer=signer or signing_key(project))
             _delete_stale(storage, target, {*manifest, remote.MANIFEST, remote.SIGNATURE})
             remote.update_pages(project, storage, [f"{target}/", f"{latest}/"])
@@ -187,13 +185,18 @@ def _download(
         return cache
     with project.work("download") as work:
         if storage := project.config.remote.get("main"):
-            with contextlib.suppress(remote.RemoteError):
-                for f in missing:
-                    on_line(f)
-                    for repo in (REPO, BUILD):  # where it is, if anywhere
-                        path = f"{_tree(project, 'repos', 'latest')}/{repo}/{'Source' if source else project.arch}/{f}"
-                        if remote.download(storage, path, work / f):
-                            break
+            latest = _tree(project, "repos", "latest")
+
+            def fetch(f: str) -> None:
+                for repo in (REPO, BUILD):  # where it is, if anywhere
+                    if remote.download(
+                        storage, f"{latest}/{repo}/{'Source' if source else project.arch}/{f}", work / f
+                    ):
+                        on_line(f)
+                        return
+
+            with contextlib.suppress(remote.RemoteError), ThreadPoolExecutor(remote.REQUESTS) as pool:
+                list(pool.map(fetch, missing))
         if left := sorted({nevra for f, nevra in missing.items() if not (work / f).exists()}):
             run(
                 project,
@@ -450,6 +453,18 @@ def _delete_stale(storage: Remote, prefix: str, keep: set[str]) -> None:
     remote.delete(storage, [f"{prefix}/{p}" for p in remote.listing(storage, f"{prefix}/") if p not in keep])
 
 
+def _batches(files: list[str]) -> list[list[str]]:
+    """Return `files` in the batches to write one after the other: the packages, then the metadata listing them,
+    then repomd.xml with its signature, as close as can be.
+    """  # noqa: D205
+    last = [f for f in files if f.endswith(("/repomd.xml", "/repomd.xml.asc"))]
+    return [
+        [f for f in files if f.endswith(".rpm")],
+        [f for f in files if not f.endswith(".rpm") and f not in last],
+        last,
+    ]
+
+
 def _upload(  # noqa: PLR0913
     storage: Remote,
     src: Path,
@@ -473,24 +488,15 @@ def _upload(  # noqa: PLR0913
         f: (f"{latest}/{f}", digest) for f, digest in remote.read_manifest(storage, latest, trusted=trusted).items()
     }
     copies = {f: path for f, (path, digest) in (candidates | (stored or {})).items() if manifest.get(f) == digest}
-    # the packages before the metadata listing them, and repomd.xml with its signature, as close as can be
-    last = [f for f in files if f.endswith(("/repomd.xml", "/repomd.xml.asc"))]
-    order = [f for f in files if f.endswith(".rpm")] + [f for f in files if not f.endswith(".rpm") and f not in last]
     with activity(f"publishing {tree}", log=True) as on_line:
-        for file in [*order, *last]:
-            on_line(file)
-            if file in copies:
-                remote.copy(storage, copies[file], f"{tree}/{file}")
-            else:
-                remote.upload(storage, f"{tree}/{file}", src / file)
+        for batch in _batches(files):
+            remote.transfer(storage, {f"{tree}/{f}": copies.get(f, src / f) for f in batch}, on_line)
         remote.write_manifest(storage, tree, manifest, signer=signer)
         # the files of a failed publish of the same name, and of the previous latest snapshot, but the pages
         keep = {*files, remote.MANIFEST, remote.SIGNATURE}
         _delete_stale(storage, tree, keep)
-        on_line("latest")
-        for file in [*order, *last]:
-            on_line(f"latest/{file}")
-            remote.copy(storage, f"{tree}/{file}", f"{latest}/{file}")
+        for batch in _batches(files):
+            remote.transfer(storage, {f"{latest}/{f}": f"{tree}/{f}" for f in batch}, on_line)
         remote.write_manifest(storage, latest, manifest, signer=signer)
         _delete_stale(storage, latest, keep)
         on_line("the pages of the directories")
