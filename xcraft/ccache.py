@@ -1,9 +1,9 @@
 """The compiler caches of the packages, shared through the remote storage.
 
-Each package has its own ccache directory, which the builds of CI fill. It is shared as a tarball, in
-``.xcraft/ccache/<arch>/<package>/``, rather than read from the storage by ccache itself, as the builds run without the
-network: a build without a local compiler cache gets it first. The tarball is not compressed again: ccache
-compresses its entries.
+Each package has its own ccache directory, which the builds of CI fill. It is shared as an archive, a tarball,
+``.xcraft/ccache/<arch>/<package>/<package>.ccache``, rather than read from the storage by ccache itself, as the
+builds run without the network: a build without a local compiler cache gets it first. The archive is not compressed
+again: ccache compresses its entries.
 """
 
 from __future__ import annotations
@@ -24,7 +24,12 @@ if TYPE_CHECKING:
     from xcraft.project import Project, Remote
     from xcraft.signing import Signer
 
-TARBALL = "ccache.tar"
+
+def archive_name(name: str) -> str:
+    """Return the name of the archive of the compiler cache of `name`, a tarball, in the remote storage."""
+    return f"{name}.ccache"
+
+
 _LAST_BUILD = "xcraft-last-build"
 """When the last successful build of the package started: the entries ccache dates after, as it dates them of their
 last use, are those it used or made."""
@@ -61,11 +66,11 @@ def push(project: Project, storage: Remote, name: str, *, signer: Signer | None)
         return info if info.isdir() or (info.mtime >= since and Path(info.name).name != "stats") else None
 
     with tempfile.TemporaryDirectory(prefix="xcraft-ccache-") as tmp, activity(f"uploading the ccache of {name}"):
-        with tarfile.open(Path(tmp) / TARBALL, "w") as tar:
+        with tarfile.open(Path(tmp) / archive_name(name), "w") as tar:
             for path in sorted(cache.iterdir()):
                 if path.name not in _LOCAL:
                     tar.add(path, path.name, filter=used)
-        remote.upload_tree(storage, remote_path(project, name), Path(tmp), [TARBALL], signer=signer)
+        remote.upload_tree(storage, remote_path(project, name), Path(tmp), [archive_name(name)], signer=signer)
     return True
 
 
@@ -80,7 +85,7 @@ def fetch(project: Project, name: str) -> bool:
                 return False
         # there, even when empty, before the local one is replaced
         (Path(tmp) / "cache").mkdir()
-        with tarfile.open(Path(tmp) / "tree" / TARBALL) as tar:
+        with tarfile.open(Path(tmp) / "tree" / archive_name(name)) as tar:
             tar.extractall(Path(tmp) / "cache", filter="data")
         if cache.exists():
             shutil.rmtree(cache)

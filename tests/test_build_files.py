@@ -360,7 +360,7 @@ def test_builds_still_to_build_again_fail(project: Project, monkeypatch: pytest.
 def test_empty_compiler_cache(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     def download(_storage: object, _path: str, dest: Path, _on_line: object, **_: object) -> bool:
         dest.mkdir(parents=True)
-        with tarfile.open(dest / ccache.TARBALL, "w"):  # of a build which compiled nothing
+        with tarfile.open(dest / ccache.archive_name("foo"), "w"):  # of a build which compiled nothing
             pass
         return True
 
