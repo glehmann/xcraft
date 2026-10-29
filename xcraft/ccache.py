@@ -3,7 +3,7 @@
 Each package has its own ccache directory, which the builds of CI fill. It is shared as an archive, a tarball,
 ``.xcraft/ccache/<arch>/<package>/<package>.ccache``, rather than read from the storage by ccache itself, as the
 builds run without the network: a build without a local compiler cache gets it first. The archive is not compressed
-again: ccache compresses its entries.
+again: ccache compresses its entries, which are compressed again with a higher level before being shared.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 from rich.markup import escape
 
 from xcraft import remote
+from xcraft.container import run
 from xcraft.display import activity, console
 from xcraft.project import INTERNAL
 
@@ -30,6 +31,9 @@ def archive_name(name: str) -> str:
     return f"{name}.ccache"
 
 
+LEVEL = 19
+"""The zstd level of the entries of the shared compiler caches: higher than the one of the builds, ccache's, which
+favors their speed, for smaller archives to transfer."""
 _LAST_BUILD = "xcraft-last-build"
 """When the last successful build of the package started: the entries ccache dates after, as it dates them of their
 last use, are those it used or made."""
@@ -56,21 +60,38 @@ def push(project: Project, storage: Remote, name: str, *, signer: Signer | None)
     """Upload the compiler cache of `name`, replacing the one of the storage, and return whether it has one.
 
     Only the entries its last successful build used or made are uploaded, if it was built: not those of the older
-    builds, which the local cache keeps. Its statistics neither, which would count them.
+    builds, which the local cache keeps. Its statistics neither, which would count them. They are compressed again with
+    the zstd `LEVEL`, in a copy of their own: ccache dates the entries of their last use.
     """
     if not (cache := local_path(project, name)).is_dir():
         return False
     since = int(float(last.read_text())) if (last := cache / _LAST_BUILD).exists() else 0
-
-    def used(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
-        return info if info.isdir() or (info.mtime >= since and Path(info.name).name != "stats") else None
-
-    with tempfile.TemporaryDirectory(prefix="xcraft-ccache-") as tmp, activity(f"uploading the ccache of {name}"):
-        with tarfile.open(Path(tmp) / archive_name(name), "w") as tar:
-            for path in sorted(cache.iterdir()):
-                if path.name not in _LOCAL:
-                    tar.add(path, path.name, filter=used)
-        remote.upload_tree(storage, remote_path(project, name), Path(tmp), [archive_name(name)], signer=signer)
+    project.state.mkdir(exist_ok=True)
+    # next to the cache, for links to its entries, which ccache replaces when it compresses them again
+    with tempfile.TemporaryDirectory(dir=project.state, prefix=".ccache-") as tmp:
+        staged = Path(tmp) / "cache"
+        staged.mkdir()
+        for path in sorted(cache.iterdir()):
+            if path.name not in _LOCAL:
+                for entry in [path, *path.rglob("*")] if path.is_dir() else [path]:
+                    if entry.is_dir():
+                        (staged / entry.relative_to(cache)).mkdir(exist_ok=True)
+                    elif entry.stat().st_mtime >= since and entry.name != "stats":
+                        (staged / entry.relative_to(cache)).hardlink_to(entry)
+        run(
+            project,
+            "ccache",
+            f"CCACHE_DIR=/ccache ccache --recompress {LEVEL}",
+            volumes=[f"{staged}:/ccache"],
+            show=f"compressing the ccache of {name}",
+            network=False,
+        )
+        with activity(f"uploading the ccache of {name}"):
+            with tarfile.open(Path(tmp) / archive_name(name), "w") as tar:
+                for path in sorted(staged.iterdir()):
+                    if path.name not in _LOCAL:
+                        tar.add(path, path.name, filter=lambda info: None if Path(info.name).name == "stats" else info)
+            remote.upload_tree(storage, remote_path(project, name), Path(tmp), [archive_name(name)], signer=signer)
     return True
 
 

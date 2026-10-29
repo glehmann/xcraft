@@ -25,7 +25,7 @@ import pytest
 from tests import ARCH, PLATFORM, TOML, copy_project
 from tests.test_build import results, write_spec, xcraft
 from tests.test_iso import cache_image
-from xcraft import buildid, remote, repodata
+from xcraft import buildid, ccache, remote, repodata
 from xcraft import publish as publisher
 from xcraft.container import run
 from xcraft.iso import build_iso, iso_key, iso_path, push_isos
@@ -600,10 +600,17 @@ def test_ccache(
     results = sorted(cache.rglob("*R"))  # the results of the compilations
     assert results
     options = [] if developer else ["--key", build_signer[0]]
+
+    def levels() -> set[int]:
+        return {path.read_bytes()[5] for path in cache.rglob("*R")}  # in the header of ccache's entries
+
+    assert levels() == {1}  # ccache's, for the builds
     assert xcraft("push", "ccache", "compiled", "--to", "main", *options) == (0, "↑ compiled\n1 pushed\n")
+    assert levels() == {1}  # the local cache is left as it is
     shutil.rmtree(cache)
     assert xcraft("fetch", "ccache", "compiled") == (0, "↓ compiled\n1 fetched\n")
     assert sorted(cache.rglob("*R")) == results
+    assert levels() == {ccache.LEVEL}  # compressed again, for smaller archives
     # a build without a compiler cache gets the one of the remote storage, and uses it, unless --fetch=none
     for release, options, hits in (("2", ["--fetch=none"], 0), ("3", [], 1)):
         shutil.rmtree(cache)
