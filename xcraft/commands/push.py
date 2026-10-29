@@ -24,17 +24,21 @@ def everything(ctx: typer.Context, arch: Arch = None, key: Key = None, to: To = 
     """Upload to the remote storage what it does not have yet.
 
     Without a command: the sources and the builds of all the packages, with the pages of the directories of what is
-    pushed: xcraft push index makes them all.
+    pushed: xcraft push index makes them all. The sources not in the source cache, like those of the packages which did
+    not build, and the packages not built, do not keep the others from being pushed, then fail it.
     """
     if ctx.invoked_subcommand:
         ctx.default_map = {ctx.invoked_subcommand: {"to": to, **({"key": key} if key else {})}}
         return
     project = load(arch=arch)
     storage = remote_storage(project, to)
-    _push_sources(project, storage, None)
-    if not_built := _push_builds(project, storage, None, signer=signing_key(project, key), final=False):
-        msg = f"not built: {', '.join(not_built)}"
-        raise RuntimeError(msg)
+    absent = _push_sources(project, storage, None)
+    not_built = _push_builds(project, storage, None, signer=signing_key(project, key), final=False)
+    if problems := [
+        *([f"not in the source cache: {', '.join(absent)}"] if absent else []),
+        *([f"not built: {', '.join(not_built)}"] if not_built else []),
+    ]:
+        raise RuntimeError("; ".join(problems))
 
 
 @app.command()
@@ -48,11 +52,13 @@ def sources(
 ) -> None:
     """Upload cached sources to the selected bucket, or only check it with --check."""
     project = load(packages, arch=arch)
-    _push_sources(project, remote_storage(project, to), packages, check=check)
+    if absent := _push_sources(project, remote_storage(project, to), packages, check=check):
+        msg = f"not in the source cache: {', '.join(absent)}"
+        raise RuntimeError(msg)
 
 
-def _push_sources(project: Project, storage: Remote, packages: list[str] | None, *, check: bool = False) -> None:
-    """Upload cached sources to `storage`, or only check it."""
+def _push_sources(project: Project, storage: Remote, packages: list[str] | None, *, check: bool = False) -> list[str]:
+    """Upload cached sources to `storage`, or only check it, and return those missing from it and the source cache."""
     archives = {
         source_path(filename, digest): (filename, digest)
         for name in packages or sorted(project.packages)
@@ -68,10 +74,9 @@ def _push_sources(project: Project, storage: Remote, packages: list[str] | None,
         console.print(f"{len(archives) - len(missing)} archives in the remote storage, {len(missing)} missing")
         if missing:
             raise typer.Exit(1)
-        return
-    if absent := [filename for filename, digest in missing if not cached_source(project, filename, digest)]:
-        msg = f"not in the source cache: {', '.join(absent)}"
-        raise RuntimeError(msg)
+        return []
+    absent = [filename for filename, digest in missing if not cached_source(project, filename, digest)]
+    missing = [(filename, digest) for filename, digest in missing if filename not in absent]
     for filename, digest in missing:
         with activity(f"uploading {filename}"):
             remote.upload(storage, source_path(filename, digest), project.source_cache / digest / filename)
@@ -79,7 +84,8 @@ def _push_sources(project: Project, storage: Remote, packages: list[str] | None,
     if missing:
         with activity("making the pages of the directories"):
             remote.update_pages(project, storage, [f"{source_path(f, d).rsplit('/', 1)[0]}/" for f, d in missing])
-    console.print(f"{len(missing)} pushed, {len(archives) - len(missing)} already in the remote storage")
+    console.print(f"{len(missing)} pushed, {len(archives) - len(missing) - len(absent)} already in the remote storage")
+    return absent
 
 
 @app.command()

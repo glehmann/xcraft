@@ -484,15 +484,19 @@ def test_push_everything(root: Path, tmp_path: Path) -> None:
     archive = tmp_path / f"trivial-{secrets.token_hex(4)}.tar.gz"
     archive.write_text(archive.name)
     write_manifest(root / "base/trivial/sources", {archive.name: cache_source(Project.find().source_cache, archive)})
+    # and one of a package not built, which the source cache has not, like those of the builds that failed
+    write_manifest(root / "base/with-deps/sources", {"absent.tar.gz": "0" * 64})
     assert xcraft("build", "trivial")[0] == 0
     code, output = xcraft("push", "--to", "main")
     # all that can be pushed, and then what could not
     assert code == 1
     assert f"↑ {archive.name}\n1 pushed, 0 already in the remote storage\n↑ trivial\n1 pushed, 0 already" in output
     # the pages of what was pushed only: xcraft push index makes them all
-    assert output.endswith("1 pushed, 0 already in the remote storage\nnot built: with-deps")
+    assert output.endswith(
+        "1 pushed, 0 already in the remote storage\nnot in the source cache: absent.tar.gz; not built: with-deps"
+    )
     assert f'href="{archive.name}"' in page(f".xcraft/sources/{sha256_of(archive)}/")
-    assert xcraft("push", "sources", "--check", "--to", "main")[0] == 0
+    assert xcraft("push", "sources", "trivial", "--check", "--to", "main")[0] == 0
 
 
 def test_builds(root: Path) -> None:
