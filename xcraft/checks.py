@@ -87,28 +87,21 @@ def _check_made(project: Project, name: str, tree: Path, *, suffix: str) -> None
 
     Their names, versions and architectures, and the provides and requirements their spec declares, those rpm
     generates apart, and the debug packages too, which rpm splits while building. The release `suffix`, %autorev, is
-    at the start of %dist, wherever the spec has it, or at the end of the release of the package defining %dist.
+    where Package.suffixed() puts it, in their names too, which may include their release.
     """
-    dist = project.parsed[name].dist
+    package = project.parsed[name]
     made = {n: b for n, b in json.loads((tree / "made.json").read_text()).items() if not is_debug(n)}
-    parsed = {b.name: b for b in project.parsed[name].binaries if not is_debug(b.name)}
+    parsed = {n: b for n, b in zip(package.built_names(suffix), package.binaries, strict=True) if not is_debug(n)}
     problems = changes(set(parsed), set(made))
     for n in sorted(made.keys() & parsed.keys()):
         b, m = parsed[n], made[n]
-
-        def suffixed(text: str, evr: str = b.evr) -> str:
-            """Return `text` with the release suffix where the spec has %dist, or else after the release."""
-            if dist and dist in evr:
-                return text.replace(dist, f"{suffix}{dist}")
-            return text.replace(evr, f"{evr}{suffix}") if suffix else text
-
-        evr = suffixed(b.evr)
+        evr = package.suffixed(b.evr, b.evr, suffix)
         if m["arch"] != b.arch or m["evr"] != evr:
             problems.append(f"{n}-{m['evr']}.{m['arch']} rather than {evr}.{b.arch}")
         problems += [
             f"{n} without the {field} {', '.join(missing)}"
             for field in ("provides", "requires")
-            if (missing := sorted({suffixed(c) for c in getattr(b, field)} - set(m[field])))
+            if (missing := sorted({package.suffixed(c, b.evr, suffix) for c in getattr(b, field)} - set(m[field])))
         ]
     if problems:
         msg = (

@@ -70,6 +70,18 @@ class Package(BaseModel):
         """Its BuildRequires, and the requirements of its binary packages."""
         return [*self.buildrequires, *(r for b in self.binaries for r in b.requires)]
 
+    def suffixed(self, text: str, evr: str, suffix: str) -> str:
+        """Return `text`, of a binary package of release, or epoch-version-release, `evr`, as built with the release
+        `suffix`, %autorev: at the start of %dist, wherever the spec has it, or else after the release.
+        """  # noqa: D205
+        if self.dist and self.dist in evr:
+            return text.replace(self.dist, f"{suffix}{self.dist}")
+        return text.replace(evr, f"{evr}{suffix}") if suffix else text
+
+    def built_names(self, suffix: str) -> list[str]:
+        """Return the names of its binary packages, as built with the release `suffix`."""
+        return [self.suffixed(b.name, b.evr.split(":")[-1].rsplit("-", 1)[-1], suffix) for b in self.binaries]
+
 
 _Packages = TypeAdapter(dict[str, Package])
 

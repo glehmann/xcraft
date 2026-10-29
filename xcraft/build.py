@@ -506,7 +506,9 @@ def make_repo(
     checked, check = repo, f"--check {repo_id(project)}"
     if autorev:
         checked = builds_repo(project, keys)
-        check += "".join(f" --pkg {binary.name}" for name in names for binary in project.packages[name].binaries)
+        check += "".join(
+            f" --pkg {n}" for name in names for n in project.packages[name].built_names(release_suffix(keys[name]))
+        )
     # without best=False, repoclosure only considers the newest version of each package, even when the
     # priority of our repository makes dnf install an older one
     try:
