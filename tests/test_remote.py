@@ -207,7 +207,7 @@ def test_sources(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -
     with caplog.at_level(logging.DEBUG, logger="xcraft"):  # what xcraft --debug shows
         assert xcraft("push", "sources")[1].endswith("1 pushed, 0 already in the remote storage\n")
     assert (
-        f"uploading {cache / digest / archive.name} to s3://xcraft-dev/sources/{digest}/{archive.name}"
+        f"uploading {cache / digest / archive.name} to s3://xcraft-dev/.xcraft/sources/{digest}/{archive.name}"
         in caplog.messages
     )
     assert xcraft("push", "sources", "--check", "--to", "main")[0] == 1
@@ -222,7 +222,7 @@ def test_sources(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -
     shutil.rmtree(cache)
     with caplog.at_level(logging.DEBUG, logger="xcraft"):
         assert xcraft("fetch", "sources") == (0, "all the source archives are in the source cache\n")
-    assert any(m.startswith(f"downloading {WEB}/sources/{digest}/") for m in caplog.messages)
+    assert any(m.startswith(f"downloading {WEB}/.xcraft/sources/{digest}/") for m in caplog.messages)
     assert (cache / digest / archive.name).read_text() == archive.name
     # and checks it
     shutil.rmtree(cache)
@@ -300,7 +300,7 @@ def test_signed_trees(root: Path, tmp_path: Path) -> None:
     assert not remote.tree_exists(storage.model_copy(update={"build_keys": []}), prefix)
     key = tmp_path / "key.asc"
     key.write_text(signer.public_key())
-    remote.upload(storage, f"keys/{'0' * 40}.asc", key)
+    remote.upload(storage, f"{remote.KEYS}/{'0' * 40}.asc", key)
     assert not remote.tree_exists(storage.model_copy(update={"build_keys": ["0" * 40]}), prefix)
     # A signed manifest cannot be transplanted to another build key.
     for file in ("file", remote.MANIFEST, remote.SIGNATURE):
@@ -423,7 +423,7 @@ def test_developer_storage(root: Path, tmp_path: Path) -> None:
     assert xcraft("build", "trivial", "--fetch=none")[0] == 0
     assert xcraft("push", "builds", "trivial")[0] == 0
     storage = Project.find().config.remote["dev"]
-    trees = remote.listing(storage, f"builds/{ARCH}/trivial/")
+    trees = remote.listing(storage, f".xcraft/builds/{ARCH}/trivial/")
     assert any(path.endswith(remote.SIGNATURE) for path in trees)
     assert signer.key not in storage.build_keys
     shutil.rmtree(root / ".xcraft/cache/builds")
@@ -483,7 +483,7 @@ def test_push_everything(root: Path, tmp_path: Path) -> None:
     assert f"↑ {archive.name}\n1 pushed, 0 already in the remote storage\n↑ trivial\n1 pushed, 0 already" in output
     # the pages of what was pushed only: xcraft push index makes them all
     assert output.endswith("1 pushed, 0 already in the remote storage\nnot built: with-deps")
-    assert f'href="{archive.name}"' in page(f"sources/{sha256_of(archive)}/")
+    assert f'href="{archive.name}"' in page(f".xcraft/sources/{sha256_of(archive)}/")
     assert xcraft("push", "sources", "--check", "--to", "main")[0] == 0
 
 
@@ -494,12 +494,13 @@ def test_builds(root: Path) -> None:
         == "↑ trivial\n1 pushed, 0 already in the remote storage\n"
     )
     # browsable, as the storage does not list directories
-    assert 'href="builds/"' in page("")
-    assert 'href="trivial/"' in page(f"builds/{ARCH}/")
+    assert 'href=".xcraft/"' in page("")
+    assert 'href="builds/"' in page(".xcraft/")
+    assert 'href="trivial/"' in page(f".xcraft/builds/{ARCH}/")
     # with the size of all that is below them and the date of the newest file, from their pages when only their
     # parent is listed
     assert re.search(
-        r'href="builds/">builds/</a></td><td data-k="[1-9]\d*"[^>]*>[\d.]+ \w+</td><td data-k="\d{4}-', page("")
+        r'href="builds/">builds/</a></td><td data-k="[1-9]\d*"[^>]*>[\d.]+ \w+</td><td data-k="\d{4}-', page(".xcraft/")
     )
     assert xcraft("push", "index", "--to", "main")[1].endswith(" pages\n")
     assert xcraft("push", "builds", "--to", "main") == (
@@ -767,7 +768,7 @@ def test_signed_publish(root: Path) -> None:  # noqa: PLR0915
         assert storage
         assert remote.exists(storage, f"repos/9.0/{STAGE}/latest/base/{ARCH}/repodata/repomd.xml.asc")
         signed = list((root / ".xcraft/cache/signed" / signer.key / "trivial").iterdir())
-        assert remote.tree_exists(storage, f"signed/{signer.key}/{ARCH}/trivial/{signed[0].name}")
+        assert remote.tree_exists(storage, f".xcraft/signed/{signer.key}/{ARCH}/trivial/{signed[0].name}")
         # signed once: the next snapshots have the same files
         rpm = signed[0] / "RPMS/noarch/trivial-1.0-1+b1.xcpng8.99.noarch.rpm"
         before = rpm.read_bytes()
@@ -783,7 +784,9 @@ def test_signed_publish(root: Path) -> None:  # noqa: PLR0915
         dev_storage = Project.find().config.remote["dev"]
         assert remote.tree_exists(dev_storage, f"repos/9.0/{STAGE}/latest", trusted=signer)
         assert not remote.tree_exists(dev_storage, f"repos/9.0/{STAGE}/latest")
-        assert remote.tree_exists(dev_storage, f"signed/{signer.key}/{ARCH}/trivial/{signed[0].name}", trusted=signer)
+        assert remote.tree_exists(
+            dev_storage, f".xcraft/signed/{signer.key}/{ARCH}/trivial/{signed[0].name}", trusted=signer
+        )
     finally:
         subprocess.run(["gpgconf", "--homedir", str(signer.gnupghome), "--kill", "gpg-agent"], check=False)
 
@@ -943,7 +946,7 @@ def test_manifest_paths_stay_in_their_tree(root: Path, tmp_path: Path) -> None:
         assert signer
         key = tmp_path / "key.asc"
         key.write_text(signer.public_key())
-        remote.upload(storage, f"keys/{signer.key}.asc", key)
+        remote.upload(storage, f"{remote.KEYS}/{signer.key}.asc", key)
         remote.upload(storage, "trees/bad/manifest.json", manifest)
         remote.upload(storage, "trees/bad/manifest.json.asc", signer.sign_file(payload))
         assert not remote.download_tree(storage, "trees/bad", tmp_path / "tree")
@@ -1004,10 +1007,10 @@ def test_signing_keys_have_a_directory_page(root: Path, tmp_path: Path) -> None:
     file.write_text("signed tree")
     remote.upload_tree(storage, "pages-with-key", tmp_path, ["file"], signer=signer)
     remote.update_pages(project, storage, ["pages-with-key/"])
-    assert f'href="{signer.key}.asc"' in page("keys/")
-    root_page = page("")
-    assert 'href="keys/"' in root_page
-    assert re.search(r'href="keys/".*?<td data-k="[1-9][0-9]*">', root_page)
+    assert f'href="{signer.key}.asc"' in page(".xcraft/keys/")
+    internal = page(".xcraft/")
+    assert 'href="keys/"' in internal
+    assert re.search(r'href="keys/".*?<td data-k="[1-9][0-9]*">', internal)
 
 
 def test_logo_on_the_pages(root: Path, tmp_path: Path) -> None:

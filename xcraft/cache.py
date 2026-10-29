@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from xcraft.container import BUILDENV
 from xcraft.graph import components, reachable
 from xcraft.localrepo import REPO_FILE, LocalRepo
+from xcraft.project import INTERNAL
 from xcraft.specs import hash_dir
 
 if TYPE_CHECKING:
@@ -142,7 +143,7 @@ def deps_repo(project: Project, name: str, keys: dict[str, str]) -> LocalRepo:
 
 def build_path(project: Project, name: str, key: str) -> str:
     """Return the path of the tree of a build in the remote storage."""
-    return f"builds/{project.arch}/{name}/{key}"
+    return f"{INTERNAL}/builds/{project.arch}/{name}/{key}"
 
 
 BUILD_FILES = ["RPMS", "SRPMS", "build.log"]

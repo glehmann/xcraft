@@ -1,7 +1,7 @@
 """The compiler caches of the packages, shared through the remote storage.
 
 Each package has its own ccache directory, which the builds of CI fill. It is shared as a tarball, in
-``ccache/<arch>/<package>/``, rather than read from the storage by ccache itself, as the builds run without the
+``.xcraft/ccache/<arch>/<package>/``, rather than read from the storage by ccache itself, as the builds run without the
 network: a build without a local compiler cache gets it first. The tarball is not compressed again: ccache
 compresses its entries.
 """
@@ -18,6 +18,7 @@ from rich.markup import escape
 
 from xcraft import remote
 from xcraft.display import activity, console
+from xcraft.project import INTERNAL
 
 if TYPE_CHECKING:
     from xcraft.project import Project, Remote
@@ -38,7 +39,7 @@ def local_path(project: Project, name: str) -> Path:
 
 def remote_path(project: Project, name: str) -> str:
     """Return the tree of the compiler cache of `name` in the remote storage."""
-    return f"ccache/{project.arch}/{name}"
+    return f"{INTERNAL}/ccache/{project.arch}/{name}"
 
 
 def note_build(project: Project, name: str, start: float) -> None:

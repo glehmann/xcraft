@@ -154,7 +154,7 @@ xcraft never builds a package whose build with the same key and release suffix i
 [remote storage](#remote-storage), unless `--fetch=none`; it builds it again as soon as one of its inputs changes. A
 build is named by its key and release suffix, `%{autorev}`: the number of its [build ID](#build-ids), `+b<n>`, and
 its development build suffix, if any, in `.xcraft/cache/builds/<arch>/<pkg>/<key>+b<n>/`, and in the storage,
-`builds/<arch>/<pkg>/<key>+b<n>/`. A [development build](#development-builds), or one built against development builds,
+`.xcraft/builds/<arch>/<pkg>/<key>+b<n>/`. A [development build](#development-builds), or one built against development builds,
 is named by the hash of its key and of the names of the builds of ours it is built against instead, with its suffix.
 
 **What it covers.** The key of a package is made of:
@@ -458,8 +458,12 @@ bucket = "xcraft-dev"
 region = "garage"
 ```
 
-The writes use the credentials of `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. The storage has
-`sources/<sha256>/<filename>` and `builds/<arch>/<package>/<key>/`, with a `manifest.json` of the build's files.
+The writes use the credentials of `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. The top of the storage only has
+the published repositories, in `repos/`, the published ISOs, in `isos/`, and what xcraft keeps for itself, in
+`.xcraft/`, like the local state of a checkout: `.xcraft/sources/<sha256>/<filename>`,
+`.xcraft/builds/<arch>/<package>/<key>+b<n>/`, with a `manifest.json` of the build's files, and the signed builds,
+the compiler caches, the public keys and the ISOs of the checkouts, in `.xcraft/signed/`, `.xcraft/ccache/`,
+`.xcraft/keys/` and `.xcraft/isos/`.
 
 - When an archive of a manifest is not in the source cache, the build, or `xcraft fetch sources`, downloads it, from
   the storage, or else from the source of the spec whose URL has the name of the archive, and checks it against the
@@ -476,7 +480,7 @@ The writes use the credentials of `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY
   leaves in the storage the builds it has, only fetching those of the dependencies of the packages it builds.
 - A build without the compiler cache of its package downloads the one of the storage first, unless `--fetch=none`: the
   one CI pushes after its builds, with `xcraft push ccache`, so that rebuilding a modified package, like the kernel
-  with a patch, mostly finds its objects. The cache of a package is a tarball, in `ccache/<arch>/<package>/`, rather
+  with a patch, mostly finds its objects. The cache of a package is a tarball, in `.xcraft/ccache/<arch>/<package>/`, rather
   than read by ccache from the storage, as the builds run without the network. `xcraft fetch ccache` gets it again.
   `xcraft push ccache` only uploads the entries the last successful build of the package used or made, which ccache
   dates of their last use: not those of the older builds, which the local cache keeps.
@@ -500,7 +504,7 @@ builds and snapshot manifests. `--unsigned` skips package signing but remote man
 key; it cannot be combined with `--key` or `--dev-key`.
 `remote.main.build_keys` only lists trusted public keys for verification; its order does not select the signing key.
 The checkout also trusts its own developer key, without any configuration change.
-Public keys are uploaded to `keys/<fingerprint>.asc` and checked against the configured
+Public keys are uploaded to `.xcraft/keys/<fingerprint>.asc` and checked against the configured
 fingerprints. Each detached `manifest.json.asc` signs the UTF-8 tree path, a newline, and the exact manifest bytes.
 Missing or invalid signatures make a remote tree unavailable. There is no unsigned-tree fallback.
 Only the manifest, its signature and public keys are downloaded before verifying the signer and signature. Build
@@ -659,7 +663,7 @@ available to the builds, which run the code of the specs.
   ```
 
   Each build is signed once, and kept in `.xcraft/cache/signed/<fingerprint>/` and in the remote storage, in
-  `signed/<fingerprint>/`: signatures have a date, so signing again would not give the same files, which the storage
+  `.xcraft/signed/<fingerprint>/`: signatures have a date, so signing again would not give the same files, which the storage
   could not store once. The snapshot's packages are checked against the public key, its `repomd.xml` are signed, and
   it has the key, as `RPM-GPG-KEY`. `--key <fingerprint>` overrides `[sign].key`, and `--dev-key` explicitly selects the
   developer's key even when `[sign]` exists. Without `[sign]` or `--key`, publishing uses the developer's key by
