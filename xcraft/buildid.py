@@ -20,10 +20,13 @@ from xcraft.cache import recipe_key
 from xcraft.container import BUILDENV, PACKAGES
 from xcraft.display import console
 from xcraft.graph import components, reachable
-from xcraft.lock import load_lock
+from xcraft.lock import Lock, load_lock, lock_path, parse_lock
 from xcraft.specs import hash_dir
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
     from xcraft.project import Project
 
 DIR = ".buildid"
@@ -43,16 +46,27 @@ class BuildId(BaseModel):
     number: int
     key: str
     """The build key, the same on all the architectures."""
+    accepts: str | None = None
+    """The build key a reused build is accepted for, the current one: an equivalence, chosen with xcraft reuse."""
 
     @classmethod
     def parse(cls, text: str) -> BuildId:
         """Return the build ID of the content of its file."""
-        number, key = text.split()
-        return cls(number=int(number), key=key)
+        match text.split():
+            case [number, key]:
+                return cls(number=int(number), key=key)
+            case [number, key, "accepts", accepts]:
+                return cls(number=int(number), key=key, accepts=accepts)
+        msg = f"not a build ID: {text}"
+        raise ValueError(msg)
 
     def text(self) -> str:
         """Return the content of its file."""
-        return f"{self.number} {self.key}\n"
+        return f"{self.number} {self.key}" + (f" accepts {self.accepts}" if self.accepts else "") + "\n"
+
+    def matches(self, key: str) -> bool:
+        """Return whether a package of build `key` has this build ID: built from it, or reusing it for it."""
+        return key in (self.key, self.accepts)
 
 
 def _recipe(project: Project) -> str:
@@ -75,54 +89,76 @@ def _recipe(project: Project) -> str:
     ).hexdigest()
 
 
-def compute(project: Project, branch: Branch | None, hashes: dict[str, str] | None = None) -> dict[str, BuildId]:
+def _lock_inputs(project: Project, lock: Lock, name: str, ignored: set[str] | None = None) -> dict:
+    """Return what the build key of `name` covers in `lock`, but the versions of the `ignored` source packages.
+
+    That is, on all the architectures, the upstream packages of the image and of its build root, with their versions,
+    and what its build root is resolved from: its dynamic BuildRequires, and the requirements and provides rpm
+    generated for the binary packages of ours it may have.
+    """
+
+    def versions(sources: list[str]) -> dict[str, str | None]:
+        return {source: None if source in (ignored or set()) else lock.sources.get(source) for source in sources}
+
+    deps = project.deps
+    binaries = sorted({b.name for dep in reachable(deps, deps[name]) for b in project.packages[dep].binaries})
+    return {
+        platform.arch: [
+            versions(lock.image.get(platform.arch, [])),
+            versions(lock.roots.of(platform.arch).get(name, [])),
+            lock.buildrequires.of(platform.arch).get(name, []),
+            {
+                b: [lock.requires.of(platform.arch).get(b, []), lock.provides.of(platform.arch).get(b, [])]
+                for b in binaries
+            },
+        ]
+        for platform in project.all_platforms()
+    }
+
+
+def compute(
+    project: Project,
+    branch: Branch | None,
+    hashes: dict[str, str] | None = None,
+    reuse: Callable[[str, dict[str, BuildId]], bool] | None = None,
+) -> dict[str, BuildId]:
     """Return the build ID of each package, from those of the main `branch`, see base(), with the `hashes` of the
     package directories (see xcraft.cache.inputs()).
 
-    The build key covers the package directory, the recipe, and, on all the architectures, in their locked versions,
-    the upstream packages of the image and of the build root, as the lock records them, with what the build root is
-    resolved from: the dynamic BuildRequires and the requirements and provides rpm generated for the binary packages
-    of ours it may have; and the build IDs of the packages of ours it is built against. Packages depending on each
-    other, in a cycle, get the key of them all: they are rebuilt together.
+    The build key covers the package directory, the recipe, what the lock has for it (see _lock_inputs()), and the
+    build IDs of the packages of ours it is built against. Packages depending on each other, in a cycle, get the key
+    of them all: they are rebuilt together.
 
     A package with the key of the main branch where the current one forks from it, or of its tip, keeps its build ID,
-    the fork's first: one unchanged by the current branch keeps it while the main branch changed it. Otherwise, it gets
-    the next number of both, as a merge of the main branch, even in progress, must not reuse its numbers. Without the
-    main branch, the numbers are those of the working tree, 1 for new packages: there is nothing to number them against.
+    the fork's first: one unchanged by the current branch keeps it while the main branch changed it. So does one reusing
+    a build for the key, there or in the working tree. Otherwise, a package `reuse` takes, with the build IDs of those
+    before it, reuses the build of the fork, accepting the key; and the others get the next number of both, as a merge
+    of the main branch, even in progress, must not reuse its numbers. Without the main branch, the numbers are those of
+    the working tree, 1 for new packages: there is nothing to number them against.
     """  # noqa: D205
     hashes = hashes or {name: hash_dir(path) for name, path in project.package_dirs.items()}
-    lock, deps, current = load_lock(project), project.deps, read(project)
-    arches = [platform.arch for platform in project.all_platforms()]
-    common = [
-        _recipe(project),
-        {arch: {source: lock.sources[source] for source in lock.image.get(arch, [])} for arch in arches},
-    ]
+    lock, deps, current, recipe = load_lock(project), project.deps, read(project), _recipe(project)
     fork, main = branch or (current, {})
     ids: dict[str, BuildId] = {}
     for component in components(deps):  # the dependencies first
-
-        def inputs(name: str, component: set[str] = component) -> list:
-            # the binary packages of ours its build root may have
-            binaries = sorted({b.name for dep in reachable(deps, deps[name]) for b in project.packages[dep].binaries})
-            return [
+        inputs = {
+            name: [
                 hashes[name],
-                {
-                    arch: [
-                        {source: lock.sources[source] for source in lock.roots.of(arch).get(name, [])},
-                        lock.buildrequires.of(arch).get(name, []),
-                        {b: [lock.requires.of(arch).get(b, []), lock.provides.of(arch).get(b, [])] for b in binaries},
-                    ]
-                    for arch in arches
-                },
+                recipe,
+                _lock_inputs(project, lock, name),
                 [[dep, ids[dep].number, ids[dep].key] for dep in sorted(deps[name] - component)],
             ]
-
-        together = json.dumps([common, {name: inputs(name) for name in sorted(component)}], sort_keys=True)
+            for name in sorted(component)
+        }
+        together = json.dumps(inputs, sort_keys=True)
         for name in sorted(component):
             key = hashlib.sha256(f"{together}\0{name}".encode()).hexdigest()
             known = [i for i in (fork.get(name), main.get(name)) if i]
-            if found := next((i for i in known if i.key == key), None):
+            reused = [i for i in (current.get(name),) if i and i.accepts]
+            if found := next((i for i in [*known, *reused] if i.matches(key)), None):
                 ids[name] = found
+            elif known and reuse and reuse(name, ids):
+                ids[name] = known[0].model_copy(update={"accepts": key})
             elif branch is None:
                 ids[name] = BuildId(number=known[0].number if known else 1, key=key)
             else:
@@ -171,18 +207,27 @@ def base(project: Project) -> Branch | None:
     """Return the build IDs of the main branch where the current one forks from it, and of its tip; or None out of a
     git repository, or without the main branch.
     """  # noqa: D205
-    if (main := _main(project)) and (fork := _git(project, "merge-base", "HEAD", main)):
+    if (main := _main(project)) and (fork := _fork(project)):
         return _at(project, fork), _at(project, main)
     return None
 
 
+def _fork(project: Project) -> str | None:
+    """Return the commit of the main branch where the current branch forks from it, if any."""
+    return (main := _main(project)) and _git(project, "merge-base", "HEAD", main)
+
+
 def proposed(project: Project, ids: dict[str, BuildId]) -> set[str]:
     """Return the packages whose build ID of `ids` is not the main branch's: those of development builds, none
-    without the main branch.
+    without the main branch. A reused build is the main branch's.
     """  # noqa: D205
     if (branch := base(project)) is None:
         return set()
-    return {name for name, i in ids.items() if i not in (branch[0].get(name), branch[1].get(name))}
+    return {
+        name
+        for name, i in ids.items()
+        if not any(j and (j.number, j.key) == (i.number, i.key) for j in (branch[0].get(name), branch[1].get(name)))
+    }
 
 
 def on_main(project: Project) -> bool:
@@ -208,11 +253,12 @@ def check_first_parent(project: Project, ids: dict[str, BuildId]) -> None:
         raise BuildIdError(msg)
 
 
-def update(project: Project) -> list[str]:
-    """Write the build IDs of the packages, and return those changed. When the project is frozen, fail instead if
-    they would change, or, on the main branch, if they reuse the numbers of the previous commit for other builds.
+def update(project: Project, reuse: Callable[[str, dict[str, BuildId]], bool] | None = None) -> list[str]:
+    """Write the build IDs of the packages, and return those changed, those `reuse` takes reusing their builds, see
+    compute(). When the project is frozen, fail instead if they would change, or, on the main branch, if they reuse the
+    numbers of the previous commit for other builds.
     """  # noqa: D205
-    ids, current = compute(project, base(project)), read(project)
+    ids, current = compute(project, base(project), reuse=reuse), read(project)
     changed = sorted(name for name in ids.keys() | current.keys() if ids.get(name) != current.get(name))
     if project.frozen:
         if changed:
@@ -227,3 +273,40 @@ def update(project: Project) -> list[str]:
         else:
             (directory / name).unlink()
     return changed
+
+
+def reuse(project: Project, names: list[str], sources: list[str]) -> list[str]:
+    """Reuse the builds of the main branch where the current one forks from it, despite changes, of the packages
+    `names`, but those whose directories changed, and of those whose only changes are updates of the upstream source
+    packages `sources`, and return those changed.
+
+    The packages built against them keep their builds too, unless they changed otherwise.
+    """  # noqa: D205
+    if not (fork := _fork(project)):
+        msg = f"reusing builds needs the main branch, {project.config.main_branch}, in a git repository"
+        raise BuildIdError(msg)
+    forked = _at(project, fork)
+    forked_lock = parse_lock(_git(project, "show", f"{fork}:./{lock_path(project).name}") or "")
+    lock, updated = load_lock(project), set(sources)
+
+    def changed(path: Path) -> bool:
+        """Return whether the files of `path` changed since the fork, untracked ones included."""
+        relative = path.relative_to(project.root).as_posix()
+        return _git(project, "diff", "--quiet", fork, "--", relative) is None or bool(
+            _git(project, "ls-files", "--others", "--exclude-standard", "--", relative)
+        )
+
+    def reusable(name: str, ids: dict[str, BuildId]) -> bool:
+        if changed(project.package_dirs[name]):
+            return False
+        if name in names:
+            return True
+        return (
+            bool(updated)
+            and not changed(project.root / "xcraft.toml")
+            and all((ids[d].number, ids[d].key) == (forked[d].number, forked[d].key)
+                    for d in project.deps[name] if d in ids and d in forked)
+            and _lock_inputs(project, lock, name, updated) == _lock_inputs(project, forked_lock, name, updated)
+        )  # fmt: skip
+
+    return update(project, reusable)

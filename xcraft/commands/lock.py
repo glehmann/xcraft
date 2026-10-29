@@ -6,10 +6,11 @@ from typing import Annotated
 
 import typer
 
+from xcraft.commands import update_build_ids
 from xcraft.display import console
 from xcraft.lock import choose_versions, load_lock, lock_path, save_lock
 from xcraft.project import Project
-from xcraft.resolution import available_versions, prepare, resolve, upstream_sources
+from xcraft.resolution import available_versions, prepare, upstream_sources
 
 
 def lock(
@@ -43,7 +44,7 @@ def lock(
     console.print(
         f"{lock_path(project).relative_to(project.root)}: {len(current.sources)} upstream source packages, what rpm "
         f"generated for {len(recorded['requires'].shared)} binary packages of ours, the dynamic BuildRequires of "
-        f"{len(recorded['buildrequires'].shared)} packages, pending updates for {len(current.pending)} packages"
+        f"{len(recorded['buildrequires'].shared)} packages"
     )
 
 
@@ -62,18 +63,10 @@ def _update(project: Project, packages: list[str], *, write: bool) -> int:
         console.print(f"{len(changed)} to update: xcraft lock --update updates them" if changed else "up to date")
         return len(changed)
     if changed:
-        # the upstream source packages of the build roots, before the update
-        roots: dict[str, set[str]] = {}
-        for platform in project.all_platforms():
-            prepare(platform)
-            resolved = resolve(platform)
-            for name, names in resolved.buildroots.items():
-                roots.setdefault(name, set()).update(resolved.packages[n].source for n in names)
-        # which may have locked new ones
-        current = load_lock(project)
-        previous = {source: current.sources[source] for source in changed}
+        current = load_lock(project)  # which may have locked new ones
         current.sources |= changed
-        current.note_updates(previous, roots)
         save_lock(project, current)
-    console.print(f"{len(changed)} updated" + (", see xcraft impacts" if current.pending else ""))
+        prepare(project)  # the images and build roots of the updated packages
+        update_build_ids(project)  # the packages built with them get new numbers
+    console.print(f"{len(changed)} updated")
     return len(changed)

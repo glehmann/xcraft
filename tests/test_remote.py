@@ -1047,3 +1047,34 @@ def test_development_builds_are_neither_pushed_nor_fetched(root: Path) -> None:
     code, output = xcraft("push", "builds", "trivial", "--final", "--to", "main")
     assert code == 0, output
     assert "↑ trivial" in output
+
+
+def test_reused_builds_are_fetched(root: Path) -> None:
+    def git(*args: str) -> None:
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@e", *args], cwd=root, check=True,
+                       capture_output=True)  # fmt: skip
+
+    # keys of their own, not to find the builds of the other tests in the storage
+    spec = root / "base/with-deps/with-deps.spec"
+    spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
+    assert xcraft("build")[0] == 0
+    git("init", "-q", "-b", "master")
+    buildid.update(Project.find())
+    git("add", "-A")
+    git("commit", "-qm", "base")
+    assert xcraft("push", "builds", "--to", "main")[0] == 0
+    # on a branch, with-deps reuses the build of the main branch, built against the previous trivial
+    git("checkout", "-qb", "feature")
+    trivial = root / "base/trivial/trivial.spec"
+    trivial.write_text(f"# changed\n{trivial.read_text()}")
+    assert xcraft("reuse", "with-deps")[0] == 0
+    shutil.rmtree(root / ".xcraft/cache/builds")
+    code, output = xcraft("build", "with-deps")
+    assert code == 0, output
+    assert "↓ with-deps fetched" in output
+    assert output.splitlines()[-1] == "1 built, 1 fetched"
+    # never built again
+    shutil.rmtree(root / ".xcraft/cache/builds")
+    code, output = xcraft("build", "with-deps", "--fetch=none")
+    assert code == 1
+    assert "✗ with-deps: not in the remote storage" in output

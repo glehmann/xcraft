@@ -283,12 +283,7 @@ def test_bump(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert code == 0, output
     assert " Me <me@example.com> - 1.0-3\n-\n\n" in (root / "base/trivial/trivial.spec").read_text()
     assert xcraft("build", "trivial")[0] == 0
-    # with --dep, from the pending updates, by source package
-    lock = load_lock(Project.find())
-    lock.pending = {"trivial": {"zlib-ng": "1.2-1"}}
-    save_lock(Project.find(), lock)
-    assert xcraft("bump", "--dep", "zlib-ng")[1] == "trivial: 1.0-3 -> 1.0-4\n"
-    assert load_lock(Project.find()).pending == {}
+    assert xcraft("bump")[0] == 2  # no package
 
 
 def test_bump_version(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -339,9 +334,6 @@ def test_bump_version_must_increase(root: Path, monkeypatch: pytest.MonkeyPatch,
         .replace("Version: 1.0", "%global upver 1.10\nVersion: %{upver}")
     )
     (root / "xcraft.toml").write_text(f'same_version = [["trivial", "twin"]]\n{TOML}')
-    lock = load_lock(Project.find())
-    lock.pending = {"trivial": {"zlib-ng": "1.2-1"}}
-    save_lock(Project.find(), lock)
     paths = [spec, twin / "twin.spec", root / "base/trivial/sources", root / "xcraft.lock"]
     before = {path: path.read_bytes() for path in paths}
     code, output = xcraft("bump", "trivial", "--version", version)
@@ -528,9 +520,8 @@ def test_lock_update_changing_implicit_deps(root: Path) -> None:
         1,
         "toyrun 1-1 -> 2-1\n1 to update: xcraft lock --update updates them\n",
     )
-    assert xcraft("lock", "--update", "toyrun") == (0, "toyrun 1-1 -> 2-1\n1 updated, see xcraft impacts\n")
-    # through trivial, with-deps was built against toyrun
-    assert load_lock(Project.find()).pending == {"with-deps": {"toyrun": "1-1"}}
+    # through trivial, with-deps was built against toyrun: its key changes
+    assert xcraft("lock", "--update", "toyrun") == (0, "toyrun 1-1 -> 2-1\nbuild IDs: with-deps 1\n1 updated\n")
 
     # trivial stays cached, but toyrun-bin has its interpreter now: with-deps is built against it
     code, output = xcraft("build", "with-deps")
@@ -558,36 +549,6 @@ def test_graph(root: Path) -> None:
     assert xcraft("graph", "with-deps", "--flat") == (0, "trivial\nwith-deps\n")
     assert xcraft("graph", "trivial", "--dependents") == (0, "trivial\n└── with-deps\n")
     assert xcraft("graph", "trivial", "--dependents", "--flat") == (0, "with-deps\n")
-
-
-def test_impacts_and_bump(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    spec = root / "base/trivial/trivial.spec"
-    spec.write_text(spec.read_text().replace("BuildArch: noarch", "BuildArch: noarch\nBuildRequires: lzo-devel"))
-    assert xcraft("build", "with-deps")[0] == 0
-    assert xcraft("impacts") == (0, "nothing pending\n")
-    # through trivial, with-deps is built against the upstream package
-    assert xcraft("graph", "lzo-devel", "--dependents", "--flat") == (0, "trivial\nwith-deps\n")
-    assert "└── lzo-devel\n" in xcraft("graph", "trivial", "--upstream")[1]
-
-    # as if lzo had been updated since trivial was built
-    lock = load_lock(Project.find())
-    lock.note_updates({"lzo": "1.0-1"}, {"trivial": {"lzo"}})
-    save_lock(Project.find(), lock)
-    code, output = xcraft("impacts")
-    assert code == 0, output
-    # by source package, and built with the current lock
-    assert re.search(r"^ lzo +1\.0-1 +\S+ +✓ trivial", output, re.MULTILINE), output
-    now = load_lock(Project.find()).sources["lzo"]
-    assert xcraft("impacts", "--markdown")[1].endswith(f"| lzo | 1.0-1 | {now} | ✓ trivial |\n")
-
-    gitconfig = root / "gitconfig"
-    gitconfig.write_text("[user]\n\tname = Me\n\temail = me@example.com\n")
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(gitconfig))
-    assert xcraft("bump", "--dep", "lzo", "-m", "Rebuild for lzo") == (
-        0,
-        "trivial: 1.0-1 -> 1.0-2\n",
-    )
-    assert load_lock(Project.find()).pending == {}
 
 
 def test_failed_step_shows_its_log(root: Path) -> None:

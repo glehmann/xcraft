@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Literal
 from rich.markup import escape
 from rich.text import Text
 
-from xcraft import ccache, remote
+from xcraft import buildid, ccache, remote
 from xcraft.cache import (
     BuildError,
     build_keys,
@@ -321,6 +321,7 @@ def _build_all(  # noqa: PLR0913
 ) -> tuple[list[Result], dict[str, str]]:
     results: dict[str, Result] = {}
     use_remote = fetch != "none" and bool(project.config.remote)
+    reused = {name for name, i in buildid.read(project).items() if i.accepts}
     # asked at once, with the keys of the start
     missing = [name for name in plan if not cached_build(project, name, keys[name]).exists()]
     stored = _stored(project, missing, keys) if use_remote and fetch == "needed" else {}
@@ -342,7 +343,7 @@ def _build_all(  # noqa: PLR0913
             results[name] = Result(name, "skipped")
             console.print(f"[yellow]-[/] {name} [yellow]skipped[/], needs {', '.join(failed)}")
             continue
-        if not build_missing:
+        if not build_missing or name in reused:  # the build of the main branch, made by CI
             results[name] = Result(name, "failed")
             _show_failure(project, name, BuildError(f"not in the remote storage, for {project.arch}"), verbose=verbose)
             continue

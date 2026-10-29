@@ -11,6 +11,7 @@ import pytest
 from tests import copy_project
 from tests.test_build import xcraft
 from xcraft import buildid
+from xcraft.lock import load_lock, save_lock
 from xcraft.project import Project
 
 if TYPE_CHECKING:
@@ -182,3 +183,70 @@ def test_numbers_given_again_on_main_branch(root: Path) -> None:
         buildid.check_first_parent(project, ids)
     ids["trivial"] = ids["trivial"].model_copy(update={"number": 3})
     buildid.check_first_parent(project, ids)
+
+
+def test_reused_builds(root: Path) -> None:
+    code, output = xcraft("reuse", "with-deps")
+    assert code == 1
+    assert "reusing builds needs the main branch, master, in a git repository" in output
+    assert xcraft("build")[0] == 0  # the builds of the main branch
+    commit_base(root)
+    base = buildid.read(Project.find())
+    git(root, "checkout", "-qb", "feature")
+    edit(root, "changed")
+    assert update() == {"trivial": 2, "with-deps": 2}
+    # with-deps, built against trivial, reuses its build, accepting the change
+    code, output = xcraft("reuse", "with-deps")
+    assert code == 0, output
+    assert output.splitlines()[-1] == "with-deps: reuses its build 1"
+    deps = buildid.read(Project.find())["with-deps"]
+    assert (deps.number, deps.key) == (1, base["with-deps"].key)
+    assert deps.accepts
+    assert (root / ".buildid/with-deps").read_text() == f"1 {deps.key} accepts {deps.accepts}\n"
+    # kept while the key is the accepted one, committed or not: a main branch's build, not a development one
+    assert update() == {"trivial": 2, "with-deps": 1}
+    git(root, "commit", "-qam", "reused")
+    assert update() == {"trivial": 2, "with-deps": 1}
+    assert built("with-deps") == ["trivial-1.0-1+b2~1.dev.xcpng8.99.noarch.rpm"]
+    assert "with-deps-1.0-1+b1.xcpng8.99.noarch.rpm" in {
+        p.name for p in root.glob(".xcraft/cache/builds/*/with-deps/*/RPMS/*/*.rpm")
+    }
+    # until it changes otherwise
+    edit(root, "changed again")
+    assert update() == {"trivial": 2, "with-deps": 2}
+    assert not buildid.read(Project.find())["with-deps"].accepts
+    # a package changed itself is not reused
+    code, output = xcraft("reuse", "trivial")
+    assert code == 0, output
+    assert output.splitlines()[-1] == "trivial: changed itself, built again"
+
+
+def test_reused_builds_of_upstream_updates(root: Path) -> None:
+    # a script run by toyrun, upstream, which rpm generates a requirement on: with-deps is built against toyrun
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(
+        spec.read_text()
+        .replace('echo "hello" > hello.txt', 'printf "#!/usr/bin/toyrun\\necho hello\\n" > hello.sh')
+        .replace("cp %{name}-%{version}/hello.txt %{buildroot}/usr/share/%{name}/",
+                 "install -m 755 %{name}-%{version}/hello.sh %{buildroot}/usr/share/%{name}/")
+        .replace("/usr/share/%{name}/hello.txt", "/usr/share/%{name}/hello.sh")
+    )  # fmt: skip
+    lock = load_lock(Project.find())
+    lock.sources["toyrun"] = "1-1"  # locked before its update
+    save_lock(Project.find(), lock)
+    assert xcraft("build", "with-deps")[0] == 0
+    commit_base(root)
+    git(root, "checkout", "-qb", "feature")
+    assert xcraft("lock", "--update", "toyrun")[0] == 0
+    assert update() == {"trivial": 1, "with-deps": 2}
+    # not for other updates
+    code, output = xcraft("reuse", "--dep", "trivial-upstream")
+    assert code == 1
+    assert "not locked: trivial-upstream" in output
+    code, output = xcraft("reuse", "--dep", "glibc")
+    assert code == 0, output
+    assert update() == {"trivial": 1, "with-deps": 2}
+    code, output = xcraft("reuse", "--dep", "toyrun")
+    assert code == 0, output
+    assert output.splitlines()[-1] == "with-deps: reuses its build 1"
+    assert update() == {"trivial": 1, "with-deps": 1}

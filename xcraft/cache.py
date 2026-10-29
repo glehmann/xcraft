@@ -74,8 +74,8 @@ def build_keys(
     suffix, %autorev: the number of its build ID, ``+b<n>``, and its development build suffix of `autorev`, if any.
 
     See xcraft.buildid. A development build, or one built against development builds, has the hash of its build key
-    and of the cache keys of the builds of ours it is built against rather than its build key. The `hashes` of the
-    package directories are those of inputs(), computed now by default. The lock must be prepared: see
+    and of the cache keys of the builds of ours it is built against rather than its build key, but a reused build. The
+    `hashes` of the package directories are those of inputs(), computed now by default. The lock must be prepared: see
     resolution.prepare().
     """  # noqa: D205
     from xcraft.buildid import base, compute  # noqa: PLC0415, which imports this module
@@ -91,6 +91,8 @@ def build_keys(
         for name in component:
             key = hashlib.sha256(f"{h.hexdigest()}\0{name}".encode()).hexdigest()
             keys[name] = f"{key}+b{ids[name].number}{autorev.get(name, '')}"
+        # but a reused build, the main branch's, built against its builds
+        keys |= {name: f"{ids[name].key}+b{ids[name].number}" for name in component if ids[name].accepts}
     return keys
 
 

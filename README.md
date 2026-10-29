@@ -54,15 +54,14 @@ xcraft --install-completion  # optional
 | `xcraft lock` | Show the lock of upstream packages, the same for all the architectures |
 | `xcraft lock --outdated [<pkg>...]` | Show what `--update` would change, without changing it, and fail then, for CI |
 | `xcraft lock --update [<pkg>...]` | Update locked packages, all or some (binary or source names), to the latest version all the architectures have, looked for natively, on any machine |
-| `xcraft impacts [--markdown]` | Show the pending updates: the upstream source packages updated since the release of the packages built with them; `--markdown` as a Markdown table, like for a pull request |
-| `xcraft ack <pkg>... [--dep <upstream>]` | Clear pending updates without a new release |
+| `xcraft reuse <pkg>... [--dep <upstream>]` | Reuse the builds of the main branch despite changes, but to the packages' own directories, or despite updates of the `--dep` upstream packages only (see [Reusing builds](#reusing-builds)) |
 | `xcraft repo [<pkg>...] [--output dir]` | Build packages, all by default, and what they need, put them in a repository, and check that everything they require is available |
 | `xcraft shell <pkg>` | Open a shell in the build tree of a package, with its build dependencies installed and its sources prepared, where `rpmbuild -ba SPECS/<spec>` builds it, without the network like the builds, the exact command shown before the prompt |
 | `xcraft log <pkg> [--step build] [--grep regex] [--last/-n n]` | Show the log of the last build of a package, in `$PAGER` on a terminal |
 | `xcraft log <pkg> -f` | Follow the log of a running build, until it ends |
 | `xcraft graph <pkg> [--dependents] [--upstream] [--flat]` | Show the packages a package is built against as a tree, or the packages built against it; `--upstream` adds the upstream binary packages; `--flat` only lists them, ours in build order |
 | `xcraft status [<pkg>...]`, or `st` | Show the version of each package, or of the given ones, with its build number and development build suffix, and whether it is built, or queued by a running build |
-| `xcraft bump <pkg>... [--dep <upstream>] [-m message]` | Bump the release of packages, with a changelog entry, empty to fill in without `-m`, and clear their pending updates; `--dep` selects the packages with a pending update of an upstream package |
+| `xcraft bump <pkg>... [-m message]` | Bump the release of packages, with a changelog entry, empty to fill in without `-m` |
 | `xcraft bump <pkg> --version v [-m message]` | Update a package to a new version, with the archive of its `Source0`, and the packages of the same version; the changelog entry is `Update to <v>` by default |
 | `xcraft clean [<pkg>...] [--builds] [--ccache]` | Remove the build trees and outdated builds, and optionally all builds and compiler caches, of the given packages or all; the source archives are kept |
 | `xcraft patchset [repo] [--package p] [--base ref] [--first n]` | Update the patches of a package with the commits of the current git branch, from the developer's repository |
@@ -146,8 +145,7 @@ keep the network: qemu-user cannot isolate them, while the large ones are for na
 through the [remote storage](#remote-storage). xcraft solves the metadata of the repositories of an emulated
 architecture natively, in its dnf cache: under emulation, that takes most of the time of dnf. Each architecture has its
 lock, its build environment image, and its builds, in `.xcraft/cache/builds/<arch>/`. AlmaLinux rebuilds EPEL for
-`x86_64_v2` only: the other architectures get Fedora's. `xcraft bump` clears the pending updates of all the
-architectures.
+`x86_64_v2` only: the other architectures get Fedora's.
 
 ## Build keys
 
@@ -216,7 +214,8 @@ current branch forks from it, as long as its key is the same, or the one of the 
 the next number of both: a branch keeps the same number however many times it changes the package, and once another
 branch got that number on the main branch, merging it conflicts, and computing the file again gives the next one, even
 while the merge is in progress. The packages built against it get new numbers too. The reason of a new number is in
-the same commit: a change of the package, of the lock, or of another build ID. Out of a git repository, or without the
+the same commit: a change of the package, of the lock, or of another build ID; or a reuse, see
+[Reusing builds](#reusing-builds). Out of a git repository, or without the
 main branch, there is nothing to number against: the numbers stay those of the working tree, 1 for new packages. A
 file in a merge conflict is written again.
 
@@ -224,6 +223,25 @@ With `--locked`, the builds fail instead of changing the build IDs; on the main 
 gets the number of the previous commit, its first parent, for another key, like when a merge conflict is resolved by
 keeping one side: CI needs that commit, with `fetch-depth: 2` for `actions/checkout`. Official builds are only made by
 CI on the main branch, so the history of its build IDs is the record of the official numbers.
+
+## Reusing builds
+
+Rebuilding with a new number is the default. A maintainer can instead reuse the build of the main branch, where the
+current branch forks from it, despite changes, with the reason in the commit:
+
+- `xcraft reuse <package>...` reuses the builds of the given packages, whatever changed but their own directories,
+  like the packages of ours they are built against;
+- `xcraft reuse --dep <upstream>...` reuses the builds of the packages whose only changes since the main branch are
+  updates of the given upstream packages, binary or source names, like an ABI compatible security fix: their
+  directories, `xcraft.toml` and the build IDs of our packages they are built against are those of the main branch, and
+  so is what the lock has for them, but the versions of these packages.
+
+The build ID then has the number and the key of the reused build, and the key it accepts, an equivalence chosen by
+the maintainer: `42 <reused key> accepts <current key>`. It holds while the key is the accepted one: another change
+gives another key, and the package a new number, as usual. The packages built against a reused one have its reused key
+in theirs, so they keep their builds too, unless they changed otherwise. A reused build is never made again: it is the
+one of the main branch, cached, or in the remote storage, on each architecture. Reusing builds needs the main branch,
+in a git repository.
 
 ## Development builds
 
@@ -706,8 +724,6 @@ architectures, and has, one line per package for readable diffs:
   `[roots.<arch>]`: as resolved, for all the architectures, by the commands resolving them, which record them when
   they change.
 - `[runtime]` and `[iso]`, by architecture: the upstream packages published, and those of the tools making the ISO.
-- `[pending.<pkg>]`: for each of our packages, the upstream source packages of its build root updated since its
-  release, with the versions it was built with.
 
 **Build roots, resolved.** Before building, dnf resolves the build environment image, from the base image and
 `packages` of `xcraft.toml`, and the build root of each package, from its `BuildRequires`, against the upstream
@@ -735,14 +751,10 @@ xcp-ng-dist.
 Since the cache key of a package covers the locked versions of its build root, an update rebuilds the packages whose
 build root has an updated package, and the packages built against them.
 
-A rebuild is not a release: rebuilt packages keep their version-release, so hosts keep the one published. For each
-update, the packages with the updated package in their build root, or in the image, get pending entries, which
-`xcraft impacts` shows, grouped by upstream source package, like glibc for glibc-devel and glibc-common, with whether
-each package builds with the current lock; for an update of the image, which impacts all the packages, only their
-count. They stay until decided: `xcraft bump`, when the update requires shipping a rebuild (static linking, OCaml
-module hashes, soname changes...), or `xcraft ack`, when it does not, like most ABI compatible updates, with the reason
-in the commit. Both work on packages, or on all the packages with a pending update of an upstream package, binary or
-source name, with `--dep`.
+Rebuilt packages get new build numbers, which `xcraft lock --update` writes, see [Build IDs](#build-ids), so the
+hosts get them. When an update does not need shipping rebuilds, like most ABI compatible updates, unlike static
+linking, OCaml module hashes or soname changes, `xcraft reuse --dep` keeps the builds, see
+[Reusing builds](#reusing-builds).
 
 **Limits.** What rpm generates for a package of ours, and its dynamic `BuildRequires`, are only known after its first
 build: until then, the keys of the packages built against it miss them, and that build corrects them. A file of ours a
