@@ -64,7 +64,8 @@ def run_build(  # noqa: PLR0913
     """Run rpmbuild `rpmbuild_stage` (a: all, p: prep...) in the build tree of `name`, then the `after` commands.
 
     The upstream packages of the image named in `replace` are replaced first by
-    ours. `suffix` is added to the release of a test build, as %autorev. The output goes to
+    ours. `suffix` is the release suffix of the build, %autorev: its number, and its development build suffix, if
+    any. The output goes to
     `log`, or to an interactive terminal without log.
     """
     parameters = {
@@ -96,9 +97,11 @@ def shell(project: Project, name: str) -> None:
 
     rpmbuild works on the build tree there, like in the builds: rpmbuild -ba SPECS/<spec> builds it again, shown before
     the prompt. The build tree is the one of the host, in .xcraft/build/, where its files can be edited, and its
-    packages are.
+    packages are. Its dependencies are their development builds, as last built, if any.
     """
-    repo = deps_repo(project, name, build_keys(project))
+    from xcraft.devbuilds import built_dev_suffixes  # noqa: PLC0415, which imports the builds
+
+    repo = deps_repo(project, name, build_keys(project, built_dev_suffixes(project)))
     tree = prepare_tree(project, name)
     replace = image_replacements(resolve(project), name)
     spec = main_spec(project.package_dirs[name]).name

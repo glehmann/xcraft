@@ -82,23 +82,30 @@ def record_dynamic(project: Project, name: str, tree: Path) -> bool:
     return True
 
 
-def _check_made(project: Project, name: str, tree: Path, *, test: bool) -> None:
+def _check_made(project: Project, name: str, tree: Path, *, suffix: str) -> None:
     """Raise when the build of `name` did not make the binary packages parsed from its spec for the architecture.
 
     Their names, versions and architectures, and the provides and requirements their spec declares, those rpm
-    generates apart, and the debug packages too, which rpm splits while building. A test build has its own releases.
+    generates apart, and the debug packages too, which rpm splits while building. The release `suffix`, %autorev, is
+    at the start of %dist, wherever the spec has it, or at the end of the release of the package defining %dist.
     """
+    dist = project.parsed[name].dist
+
+    def suffixed(text: str) -> str:
+        return text.replace(dist, f"{suffix}{dist}") if dist else text
+
     made = {n: b for n, b in json.loads((tree / "made.json").read_text()).items() if not is_debug(n)}
     parsed = {b.name: b for b in project.parsed[name].binaries if not is_debug(b.name)}
     problems = changes(set(parsed), set(made))
     for n in sorted(made.keys() & parsed.keys()):
         b, m = parsed[n], made[n]
-        if m["arch"] != b.arch or (not test and m["evr"] != b.evr):
-            problems.append(f"{n}-{m['evr']}.{m['arch']} rather than {b.evr}.{b.arch}")
+        evr = suffixed(b.evr) if dist and dist in b.evr else f"{b.evr}{suffix}"
+        if m["arch"] != b.arch or m["evr"] != evr:
+            problems.append(f"{n}-{m['evr']}.{m['arch']} rather than {evr}.{b.arch}")
         problems += [
             f"{n} without the {field} {', '.join(missing)}"
-            for field in (("provides", "requires") if not test else ())
-            if (missing := sorted(set(getattr(b, field)) - set(m[field])))
+            for field in ("provides", "requires")
+            if (missing := sorted({suffixed(c) for c in getattr(b, field)} - set(m[field])))
         ]
     if problems:
         msg = (
@@ -175,9 +182,9 @@ def record_rpm_deps(project: Project, names: list[str], keys: dict[str, str], *,
     return True
 
 
-def check_build(project: Project, name: str, tree: Path, *, test: bool) -> bool:
-    """Record the dynamic BuildRequires of the build of `name` in `tree`, check what it installed and made, and return
-    whether the lock changed.
+def check_build(project: Project, name: str, tree: Path, *, suffix: str) -> bool:
+    """Record the dynamic BuildRequires of the build of `name` in `tree`, check what it installed and made, with its
+    release `suffix`, and return whether the lock changed.
     """  # noqa: D205
     changed = record_dynamic(project, name, tree)
     installed = json.loads((tree / "buildroot.json").read_text())["installed"]
@@ -188,5 +195,5 @@ def check_build(project: Project, name: str, tree: Path, *, test: bool) -> bool:
             msg = f"{e}, with the dynamic BuildRequires it asked for, now in the lock: built again after what they need"
             raise BuildRootChangedError(msg) from None
         raise
-    _check_made(project, name, tree, test=test)
+    _check_made(project, name, tree, suffix=suffix)
     return changed

@@ -1,7 +1,7 @@
 """Signing our packages, with the host's gpg, and rpmsign in a container.
 
 The key never gets near the builds, which run the specs' code: only the host's
-gpg uses it, so it can be in an HSM, through gpg. Test builds are signed with the developer's
+gpg uses it, so it can be in an HSM, through gpg. Development builds are signed with the developer's
 own key, which xcraft makes in its own keyring, without passphrase: it is only
 for test hosts.
 """
@@ -119,12 +119,12 @@ def signing_key(project: Project, key: str | None = None) -> Signer | None:
 
 
 def dev_keyring(project: Project) -> Path:
-    """Return the keyring of the developer's key for test builds."""
+    """Return the keyring of the developer's key for development builds."""
     return project.state / "key"
 
 
 def dev_signer(project: Project) -> Signer | None:
-    """Return the signer of test builds, with the developer's key, when there is one."""
+    """Return the signer of development builds, with the developer's key, when there is one."""
     keyring = dev_keyring(project)
     if not (keyring / "fingerprint").exists():
         return None
@@ -132,7 +132,7 @@ def dev_signer(project: Project) -> Signer | None:
 
 
 def create_dev_key(project: Project, name: str) -> Signer:
-    """Make the developer's key for test builds, `name` being its user id, and return its signer."""
+    """Make the developer's key for development builds, `name` being its user id, and return its signer."""
     keyring = dev_keyring(project)
     if (keyring / "fingerprint").exists():
         msg = f"there is already a key in {keyring}"

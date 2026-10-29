@@ -14,7 +14,7 @@ import pytest
 from typer.testing import CliRunner
 
 from tests import ARCH, TOML, TOYS, copy_project
-from xcraft import container
+from xcraft import buildid, container
 from xcraft.__main__ import app
 from xcraft.cache import BuildError
 from xcraft.iso import _install_tools
@@ -87,9 +87,6 @@ def test_build_all_by_default(root: Path) -> None:
     assert code == 0, output
     assert output.splitlines() == ["build    trivial", "build    with-deps", "2 to build"]
     assert xcraft("build", "-n") == (code, output)
-    code, output = xcraft("build", "--test", "fix1")
-    assert code == 2
-    assert "test and pre builds are of the given packages only" in output
 
 
 def test_spec_changed_during_build_is_not_cached(root: Path) -> None:
@@ -111,7 +108,7 @@ def write_spec(root: Path, name: str, requires: str = "", files: str = "/usr/sha
     """Write a minimal noarch package installing `files`, with the BuildRequires `requires`."""
     (root / "base" / name).mkdir()
     (root / "base" / name / f"{name}.spec").write_text(
-        f"Name: {name}\nVersion: 1.0\nRelease: 1\nSummary: test\nLicense: MIT\nBuildArch: noarch\n"
+        f"Name: {name}\nVersion: 1.0\nRelease: 1%{{?dist}}\nSummary: test\nLicense: MIT\nBuildArch: noarch\n"
         + (f"BuildRequires: {requires}\n" if requires else "")
         + f"%description\ntest\n%install\nmkdir -p %{{buildroot}}{files.rsplit('/', 1)[0]}\n"
         + f"touch %{{buildroot}}{files}\n%files\n{files}\n"
@@ -184,50 +181,11 @@ def test_image_packages_replaced_by_ours(root: Path) -> None:
     )
 
 
-def test_test_and_pre_builds(root: Path) -> None:
-    def rpms(*args: str) -> list[str]:
-        code, output = xcraft("build", *args)
-        assert code == 0, output
-        return [Path(line).name for line in output.splitlines() if line.endswith(".rpm")]
-
-    assert rpms("trivial", "--test", "fix1") == ["trivial-1.0-1.0.fix1.1.xcpng8.99.noarch.rpm"]
-    assert rpms("trivial", "--test", "fix1") == ["trivial-1.0-1.0.fix1.2.xcpng8.99.noarch.rpm"]
-    assert rpms("trivial", "--pre", "fix1") == ["trivial-1.0-1~fix1.1.xcpng8.99.noarch.rpm"]
-    # the test builds are not the normal one
-    assert states() == {"trivial": "missing", "with-deps": "missing"}
-    assert xcraft("build", "trivial", "--test", "fix-1")[0] == 2
-
-    def tests() -> str:
-        # without their ages, "just now" or "1m ago" on a busy machine
-        line = " ".join(xcraft("status", "trivial")[1].splitlines()[1].split()[3:])
-        return re.sub(r"(just now|\d+m ago)", "<age>", line)
-
-    # the latest of each ID, the newest first
-    assert tests() == "fix1.1 (pre, <age>), fix1.2 (test, <age>)"
-    spec = root / "base/trivial/trivial.spec"
-    spec.write_text(spec.read_text().replace('echo "hello"', 'echo "hello again"'))
-    assert tests() == "fix1.1 (pre, <age>, outdated), fix1.2 (test, <age>, outdated)"
-
-
-def test_repo_of_test_builds(root: Path) -> None:
-    code, output = xcraft("repo", "with-deps", "--test", "fix1", "--baseurl", "http://example.com/fix1/")
-    assert code == 0, output
-    repo = root / "repo-fix1"
-    # only the test build, not trivial, which the hosts have
-    assert sorted(p.name for p in repo.glob("*.rpm")) == ["with-deps-1.0-1.0.fix1.1.xcpng8.99.noarch.rpm"]
-    assert (repo / "repodata/repomd.xml").exists()
-    assert "baseurl=http://example.com/fix1/\n" in (repo / "xcraft-fix1.repo").read_text()
-    assert output.splitlines()[-2:] == [
-        "on the hosts, with this directory at http://example.com/fix1/:",
-        "  copy xcraft-fix1.repo to /etc/yum.repos.d/, then: dnf upgrade --refresh with-deps",
-    ]
-
-
 def test_repo_host_options(root: Path) -> None:
     for args, error in [
-        (["--host", "h"], "--host and --upgrade are for test builds"),
-        (["--test", "a", "--upgrade"], "--upgrade needs --host"),
-        (["--test", "a", "--host", "h", "--baseurl", "http://x/"], "with --host, the hosts find the repository in"),
+        (["--host", "h", "--final"], "--host and --upgrade are for the development builds of the given packages"),
+        (["--upgrade"], "--upgrade needs --host"),
+        (["--host", "h", "--baseurl", "http://x/"], "with --host, the hosts find the repository in"),
     ]:
         code, output = xcraft("repo", "trivial", *args)
         assert code == 2
@@ -536,6 +494,7 @@ def test_recorded(root: Path) -> None:
                  "install -m 755 %{name}-%{version}/hello.tcl %{buildroot}/usr/share/%{name}/")
         .replace("/usr/share/%{name}/hello.txt", "/usr/share/%{name}/hello.tcl")
     )  # fmt: skip
+    buildid.update(Project.find())  # the build IDs of the changed spec, --locked checks before building
     code, output = xcraft("build", "trivial", "--locked")
     assert code == 1
     assert "+buildrequires.trivial zlib-ng-compat-devel" in output

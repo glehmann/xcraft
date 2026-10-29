@@ -9,6 +9,7 @@ import typer
 from xcraft import clean as cleaner
 from xcraft.cache import build_keys
 from xcraft.commands import Arch, Packages, load
+from xcraft.devbuilds import built_dev_suffixes
 from xcraft.display import activity, console
 
 
@@ -24,12 +25,15 @@ def clean(
 ) -> None:
     """Remove the build trees and outdated builds, of the given packages only, or of all with what they share.
 
+    The current builds are kept: the final ones, and the development ones, as last built.
+
     The source archives are always kept.
     """
     project = load(packages, arch=arch)
     keys = build_keys(project)
+    developed = build_keys(project, built_dev_suffixes(project))  # as last built
     with project.lock(), activity("cleaning"):
-        freed = cleaner.clean(project, keys, packages or None, all_builds=builds, ccache=ccache)
+        freed = cleaner.clean(project, [keys, developed], packages or None, all_builds=builds, ccache=ccache)
     console.print(f"freed {_size(freed)}")
     # the repositories xcraft repo made, which clean leaves alone, keep the files of builds
     if kept := cleaner.repos_disk_usage(project):

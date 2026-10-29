@@ -7,7 +7,8 @@ import typer
 from xcraft import build as builder
 from xcraft import ccache
 from xcraft.cache import build_keys, cached_build
-from xcraft.commands import Arch, Packages, load
+from xcraft.commands import Arch, Final, Packages, load
+from xcraft.devbuilds import developed
 from xcraft.display import console
 from xcraft.project import Project
 from xcraft.sources import SourceError, fetch_sources
@@ -69,15 +70,20 @@ def caches(packages: Packages = None, arch: Arch = None) -> None:
 
 
 @app.command()
-def builds(packages: Packages = None, arch: Arch = None) -> None:
-    """Download from the remote storage the current builds of the packages, all by default, missing from the cache."""
+def builds(packages: Packages = None, final: Final = False, arch: Arch = None) -> None:
+    """Download from the remote storage the current builds of the packages, all by default, missing from the cache.
+
+    The packages with development builds are skipped, unless --final, which downloads their final builds, if any.
+    """
     project = load(packages, arch=arch)
     if not project.config.remote:
         msg = "no remote storage: see [remote.main] and [remote.dev] in xcraft.toml"
         raise typer.BadParameter(msg)
-    keys = build_keys(project)
+    keys, skipped = build_keys(project), set() if final else developed(project)
+    if shown := sorted(skipped & {*(packages or project.packages)}):
+        console.print(f"development builds, not fetched: {', '.join(shown)}")
     fetched, cached, absent = [], [], []
-    for name in packages or sorted(project.packages):
+    for name in [name for name in packages or sorted(project.packages) if name not in skipped]:
         if cached_build(project, name, keys[name]).exists():
             cached.append(name)
         elif builder.fetch_build(project, name, keys[name]):

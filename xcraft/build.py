@@ -29,6 +29,7 @@ from xcraft.cache import (
     deps_repo,
     inputs,
     previous_duration,
+    release_suffix,
 )
 from xcraft.checks import BuildRootChangedError, check_build, check_resolved, record_dynamic, record_rpm_deps
 from xcraft.container import DNF_LOCK, ContainerError, build_image, run
@@ -134,6 +135,7 @@ def _build_one(  # noqa: PLR0913
     repo = deps_repo(project, name, keys)
     tree = prepare_tree(project, name)
     log = project.log(name)
+    suffix = release_suffix(keys[name])
     pid_file = _pid_file(project, name)
     pid_file.write_text(str(os.getpid()))
     start = time.time()
@@ -147,7 +149,7 @@ def _build_one(  # noqa: PLR0913
                     progress(line)
                 diagnose(line)
 
-            run_build(project, name, repo, "a", replace=replace, suffix=autorev.get(name, ""), log=log, on_line=on_line)
+            run_build(project, name, repo, "a", replace=replace, suffix=suffix, log=log, on_line=on_line)
     except ContainerError as e:
         # those it asked for before failing, maybe for one of ours not among its dependencies
         if (tree / "buildrequires.txt").exists() and record_dynamic(project, name, tree):
@@ -157,12 +159,12 @@ def _build_one(  # noqa: PLR0913
     finally:
         pid_file.unlink()
     ccache.note_build(project, name, start)
-    if check_build(project, name, tree, test=name in autorev):
+    if check_build(project, name, tree, suffix=suffix):
         keys = build_keys(project, autorev, hashes)  # covering what the build recorded
     if hash_dir(project.package_dirs[name]) != staged:
         msg = f"{project.package_dirs[name].relative_to(project.root)} changed during the build, build it again"
         raise BuildError(msg)
-    # test builds are signed with the developer's key, if any
+    # development builds are signed with the developer's key, if any
     if name in autorev and (signer := dev_signer(project)):
         for output in ("RPMS", "SRPMS"):
             signer.sign_rpms(project, tree / output)
@@ -171,7 +173,7 @@ def _build_one(  # noqa: PLR0913
 
 
 def _cache(project: Project, name: str, key: str, tree: Path, autorev: dict[str, str]) -> Path:
-    """Move the build of `name` in `tree` to the cache, with its `key` and the test build suffixes `autorev`, and
+    """Move the build of `name` in `tree` to the cache, with its `key` and the development build suffixes `autorev`, and
     return it there.
     """  # noqa: D205
     build_dir = cached_build(project, name, key)
@@ -182,7 +184,7 @@ def _cache(project: Project, name: str, key: str, tree: Path, autorev: dict[str,
     for output in ("RPMS", "SRPMS"):
         (tree / output).rename(new / output)
     if name in autorev:
-        # the suffixes of all the test builds of the run, its own and those of the dependencies built with it
+        # the suffixes of all the development builds of the run, its own and those of the dependencies built with it
         (new / "autorev").write_text(json.dumps(autorev, sort_keys=True))
     shutil.copy2(project.log(name), new / "build.log")
     if build_dir.exists():  # an earlier build of the same inputs
@@ -250,7 +252,7 @@ def build(  # noqa: PLR0913
     """Build `targets` and, unless `with_deps` is false, what they need, skipping what is cached, and return how
     it went, with the keys of all the packages, those of their builds.
 
-    `autorev` has the release suffixes of the test builds, by package. What is
+    `autorev` has the release suffixes of the development builds, by package. What is
     not cached locally is fetched from the remote storage when it has it, but
     only the builds of the dependencies of the packages to build with `fetch`
     needed, or nothing with none: it is built then. Without `build_missing`,
@@ -489,7 +491,7 @@ def make_repo(
     """Make `dest` a repository with the builds of `names`, with their `keys`, and the extra upstream RPMs.
 
     Check that everything they require is available, from this repository or from the
-    build environment's ones. With the test builds of `autorev`, the repository only has
+    build environment's ones. With the development builds of `autorev`, the repository only has
     them, to install over a host's packages, and they are checked with our other builds.
     """
     if missing := [name for name in names if not cached_build(project, name, keys[name]).exists()]:

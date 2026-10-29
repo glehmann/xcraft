@@ -15,7 +15,7 @@ import pytest
 import typer
 
 from tests import TOML, config
-from xcraft import build, cache, ccache, testbuilds
+from xcraft import build, cache, ccache
 from xcraft.build import queued
 from xcraft.cache import BuildError, build_keys, previous_duration, recipe_key
 from xcraft.checks import _check_made, record_rpm_deps
@@ -90,7 +90,7 @@ def test_clean_keeps_sources_and_current_builds(project: Project) -> None:
                  "build/bar/SPECS/bar.spec", "ccache/bar/data"):  # fmt: skip
         (state / path).parent.mkdir(parents=True, exist_ok=True)
         (state / path).write_bytes(b"x" * 8192)
-    assert clean(project, keys, ["bar"], ccache=True) > 0
+    assert clean(project, [keys], ["bar"], ccache=True) > 0
     assert "cache/builds/x86_64_v2/bar/current/RPMS/bar.rpm" in files(state)
     assert not [f for f in files(state) if f.startswith(("cache/builds/x86_64_v2/bar/old", "build/bar", "ccache/bar"))]
     assert {"build/foo/SPECS/foo.spec", "cache/builds/x86_64_v2/foo/old/RPMS/foo.rpm"} <= set(files(state))
@@ -100,17 +100,17 @@ def test_clean_keeps_sources_and_current_builds(project: Project) -> None:
         link.parent.mkdir(parents=True, exist_ok=True)
         link.hardlink_to(rpm)
     assert repos_disk_usage(project) == 0
-    assert clean(project, keys, ["bar"], all_builds=True) == 8192
+    assert clean(project, [keys], ["bar"], all_builds=True) == 8192
     assert not [f for f in files(state) if "bar" in f]
     assert repos_disk_usage(project) == 8192  # only repo/ has it now
 
-    assert clean(project, keys) > 0
+    assert clean(project, [keys]) > 0
     assert files(state) == [
         "cache/builds/x86_64_v2/foo/current/RPMS/foo.rpm",
         "cache/sources/abc/foo.tar.gz",
         "ccache/foo/data",
     ]
-    clean(project, keys, all_builds=True, ccache=True)
+    clean(project, [keys], all_builds=True, ccache=True)
     assert files(state) == ["cache/sources/abc/foo.tar.gz"]
 
 
@@ -243,12 +243,11 @@ def test_build_dependencies(project: Project, monkeypatch: pytest.MonkeyPatch) -
     assert build_dependencies(project) == ["gcc", "zlib-devel"]  # but ours, and those of the base repository
 
 
-def test_keys_of_cycles(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("xcraft.cache.resolve", lambda _: Resolved())
-    monkeypatch.setattr("xcraft.cache.image_tag", lambda _: "localhost/xcraft-build:image")
+def test_keys_of_cycles(project: Project) -> None:
     for name in ("a", "b", "0foo"):
         (project.root / "base" / name).mkdir(parents=True)
         (project.root / "base" / name / f"{name}.spec").write_text(name)
+    project.packages = {name: Package(name=name, binaries=[]) for name in ("a", "b", "0foo")}
     project.deps = {"a": {"b"}, "b": {"a"}}
     keys = build_keys(project)
     # not the order the cycle is reached in: from a package depending on b, first in name order
@@ -307,17 +306,22 @@ def test_check_made(project: Project, tmp_path: Path) -> None:
         "foo-tools-debuginfo": {"evr": "1.0-1", "arch": "x86_64", "provides": [], "requires": []},
     }  # fmt: skip
     (tmp_path / "made.json").write_text(json.dumps(made))
-    _check_made(project, "foo", tmp_path, test=False)
+    _check_made(project, "foo", tmp_path, suffix="")
     made["foo"] |= {"evr": "1.0-1.0.fix.1", "requires": ["libc.so.6()(64bit)"]}
     (tmp_path / "made.json").write_text(json.dumps({**made, "foo-extra": made["foo"]}))
     problems = (
         r"\+foo-extra; foo-1\.0-1\.0\.fix\.1\.x86_64 rather than 1\.0-1\.x86_64; foo without the requires bar >= 2"
     )
     with pytest.raises(BuildError, match=f": {problems}: xcraft parses"):
-        _check_made(project, "foo", tmp_path, test=False)
-    # a test build has its own release
+        _check_made(project, "foo", tmp_path, suffix="")
+    # the release suffix, %autorev, at the start of %dist, wherever the spec has it
+    numbered = binary.model_copy(update={"evr": "1.0-1.xcpng", "provides": ["foo = 1.0-1.xcpng"]})
+    project.parsed = {"foo": Package(name="foo", dist=".xcpng", binaries=[numbered, debug])}
+    made["foo"] |= {"evr": "1.0-1+b2.xcpng", "provides": ["foo = 1.0-1+b2.xcpng"], "requires": ["bar >= 2"]}
     (tmp_path / "made.json").write_text(json.dumps(made))
-    _check_made(project, "foo", tmp_path, test=True)
+    _check_made(project, "foo", tmp_path, suffix="+b2")
+    with pytest.raises(BuildError, match=r"foo-1\.0-1\+b2\.xcpng\.x86_64 rather than 1\.0-1\+b3\.xcpng\.x86_64"):
+        _check_made(project, "foo", tmp_path, suffix="+b3")
 
 
 def test_record_rpm_deps(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -352,18 +356,6 @@ def test_builds_still_to_build_again_fail(project: Project, monkeypatch: pytest.
     assert len(attempts) == 2
 
 
-def test_latest_test_builds(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(testbuilds, "build_keys", lambda *_: {"foo": "other"})
-    # the numbers start again with each release: the latest is the newest
-    for key, suffix, mtime in (("old", ".0.dev.9", 1000), ("new", ".0.dev.1", 2000)):
-        (project.state / f"cache/builds/x86_64_v2/foo/{key}").mkdir(parents=True)
-        (project.state / f"cache/builds/x86_64_v2/foo/{key}/autorev").write_text(json.dumps({"foo": suffix}))
-        log = project.state / f"cache/builds/x86_64_v2/foo/{key}/build.log"
-        log.touch()
-        os.utime(log, (mtime, mtime))
-    assert [(b.ident, b.number) for b in testbuilds.test_builds(project, "foo", {})] == [("dev", 1)]
-
-
 def test_empty_compiler_cache(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     def download(_storage: object, _path: str, dest: Path, _on_line: object, **_: object) -> bool:
         dest.mkdir(parents=True)
@@ -386,8 +378,7 @@ def test_packages_edited_while_building(project: Project, monkeypatch: pytest.Mo
         (project.root / "base" / name).mkdir(parents=True)
         (project.root / "base" / name / f"{name}.spec").write_text(name)
     project.deps = {"a": set(), "b": {"a"}, "c": set()}
-    monkeypatch.setattr(cache, "resolve", lambda _: Resolved())
-    monkeypatch.setattr(cache, "image_tag", lambda _: "localhost/xcraft-build:image")
+    project.packages = {name: Package(name=name, binaries=[]) for name in ("a", "b", "c")}
     hashes = cache.inputs(project)
     keys = build_keys(project, hashes=hashes)
     (cache.cached_build(project, "b", keys["b"])).mkdir(parents=True)

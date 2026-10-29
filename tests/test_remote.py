@@ -25,8 +25,8 @@ import pytest
 from tests import ARCH, PLATFORM, TOML, copy_project
 from tests.test_build import results, write_spec, xcraft
 from tests.test_iso import cache_image
+from xcraft import buildid, remote, repodata
 from xcraft import publish as publisher
-from xcraft import remote, repodata
 from xcraft.container import run
 from xcraft.iso import build_iso, iso_key, iso_path, push_isos
 from xcraft.lock import load_lock
@@ -521,7 +521,7 @@ def test_builds(root: Path) -> None:
     assert output.splitlines()[0] == "↓ trivial fetched"
     assert output.splitlines()[-1] == "1 built, 1 fetched"
     assert list(
-        (root / f".xcraft/cache/builds/{ARCH}/trivial").glob("*/RPMS/noarch/trivial-1.0-1.xcpng8.99.noarch.rpm")
+        (root / f".xcraft/cache/builds/{ARCH}/trivial").glob("*/RPMS/noarch/trivial-1.0-1+b1.xcpng8.99.noarch.rpm")
     )
     # built, even though the storage has it
     shutil.rmtree(root / f".xcraft/cache/builds/{ARCH}/trivial")
@@ -641,7 +641,7 @@ def test_unavailable_remote_storage(root: Path) -> None:
     (root / "xcraft.toml").write_text(REMOTE.replace(str(WEB_PORT), "13899"))  # of no worker
     code, output = xcraft("build", "trivial")
     assert code == 0, output
-    assert output.startswith(
+    assert output.splitlines()[1].startswith(  # after the build IDs
         "remote storage unavailable, building locally: http://xcraft-dev.web.garage.localhost:13899/"
     )
     assert output.splitlines()[-1] == "1 built"
@@ -676,11 +676,11 @@ def test_publish(root: Path) -> None:
         for repo in (*arches, "Source"):
             assert remote.exists(storage, f"{base}/{repo}/repodata/repomd.xml")
             assert remote.exists(
-                storage, f"{base}/{repo}/trivial-1.0-1.xcpng8.99.{'src' if repo == 'Source' else 'noarch'}.rpm"
+                storage, f"{base}/{repo}/trivial-1.0-1+b1.xcpng8.99.{'src' if repo == 'Source' else 'noarch'}.rpm"
             )
         # the sources of the upstream packages too
         assert remote.exists(storage, f"{base}/Source/bc-{bc.evr}.src.rpm")
-        assert 'href="trivial-1.0-1.xcpng8.99.noarch.rpm"' in page(f"{base}/{arches[-1]}/")
+        assert 'href="trivial-1.0-1%2Bb1.xcpng8.99.noarch.rpm"' in page(f"{base}/{arches[-1]}/")
     # a second one the same day, without changing the locks, of the repositories only, like all without [iso]
     code, output = xcraft("publish", "repos", "--to", "main", "--locked", "--unsigned")
     assert code == 0, output
@@ -708,6 +708,7 @@ def test_publish(root: Path) -> None:
     # what our packages need at runtime is checked
     (root / "xcraft.toml").write_text(REMOTE)
     assert xcraft("build", "--dry-run")[0] == 0  # the lock of the architecture left
+    buildid.update(Project.find())  # and the build IDs, which cover all the architectures
     code, output = xcraft("publish", "--locked", "--local")
     assert code == 1
     assert re.search(rf"--locked forbids: .*-runtime\.{ARCH} bc\b", output)
@@ -760,7 +761,7 @@ def test_signed_publish(root: Path) -> None:  # noqa: PLR0915
         assert (snapshot / "RPM-GPG-KEY").read_text() == signer.public_key()
         for repo in (ARCH, "Source"):
             assert (snapshot / "base" / repo / "repodata/repomd.xml.asc").exists()
-        ours = [f"base/{ARCH}/trivial-1.0-1.xcpng8.99.noarch.rpm", "base/Source/trivial-1.0-1.xcpng8.99.src.rpm"]
+        ours = [f"base/{ARCH}/trivial-1.0-1+b1.xcpng8.99.noarch.rpm", "base/Source/trivial-1.0-1+b1.xcpng8.99.src.rpm"]
         check_signatures(Project.find(), snapshot, ours, what="packages of ours", public_key=signer.public_key())
         storage = Project.find().config.remote.get("main")
         assert storage
@@ -768,7 +769,7 @@ def test_signed_publish(root: Path) -> None:  # noqa: PLR0915
         signed = list((root / ".xcraft/cache/signed" / signer.key / "trivial").iterdir())
         assert remote.tree_exists(storage, f"signed/{signer.key}/{ARCH}/trivial/{signed[0].name}")
         # signed once: the next snapshots have the same files
-        rpm = signed[0] / "RPMS/noarch/trivial-1.0-1.xcpng8.99.noarch.rpm"
+        rpm = signed[0] / "RPMS/noarch/trivial-1.0-1+b1.xcpng8.99.noarch.rpm"
         before = rpm.read_bytes()
         assert xcraft("publish", "--to", "main")[0] == 0
         assert rpm.read_bytes() == before
@@ -796,7 +797,7 @@ def test_publish_rebuilt_package(root: Path, tmp_path: Path) -> None:
     assert code == 0, output
     storage = Project.find().config.remote.get("main")
     assert storage
-    rpm = f"base/{ARCH}/trivial-1.0-1.xcpng8.99.noarch.rpm"
+    rpm = f"base/{ARCH}/trivial-1.0-1+b1.xcpng8.99.noarch.rpm"
     local = root / ".xcraft/publish" / rpm
     for name in (re.search(r"published (repos/\S+),", output)[1], f"repos/9.0/{STAGE}/latest"):  # ty: ignore[not-subscriptable]
         assert remote.read_manifest(storage, name)[rpm] == sha256_of(local)
@@ -1019,3 +1020,30 @@ def test_logo_on_the_pages(root: Path, tmp_path: Path) -> None:
     (root / "xcraft.toml").write_text(f'{before}logo = "https://xcp-ng.org/assets/img/mainlogo.png"\n{sep}{after}')
     remote.update_pages(Project.find(), Project.find().config.remote["main"], ["nested/"])
     assert '<img src="https://xcp-ng.org/assets/img/mainlogo.png" alt="">' in page("nested/")
+
+
+def test_development_builds_are_neither_pushed_nor_fetched(root: Path) -> None:
+    def git(*args: str) -> None:
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@e", *args], cwd=root, check=True,
+                       capture_output=True)  # fmt: skip
+
+    git("init", "-q", "-b", "master")
+    buildid.update(Project.find())
+    git("add", "-A")
+    git("commit", "-qm", "base")
+    git("checkout", "-qb", "feature")
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
+    assert xcraft("build", "trivial")[0] == 0
+    code, output = xcraft("push", "builds", "--to", "main")
+    assert code == 0, output
+    assert output.splitlines()[0] == "development builds, not pushed: trivial, with-deps"
+    assert "0 pushed" in output
+    code, output = xcraft("fetch", "builds")
+    assert code == 0, output
+    assert output.splitlines()[0] == "development builds, not fetched: trivial, with-deps"
+    # their final builds, explicitly
+    assert xcraft("build", "trivial", "--final")[0] == 0
+    code, output = xcraft("push", "builds", "trivial", "--final", "--to", "main")
+    assert code == 0, output
+    assert "↑ trivial" in output

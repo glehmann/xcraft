@@ -1,8 +1,8 @@
-"""The cache of the builds, under keys covering everything that goes into them.
+"""The cache of the builds, under keys covering everything that goes into them, and their releases.
 
-That is the package directory (spec, patches, ``sources`` manifest), the keys
-of the packages it is built against, the build environment image and
-platform, and the extra upstream RPMs.
+The key of a build is its build key (see xcraft.buildid), with its release
+suffix, %autorev: the number of its build ID, and its development build
+suffix, if any.
 """
 
 from __future__ import annotations
@@ -12,10 +12,9 @@ import json
 import re
 from typing import TYPE_CHECKING
 
-from xcraft.container import BUILDENV, image_tag
+from xcraft.container import BUILDENV
 from xcraft.graph import components, reachable
 from xcraft.localrepo import REPO_FILE, LocalRepo
-from xcraft.resolution import resolve
 from xcraft.specs import hash_dir
 
 if TYPE_CHECKING:
@@ -71,38 +70,33 @@ def inputs(project: Project) -> dict[str, str]:
 def build_keys(
     project: Project, autorev: dict[str, str] | None = None, hashes: dict[str, str] | None = None
 ) -> dict[str, str]:
-    """Return the cache key of each package: a SHA-256 of all that makes its build.
+    """Return the cache key of each package: its build key, the same on all the architectures, then its release
+    suffix, %autorev: the number of its build ID, ``+b<n>``, and its development build suffix of `autorev`, if any.
 
-    That is its package directory, the build environment image and recipe,
-    the versions of the upstream packages of its build root, resolved, besides
-    the image's ones, which the image id covers, the `autorev` of the test
-    builds, and the keys of its dependencies. Packages depending on each other
-    get the key of them all. The `hashes` of the package directories are those
-    of inputs(), computed now by default. The lock must be prepared: see
+    See xcraft.buildid. A development build, or one built against development builds, has the hash of its build key
+    and of the cache keys of the builds of ours it is built against rather than its build key. The `hashes` of the
+    package directories are those of inputs(), computed now by default. The lock must be prepared: see
     resolution.prepare().
-    """
-    resolved, deps = resolve(project), project.deps
-    hashes = hashes or inputs(project)
-    image = set(resolved.image)
-    base = json.dumps([image_tag(project), project.platform, project.config.extra_upstream, recipe_key()])
+    """  # noqa: D205
+    from xcraft.buildid import base, compute  # noqa: PLC0415, which imports this module
 
-    def package(name: str) -> str:
-        buildroot = [
-            f"{upstream}={resolved.packages[upstream].evr}"
-            for upstream in resolved.buildroots.get(name, [])
-            if upstream not in image
-        ]
-        return json.dumps([name, hashes[name], (autorev or {}).get(name), buildroot])
-
+    ids, deps, autorev = compute(project, base(project), hashes), project.deps, autorev or {}
     keys: dict[str, str] = {}
     for component in components(deps):  # the dependencies first
-        h = hashlib.sha256(base.encode())
-        for name in sorted(component):
-            h.update(package(name).encode())
-        for dep in sorted({dep for name in component for dep in deps[name]} - component):
-            h.update(keys[dep].encode())
-        keys |= {name: hashlib.sha256(f"{h.hexdigest()}\0{name}".encode()).hexdigest() for name in component}
+        outside = sorted({dep for name in component for dep in deps[name]} - component)
+        if not component & autorev.keys() and all(release_suffix(keys[d]) == f"+b{ids[d].number}" for d in outside):
+            keys |= {name: f"{ids[name].key}+b{ids[name].number}" for name in component}
+            continue
+        h = hashlib.sha256(json.dumps([[ids[n].key for n in sorted(component)], [keys[d] for d in outside]]).encode())
+        for name in component:
+            key = hashlib.sha256(f"{h.hexdigest()}\0{name}".encode()).hexdigest()
+            keys[name] = f"{key}+b{ids[name].number}{autorev.get(name, '')}"
     return keys
+
+
+def release_suffix(key: str) -> str:
+    """Return the release suffix of a build, %autorev, from its cache `key`: what follows the hash."""
+    return key[64:]
 
 
 def builds_dir(project: Project, name: str) -> Path:
@@ -116,9 +110,11 @@ def cached_build(project: Project, name: str, key: str) -> Path:
 
 
 def has_normal_build(project: Project, name: str) -> bool:
-    """Return whether `name` has a cached build, of any version, besides the test builds."""
+    """Return whether `name` has a cached build, of any version, besides the development builds."""
     return any(
-        not (build.name.startswith(".") or (build / "autorev").exists())  # not a build in progress, or a test one
+        not (
+            build.name.startswith(".") or (build / "autorev").exists()
+        )  # not a build in progress, or a development one
         for build in builds_dir(project, name).glob("*")
     )
 

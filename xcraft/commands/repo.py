@@ -10,16 +10,17 @@ import typer
 
 from xcraft import build as builder
 from xcraft import process
-from xcraft.commands import Arch, Packages, Pre, Test, load, test_kind
+from xcraft.commands import Arch, Dev, Final, Packages, dev_ident, load, update_build_ids
+from xcraft.devbuilds import dev_suffixes
 from xcraft.display import activity, console
+from xcraft.graph import dependents
 from xcraft.signing import check_signatures, dev_signer
 from xcraft.specs import is_debug
-from xcraft.testbuilds import next_test_suffixes
 
 REMOTE = "/var/local/xcraft"
-"""Where the repositories of test builds go on the hosts, one per ID."""
+"""Where the repositories of development builds go on the hosts, one per ID."""
 KEY_FILE = "RPM-GPG-KEY-xcraft-test"
-"""The developer's key, in the repositories of test builds."""
+"""The developer's key, in the repositories of development builds."""
 
 
 def _hosts(hosts: list[str] | None) -> list[str] | None:
@@ -31,7 +32,9 @@ def _hosts(hosts: list[str] | None) -> list[str] | None:
 
 
 def _copy_to_host(host: str, output: Path, ident: str, binaries: list[str], *, upgrade: bool) -> None:
-    """Copy the repository of test builds in `output` to `host`, with its .repo file, and maybe upgrade `binaries`."""
+    """Copy the repository of development builds in `output` to `host`, with its .repo file, and maybe upgrade
+    `binaries`.
+    """  # noqa: D205
     remote = f"{REMOTE}/{ident}"
     with activity(f"copying the repository to {host}"):
         process.run(["ssh", host, f"mkdir -p {remote}"], capture=True)
@@ -47,43 +50,49 @@ def _copy_to_host(host: str, output: Path, ident: str, binaries: list[str], *, u
         process.run(["ssh", host, script])
 
 
-def repo(  # noqa: PLR0913, PLR0917
+def repo(  # noqa: C901, PLR0913, PLR0917
+    ctx: typer.Context,
     packages: Packages = None,
+    with_dependents: Annotated[
+        bool, typer.Option("--dependents", help="Also build the packages built against these ones.")
+    ] = False,
     output: Annotated[
         Path | None,
-        typer.Option(help="Directory of the repository. repo/ in the project by default, repo-<ID>/ for test builds."),
+        typer.Option(
+            help="Directory of the repository. repo/ in the project by default, repo-<ID>/ for development builds."
+        ),
     ] = None,
-    test: Test = None,
-    pre: Pre = None,
     baseurl: Annotated[
         str | None,
         typer.Option(
-            help="Where hosts find the repository of test builds, for its .repo file. Its directory by default."
+            help="Where hosts find the repository of development builds, for its .repo file. Its directory by default."
         ),
     ] = None,
     hosts: Annotated[
         list[str] | None,
         typer.Option(
             "--host",
-            help=f"Test host, as for ssh, to copy the repository of test builds to, in {REMOTE}/<ID>, with its "
-            ".repo file. Can be repeated.",
+            help=f"Test host, as for ssh, to copy the repository of development builds to, in {REMOTE}/<ID>, with "
+            "its .repo file. Can be repeated.",
             show_default=False,
             callback=_hosts,
         ),
     ] = None,
     upgrade: Annotated[
-        bool, typer.Option("--upgrade", help="Also upgrade, on the hosts, the test packages they have installed.")
+        bool, typer.Option("--upgrade", help="Also upgrade, on the hosts, the packages they have installed.")
     ] = False,
+    dev: Dev = None,
+    final: Final = False,
     arch: Arch = None,
 ) -> None:
     """Build the given packages, all by default, and what they need, put them in a repository, and check them.
 
-    With --test or --pre, the repository only has new test builds of the given packages, to install on test hosts
-    over their packages, with a .repo file.
+    When the given packages have development builds, see --dev, the repository only has them, to install on test
+    hosts over their packages, with a .repo file.
     """
-    kind = test_kind(test, pre, packages)
-    if (hosts or upgrade) and not kind:
-        msg = "--host and --upgrade are for test builds, with --test or --pre"
+    ident = dev_ident(ctx, dev, final=final)
+    if (hosts or upgrade) and not (packages and ident):
+        msg = "--host and --upgrade are for the development builds of the given packages"
         raise typer.BadParameter(msg)
     if upgrade and not hosts:
         msg = "--upgrade needs --host"
@@ -93,36 +102,45 @@ def repo(  # noqa: PLR0913, PLR0917
         raise typer.BadParameter(msg)
     project = load(packages, arch=arch)
     names = list(packages or sorted(project.packages))
+    if with_dependents:
+        names += sorted(dependents(project.deps, names) - set(names))
     with project.lock():
-        autorev = next_test_suffixes(project, names, *kind) if kind else {}
+        update_build_ids(project)
+        autorev = dev_suffixes(project, ident, advance=True)
         results, keys = builder.build(project, names, autorev=autorev)
+        update_build_ids(project)
         if failed := [r.name for r in results if r.failed]:
             msg = f"not built: {', '.join(failed)}"
             raise RuntimeError(msg)
-        output = (output or project.root / (f"repo-{kind[1]}" if kind else "repo")).absolute()
-        published = names if kind else [r.name for r in results]
-        builder.make_repo(project, published, output, keys, autorev=autorev)
+        # the development builds of the given packages, alone, to install over a host's packages
+        developed = sorted(set(names) & autorev.keys()) if packages else []
+        if hosts and not developed:
+            msg = f"no development builds of {', '.join(names)}: they are the main branch's"
+            raise typer.BadParameter(msg)
+        output = (output or project.root / (f"repo-{ident}" if developed else "repo")).absolute()
+        published = developed or [r.name for r in results]
+        builder.make_repo(project, published, output, keys, autorev=autorev if developed else None)
     console.print(f"[bold green]✓[/] repository in {output}, with all dependencies satisfied")
-    if kind:
-        url = baseurl or (f"file://{REMOTE}/{kind[1]}" if hosts else f"file://{output}")
-        repo_file = output / f"xcraft-{kind[1]}.repo"
+    if developed and ident:
+        url = baseurl or (f"file://{REMOTE}/{ident}" if hosts else f"file://{output}")
+        repo_file = output / f"xcraft-{ident}.repo"
         if signer := dev_signer(project):
             key = signer.public_key()
             rpms = sorted(f.relative_to(output).as_posix() for f in output.glob("*.rpm"))
-            check_signatures(project, output, rpms, what="test packages", public_key=key)
+            check_signatures(project, output, rpms, what="development packages", public_key=key)
             signer.sign_file(output / "repodata/repomd.xml")
             (output / KEY_FILE).write_text(key)
             checks = f"gpgcheck=1\nrepo_gpgcheck=1\ngpgkey={url.rstrip('/')}/{KEY_FILE}\n"
         else:
-            console.print("[yellow]the test packages are not signed[/]: see xcraft key create")
+            console.print("[yellow]the development packages are not signed[/]: see xcraft key create")
             checks = "gpgcheck=0\n"
         repo_file.write_text(
-            f"[xcraft-{kind[1]}]\nname=xcraft {kind[0]} builds {kind[1]}\nbaseurl={url}\n"
+            f"[xcraft-{ident}]\nname=xcraft development builds {ident}\nbaseurl={url}\n"
             f"enabled=1\n{checks}metadata_expire=0\n"
         )
-        binaries = [b.name for name in names for b in project.packages[name].binaries if not is_debug(b.name)]
+        binaries = [b.name for name in developed for b in project.packages[name].binaries if not is_debug(b.name)]
         for host in hosts or []:
-            _copy_to_host(host, output, kind[1], binaries, upgrade=upgrade)
+            _copy_to_host(host, output, ident, binaries, upgrade=upgrade)
         if not hosts:
             console.print(f"on the hosts, with this directory at {url}:", markup=False)
             console.print(
