@@ -33,7 +33,16 @@ from xcraft.cache import (
 )
 from xcraft.checks import BuildRootChangedError, check_build, check_resolved, record_dynamic, record_rpm_deps
 from xcraft.container import DNF_LOCK, ContainerError, build_image, run
-from xcraft.display import activity, console, diagnostics, duration, log_step, print_log_line, read_tail
+from xcraft.display import (
+    activity,
+    console,
+    diagnostics,
+    duration,
+    in_ci,
+    log_step,
+    print_log_line,
+    read_tail,
+)
 from xcraft.graph import build_order, reachable
 from xcraft.localrepo import LocalRepo, repo_id
 from xcraft.lock import lock_path
@@ -140,9 +149,14 @@ def _build_one(  # noqa: PLR0913
     pid_file.write_text(str(os.getpid()))
     start = time.time()
     try:
-        with activity(status, expected=previous_duration(project, name)) if status else nullcontext(None) as progress:
-            # the errors and warnings above the progress, like with the whole log, after the status
-            diagnose = diagnostics(print_log_line, header=Text.from_markup(status).plain) if status else print_log_line
+        with (
+            activity(status, expected=previous_duration(project, name), still=f"building {name}")
+            if status
+            else nullcontext(None) as progress
+        ):
+            # the errors and warnings above the progress, like with the whole log, after the status, which CI shows
+            header = Text.from_markup(status).plain if status and not in_ci() else ""
+            diagnose = diagnostics(print_log_line, header=header) if status else print_log_line
 
             def on_line(line: str) -> None:
                 if progress:
