@@ -267,14 +267,17 @@ def delete(storage: Remote, paths: list[str]) -> None:
 KEYS = f"{INTERNAL}/keys"
 """The public keys of the signed trees, by fingerprint, in the storage."""
 MANIFEST = "manifest.json"
-"""The files of a tree in the storage, with their SHA-256, uploaded last: a tree without it is incomplete."""
-SIGNATURE = f"{MANIFEST}.asc"
+"""The files of a tree in the storage, with their SHA-256, and its signature, uploaded last: a tree without it is
+incomplete."""
 
 
 class TreeManifest(BaseModel):
-    """Validate paths and digests from a signed remote manifest."""
+    """The files of a tree of the remote storage, with their SHA-256, and the signature of the tree: a detached one,
+    of its path, a newline, and the files as signed_files() gives them.
+    """  # noqa: D205
 
     files: dict[str, str]
+    signature: str = ""
 
     @field_validator("files")
     @classmethod
@@ -289,6 +292,11 @@ class TreeManifest(BaseModel):
                 msg = f"invalid SHA-256: {name}"
                 raise ValueError(msg)
         return files
+
+
+def signed_files(files: dict[str, str]) -> bytes:
+    """Return the `files` of a manifest as signed: their JSON, sorted, one by line."""
+    return json.dumps(files, indent=1, sort_keys=True).encode()
 
 
 def _payload(prefix: str, manifest: bytes) -> bytes:
@@ -313,7 +321,7 @@ def _forget(storage: Remote, paths: list[str]) -> None:
     for path in paths:
         if path.startswith(f"{KEYS}/"):
             _keys.pop((storage.url, path.removeprefix(f"{KEYS}/").removesuffix(".asc")), None)
-        elif path.endswith((f"/{MANIFEST}", f"/{SIGNATURE}")):
+        elif path.endswith(f"/{MANIFEST}"):
             prefix = path.rsplit("/", 1)[0]
             for key in [k for k in _checked if k[:2] == (storage.url, prefix)]:
                 _checked.pop(key, None)
@@ -350,13 +358,16 @@ def _check(storage: Remote, prefix: str, trusted: Signer | None, fingerprints: f
     """Return the manifest of `prefix`, when signed with the keys of `fingerprints`."""
     with tempfile.TemporaryDirectory(prefix="xcraft-manifest-") as tmp:
         work = Path(tmp)
-        manifest, signature = work / MANIFEST, work / SIGNATURE
-        if not download(storage, f"{prefix}/{MANIFEST}", manifest) or not download(
-            storage, f"{prefix}/{SIGNATURE}", signature
-        ):
+        manifest, signature, payload = work / MANIFEST, work / "signature.asc", work / "payload"
+        if not download(storage, f"{prefix}/{MANIFEST}", manifest):
             return None
-        payload = work / "payload"
-        payload.write_bytes(_payload(prefix, manifest.read_bytes()))
+        try:
+            tree = TreeManifest.model_validate_json(manifest.read_bytes())
+        except ValueError:
+            log.warning("ignoring invalid remote tree %s", prefix)
+            return None
+        signature.write_text(tree.signature)
+        payload.write_bytes(_payload(prefix, signed_files(tree.files)))
         keyring = work / "keys"
         keyring.mkdir(mode=0o700)
         verifier = Signer(key="", gnupghome=keyring)
@@ -366,16 +377,14 @@ def _check(storage: Remote, prefix: str, trusted: Signer | None, fingerprints: f
             if keys or trusted:
                 verifier.gpg("--import", str(work / "keys.asc"))
             status = verifier.gpg("--status-fd", "1", "--verify", str(signature), str(payload))
-            if not any(
-                line.startswith("[GNUPG:] VALIDSIG ")
-                and (line.split()[2] in fingerprints or line.split()[-1] in fingerprints)
-                for line in status.splitlines()
-            ):
-                return None
-            return TreeManifest(files=json.loads(manifest.read_bytes())).files
-        except (SigningError, ValueError):
+        except SigningError:
             log.warning("ignoring invalid remote tree %s", prefix)
             return None
+    valid = any(
+        line.startswith("[GNUPG:] VALIDSIG ") and (line.split()[2] in fingerprints or line.split()[-1] in fingerprints)
+        for line in status.splitlines()
+    )
+    return tree.files if valid else None
 
 
 def tree_exists(storage: Remote, prefix: str, *, trusted: Signer | None = None) -> bool:
@@ -476,15 +485,14 @@ def write_manifest(storage: Remote, prefix: str, manifest: dict[str, str], *, si
     TreeManifest(files=manifest)
     with tempfile.TemporaryDirectory(prefix="xcraft-sign-") as tmp:
         work = Path(tmp)
-        file = work / MANIFEST
-        file.write_text(json.dumps(manifest, indent=1, sort_keys=True))
         payload = work / "payload"
-        payload.write_bytes(_payload(prefix, file.read_bytes()))
-        signature = signer.sign_file(payload)
+        payload.write_bytes(_payload(prefix, signed_files(manifest)))
+        file = work / MANIFEST
+        tree = TreeManifest(files=manifest, signature=signer.sign_file(payload).read_text())
+        file.write_text(tree.model_dump_json(indent=1) + "\n")
         key = work / "key.asc"
         key.write_text(signer.public_key())
         upload(storage, f"{KEYS}/{signer.key}.asc", key)
-        upload(storage, f"{prefix}/{SIGNATURE}", signature)
         upload(storage, f"{prefix}/{MANIFEST}", file)
 
 

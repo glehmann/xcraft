@@ -303,7 +303,7 @@ def test_signed_trees(root: Path, tmp_path: Path) -> None:
     remote.upload(storage, f"{remote.KEYS}/{'0' * 40}.asc", key)
     assert not remote.tree_exists(storage.model_copy(update={"build_keys": ["0" * 40]}), prefix)
     # A signed manifest cannot be transplanted to another build key.
-    for file in ("file", remote.MANIFEST, remote.SIGNATURE):
+    for file in ("file", remote.MANIFEST):
         remote.copy(storage, f"{prefix}/{file}", f"{prefix}-other/{file}")
     assert not remote.download_tree(storage, f"{prefix}-other", tmp_path / "wrong-path")
     # Changed bytes fail even when the manifest is authentic.
@@ -312,12 +312,15 @@ def test_signed_trees(root: Path, tmp_path: Path) -> None:
     with pytest.raises(remote.RemoteError, match="corrupted"):
         remote.download_tree(storage, prefix, tmp_path / "corrupt")
     assert not (tmp_path / "corrupt").exists()
-    # Replacing both bytes and manifest still cannot forge the signature.
-    (src / remote.MANIFEST).write_text('{"file": "' + sha256_of(src / "file") + '"}')
-    remote.upload(storage, f"{prefix}/{remote.MANIFEST}", src / remote.MANIFEST)
-    assert not remote.tree_exists(storage, prefix)
-    remote.delete(storage, [f"{prefix}/{remote.SIGNATURE}"])
-    assert not remote.tree_exists(storage, prefix)
+    # Replacing both bytes and manifest still cannot forge the signature, nor remove it.
+    signature = remote.TreeManifest.model_validate_json(
+        urllib.request.urlopen(f"{storage.url}/{prefix}/{remote.MANIFEST}").read()  # noqa: S310, the test garage
+    ).signature
+    for forged in (signature, ""):
+        manifest = remote.TreeManifest(files={"file": sha256_of(src / "file")}, signature=forged)
+        (src / remote.MANIFEST).write_text(manifest.model_dump_json())
+        remote.upload(storage, f"{prefix}/{remote.MANIFEST}", src / remote.MANIFEST)
+        assert not remote.tree_exists(storage, prefix)
 
 
 @pytest.mark.parametrize("kind", ["builds", "ccache"])
@@ -335,7 +338,7 @@ def test_tree_fallback_checks_signatures(
     manifest = remote.upload_tree(dev, prefix, src, ["file"], signer=signer)
     # Main has an unsigned tree. Only its metadata may be downloaded before trying dev.
     remote.upload(main, f"{prefix}/file", src / "file")
-    (src / remote.MANIFEST).write_text(json.dumps(manifest))
+    (src / remote.MANIFEST).write_text(json.dumps({"files": manifest}))
     remote.upload(main, f"{prefix}/{remote.MANIFEST}", src / remote.MANIFEST)
     with caplog.at_level(logging.DEBUG, logger="xcraft"):
         assert remote.tree_available(project, prefix)
@@ -424,7 +427,8 @@ def test_developer_storage(root: Path, tmp_path: Path) -> None:
     assert xcraft("push", "builds", "trivial")[0] == 0
     storage = Project.find().config.remote["dev"]
     trees = remote.listing(storage, f".xcraft/builds/{ARCH}/trivial/")
-    assert any(path.endswith(remote.SIGNATURE) for path in trees)
+    assert any(path.endswith(remote.MANIFEST) for path in trees)
+    assert not any(path.endswith(".asc") for path in trees)
     assert signer.key not in storage.build_keys
     shutil.rmtree(root / ".xcraft/cache/builds")
     code, output = xcraft("fetch", "builds", "trivial")
@@ -938,17 +942,16 @@ def test_manifest_paths_stay_in_their_tree(root: Path, tmp_path: Path) -> None:
     storage = Project.find().config.remote.get("main")
     assert storage
     for name in ("../escaped", "/var/escaped", "a/../../escaped"):
-        manifest = tmp_path / remote.MANIFEST
-        manifest.write_text(json.dumps({name: "0" * 64}))
         payload = tmp_path / "payload"
-        payload.write_bytes(b"trees/bad\n" + manifest.read_bytes())
+        payload.write_bytes(b"trees/bad\n" + remote.signed_files({name: "0" * 64}))
         signer = release_signer(Project.find())
         assert signer
         key = tmp_path / "key.asc"
         key.write_text(signer.public_key())
         remote.upload(storage, f"{remote.KEYS}/{signer.key}.asc", key)
+        manifest = tmp_path / remote.MANIFEST
+        manifest.write_text(json.dumps({"files": {name: "0" * 64}, "signature": signer.sign_file(payload).read_text()}))
         remote.upload(storage, "trees/bad/manifest.json", manifest)
-        remote.upload(storage, "trees/bad/manifest.json.asc", signer.sign_file(payload))
         assert not remote.download_tree(storage, "trees/bad", tmp_path / "tree")
     assert not list(tmp_path.glob("**/escaped"))
 

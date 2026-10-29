@@ -123,7 +123,7 @@ def reuse_published(  # noqa: PLR0913
             for files in _batches(list(manifest)):
                 remote.transfer(storage, {f"{target}/{f}": f"{latest}/{f}" for f in files}, on_line)
             remote.write_manifest(storage, target, manifest, signer=signer or signing_key(project))
-            _delete_stale(storage, target, {*manifest, remote.MANIFEST, remote.SIGNATURE})
+            _delete_stale(storage, target, {*manifest, remote.MANIFEST})
             remote.update_pages(project, storage, [f"{target}/", f"{latest}/"])
         console.print(f"[bold green]✓[/] published {target}, and as {latest} (reused the matching snapshot)")
     return True
@@ -520,10 +520,10 @@ def _upload(  # noqa: PLR0913
             remote.transfer(storage, {f"{tree}/{f}": copies.get(f, src / f) for f in batch}, on_line)
         remote.write_manifest(storage, tree, manifest, signer=signer)
         # the files of a failed publish of the same name, and of the previous latest snapshot, but the pages
-        keep = {*files, remote.MANIFEST, remote.SIGNATURE}
+        keep = {*files, remote.MANIFEST}
         _delete_stale(storage, tree, keep)
         # only the files changed: without its manifest, a latest tree left incomplete is copied entirely next time
-        remote.delete(storage, [f"{latest}/{remote.MANIFEST}", f"{latest}/{remote.SIGNATURE}"])
+        remote.delete(storage, [f"{latest}/{remote.MANIFEST}"])
         for batch in _batches([f for f in files if previous.get(f) != manifest[f]]):
             remote.transfer(storage, {f"{latest}/{f}": f"{tree}/{f}" for f in batch}, on_line)
         remote.write_manifest(storage, latest, manifest, signer=signer)
