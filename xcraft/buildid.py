@@ -82,7 +82,7 @@ def _recipe(project: Project) -> str:
                 config.macros,
                 config.release_suffixes,
                 config.extra_upstream,
-                {name: repo.model_dump() for name, repo in project.repos.items()},
+                {name: repo.model_dump() for name, repo in config.repos.items()},
             ],
             sort_keys=True,
         ).encode()
