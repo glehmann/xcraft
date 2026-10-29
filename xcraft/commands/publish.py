@@ -9,7 +9,7 @@ import typer
 from pydantic import ValidationError
 
 from xcraft import publish as publisher
-from xcraft.commands import Key, To, choose_signer, complete_arch, load, remote_storage
+from xcraft.commands import Key, To, choose_signer, complete_arch, load, remote_storage, update_build_ids
 from xcraft.display import console
 from xcraft.iso import isos_available, make_isos, push_isos
 from xcraft.project import Destination, Project, Publish
@@ -201,6 +201,7 @@ def _publish(  # noqa: C901, PLR0912, PLR0913
         key=key,
     )
     with project.lock():
+        update_build_ids(project)  # the final builds are numbered by them
         dest = (output or project.state / "publish").absolute()
         build = only != "isos" and project.config.publish.build
         if (
@@ -214,6 +215,7 @@ def _publish(  # noqa: C901, PLR0912, PLR0913
             built, stored = publisher.remote_snapshot(platforms, dest, signer=signer, storage=storage, build=build)
         else:
             built, stored = snapshot(platforms, dest, signer=signer, storage=storage, build=build), {}
+        update_build_ids(project)  # with what the builds found
         for platform in with_isos:
             console.print(f"getting the ISOs for {platform.arch}")
             if storage and stored and not isos_available(platform, signer=signer):  # made from its packages

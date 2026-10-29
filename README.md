@@ -8,7 +8,7 @@ container made only of AlmaLinux 10 packages, in the versions of a committed loc
 - Python >= 3.13 and [uv](https://docs.astral.sh/uv/)
 - podman, rootless is enough
 - git and git-lfs, to import packages
-- ssh and rsync, to copy repositories of test builds to test hosts
+- ssh and rsync, to copy repositories of development builds to test hosts
 - gpg, to sign packages
 - qemu-system-x86_64, qemu-img, and OVMF firmware, to boot installer VMs with `xcraft boot`
 
@@ -32,15 +32,15 @@ xcraft --install-completion  # optional
 | `xcraft build [<pkg>...] --fetch=needed\|none` | Only fetch from the remote storage the builds the packages to build need, like CI, which then only builds what the storage misses; or fetch nothing, and build what is not cached locally |
 | `xcraft build <pkg> -v` | Show the build log while building |
 | `xcraft build <pkg> --locked` | Fail the builds that would change the lock: new upstream packages, or what a build found, for CI |
-| `xcraft build <pkg>... --test ID` / `--pre ID` | Test builds, to install on a test host (see [Test builds](#test-builds)) |
-| `xcraft repo <pkg>... --test ID` / `--pre ID` | A repository of new test builds, for test hosts |
-| `xcraft repo <pkg>... --test ID --host h [--upgrade]` | The same, copied to test hosts over ssh, and upgraded there |
+| `xcraft build [<pkg>...] --dev ID` / `--final` | Development builds with another identifier than `dev`, or `$XCRAFT_DEV`; or final builds, without development suffixes (see [Development builds](#development-builds)) |
+| `xcraft repo <pkg>... [--dependents]` | When they have development builds, a repository of them alone, for test hosts |
+| `xcraft repo <pkg>... --host h [--upgrade]` | The same, copied to test hosts over ssh, and upgraded there |
 | `xcraft publish [repos\|isos] [--stage s] [--locked] [--local] [--unsigned] [--dev-key] [--arch a]` | Publish a snapshot of the distribution, its repositories and its ISOs, or only those given, for all the architectures or `--arch`, as the stage's latest one; a `--local` one is of the host's architecture by default |
 | `xcraft iso [--netinstall] [--output f] [-V id] [--locked] [--unsigned]` | Make the installation ISO, from a local snapshot (see [Installation ISO](#installation-iso)) |
 | `xcraft boot [--iso f] [--disk f] [--headless] [--unsigned]` | Build the ISO and boot its installer in a local QEMU VM, creating a virtual disk if missing |
 | `xcraft boot --installed [--disk f]` | Boot the installed virtual disk without making or attaching an ISO |
 | `xcraft vm <command>` | Inspect a VM, read its console, send input, save diagnostics, or stop it |
-| `xcraft key create` / `xcraft key show [--export]` | The developer's key, which signs the test builds |
+| `xcraft key create` / `xcraft key show [--export]` | The developer's key, which signs the development builds |
 | `xcraft push` | Upload everything the remote storage misses: the source archives and the builds of all packages, with the `index.html` pages of their directories |
 | `xcraft push sources [<pkg>...] [--check] [--to main\|dev]` | Upload cached sources, or check the selected bucket; defaults to dev |
 | `xcraft push builds [<pkg>...]` | Upload the current builds missing from the remote storage, for CI |
@@ -61,7 +61,7 @@ xcraft --install-completion  # optional
 | `xcraft log <pkg> [--step build] [--grep regex] [--last/-n n]` | Show the log of the last build of a package, in `$PAGER` on a terminal |
 | `xcraft log <pkg> -f` | Follow the log of a running build, until it ends |
 | `xcraft graph <pkg> [--dependents] [--upstream] [--flat]` | Show the packages a package is built against as a tree, or the packages built against it; `--upstream` adds the upstream binary packages; `--flat` only lists them, ours in build order |
-| `xcraft status [<pkg>...]`, or `st` | Show the version of each package, or of the given ones, whether it is built, or queued by a running build, and its latest test builds |
+| `xcraft status [<pkg>...]`, or `st` | Show the version of each package, or of the given ones, with its build number and development build suffix, and whether it is built, or queued by a running build |
 | `xcraft bump <pkg>... [--dep <upstream>] [-m message]` | Bump the release of packages, with a changelog entry, empty to fill in without `-m`, and clear their pending updates; `--dep` selects the packages with a pending update of an upstream package |
 | `xcraft bump <pkg> --version v [-m message]` | Update a package to a new version, with the archive of its `Source0`, and the packages of the same version; the changelog entry is `Update to <v>` by default |
 | `xcraft clean [<pkg>...] [--builds] [--ccache]` | Remove the build trees and outdated builds, and optionally all builds and compiler caches, of the given packages or all; the source archives are kept |
@@ -120,6 +120,7 @@ base_image = "ghcr.io/almalinux/10-base:10.2@sha256:..."   # image the build env
 platforms = ["linux/amd64/v2", "linux/arm64"]   # the platforms of the builds, one at a time
 packages = ["rpm-build", "gcc", ...]   # installed in the build environment, with what xcraft uses
 same_version = [["kernel", "kernel-headers"]]   # updated together by xcraft bump --version
+main_branch = "master"                 # the branch the build IDs are numbered against, master by default
 [ccache_size]                          # the maximum size of the compiler cache of packages, 5G by default
 kernel = "20G"
 [macros]                               # RPM macros of the build environment
@@ -150,39 +151,41 @@ architectures.
 
 ## Build keys
 
-Each build of a package has a **key**: a SHA-256 of everything that goes into it. xcraft never builds a package whose
-build with the same key it already has, locally or in the [remote storage](#remote-storage), unless `--fetch=none`; it
-builds it again as soon as one of its inputs changes. The key is the name of the build in
-`.xcraft/cache/builds/<arch>/<pkg>/<key>/`, and in the storage, `builds/<arch>/<pkg>/<key>/`.
+Each build of a package has a **key**: a SHA-256 of everything that goes into it, the same on all the architectures.
+xcraft never builds a package whose build with the same key and release suffix it already has, locally or in the
+[remote storage](#remote-storage), unless `--fetch=none`; it builds it again as soon as one of its inputs changes. A
+build is named by its key and release suffix, `%{autorev}`: the number of its [build ID](#build-ids), `+b<n>`, and
+its development build suffix, if any, in `.xcraft/cache/builds/<arch>/<pkg>/<key>+b<n>/`, and in the storage,
+`builds/<arch>/<pkg>/<key>+b<n>/`. A [development build](#development-builds), or one built against development builds,
+is named by the hash of its key and of the names of the builds of ours it is built against instead, with its suffix.
 
 **What it covers.** The key of a package is made of:
 
 | Part | What it is | Changed by |
 |---|---|---|
-| The build environment image | A hash of the base image, pinned by digest, the platform, `packages` of `xcraft.toml`, the repositories, the RPM macros (`%dist`...), and the versions of the image's packages, resolved from the lock | Any change to these settings, or an update of a package of the image |
-| The platform | The one xcraft works on, see [Architectures](#configuration) | `--arch` |
-| The extra upstream RPMs | The names and URLs of `extra_upstream` | `extra_upstream` |
 | The recipe | The build script, `xcraft/buildenv/build.sh`, the `.repo` file of the local repository, and the scripts recording what the builds install and isolating them from the network | A change to how xcraft builds, but one declared making the same packages |
+| The build environment | The base image, pinned by digest, the Containerfile, `packages` of `xcraft.toml`, the repositories, the RPM macros (`%dist`...), the `release_suffixes`, and the names and URLs of `extra_upstream` | Any change to these settings |
+| The image | The upstream source packages of the build environment image of all the architectures, with their versions, as the lock records them (see [The lock](#the-lock)) | An update of a package of the image |
 | The package | Its name, and all the files of `<repo>/<pkg>/`, but `origin`: their paths, contents, and whether they are executable. The `sources` manifest covers the archives by their SHA-256 | Any change to the spec, a patch, a source file, or an archive |
-| Its build root | The upstream packages of its build root besides the image's, resolved from its `BuildRequires` and the lock (see [The lock](#the-lock)), with their versions | `xcraft lock --update` of one of them, a change of its `BuildRequires`, or what the builds found |
-| Its test build suffix | `.0.ID.<n>` or `~ID.<n>`, for `--test` and `--pre` only | Each test build |
-| Its dependencies | The keys of the packages of ours its build installs (see [Dependencies](#dependencies)), like `kernel-headers`, in all the build roots | Any change to one of them, recursively |
+| Its build root | The upstream source packages of its build root besides the image's, on all the architectures, with their versions, and what it is resolved from besides its `BuildRequires`: its dynamic `BuildRequires`, and what rpm generated for the binary packages of ours it may have, as the lock records them | `xcraft lock --update` of one of them, a change of its `BuildRequires`, or what the builds found |
+| Its dependencies | The build IDs, numbers and keys, of the packages of ours its build installs (see [Dependencies](#dependencies)), like `kernel-headers`, in all the build roots | Any change to one of them, recursively |
 
-The first four are common to all the packages: changing one of them rebuilds everything. Packages depending on each
+The first three are common to all the packages: changing one of them rebuilds everything. Packages depending on each
 other, a cycle, share the hash of them all, from which each one gets its own key.
 
-**What it does not cover.** The path of the checkout, the machine, the user and the time; `origin`, and the files out of
-`<repo>/<pkg>/`, but those above; the SHA-256 and architecture of the upstream packages, only their versions. So the
-same commit gives the same keys everywhere: a build pushed by CI, or by a colleague, is fetched by any checkout instead
-of being built again. The local repository of the builds gets its own name in each checkout, `xcraft-<project id>`,
-for its own metadata in the dnf cache the containers share, but the recipe the key covers has a placeholder instead.
+**What it does not cover.** The architecture, which is the directory of the builds; the path of the checkout, the
+machine, the user and the time; `origin`, and the files out of `<repo>/<pkg>/`, but those above; the SHA-256 and
+architecture of the upstream packages, only their versions. So the same commit gives the same keys everywhere, on all
+the architectures: a build pushed by CI, or by a colleague, is fetched by any checkout instead of being built again.
+The local repository of the builds gets its own name in each checkout, `xcraft-<project id>`, for its own metadata in
+the dnf cache the containers share, but the recipe the key covers has a placeholder instead.
 
 **What a change rebuilds.**
 
 - A spec or a patch: the package, and those built against it, directly or not (`xcraft graph --dependents <pkg>`);
 - a version or a release bump: the same, as it changes the spec;
 - an update of the lock: the packages with the updated package in their build root, and those built against them, or
-  everything when the package is in the image;
+  everything when the package is in the image, on all the architectures, even when only one has it;
 - the configuration of the build environment, or a new version of xcraft changing the recipe: everything.
 
 **Same builds.** A change to the recipe which makes the same packages, like a fix of how it fails, can keep the
@@ -200,37 +203,59 @@ like a new requirement rpm generated, the lock gets it, and the builds are cache
 which the next commands find. With `--locked`, for CI, such a build fails instead, as its key would not be the one of
 the committed lock.
 
-## Test builds
+## Build IDs
+
+Each package has a build ID, in `.buildid/<package>`, to commit: a number and the key of its build, one line, like
+`42 3f1c…e2a0`. The number is in the releases of its builds, as `+b<n>` in `%{autorev}`, at the start of `%{dist}`:
+`1+b42.xcpng8.99` for `Release: 1%{?dist}`. Every package must end its release with `%{?dist}`, or with
+`%{?autorev}` for the package defining `%{dist}`. `xcraft build`, `repo` and `publish` update the build IDs, before
+building, and after, with what the builds found.
+
+A package keeps the build ID of the main branch, `main_branch` of `xcraft.toml`, `master` by default, where the
+current branch forks from it, as long as its key is the same, or the one of the main branch's tip. Otherwise it gets
+the next number of both: a branch keeps the same number however many times it changes the package, and once another
+branch got that number on the main branch, merging it conflicts, and computing the file again gives the next one, even
+while the merge is in progress. The packages built against it get new numbers too. The reason of a new number is in
+the same commit: a change of the package, of the lock, or of another build ID. Out of a git repository, or without the
+main branch, there is nothing to number against: the numbers stay those of the working tree, 1 for new packages. A
+file in a merge conflict is written again.
+
+With `--locked`, the builds fail instead of changing the build IDs; on the main branch, they also fail when a package
+gets the number of the previous commit, its first parent, for another key, like when a merge conflict is resolved by
+keeping one side: CI needs that commit, with `fetch-depth: 2` for `actions/checkout`. Official builds are only made by
+CI on the main branch, so the history of its build IDs is the record of the official numbers.
+
+## Development builds
 
 While working on a package, a developer installs several builds of it on the same test host. Each one must upgrade
-the previous one, and stay below the next real release. As with koji's `--test-build` and `--pre-build`:
+the previous one, and stay below the next real release. So the builds of the packages whose build ID is not the main
+branch's, those changed, and those built against them, are development builds, by default: `+b<n>~<c>.dev`, below
+the final build, `+b<n>`. The other packages get their final builds, fetched from the remote storage. `--dev ID`, or
+`$XCRAFT_DEV`, gives another identifier than `dev`.
 
-- `xcraft build <pkg> --test ID` gives the release `<release>.0.ID.<n>`, above the current release and below the
-  next one: `2.0.fix123.1.xcpng8.99` is between `2.xcpng8.99` and `3.xcpng8.99`;
-- `xcraft build <pkg> --pre ID` gives `<release>~ID.<n>`, below the release, when the spec is already bumped to the
-  coming one: `3~fix123.1.xcpng8.99` is below `3.xcpng8.99`.
+`<c>` is a counter of the package and number, going up when the inputs of the build or the identifier change, so that
+each development build upgrades the previous ones, whatever their identifiers, while a build of the same inputs is
+cached: `1+b42~1.dev`, `1+b42~2.dev`, `1+b42~3.qcow2`, then `1+b42`. The counters are in `.xcraft/dev-builds.json`,
+which `xcraft clean` keeps, so they are specific to the checkout. `--final` makes final builds, overriding
+`$XCRAFT_DEV`, but not with `--dev`. On the main branch, all the builds are final ones. The build prints the paths of
+the RPMs of the development builds it makes. They are cached apart from the final builds, never pushed to the remote
+storage, nor taken from it; `xcraft status` shows them, `clean` keeps those last built, and `shell` installs them.
 
-`<n>` is the next number of the package for that ID and release, kept in `.xcraft/test-builds.json` (which
-`xcraft clean` keeps), so it is specific to the checkout. The suffix goes into `%{autorev}`, part of `%{dist}`, so
-the specs are not changed. With several packages, like `xcraft build --test ID xen qemu`, all of them are test builds,
-built against each other. The build prints the paths of their RPMs. Test builds are cached apart from the normal
-builds.
-
-`xcraft repo <pkg>... --test ID` (or `--pre ID`) makes the next test builds, and puts them alone in a repository,
-`repo-ID/` by default, with a `xcraft-ID.repo` file for the hosts, which keep their usual repositories for
-everything else. Their dependencies are checked with our other current builds.
+`xcraft repo <pkg>...` puts the development builds of the given packages alone in a repository, `repo-ID/` by default,
+with a `xcraft-ID.repo` file for the hosts, which keep their usual repositories for everything else. Their
+dependencies are checked with our other current builds. `--dependents` adds the packages built against them.
 
 With `--host`, as given to ssh and repeatable, xcraft copies the repository to each host with rsync, in
-`/var/local/xcraft/ID/`, and installs its `.repo` file, and with `--upgrade`, it also upgrades the test packages the
-host has installed:
+`/var/local/xcraft/ID/`, and installs its `.repo` file, and with `--upgrade`, it also upgrades the packages the host
+has installed:
 
 ```
-xcraft repo xen --test fix123 --host root@testhost --upgrade
+xcraft repo xen --dependents --host root@testhost --upgrade
 ```
 
-Each `xcraft repo --test` makes new builds, which the upgrade takes over the previous ones. Without `--host`,
-`--baseurl` gives where the hosts find the repository, for instance over http; by default, it is its directory, to
-copy at the same place on the hosts.
+Without `--host`, `--baseurl` gives where the hosts find the repository, for instance over http; by default, it is its
+directory, to copy at the same place on the hosts. Bringing a host back to an earlier state, like after a change is
+dropped, is up to the developer, like restoring a btrfs snapshot.
 
 ## Import
 
@@ -427,7 +452,8 @@ The writes use the credentials of `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY
 - When a package is not built locally, the build downloads its build with the same key, when the storage has it: the
   key covers everything the build depends on, so it is the same everywhere for the same commit. A build is a binary
   people install, so only CI should push builds, after `xcraft build --locked`, which fails when a build would
-  change the lock, and so its key: `xcraft push builds`. Test builds are never pushed. With `--fetch=needed`, CI
+  change the lock, and so its key: `xcraft push builds`. Development builds are never pushed, nor fetched: `push
+  builds` and `fetch builds` skip the packages with ones, unless `--final`. With `--fetch=needed`, CI
   leaves in the storage the builds it has, only fetching those of the dependencies of the packages it builds.
 - A build without the compiler cache of its package downloads the one of the storage first, unless `--fetch=none`: the
   one CI pushes after its builds, with `xcraft push ccache`, so that rebuilding a modified package, like the kernel
@@ -601,9 +627,9 @@ Our packages are signed with the host's gpg, which holds the key, by rpmsign in 
 restricted socket of the host's gpg agent, made for that, so the key never leaves the host, nor its HSM, and is never
 available to the builds, which run the code of the specs.
 
-- **Test builds** are signed with the developer's key, made with `xcraft key create`: an RSA key without passphrase,
-  in its own keyring, `.xcraft/key/`, apart from the developer's own keys, as it is only for test hosts. The
-  repositories of test builds then have its public key, and their `.repo` file checks the packages and the
+- **Development builds** are signed with the developer's key, made with `xcraft key create`: an RSA key without
+  passphrase, in its own keyring, `.xcraft/key/`, apart from the developer's own keys, as it is only for test hosts.
+  The repositories of development builds then have its public key, and their `.repo` file checks the packages and the
   repository's metadata (`gpgcheck`, `repo_gpgcheck`).
 - **Published packages** are signed with the key of `[sign]` in `xcraft.toml`:
 

@@ -7,6 +7,8 @@ from typing import Annotated
 
 import typer
 
+from xcraft import buildid
+from xcraft.display import console
 from xcraft.project import Destination, Project, Remote
 from xcraft.resolution import prepare
 from xcraft.signing import Signer, dev_signer, signing_key
@@ -73,33 +75,40 @@ def remote_storage(project: Project, to: Destination = "main") -> Remote:
     return storage
 
 
-Test = Annotated[
+Dev = Annotated[
     str | None,
     typer.Option(
+        "--dev",
         metavar="ID",
-        help="Test builds of the given packages, above their release and below the next one: <release>.0.ID.<n>.",
+        envvar="XCRAFT_DEV",
+        help="Identifier of the development builds: of the packages whose build ID is not the main branch's, as "
+        "<release>+b<n>~<counter>.ID. dev by default.",
+        show_default=False,
     ),
 ]
-Pre = Annotated[
-    str | None,
-    typer.Option(metavar="ID", help="Pre builds of the given packages, below their release: <release>~ID.<n>."),
+Final = Annotated[
+    bool, typer.Option("--final", help="Final builds, without development suffixes, like CI on the main branch.")
 ]
 
 
-def test_kind(test: str | None, pre: str | None, packages: list[str] | None) -> tuple[str, str] | None:
-    """Return the kind and ID of the test builds of `packages` asked with --test or --pre, if any."""
-    if test and pre:
-        msg = "--test and --pre cannot be used together"
-        raise typer.BadParameter(msg)
-    if (test or pre) and not packages:
-        msg = "test and pre builds are of the given packages only"
-        raise typer.BadParameter(msg)
-    if not (ident := test or pre):
+def dev_ident(ctx: typer.Context, dev: str | None, *, final: bool) -> str | None:
+    """Return the identifier of the development builds, or None for final builds: --final overrides $XCRAFT_DEV."""
+    if final:
+        if (source := ctx.get_parameter_source("dev")) and source.name == "COMMANDLINE":  # not $XCRAFT_DEV
+            msg = "--final and --dev cannot be used together"
+            raise typer.BadParameter(msg)
         return None
-    if not re.fullmatch(r"[a-zA-Z0-9]{1,16}", ident):
-        msg = f"the build ID must be 1 to 16 letters and digits: {ident}"
+    if not re.fullmatch(r"[a-zA-Z0-9]{1,16}", ident := dev or "dev"):
+        msg = f"the development build ID must be 1 to 16 letters and digits: {ident}"
         raise typer.BadParameter(msg)
-    return ("test" if test else "pre"), ident
+    return ident
+
+
+def update_build_ids(project: Project) -> None:
+    """Update the build IDs of the packages, showing the changed ones, or fail with --locked, see xcraft.buildid."""
+    if changed := buildid.update(project):
+        ids = buildid.read(project)
+        console.print("build IDs: " + ", ".join(f"{name} {ids[name].number}" for name in changed if name in ids))
 
 
 Dep = Annotated[

@@ -9,13 +9,14 @@ import typer
 
 from xcraft import build as builder
 from xcraft.cache import cached_build
-from xcraft.commands import Arch, Packages, Pre, Test, load, test_kind
+from xcraft.commands import Arch, Dev, Final, Packages, dev_ident, load, update_build_ids
+from xcraft.devbuilds import dev_suffixes
 from xcraft.display import console
 from xcraft.graph import dependents
-from xcraft.testbuilds import next_test_suffixes
 
 
 def build(  # noqa: PLR0913, PLR0917
+    ctx: typer.Context,
     packages: Packages = None,
     no_deps: Annotated[bool, typer.Option("--no-deps", help="Do not build the dependencies.")] = False,
     with_dependents: Annotated[
@@ -33,28 +34,30 @@ def build(  # noqa: PLR0913, PLR0917
     locked: Annotated[
         bool, typer.Option("--locked", help="Fail the builds that would change the lock, for CI.")
     ] = False,
-    test: Test = None,
-    pre: Pre = None,
+    dev: Dev = None,
+    final: Final = False,
     arch: Arch = None,
 ) -> None:
     """Build the given packages, all by default, and what they need, in the build environment.
 
-    Each test or pre build of a package gets the next number <n> for its ID and release.
+    The packages whose build ID is not the main branch's get development builds, unless --final, see --dev.
     """
-    kind = test_kind(test, pre, packages)
+    ident = dev_ident(ctx, dev, final=final)
     project = load(packages, locked=locked, arch=arch)
     names = list(packages or sorted(project.packages))
     if with_dependents:
         names += sorted(dependents(project.deps, names) - set(names))
     if dry_run:
-        autorev = dict.fromkeys(names, "?") if kind else None
+        autorev = dev_suffixes(project, ident)
         builder.build(project, names, with_deps=not no_deps, dry_run=True, autorev=autorev, fetch=fetch)
         return
     with project.lock():
-        autorev = next_test_suffixes(project, names, *kind) if kind else {}
+        update_build_ids(project)
+        autorev = dev_suffixes(project, ident, advance=True)
         results, keys = builder.build(
             project, names, with_deps=not no_deps, verbose=verbose, autorev=autorev, fetch=fetch
         )
+        update_build_ids(project)  # with what the builds found
     if autorev:
         for r in results:
             if r.name in autorev and r.status == "built":

@@ -30,7 +30,7 @@ def _disk_usage(path: Path) -> int:
 
 def clean(
     project: Project,
-    keys: dict[str, str],
+    keys: list[dict[str, str]],
     names: list[str] | None = None,
     *,
     all_builds: bool = False,
@@ -38,8 +38,8 @@ def clean(
 ) -> int:
     """Remove what xcraft can regenerate, and return how many bytes that freed.
 
-    That is the build trees, the outdated builds of the platform, all of them
-    with `all_builds`, and the compiler caches with `ccache`, of the packages
+    That is the build trees, the outdated builds of the platform, those of none
+    of the `keys`, all of them with `all_builds`, and the compiler caches with `ccache`, of the packages
     `names`, or of all of them with what they share. The source cache is kept.
 
     The local repository and snapshot, made again when needed, are removed in
@@ -61,7 +61,9 @@ def clean(
     if all_builds:
         paths += packages
     else:
-        paths += [build for pkg in packages for build in pkg.iterdir() if keys.get(pkg.name) != build.name]
+        paths += [
+            build for pkg in packages for build in pkg.iterdir() if build.name not in {k.get(pkg.name) for k in keys}
+        ]
     if ccache:
         paths += [state / "ccache"] if names is None else [state / "ccache" / name for name in names]
     for path in paths:

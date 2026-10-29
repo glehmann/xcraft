@@ -165,6 +165,8 @@ class Config(BaseModel):
     the locks of the architectures have the same versions but for them."""
     repositories: list[str] = ["base"]
     """The repositories the packages are published in: directories of the project, with one subdirectory per package."""
+    main_branch: str = "master"
+    """The git branch CI makes the final builds of, which the build IDs of the packages are numbered against."""
     import_: Import = Field(Import(), alias="import")
     remote: dict[Destination, Remote] = {}
     """The independent main and developer buckets, each with its own public URL and S3 settings."""

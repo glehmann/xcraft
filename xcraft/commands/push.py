@@ -8,7 +8,8 @@ import typer
 
 from xcraft import ccache, remote
 from xcraft.cache import BUILD_FILES, build_keys, build_path, cached_build
-from xcraft.commands import Arch, Key, Packages, To, load, remote_storage
+from xcraft.commands import Arch, Final, Key, Packages, To, load, remote_storage
+from xcraft.devbuilds import developed
 from xcraft.display import activity, console
 from xcraft.iso import push_isos
 from xcraft.project import Project, Remote
@@ -31,7 +32,7 @@ def everything(ctx: typer.Context, arch: Arch = None, key: Key = None, to: To = 
     project = load(arch=arch)
     storage = remote_storage(project, to)
     _push_sources(project, storage, None)
-    if not_built := _push_builds(project, storage, None, signer=signing_key(project, key)):
+    if not_built := _push_builds(project, storage, None, signer=signing_key(project, key), final=False):
         msg = f"not built: {', '.join(not_built)}"
         raise RuntimeError(msg)
 
@@ -82,10 +83,15 @@ def _push_sources(project: Project, storage: Remote, packages: list[str] | None,
 
 
 @app.command()
-def builds(packages: Packages = None, arch: Arch = None, key: Key = None, to: To = "dev") -> None:
-    """Upload the current builds of the given packages, all by default. Test builds are never uploaded."""
+def builds(packages: Packages = None, final: Final = False, arch: Arch = None, key: Key = None, to: To = "dev") -> None:
+    """Upload the current builds of the given packages, all by default.
+
+    Development builds are never uploaded: the packages with ones are skipped, unless --final, which uploads their
+    final builds.
+    """
     project = load(packages, arch=arch)
-    if not_built := _push_builds(project, remote_storage(project, to), packages, signer=signing_key(project, key)):
+    storage, signer = remote_storage(project, to), signing_key(project, key)
+    if not_built := _push_builds(project, storage, packages, signer=signer, final=final):
         msg = f"not built: {', '.join(not_built)}"
         raise RuntimeError(msg)
 
@@ -110,10 +116,17 @@ def isos(
         )
 
 
-def _push_builds(project: Project, storage: Remote, packages: list[str] | None, *, signer: Signer | None) -> list[str]:
-    """Upload the current builds of `packages`, all by default, and return those not built."""
-    keys = build_keys(project)
-    paths = {name: build_path(project, name, keys[name]) for name in packages or sorted(project.packages)}
+def _push_builds(
+    project: Project, storage: Remote, packages: list[str] | None, *, signer: Signer | None, final: bool
+) -> list[str]:
+    """Upload the current builds of `packages`, all by default, and return those not built: the final builds, but
+    of the packages with development builds, unless `final`.
+    """  # noqa: D205
+    keys, skipped = build_keys(project), set() if final else developed(project)
+    if shown := sorted(skipped & {*(packages or project.packages)}):
+        console.print(f"development builds, not pushed: {', '.join(shown)}")
+    names = [name for name in packages or sorted(project.packages) if name not in skipped]
+    paths = {name: build_path(project, name, keys[name]) for name in names}
     # first: a build of xcraft build --fetch=needed may be in the storage only
     with activity("checking the remote storage"):
         present = [

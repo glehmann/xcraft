@@ -1,4 +1,4 @@
-"""Signing our packages: the developer's key for test builds, and the release key for publishing."""
+"""Signing our packages: the developer's key for development builds, and the release key for publishing."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import typer
 
 from tests import copy_project
 from tests.test_build import xcraft
+from xcraft import buildid
 from xcraft.commands import choose_signer
 from xcraft.project import Project, Sign
 from xcraft.signing import Signer, SigningError, check_signatures, create_dev_key, dev_keyring, dev_signer, signing_key
@@ -39,7 +40,7 @@ def test_dev_key(root: Path) -> None:
     assert xcraft("key", "show") == (1, "no key: see xcraft key create\n")
     code, output = xcraft("key", "create")
     assert code == 0, output
-    assert "for: Test User (xcraft test builds) <test@example.com>" in output
+    assert "for: Test User (xcraft development builds) <test@example.com>" in output
     signer = dev_signer(Project.find())
     assert signer
     assert xcraft("key", "show")[1].startswith(f"{signer.key}\n")
@@ -65,18 +66,26 @@ def test_signer_selection(root: Path) -> None:
 
 
 @needs_gpg
-def test_test_builds_are_signed(build_environment: None, root: Path) -> None:
+def test_development_builds_are_signed(build_environment: None, root: Path) -> None:
     def rpms(*args: str) -> list[Path]:
         code, output = xcraft(*args)
         assert code == 0, output
         return [root / p for p in output.splitlines() if p.endswith(".rpm")]
 
+    # a change on a branch: development builds
+    subprocess.run(["git", "-C", str(root), "symbolic-ref", "HEAD", "refs/heads/master"], check=True)
+    buildid.update(Project.find())
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "base"], check=True)
+    subprocess.run(["git", "-C", str(root), "checkout", "-qb", "feature"], check=True)
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(f"# changed\n{spec.read_text()}")
     # unsigned without a key
-    unsigned = rpms("build", "trivial", "--test", "nokey")
+    unsigned = rpms("build", "trivial", "--dev", "nokey")
     assert xcraft("key", "create")[0] == 0
     signer = dev_signer(Project.find())
     assert signer
-    signed = rpms("build", "trivial", "--test", "key")
+    signed = rpms("build", "trivial", "--dev", "key")
     check_signatures(
         Project.find(), root, [str(p.relative_to(root)) for p in signed], what="test", public_key=signer.public_key()
     )
@@ -105,7 +114,7 @@ def test_test_builds_are_signed(build_environment: None, root: Path) -> None:
         )
 
     # their repositories too, with the key for the test hosts
-    assert xcraft("repo", "trivial", "--test", "key")[0] == 0
+    assert xcraft("repo", "trivial", "--dev", "key")[0] == 0
     repo = root / "repo-key"
     assert (repo / "repodata/repomd.xml.asc").exists()
     assert (repo / "RPM-GPG-KEY-xcraft-test").read_text() == signer.public_key()
