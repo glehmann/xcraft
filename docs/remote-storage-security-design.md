@@ -168,13 +168,13 @@ option are superseded here by the requested stage layout; flattening public URLs
 
 CI signs the manifest of each tree it pushes: the builds, the compiler caches, the signed builds and the snapshots.
 xcraft checks the signature before using a tree, and the files against the manifest, as it already does.
-It downloads only the manifest, signature and candidate public keys before verifying them. The manifest includes the
+It downloads only the manifest and candidate public keys before verifying them. The manifest includes the
 tree path in its signed payload, and the public keys must match locally configured fingerprints. An unknown signer
 or invalid signature must not trigger any build-file or compiler-cache payload downloads.
 
-- **The signature** is a detached gpg signature, `manifest.json.asc`, next to `manifest.json`, of the path of the tree
-  in UTF-8, a newline, then the exact manifest bytes: a signed manifest moved under another path, like the key of
-  another build, does not verify.
+- **The signature** is in clear, in the manifest, `manifest.asc`: its signed text is the path of the tree, then a
+  `<sha256>  <file>` line by file, sorted, like `sha256sum`'s. A signed manifest moved under another path, like the
+  key of another build, does not verify.
 - **The verification keys** are trusted public keys in `xcraft.toml`, by fingerprint:
 
   ```toml

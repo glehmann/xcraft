@@ -95,6 +95,11 @@ class Signer:
                 msg = f"cannot sign the packages, see {project.state / 'logs/_sign.log'}"
                 raise SigningError(msg) from e
 
+    def clearsign(self, file: Path, signed: Path) -> None:
+        """Write `file` signed in clear, as `signed`: its text, then its armored signature."""
+        signed.unlink(missing_ok=True)
+        self.gpg("--local-user", self.key, "--clearsign", "--output", str(signed), str(file))
+
     def sign_file(self, file: Path) -> Path:
         """Write the armored detached signature of `file`, as ``<file>.asc``, and return it."""
         signature = file.with_name(f"{file.name}.asc")
