@@ -425,14 +425,16 @@ body { margin: 0 auto; padding: 2.5rem 1.5rem 6rem; max-width: 64rem;
 img { display: block; width: 10rem; margin-bottom: 1.5rem }
 h1 { font-size: 1.1rem; font-weight: 600; margin: 0 0 1.25rem }
 a { color: inherit; text-decoration: none }
-table { border-collapse: collapse; width: 100% }
+table { border-collapse: collapse; table-layout: fixed; width: 100% }
 th { font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .08em;
      color: #8b8b94; cursor: pointer; user-select: none }
 td { border-top: 1px solid #ececf1; color: #6d6d76 }
 th, td { padding: .4rem 0; text-align: left }
 th + th, td + td { padding-left: 1.5rem }
 th:nth-child(n+2), td:nth-child(n+2) { text-align: right; white-space: nowrap }
-td:first-child { color: inherit }
+th:nth-child(2) { width: 6rem }
+th:nth-child(3) { width: 9rem }
+td:first-child { color: inherit; overflow-wrap: anywhere }
 tbody tr:hover { background: #f6f6f9 }
 tbody a:hover { text-decoration: underline }
 @media (prefers-color-scheme: dark) {
