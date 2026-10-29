@@ -10,6 +10,7 @@ import typer
 
 from xcraft import build as builder
 from xcraft import process
+from xcraft.cache import release_suffix
 from xcraft.commands import Arch, Dev, Final, Packages, dev_ident, load, update_build_ids
 from xcraft.devbuilds import dev_suffixes
 from xcraft.display import activity, console
@@ -156,7 +157,12 @@ def repo(  # noqa: C901, PLR0913, PLR0917
             f"[xcraft-{ident}]\nname=xcraft development builds {ident}\nbaseurl={url}\n"
             f"enabled=1\n{checks}metadata_expire=0\n"
         )
-        binaries = [b.name for name in developed for b in project.packages[name].binaries if not is_debug(b.name)]
+        binaries = [
+            n
+            for name in developed
+            for n in project.packages[name].built_names(release_suffix(keys[name]))
+            if not is_debug(n)
+        ]
         for host in hosts or []:
             _copy_to_host(host, output, ident, binaries, upgrade=upgrade)
         if not hosts:
