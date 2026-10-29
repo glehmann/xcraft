@@ -511,9 +511,8 @@ def _upload(  # noqa: PLR0913
     """  # noqa: D205
     manifest = {f: sha256_of(src / f) for f in files} | (remote_files or {})
     files = sorted(manifest)
-    candidates = {
-        f: (f"{latest}/{f}", digest) for f, digest in remote.read_manifest(storage, latest, trusted=trusted).items()
-    }
+    previous = remote.read_manifest(storage, latest, trusted=trusted)
+    candidates = {f: (f"{latest}/{f}", digest) for f, digest in previous.items()}
     copies = {f: path for f, (path, digest) in (candidates | (stored or {})).items() if manifest.get(f) == digest}
     with activity(f"publishing {tree}", log=True) as on_line:
         for batch in _batches(files):
@@ -522,7 +521,9 @@ def _upload(  # noqa: PLR0913
         # the files of a failed publish of the same name, and of the previous latest snapshot, but the pages
         keep = {*files, remote.MANIFEST, remote.SIGNATURE}
         _delete_stale(storage, tree, keep)
-        for batch in _batches(files):
+        # only the files changed: without its manifest, a latest tree left incomplete is copied entirely next time
+        remote.delete(storage, [f"{latest}/{remote.MANIFEST}", f"{latest}/{remote.SIGNATURE}"])
+        for batch in _batches([f for f in files if previous.get(f) != manifest[f]]):
             remote.transfer(storage, {f"{latest}/{f}": f"{tree}/{f}" for f in batch}, on_line)
         remote.write_manifest(storage, latest, manifest, signer=signer)
         _delete_stale(storage, latest, keep)
@@ -768,6 +769,11 @@ def _add_ours(plan: _Plan, project: Project, keys: dict[str, str], *, signer: Si
     with activity(
         f"signing our packages for {project.arch}" if signer else "getting our packages", log=True
     ) as on_line:
+        # their manifests, checked once, concurrently
+        trusted = dev_signer(project)
+        trees = [_signed_path(project, signer, n, k) if signer else build_path(project, n, k) for n, k in keys.items()]
+        with ThreadPoolExecutor(remote.REQUESTS) as pool:
+            list(pool.map(lambda tree: remote.read_manifest(storage, tree, trusted=trusted), trees))
         for name in sorted(keys):
             on_line(name)
             tree = _stored_build(project, signer, name, keys[name], storage)

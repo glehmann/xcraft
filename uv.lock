@@ -780,6 +780,7 @@ dependencies = [
     { name = "rich" },
     { name = "rpm-version" },
     { name = "typer" },
+    { name = "urllib3" },
 ]
 
 [package.dev-dependencies]
@@ -804,6 +805,7 @@ requires-dist = [
     { name = "rich", specifier = ">=13.0" },
     { name = "rpm-version", specifier = ">=0.5.1" },
     { name = "typer", specifier = ">=0.12" },
+    { name = "urllib3", specifier = ">=2.0" },
 ]
 
 [package.metadata.requires-dev]

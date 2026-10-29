@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import email.message
 import functools
 import ipaddress
 import json
@@ -26,6 +27,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 from urllib.parse import quote, urlparse
 
+import urllib3
 from pydantic import BaseModel, field_validator
 
 from xcraft import process
@@ -67,14 +69,43 @@ def on_this_machine(storage: Remote) -> bool:
     return loopback(storage.url) and loopback(storage.s3_endpoint or storage.url)
 
 
+@functools.cache
+def _pool() -> urllib3.PoolManager:
+    """Return the connections to the storages, reused: a new one takes several round trips, with TLS."""
+    return urllib3.PoolManager(maxsize=REQUESTS)
+
+
+def _pooled(url: str) -> bool:
+    """Return whether `url` is requested through _pool(): not through a proxy, which only urllib knows."""
+    parsed = urlparse(url)
+    return parsed.scheme not in urllib.request.getproxies() or bool(urllib.request.proxy_bypass(parsed.hostname or ""))
+
+
+def _request(method: str, url: str) -> urllib3.BaseHTTPResponse:
+    """Request `url`, failing like urllib, with an OSError, an HTTPError for an HTTP error."""
+    try:
+        response = _pool().request(method, url, preload_content=False)
+    except urllib3.exceptions.HTTPError as e:
+        raise urllib.error.URLError(e) from e
+    if response.status >= 400:  # noqa: PLR2004
+        response.drain_conn()
+        response.release_conn()
+        raise urllib.error.HTTPError(url, response.status, response.reason or "", email.message.Message(), None)
+    return response
+
+
 def exists(storage: Remote, path: str) -> bool:
     """Return whether the shared storage has `path`."""
-    log.debug("checking %s", _url(storage, path))
+    url = _url(storage, path)
+    log.debug("checking %s", url)
     try:
-        with urllib.request.urlopen(urllib.request.Request(_url(storage, path), method="HEAD")):  # noqa: S310
-            return True
+        if _pooled(url):
+            _request("HEAD", url).release_conn()
+        else:
+            urllib.request.urlopen(urllib.request.Request(url, method="HEAD")).close()  # noqa: S310
     except OSError as e:
         return _absent_or_raise(storage, path, e)
+    return True
 
 
 REQUESTS = 16
@@ -92,12 +123,34 @@ def download(storage: Remote, path: str, dest: Path, on_line: Callable[[str], No
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_name(f"{dest.name}.part")
     try:
-        process.download(_url(storage, path), part, download_progress(on_line))
+        if _pooled(url := _url(storage, path)):
+            _get(url, part, download_progress(on_line))
+        else:
+            process.download(url, part, download_progress(on_line))
     except OSError as e:
         part.unlink(missing_ok=True)
         return _absent_or_raise(storage, path, e)
     part.rename(dest)
     return True
+
+
+_BLOCK = 1 << 16
+
+
+def _get(url: str, dest: Path, report: Callable[[int, int, int], None]) -> None:
+    """Download `url` to `dest` like process.download(), over the connections of _pool()."""
+    log.debug("downloading %s to %s", url, dest)
+    response = _request("GET", url)
+    try:
+        total = int(response.headers.get("Content-Length", -1))
+        with dest.open("wb") as file:
+            for blocks, chunk in enumerate(response.stream(_BLOCK, decode_content=False), 1):
+                file.write(chunk)
+                report(blocks, _BLOCK, total)
+    except urllib3.exceptions.HTTPError as e:
+        raise urllib.error.URLError(e) from e
+    finally:
+        response.release_conn()
 
 
 def _absent_or_raise(storage: Remote, path: str, error: OSError) -> bool:
@@ -157,6 +210,7 @@ def _writing(storage: Remote, action: str) -> Generator[S3Client]:
 def upload(storage: Remote, path: str, file: Path) -> None:
     """Upload `file` as `path`, with the S3 credentials of the environment."""
     log.debug("uploading %s to %s", file, _s3_url(storage, path))
+    _forget(storage, [path])
     with _writing(storage, f"upload {path}") as s3:
         s3.upload_file(str(file), storage.bucket, path)
 
@@ -164,12 +218,14 @@ def upload(storage: Remote, path: str, file: Path) -> None:
 def copy(storage: Remote, src: str, dest: str) -> None:
     """Copy `src` to `dest` in the storage, without transferring it."""
     log.debug("copying %s to %s", _s3_url(storage, src), _s3_url(storage, dest))
+    _forget(storage, [dest])
     with _writing(storage, f"copy {src} to {dest}") as s3:
         s3.copy_object(Bucket=storage.bucket, Key=dest, CopySource={"Bucket": storage.bucket, "Key": src})
 
 
 def transfer(storage: Remote, files: dict[str, str | Path], on_line: Callable[[str], None] = lambda _: None) -> None:
     """Write the paths of `files` concurrently: copies of the paths of the storage, or uploads of the local files."""
+    _forget(storage, list(files))
     with _writing(storage, f"write {len(files)} files") as s3:
 
         def write(dest: str, src: str | Path) -> str:
@@ -198,6 +254,7 @@ def delete(storage: Remote, paths: list[str]) -> None:
     """Delete `paths` from the storage."""
     for path in paths:
         log.debug("deleting %s", _s3_url(storage, path))
+    _forget(storage, paths)
     with _writing(storage, f"delete {len(paths)} files") as s3:
         for i in range(0, len(paths), 1000):  # the most S3 deletes at once
             s3.delete_objects(Bucket=storage.bucket, Delete={"Objects": [{"Key": p} for p in paths[i : i + 1000]]})
@@ -232,10 +289,59 @@ def _payload(prefix: str, manifest: bytes) -> bytes:
     return prefix.encode() + b"\n" + manifest
 
 
+_checked: dict[tuple[str, str, frozenset[str]], dict[str, str] | None] = {}
+"""The manifests checked, by storage, tree and trusted fingerprints, or None for the trees missing or not trusted,
+until written, or the next command."""
+_keys: dict[tuple[str, str], str | None] = {}
+"""The public keys of the storages, by storage and fingerprint, or None for those they miss or are not."""
+
+
+def forget() -> None:
+    """Forget the manifests and keys read in the storages, for a new command."""
+    _checked.clear()
+    _keys.clear()
+
+
+def _forget(storage: Remote, paths: list[str]) -> None:
+    """Forget what was read of the manifests and keys of `paths`, which are written."""
+    for path in paths:
+        if path.startswith("keys/"):
+            _keys.pop((storage.url, path.removeprefix("keys/").removesuffix(".asc")), None)
+        elif path.endswith((f"/{MANIFEST}", f"/{SIGNATURE}")):
+            prefix = path.rsplit("/", 1)[0]
+            for key in [k for k in _checked if k[:2] == (storage.url, prefix)]:
+                _checked.pop(key, None)
+
+
+def _build_key(storage: Remote, fingerprint: str) -> str | None:
+    """Return the public key `fingerprint` of the storage, downloaded once, or None when it has not that key."""
+    if (storage.url, fingerprint) not in _keys:
+        with tempfile.TemporaryDirectory(prefix="xcraft-key-") as tmp:
+            key, found = Path(tmp) / "key.asc", None
+            try:
+                if download(storage, f"keys/{fingerprint}.asc", key):
+                    shown = Signer(key="", gnupghome=Path(tmp)).gpg("--with-colons", "--show-keys", str(key))
+                    if [line.split(":")[9] for line in shown.splitlines() if line.startswith("fpr:")][:1] == [
+                        fingerprint
+                    ]:
+                        found = key.read_text()
+            except SigningError:
+                pass
+        _keys[storage.url, fingerprint] = found
+    return _keys[storage.url, fingerprint]
+
+
 def _manifest(storage: Remote, prefix: str, trusted: Signer | None) -> dict[str, str] | None:
-    fingerprints = {*storage.build_keys, *([trusted.key.upper()] if trusted else [])}
+    fingerprints = frozenset({*storage.build_keys, *([trusted.key.upper()] if trusted else [])})
     if not fingerprints:
         return None
+    if (storage.url, prefix, fingerprints) not in _checked:
+        _checked[storage.url, prefix, fingerprints] = _check(storage, prefix, trusted, fingerprints)
+    return dict(checked) if (checked := _checked[storage.url, prefix, fingerprints]) is not None else None
+
+
+def _check(storage: Remote, prefix: str, trusted: Signer | None, fingerprints: frozenset[str]) -> dict[str, str] | None:
+    """Return the manifest of `prefix`, when signed with the keys of `fingerprints`."""
     with tempfile.TemporaryDirectory(prefix="xcraft-manifest-") as tmp:
         work = Path(tmp)
         manifest, signature = work / MANIFEST, work / SIGNATURE
@@ -248,23 +354,11 @@ def _manifest(storage: Remote, prefix: str, trusted: Signer | None) -> dict[str,
         keyring = work / "keys"
         keyring.mkdir(mode=0o700)
         verifier = Signer(key="", gnupghome=keyring)
-        if trusted:
-            key = work / "local.asc"
-            key.write_text(trusted.public_key())
-            verifier.gpg("--import", str(key))
-        for fingerprint in storage.build_keys:
-            key = work / "key.asc"
-            if not download(storage, f"keys/{fingerprint}.asc", key):
-                continue
-            try:
-                shown = verifier.gpg("--with-colons", "--show-keys", str(key))
-                shown_fingerprints = [line.split(":")[9] for line in shown.splitlines() if line.startswith("fpr:")]
-                if not shown_fingerprints or shown_fingerprints[0] != fingerprint:
-                    continue
-                verifier.gpg("--import", str(key))
-            except SigningError:
-                continue
+        keys = [k for fingerprint in storage.build_keys if (k := _build_key(storage, fingerprint))]
+        (work / "keys.asc").write_text("\n".join([*keys, *([trusted.public_key()] if trusted else [])]))
         try:
+            if keys or trusted:
+                verifier.gpg("--import", str(work / "keys.asc"))
             status = verifier.gpg("--status-fd", "1", "--verify", str(signature), str(payload))
             if not any(
                 line.startswith("[GNUPG:] VALIDSIG ")

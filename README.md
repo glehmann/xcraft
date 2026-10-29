@@ -566,6 +566,8 @@ xcraft publish --stage kernel-fix  # developer bucket, custom stage
 Publication signs the hashes of the locally checked snapshot. Files are reused by server-side S3 copy only when a
 trusted remote manifest has hashes matching the local snapshot. Those copies are not downloaded again during publication;
 downloads still check each payload against its signed manifest.
+The `latest` tree only gets the files that changed: its manifest is removed while they are copied, so that a
+publication failing then leaves it incomplete, and the next one copies all its files.
 
 A snapshot published to the storage is assembled without the packages the storage has: the latest snapshot's, whose
 metadata entries are reused by SHA-256 (the lock's for the upstream binaries, its trusted manifest's for the others),
