@@ -115,19 +115,10 @@ Dep = Annotated[
     list[str] | None,
     typer.Option(
         "--dep",
-        help="Upstream package, binary or source name: select the packages with a pending update of it.",
+        help="Upstream package, binary or source name: select the packages whose only changes are updates of it.",
         show_default=False,
     ),
 ]
-
-
-def pending_packages(names: list[str] | None, pending: dict[str, dict[str, str]], upstream: list[str]) -> list[str]:
-    """Return the packages `names`, and those with pending updates of the `upstream` packages."""
-    selected = set(names or []) | {package for package, entries in pending.items() if set(upstream) & entries.keys()}
-    if not selected:
-        msg = "no package given, or pending on the given upstream packages"
-        raise typer.BadParameter(msg)
-    return sorted(selected)
 
 
 def choose_signer(

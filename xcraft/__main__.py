@@ -14,7 +14,6 @@ from typer import rich_utils
 
 from xcraft import process, remote
 from xcraft.commands import (
-    ack,
     boot,
     build,
     bump,
@@ -22,7 +21,6 @@ from xcraft.commands import (
     doctor,
     fetch,
     graph,
-    impacts,
     import_,
     iso,
     key,
@@ -32,6 +30,7 @@ from xcraft.commands import (
     publish,
     push,
     repo,
+    reuse,
     shell,
     status,
     vm,
@@ -49,7 +48,7 @@ app = typer.Typer(
 for panel, commands in {
     "Building": [build.build, repo.repo, shell.shell, log.log, graph.graph, status.status, clean.clean],
     "Packages": [bump.bump, patchset.patchset],
-    "Upstream packages": [lock.lock, impacts.impacts, ack.ack],
+    "Upstream packages": [lock.lock, reuse.reuse],
     "Publishing": [iso.iso, boot.boot],
     "Host": [doctor.doctor],
 }.items():

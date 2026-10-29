@@ -9,13 +9,11 @@ import typer
 from rpm_version import evr_compare  # ty: ignore[unresolved-import]
 
 from xcraft import process
-from xcraft.commands import Dep, Packages, load, pending_packages
+from xcraft.commands import Packages, load
 from xcraft.display import activity, console, download_progress
-from xcraft.lock import load_lock, save_lock
 from xcraft.process import git
 from xcraft.project import write_atomically
 from xcraft.release import add_changelog_entry, bump_release, reset_release, set_version
-from xcraft.resolution import upstream_sources
 from xcraft.sources import archive_name, cache_source, read_manifest, write_manifest
 from xcraft.specs import load_packages, main_spec
 
@@ -114,7 +112,6 @@ def _update_specs(  # noqa: PLR0913
 
 def bump(
     packages: Packages = None,
-    dep: Dep = None,
     message: Annotated[
         str,
         typer.Option(
@@ -134,29 +131,26 @@ def bump(
         ),
     ] = "",
 ) -> None:
-    """Bump the release of packages, with a changelog entry by the git user, and clear their pending updates."""
-    if version and (dep or len(packages or []) != 1):
-        msg = "--version needs one package, without --dep"
+    """Bump the release of packages, with a changelog entry by the git user."""
+    if not packages:
+        msg = "no package given"
+        raise typer.BadParameter(msg)
+    if version and len(packages) != 1:
+        msg = "--version needs one package"
         raise typer.BadParameter(msg)
     project = load(packages)
     before = project.packages
     name, email = (git("-C", str(project.root), "config", key) for key in ("user.name", "user.email"))
     author = f"{name} <{email}>"
     with project.lock():
-        # first, as it may lock them
-        sources = upstream_sources(project, dep) if dep else []
-        lock = load_lock(project)
         if version:
-            names = same_version(project.config.same_version, (packages or [])[0])
+            names = same_version(project.config.same_version, packages[0])
             _check_version(before, names, version)
         else:
-            names = pending_packages(packages, lock.pending, sources)
+            names = sorted(packages)
         message = message or (f"Update to {version}" if version else "")
         after = _update_specs(project, before, names, version=version, author=author, message=message)
         for package in names:
             console.print(f"[bold]{package}[/]: {_evr(before[package])} -> {_evr(after[package])}")
-        # their next releases are built with the current lock
-        lock.clear_pending(names)
-        save_lock(project, lock)
     if version:
         console.print(f"once built, share the new archives with: xcraft push sources {' '.join(names)}")

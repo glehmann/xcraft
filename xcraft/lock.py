@@ -100,31 +100,6 @@ class Lock(BaseModel):
     extra ones."""
     iso: dict[str, list[str]] = {}
     """Upstream packages of the tools making the ISO, besides the image's, by architecture."""
-    pending: dict[str, dict[str, str]] = {}
-    """For each of our packages, the updated upstream source packages of its build root, and the versions it was built
-    with."""
-
-    def note_updates(self, previous: dict[str, str], roots: dict[str, set[str]]) -> None:
-        """Add the pending entries of updated source packages, given their `previous` versions, and the upstream source
-        packages in the build root of each of our packages, on any architecture.
-        """  # noqa: D205
-        for package, sources in roots.items():
-            entries = self.pending.setdefault(package, {})
-            for source, version in previous.items():
-                if source in sources:
-                    entries.setdefault(source, version)
-                    if entries[source] == self.sources[source]:  # back to the version it was built with
-                        del entries[source]
-        self.pending = {package: entries for package, entries in self.pending.items() if entries}
-
-    def clear_pending(self, packages: list[str], upstream: list[str] | None = None) -> None:
-        """Remove the pending entries of `packages`, all of them, or only those of the `upstream` source packages."""
-        for package in packages:
-            entries = self.pending.get(package, {})
-            for name in list(entries) if upstream is None else upstream:
-                entries.pop(name, None)
-            if not entries:
-                self.pending.pop(package, None)
 
 
 def choose_versions(available: dict[str, dict[str, list[str]]]) -> dict[str, str]:
@@ -156,10 +131,12 @@ def lock_path(project: Project) -> Path:
 def load_lock(project: Project) -> Lock:
     """Return the lock of the project, empty when there is none yet."""
     path = lock_path(project)
-    if not path.exists():
-        return Lock()
-    with path.open("rb") as f:
-        data = tomllib.load(f)
+    return parse_lock(path.read_text()) if path.exists() else Lock()
+
+
+def parse_lock(text: str) -> Lock:
+    """Return the lock of the content of a lock file."""
+    data = tomllib.loads(text)
     for field in ("requires", "provides", "buildrequires", "roots"):
         entries = data.get(field, {})
         data[field] = {
@@ -186,7 +163,6 @@ def _entries(lock: Lock) -> set[str]:
         ),
         *(f"{field}.{arch} {name}" for field in ("image", "runtime", "iso")
           for arch, names in getattr(lock, field).items() for name in names),
-        *(f"pending.{package} {name}-{v}" for package, pending in lock.pending.items() for name, v in pending.items()),
     }  # fmt: skip
 
 
@@ -222,7 +198,4 @@ def save_lock(project: Project, lock: Lock) -> None:
             lines += _tables(f"{field}.{arch}", entries)
     lines += _tables("image", lock.image, "the upstream source packages of the build environment image")
     lines += _tables("runtime", lock.runtime) + _tables("iso", lock.iso)
-    for package, entries in sorted(lock.pending.items()):
-        lines += ["", f"[pending.{json.dumps(package)}]"]
-        lines += [f"{json.dumps(name)} = {json.dumps(version)}" for name, version in sorted(entries.items())]
     write_atomically(lock_path(project), "\n".join(lines) + "\n")

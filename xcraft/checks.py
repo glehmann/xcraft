@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from rich.markup import escape
 
-from xcraft.cache import BuildError, cached_build
+from xcraft.cache import BuildError, cached_build, release_suffix
 from xcraft.container import BUILDENV
 from xcraft.display import changes, console
 from xcraft.lock import Locked, load_lock, save_lock
@@ -145,9 +145,19 @@ def _record_new_rpm_deps(
         write_atomically(build / "rpm-deps.json", json.dumps(recorded))
 
 
+def _unsuffixed(project: Project, name: str, value: str, suffix: str) -> str:
+    """Return `value`, what rpm generated for a build of `name`, without its release `suffix`, %autorev: at the start of
+    %dist, or at the end of the release of the package defining %dist.
+    """  # noqa: D205
+    dist = project.parsed[name].dist
+    if suffix and dist and f"{suffix}{dist}" in value:
+        return value.replace(f"{suffix}{dist}", dist)
+    return value.removesuffix(suffix) if suffix else value
+
+
 def record_rpm_deps(project: Project, names: list[str], keys: dict[str, str], *, quiet: bool = False) -> bool:
     """Record in the lock what rpm generated for the binary packages of the cached builds of `names`, with `keys`,
-    and return whether the lock changed.
+    without their release suffixes, and return whether the lock changed.
 
     What a build generated is kept with it, for the same locked versions and requirements of our specs. What cannot
     be recorded yet is shown, unless `quiet`.
@@ -170,11 +180,13 @@ def record_rpm_deps(project: Project, names: list[str], keys: dict[str, str], *,
     with project.lock():
         lock = load_lock(project)
         before = lock.model_dump()
-        for build in builds.values():
+        for name, build in builds.items():
             recorded = found(build) or {}
             for field in ("requires", "provides"):
                 for binary, values in recorded.get(field, {}).items():
-                    getattr(lock, field).record(project.arch, project.first, binary, values)
+                    # as the specs are parsed: the lock does not depend on the numbers of the builds
+                    unsuffixed = [_unsuffixed(project, name, value, release_suffix(keys[name])) for value in values]
+                    getattr(lock, field).record(project.arch, project.first, binary, unsuffixed)
         if lock.model_dump() == before:
             return False
         save_lock(project, lock)

@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import pytest
-from typer.testing import CliRunner
 
 from tests import TOML, config
-from xcraft.__main__ import app
 from xcraft.lock import Lock, Locked, Recorded, choose_versions, load_lock, lock_path, save_lock, versionlock
 from xcraft.project import Project
 from xcraft.resolution import lock_sources
@@ -30,7 +28,8 @@ def test_save_and_load(tmp_path) -> None:  # noqa: ANN001
         buildrequires=Recorded(shared={"xcp-python-libs": ["python3-wheel"]}),
         runtime={"x86_64_v2": ["bash"]},
         iso={"aarch64": ["xorriso"]},
-        pending={"xen": {"openssl": "1:3.5.2-1.el10_2"}},
+        image={"aarch64": ["glibc"]},
+        roots=Recorded(shared={"qemu": ["pixman"]}),
     )
     save_lock(project, lock)
     assert lock_path(project) == tmp_path / "xcraft.lock"
@@ -39,7 +38,7 @@ def test_save_and_load(tmp_path) -> None:  # noqa: ANN001
     # one line per package, for readable diffs, and the differences of an architecture in its own table
     assert '[sources]\n"glibc" = "2.39-145.el10_2"\n' in text
     assert '[requires.aarch64]\n"qemu" = [\n    "pixman",\n]\n' in text
-    assert '[pending."xen"]\n"openssl" = "1:3.5.2-1.el10_2"\n' in text
+    assert '[roots]  # the upstream source packages of the build roots, but the image\'s\n"qemu" = [\n' in text
 
 
 def test_record() -> None:
@@ -68,30 +67,6 @@ def test_record() -> None:
 def test_versionlock() -> None:
     packages = {"gcc": locked("1:14.2-1"), "bash": locked("5.2-3")}
     assert versionlock(packages) == "bash-0:5.2-3.x86_64_v2\ngcc-1:14.2-1.x86_64_v2\n"
-
-
-def test_pending() -> None:
-    lock = Lock(sources={"glibc": "2.39-1", "openssl": "3.2-1"})
-    roots = {"xen": {"glibc", "openssl"}, "vmss": {"glibc"}}
-
-    lock.sources["openssl"] = "3.2-2"
-    lock.note_updates({"openssl": "3.2-1"}, roots)
-    assert lock.pending == {"xen": {"openssl": "3.2-1"}}
-
-    # the oldest version is kept
-    lock.sources |= {"glibc": "2.39-2", "openssl": "3.2-3"}
-    lock.note_updates({"glibc": "2.39-1", "openssl": "3.2-2"}, roots)
-    assert lock.pending == {"xen": {"openssl": "3.2-1", "glibc": "2.39-1"}, "vmss": {"glibc": "2.39-1"}}
-
-    # back to the version it was built with
-    lock.sources["glibc"] = "2.39-1"
-    lock.note_updates({"glibc": "2.39-2"}, roots)
-    assert lock.pending == {"xen": {"openssl": "3.2-1"}}
-
-    lock.clear_pending(["xen"], ["glibc"])
-    assert lock.pending == {"xen": {"openssl": "3.2-1"}}
-    lock.clear_pending(["xen"])
-    assert lock.pending == {}
 
 
 def test_frozen(tmp_path) -> None:  # noqa: ANN001
@@ -124,18 +99,6 @@ def test_choose_versions() -> None:
         "glibc": "2.39-146",
         "macros": "1-23.el10",
     }
-
-
-def test_ack(project: Project) -> None:
-    pending = {"xen": {"glibc": "2.39-1", "openssl": "3.2-1"}, "vmss": {"glibc": "2.39-1"}}
-    save_lock(project, Lock(sources={"glibc": "2.39-2", "openssl": "3.2-2"}, pending=pending))
-    result = CliRunner().invoke(app, ["ack", "--dep", "glibc"])
-    assert result.exit_code == 0, result.output
-    assert result.output == "vmss: glibc\nxen: glibc\n"
-    assert load_lock(project).pending == {"xen": {"openssl": "3.2-1"}}
-    assert CliRunner().invoke(app, ["ack", "nope"]).exit_code == 2
-    assert CliRunner().invoke(app, ["ack", "xen"]).exit_code == 0  # not in the project, with pending updates
-    assert load_lock(project).pending == {}
 
 
 def test_lock_sources_locked_meanwhile(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
