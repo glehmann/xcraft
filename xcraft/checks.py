@@ -90,16 +90,19 @@ def _check_made(project: Project, name: str, tree: Path, *, suffix: str) -> None
     at the start of %dist, wherever the spec has it, or at the end of the release of the package defining %dist.
     """
     dist = project.parsed[name].dist
-
-    def suffixed(text: str) -> str:
-        return text.replace(dist, f"{suffix}{dist}") if dist else text
-
     made = {n: b for n, b in json.loads((tree / "made.json").read_text()).items() if not is_debug(n)}
     parsed = {b.name: b for b in project.parsed[name].binaries if not is_debug(b.name)}
     problems = changes(set(parsed), set(made))
     for n in sorted(made.keys() & parsed.keys()):
         b, m = parsed[n], made[n]
-        evr = suffixed(b.evr) if dist and dist in b.evr else f"{b.evr}{suffix}"
+
+        def suffixed(text: str, evr: str = b.evr) -> str:
+            """Return `text` with the release suffix where the spec has %dist, or else after the release."""
+            if dist and dist in evr:
+                return text.replace(dist, f"{suffix}{dist}")
+            return text.replace(evr, f"{evr}{suffix}") if suffix else text
+
+        evr = suffixed(b.evr)
         if m["arch"] != b.arch or m["evr"] != evr:
             problems.append(f"{n}-{m['evr']}.{m['arch']} rather than {evr}.{b.arch}")
         problems += [

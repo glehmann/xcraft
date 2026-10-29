@@ -323,6 +323,12 @@ def test_check_made(project: Project, tmp_path: Path) -> None:
     _check_made(project, "foo", tmp_path, suffix="+b2")
     with pytest.raises(BuildError, match=r"foo-1\.0-1\+b2\.xcpng\.x86_64 rather than 1\.0-1\+b3\.xcpng\.x86_64"):
         _check_made(project, "foo", tmp_path, suffix="+b3")
+    # or at the end of the release, for the packages without %dist, like the one defining it
+    numbered = binary.model_copy(update={"evr": "1.0-2.abc", "provides": ["foo = 1.0-2.abc"]})
+    project.parsed = {"foo": Package(name="foo", dist=".xcpng", binaries=[numbered, debug])}
+    made["foo"] |= {"evr": "1.0-2.abc+b2", "provides": ["foo = 1.0-2.abc+b2"]}
+    (tmp_path / "made.json").write_text(json.dumps(made))
+    _check_made(project, "foo", tmp_path, suffix="+b2")
 
 
 def test_record_rpm_deps(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
