@@ -483,7 +483,9 @@ the compiler caches, the public keys and the ISOs of the checkouts, in `.xcraft/
   with a patch, mostly finds its objects. The cache of a package is a tarball, `.xcraft/ccache/<arch>/<package>/<package>.ccache`, rather
   than read by ccache from the storage, as the builds run without the network. `xcraft fetch ccache` gets it again.
   `xcraft push ccache` only uploads the entries the last successful build of the package used or made, which ccache
-  dates of their last use: not those of the older builds, which the local cache keeps.
+  dates of their last use: not those of the older builds, which the local cache keeps. The builds compress the entries
+  with zstd's fast level 1, ccache's, and the push compresses them again with level 19, in a copy, `ccache
+  --recompress`: for the kernel, a quarter less to transfer.
 
 Without network, or when the storage is unavailable, everything still works with what is local.
 
