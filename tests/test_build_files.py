@@ -21,6 +21,7 @@ from xcraft.cache import BuildError, build_keys, previous_duration, recipe_key
 from xcraft.checks import _check_made, record_rpm_deps
 from xcraft.clean import clean, repos_disk_usage
 from xcraft.commands import complete_arch, load
+from xcraft.commands.repo import _kept
 from xcraft.localrepo import RepoError, fresh_dir
 from xcraft.lock import Lock, load_lock, save_lock
 from xcraft.project import Project, ProjectLockedError
@@ -410,3 +411,13 @@ def test_unknown_packages_before_preparing(project: Project, monkeypatch: pytest
     monkeypatch.setattr("xcraft.commands.prepare", lambda _: pytest.fail("prepared"))
     with pytest.raises(typer.BadParameter, match="unknown package"):
         load(["nope"])
+
+
+def test_packages_kept_by_test_hosts() -> None:
+    rpms = ["xen-4.17-1+b3~2.dev.x86_64.rpm", "xen-libs-4.17-1+b3~2.dev.x86_64.rpm", "qemu-9-1+b5~1.dev.x86_64.rpm"]
+    installed = [
+        "xen-4.17-1+b3~2.dev.x86_64",  # upgraded
+        "xen-libs-4.17-1+b3~4.qcow2.x86_64",  # newer, from another identifier
+        "package qemu is not installed",
+    ]
+    assert _kept(installed, rpms) == [("xen-libs-4.17-1+b3~4.qcow2.x86_64", "xen-libs-4.17-1+b3~2.dev.x86_64")]

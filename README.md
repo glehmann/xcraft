@@ -265,7 +265,8 @@ dependencies are checked with our other current builds. `--dependents` adds the 
 
 With `--host`, as given to ssh and repeatable, xcraft copies the repository to each host with rsync, in
 `/var/local/xcraft/ID/`, and installs its `.repo` file, and with `--upgrade`, it also upgrades the packages the host
-has installed:
+has installed, warning about those it keeps in other builds than the repository's, like newer ones of another
+identifier:
 
 ```
 xcraft repo xen --dependents --host root@testhost --upgrade

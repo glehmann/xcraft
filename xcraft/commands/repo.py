@@ -48,6 +48,24 @@ def _copy_to_host(host: str, output: Path, ident: str, binaries: list[str], *, u
             'if [ -n "$names" ]; then dnf -y upgrade --refresh $names; else echo "none of them is installed"; fi\n'
         )
         process.run(["ssh", host, script])
+        query = f"rpm -q --qf '%{{NAME}}-%{{VERSION}}-%{{RELEASE}}.%{{ARCH}}\\n' {shlex.join(binaries)} || true"
+        installed = process.run(["ssh", host, query], capture=True).stdout.splitlines()
+        for kept, built in _kept(installed, sorted(p.name for p in output.glob("*.rpm"))):
+            console.print(f"[yellow]warning[/]: {host} keeps {kept}, not {built}: newer, or held")
+
+
+def _kept(installed: list[str], rpms: list[str]) -> list[tuple[str, str]]:
+    """Return the `installed` packages, as rpm -q gives them, which are not the builds of the repository `rpms`, but
+    of the same names, with them: after an upgrade, those installed are newer, or held.
+    """  # noqa: D205
+    built = {rpm.removesuffix(".rpm").rsplit("-", 2)[0]: rpm.removesuffix(".rpm") for rpm in rpms}
+    return sorted(
+        (nevra, built[name])
+        for nevra in installed
+        if " " not in nevra  # not the packages not installed
+        and (name := nevra.rsplit("-", 2)[0]) in built
+        and nevra != built[name]
+    )
 
 
 def repo(  # noqa: C901, PLR0913, PLR0917
