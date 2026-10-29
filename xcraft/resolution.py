@@ -168,12 +168,38 @@ def prepare(project: Project, *, roots: bool = True) -> None:
     """Lock the upstream source packages needed by the build environment image, the one of the host too, for the
     specs, and the build roots, unless not `roots`: what the commands resolving do first, and the builds once they
     recorded what they found.
+
+    With the build roots, those of all the architectures are recorded in the lock, with their images: the build keys
+    cover them, on any architecture. Their resolutions are cached, so only a change resolves them again.
     """  # noqa: D205
     native = project.on_host()
     for platform in [native] if native == project else [native, project]:
         _locking(platform, _image)
     if roots:
-        _locking(project, _roots)
+        for platform in project.all_platforms():
+            _locking(platform, _image)
+            _locking(platform, _roots)
+        _record(project)
+
+
+def _record(project: Project) -> None:
+    """Record in the lock the upstream source packages of the images and of the build roots of all the architectures,
+    those of the packages and architectures of the project only.
+    """  # noqa: D205
+    platforms, lock = project.all_platforms(), load_lock(project)
+    recorded = lock.model_copy(deep=True)
+    lock.image = {}
+    lock.roots.shared = {name: v for name, v in lock.roots.shared.items() if name in project.package_dirs}
+    lock.roots.arches = {}
+    for platform in platforms:
+        image, roots = _locked(_image(platform)), _locked(_roots(platform))
+        lock.image[platform.arch] = sorted({image.packages[n].source for n in image.image})
+        for name in sorted(project.package_dirs):
+            sources = {roots.packages[n].source for n in roots.buildroots.get(name, [])}
+            lock.roots.record(platform.arch, platforms[0].arch, name, sorted(sources - {*lock.image[platform.arch]}))
+    if lock != recorded:
+        with project.lock():
+            save_lock(project, lock)
 
 
 def _image(project: Project) -> Resolved:

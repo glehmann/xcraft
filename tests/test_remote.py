@@ -707,6 +707,7 @@ def test_publish(root: Path) -> None:
         assert sorted(p.name for p in (root / ".xcraft/publish/base").iterdir()) == ["Source", "x86_64"]
     # what our packages need at runtime is checked
     (root / "xcraft.toml").write_text(REMOTE)
+    assert xcraft("build", "--dry-run")[0] == 0  # the lock of the architecture left
     code, output = xcraft("publish", "--locked", "--local")
     assert code == 1
     assert re.search(rf"--locked forbids: .*-runtime\.{ARCH} bc\b", output)

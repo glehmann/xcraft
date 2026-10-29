@@ -675,6 +675,10 @@ architectures, and has, one line per package for readable diffs:
   the capabilities and files rpm generated for it that a spec of ours requires; `[buildrequires]`, for each package
   with `%generate_buildrequires`, its dynamic `BuildRequires`. An architecture which finds
   others has its own entries, which replace the shared ones, in `[requires.<arch>]` and the like.
+- `[image]`, by architecture, the upstream source packages of the build environment image, and `[roots]`, for each
+  package of ours, those of its build root but the image's, shared by the architectures but for their own entries, in
+  `[roots.<arch>]`: as resolved, for all the architectures, by the commands resolving them, which record them when
+  they change.
 - `[runtime]` and `[iso]`, by architecture: the upstream packages published, and those of the tools making the ISO.
 - `[pending.<pkg>]`: for each of our packages, the upstream source packages of its build root updated since its
   release, with the versions it was built with.

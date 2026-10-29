@@ -635,3 +635,24 @@ def test_failed_step_shows_its_log(root: Path) -> None:
     # like in CI, where the log is out of reach
     with pytest.raises(container.ContainerError, match=r"_failing\.log, which ends with:\n  first\n  boom$"):
         container.run(Project.find(), "failing", "echo first; echo boom; false")
+
+
+def test_lock_records_image_and_roots(root: Path) -> None:
+    spec = root / "base/trivial/trivial.spec"
+    original = spec.read_text()
+    spec.write_text(original.replace("BuildArch: noarch", "BuildArch: noarch\nBuildRequires: lzo-devel"))
+    assert xcraft("build", "--dry-run")[0] == 0
+    lock = load_lock(Project.find())
+    image = set(lock.image[ARCH])
+    assert "glibc" in image
+    # the upstream source packages of the build roots, but the image's
+    assert "lzo" in lock.roots.shared["trivial"]
+    assert not image & {*lock.roots.shared["trivial"], *lock.roots.shared.get("with-deps", [])}
+    # recorded again when they change, which --locked forbids
+    spec.write_text(original)
+    code, output = xcraft("build", "--dry-run", "--locked")
+    assert code == 1
+    assert "--locked forbids: " in output
+    assert "-roots.trivial lzo" in output
+    assert xcraft("build", "--dry-run")[0] == 0
+    assert "lzo" not in load_lock(Project.find()).roots.shared.get("trivial", [])
