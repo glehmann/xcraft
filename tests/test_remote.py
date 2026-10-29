@@ -28,7 +28,7 @@ from tests.test_iso import cache_image
 from xcraft import buildid, ccache, remote, repodata
 from xcraft import publish as publisher
 from xcraft.container import run
-from xcraft.iso import build_iso, iso_key, iso_path, push_isos
+from xcraft.iso import build_iso, iso_key, iso_name, iso_path, push_isos
 from xcraft.lock import load_lock
 from xcraft.project import Project
 from xcraft.resolution import resolve_image
@@ -167,17 +167,21 @@ def test_iso_cache(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture)
     assert "0 ISOs pushed, 1 already" in xcraft("push", "isos")[1]
     storage = project.config.remote["dev"]
     snapshot = tmp_path / "snapshot"
-    published = snapshot / "iso" / project.arch / image.name
+    published = snapshot / "iso" / iso_name(project, "8.99.0", netinstall=False, signer=signer)
     published.parent.mkdir(parents=True)
     shutil.copy2(image, published)
     with caplog.at_level(logging.DEBUG, logger="xcraft"):
-        stored = {
-            f"{project.arch}/{file}": source for file, source in push_isos(project, storage, signer=signer).items()
-        }
+        stored = push_isos(project, storage, signer=signer)
         publisher.upload_isos(project, snapshot, storage, "cache-reuse", signer=signer, stored=stored)
     assert any(m.startswith("copying ") and "/image.iso to " in m for m in caplog.messages)
     assert not any(m.startswith(f"uploading {published} ") for m in caplog.messages)
-    assert not any(m.startswith("downloading ") and f"/{image.name} to " in m for m in caplog.messages)
+    assert not any(m.startswith("downloading ") and f"/{published.name} to " in m for m in caplog.messages)
+    # with the checksums of the ISOs of all the architectures, signed
+    manifest = remote.read_manifest(storage, f"isos/9.0/{STAGE}/cache-reuse", trusted=signer)
+    assert {published.name, publisher.SUMS, f"{publisher.SUMS}.asc"} <= manifest.keys()
+    sums = tmp_path / publisher.SUMS
+    assert remote.download(storage, f"isos/9.0/{STAGE}/cache-reuse/{publisher.SUMS}", sums)
+    assert sums.read_text() == f"{sha256_of(image)}  {published.name}\n"
     shutil.rmtree(project.state / "cache")
     # No snapshot, RPMs, prepared container state or signing operations are needed to fetch the image.
     project.frozen = True

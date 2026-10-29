@@ -357,7 +357,10 @@ does, from a snapshot like `xcraft publish --local` makes, of its architecture o
 - it is hybrid: it boots with BIOS and UEFI, from a CD or a USB stick.
 
 The tools making it, like xorriso and syslinux, are installed in the containers making it, in the versions of the
-lock, which records them in `iso`. The ISO is `.xcraft/iso/xcp-ng-<version>[-netinstall].iso` by default.
+lock, which records them in `iso`. The ISO is `.xcraft/iso/xcp-ng-<version>-<id>-<arch>[-netinstall].iso` by default:
+`<arch>` is the RPM architecture, like `x86_64_v2`, and `<id>`, like `4772c1`, identifies what the ISOs are made of,
+the same for the full and netinstall ones of all the architectures: the beginning of a hash of their keys, which
+cover the packages, the lock and the ISO's configuration.
 Images are cached in `.xcraft/cache/isos/<arch>/<key>/`. Both `xcraft iso` and `xcraft boot` reuse the matching local
 image, then try the trusted remote storage, and only assemble a snapshot and build an ISO on a cache miss. A cache
 hit needs no build containers or signing secrets. The key covers package inputs and locked dependencies, ISO
@@ -575,7 +578,8 @@ repos/<release>/<stage>/<date>[.<n>]/base/Source/   the source RPMs of all archi
 repos/<release>/<stage>/<date>[.<n>]/build/<arch>/  upstream build dependencies absent from base/<arch>/
 repos/<release>/<stage>/<date>[.<n>]/build/Source/  their source RPMs
 repos/<release>/<stage>/latest/...                 a copy of this stage's latest snapshot
-isos/<release>/<stage>/<date>[.<n>]/<arch>/         packages and netinstall ISOs, with signatures (.asc)
+isos/<release>/<stage>/<date>[.<n>]/                the packages and netinstall ISOs of all the architectures,
+                                                    with signatures (.asc), and their SHA256SUMS, signed too
 isos/<release>/<stage>/latest/...                  a copy of this stage's latest ISOs
 ```
 
@@ -611,7 +615,8 @@ xcraft publish --stage kernel-fix  # developer bucket, custom stage
   their build times only.
 - The ISOs are made like `xcraft iso` makes them, from the snapshot, for its x86_64 architectures, when `[iso]
   installer` is configured: their boot loaders are for x86_64. They are signed like the snapshot: their repository,
-  and their files, with a detached signature.
+  and their files, with a detached signature. Their checksums are in `SHA256SUMS`, as `sha256sum` writes them, with
+  its detached signature, so that `sha256sum -c SHA256SUMS` checks a download.
 - All snapshots are kept. The storage stores identical files once: our packages are copies of the pushed builds, and
   the upstream ones and the sources of the previous snapshot, so a snapshot only costs what changed.
 

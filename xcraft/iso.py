@@ -41,9 +41,9 @@ KEY_FILE = "RPM-GPG-KEY-xcpng"
 
 
 class Image(BaseModel):
-    """The cached ISO's output name and content digest."""
+    """The cached ISO's version, of the distribution, and content digest."""
 
-    name: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.+-]*\.iso$")
+    version: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.+-]*$")
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
@@ -112,6 +112,19 @@ def iso_inputs(project: Project, *, signer: Signer | None) -> dict[str, str]:
     }
 
 
+def iso_id(project: Project, *, signer: Signer | None) -> str:
+    """Return the identifier of the ISOs of the checkout, the same for all the architectures, full or netinstall: the
+    beginning of a hash of the keys of all of them, which cover what they are made of.
+    """  # noqa: D205
+    keys = sorted(key for platform in project.all_platforms() for key in iso_inputs(platform, signer=signer).values())
+    return hashlib.sha256(json.dumps(keys).encode()).hexdigest()[:6]
+
+
+def iso_name(project: Project, version: str, *, netinstall: bool, signer: Signer | None) -> str:
+    """Return the file name of an ISO of the distribution `version`, with its identifier and architecture."""
+    return f"xcp-ng-{version}-{iso_id(project, signer=signer)}-{project.arch}{'-netinstall' if netinstall else ''}.iso"
+
+
 def isos_available(project: Project, *, signer: Signer | None) -> bool:
     """Return whether the full and netinstall ISOs of the checkout are cached, or in the remote storage."""
     try:
@@ -140,9 +153,11 @@ def _image(tree: Path) -> Image:
     return image
 
 
-def _output(project: Project, tree: Path, output: Path | None) -> Path:
+def _output(project: Project, tree: Path, output: Path | None, *, netinstall: bool, signer: Signer | None) -> Path:
+    """Return the cached ISO in `tree` as `output`, or with its name in .xcraft/iso/ by default."""
     image = _image(tree)
-    output = (output or project.state / "iso" / image.name).absolute()
+    name = iso_name(project, image.version, netinstall=netinstall, signer=signer)
+    output = (output or project.state / "iso" / name).absolute()
     output.parent.mkdir(parents=True, exist_ok=True)
     if not output.exists() or sha256_of(output) != image.sha256:
         with tempfile.TemporaryDirectory(dir=output.parent, prefix=".iso-") as tmp:
@@ -152,16 +167,16 @@ def _output(project: Project, tree: Path, output: Path | None) -> Path:
     return output
 
 
-def _find(project: Project, key: str, output: Path | None) -> Path | None:
+def _find(project: Project, key: str, output: Path | None, *, netinstall: bool, signer: Signer | None) -> Path | None:
     tree = cached_iso(project, key)
     if tree.exists():
-        return _output(project, tree, output)
+        return _output(project, tree, output, netinstall=netinstall, signer=signer)
     if not project.config.remote:
         return None
     try:
         with activity("looking for the ISO in the remote storage") as on_line:
             if remote.fetch_tree(project, iso_path(project, key), tree, on_line):
-                return _output(project, tree, output)
+                return _output(project, tree, output, netinstall=netinstall, signer=signer)
     except remote.RemoteError as e:
         console.print(f"[yellow]remote storage unavailable, making the ISO locally[/]: {escape(str(e))}")
     return None
@@ -179,7 +194,10 @@ def push_isos(
         if not tree.exists():
             continue
         image = _image(tree)
-        stored[image.name] = (f"{path}/image.iso", image.sha256)
+        stored[iso_name(project, image.version, netinstall=netinstall, signer=signer)] = (
+            f"{path}/image.iso",
+            image.sha256,
+        )
         if remote.tree_exists(storage, path, trusted=upload_signer or signer or signing_key(project)):
             present += 1
             continue
@@ -203,7 +221,8 @@ def build_iso(
 ) -> Path:
     """Build or fetch the current packages, assemble a local snapshot, and make its installation ISO."""
     with project.lock():
-        if found := _find(project, iso_key(project, netinstall=netinstall, volid=volid, signer=signer), output):
+        key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer)
+        if found := _find(project, key, output, netinstall=netinstall, signer=signer):
             return found
         checkout = _checkout(project)
         prepare(project)
@@ -259,10 +278,11 @@ def make_iso(  # noqa: PLR0913
 ) -> Path:
     """Reuse, fetch or make an ISO, storing it under its final checkout inputs."""
     with project.lock():
-        if found := _find(project, iso_key(project, netinstall=netinstall, volid=volid, signer=signer), output):
+        key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer)
+        if found := _find(project, key, output, netinstall=netinstall, signer=signer):
             return found
         checkout = _checkout(project)
-        made = _make_iso(project, snapshot, None, netinstall=netinstall, volid=volid, signer=signer)
+        made, version = _make_iso(project, snapshot, netinstall=netinstall, volid=volid, signer=signer)
         if checkout != _checkout(project):
             msg = "ISO inputs changed while making the image: run again"
             raise RuntimeError(msg)
@@ -271,26 +291,21 @@ def make_iso(  # noqa: PLR0913
         with project.work("cache-iso") as work:
             staged = work / "tree"
             staged.mkdir()
-            shutil.copy2(made, staged / "image.iso")
-            (staged / "image.json").write_text(Image(name=made.name, sha256=sha256_of(made)).model_dump_json())
+            shutil.move(made, staged / "image.iso")
+            (staged / "image.json").write_text(
+                Image(version=version, sha256=sha256_of(staged / "image.iso")).model_dump_json()
+            )
             tree.parent.mkdir(parents=True, exist_ok=True)
             staged.rename(tree)
-        return _output(project, tree, output) if output else made
+        return _output(project, tree, output, netinstall=netinstall, signer=signer)
 
 
-def _make_iso(  # noqa: PLR0913
-    project: Project,
-    snapshot: Path,
-    output: Path | None,
-    *,
-    netinstall: bool,
-    volid: str | None,
-    signer: Signer | None,
-) -> Path:
-    """Make the ISO of `snapshot`, its binaries for the architecture, as `output`, or in .xcraft/iso/ by default.
-
-    Return the path of the ISO.
-    """
+def _make_iso(
+    project: Project, snapshot: Path, *, netinstall: bool, volid: str | None, signer: Signer | None
+) -> tuple[Path, str]:
+    """Make the ISO of `snapshot`, its binaries for the architecture, in .xcraft/tmp/, and return it, with the
+    version of the distribution it installs.
+    """  # noqa: D205
     iso = project.config.iso
     _install_tools(project)  # in the versions of the lock, which the ISO is then made with
     with project.work("iso") as work:
@@ -314,9 +329,6 @@ def _make_iso(  # noqa: PLR0913
             keys = tree / KEY_FILE
             keys.write_text(signer.public_key() + "\n" + keys.read_text())
         info = json.loads((work / "info.json").read_text())
-        suffix = "-netinstall" if netinstall else ""
-        output = (output or project.state / "iso" / f"xcp-ng-{info['version']}{suffix}.iso").absolute()
-        output.parent.mkdir(parents=True, exist_ok=True)
         # hybrid, for BIOS and UEFI, from a CD or a USB stick
         xorriso = (
             f"xorriso -as mkisofs -quiet -o /work/image.iso -V {shlex.quote(volid or info['volid'])} -R -J -joliet-long"
@@ -325,13 +337,15 @@ def _make_iso(  # noqa: PLR0913
             " -eltorito-alt-boot -e boot/efiboot.img -no-emul-boot -isohybrid-gpt-basdat /work/tree"
         )
         run(project, "iso", f"{_INSTALL_TOOLS} && {xorriso}", volumes=volumes, show="making the ISO")
-        shutil.move(work / "image.iso", output)
-    return output
+        made = project.state / "tmp" / f"{work.name}.iso"
+        shutil.move(work / "image.iso", made)
+    return made, info["version"]
 
 
 def make_isos(project: Project, snapshot: Path, dest: Path, *, signer: Signer | None) -> list[Path]:
     """Make the ISOs of `snapshot`, its binaries for the architecture, with the packages and netinstall, in `dest`,
-    with their detached signatures by `signer`, if any, and return them.
+    the directory of the ISOs of all the architectures, with their detached signatures by `signer`, if any, and return
+    them.
     """  # noqa: D205
     dest.mkdir(parents=True, exist_ok=True)
     isos = []

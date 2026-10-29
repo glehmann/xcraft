@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 
@@ -9,7 +10,7 @@ import pytest
 
 from tests import PROJECT, TOML
 from tests.test_build import xcraft
-from xcraft.iso import Image, build_iso, cached_iso, iso_key
+from xcraft.iso import Image, build_iso, cached_iso, iso_id, iso_key, iso_name
 from xcraft.lock import load_lock, save_lock
 from xcraft.project import Project, Remote
 from xcraft.signing import Signer
@@ -30,7 +31,7 @@ def cache_image(project: Project, image: Path, *, signer: Signer | None = None) 
     tree = cached_iso(project, iso_key(project, netinstall=False, volid=None, signer=signer))
     tree.mkdir(parents=True)
     shutil.copy2(image, tree / "image.iso")
-    (tree / "image.json").write_text(Image(name=image.name, sha256=sha256_of(image)).model_dump_json())
+    (tree / "image.json").write_text(Image(version="8.99.0", sha256=sha256_of(image)).model_dump_json())
     return tree
 
 
@@ -64,7 +65,7 @@ def test_iso_lookup_before_preparation(project: Project, tmp_path: Path) -> None
     image.write_bytes(b"cached ISO contents")
     tree = cache_image(project, image)
     assert xcraft("iso", "--locked", "--unsigned")[0] == 0
-    output = project.state / "iso/test.iso"
+    output = project.state / "iso" / iso_name(project, "8.99.0", netinstall=False, signer=None)
     assert output.read_bytes() == image.read_bytes()
     output.write_bytes(b"changed output")
     assert build_iso(project) == output
@@ -97,6 +98,22 @@ def test_iso_metadata_path(project: Project, tmp_path: Path) -> None:
     image = tmp_path / "test.iso"
     image.write_bytes(b"image")
     tree = cache_image(project, image)
-    (tree / "image.json").write_text('{"name":"../../outside.iso","sha256":"' + sha256_of(image) + '"}')
-    with pytest.raises(ValueError, match="name"):
+    (tree / "image.json").write_text('{"version":"../../outside","sha256":"' + sha256_of(image) + '"}')
+    with pytest.raises(ValueError, match="version"):
         build_iso(project)
+
+
+def test_iso_names(project: Project) -> None:
+    full = iso_name(project, "8.99.0", netinstall=False, signer=None)
+    assert re.fullmatch(rf"xcp-ng-8\.99\.0-[0-9a-f]{{6}}-{project.arch}\.iso", full)
+    # the same identifier for the netinstall ISO, and those of the other architectures
+    ident = full.split("-")[3]
+    assert (
+        iso_name(project, "8.99.0", netinstall=True, signer=None)
+        == f"xcp-ng-8.99.0-{ident}-{project.arch}-netinstall.iso"
+    )
+    for platform in project.all_platforms():
+        assert iso_id(platform, signer=None) == ident
+    # another one for other contents
+    (project.root / "base/trivial/trivial.spec").write_text("changed")
+    assert iso_id(project, signer=None) != ident

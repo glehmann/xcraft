@@ -220,11 +220,11 @@ def _publish(  # noqa: C901, PLR0912, PLR0913
             console.print(f"getting the ISOs for {platform.arch}")
             if storage and stored and not isos_available(platform, signer=signer):  # made from its packages
                 publisher.materialize(storage, dest, stored, f"{REPO}/{platform.arch}")
-            for iso in make_isos(platform, dest / REPO / platform.arch, dest / ISO_DIR / platform.arch, signer=signer):
+            for iso in make_isos(platform, dest / REPO / platform.arch, dest / ISO_DIR, signer=signer):
                 console.print(f"[bold green]✓[/] {iso}")
         if storage:
             isos = {
-                f"{platform.arch}/{file}": source
+                file: source
                 for platform in with_isos
                 for file, source in push_isos(platform, storage, signer=signer).items()
             }
