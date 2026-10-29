@@ -480,7 +480,7 @@ the compiler caches, the public keys and the ISOs of the checkouts, in `.xcraft/
   leaves in the storage the builds it has, only fetching those of the dependencies of the packages it builds.
 - A build without the compiler cache of its package downloads the one of the storage first, unless `--fetch=none`: the
   one CI pushes after its builds, with `xcraft push ccache`, so that rebuilding a modified package, like the kernel
-  with a patch, mostly finds its objects. The cache of a package is a tarball, in `.xcraft/ccache/<arch>/<package>/`, rather
+  with a patch, mostly finds its objects. The cache of a package is a tarball, `.xcraft/ccache/<arch>/<package>/<package>.ccache`, rather
   than read by ccache from the storage, as the builds run without the network. `xcraft fetch ccache` gets it again.
   `xcraft push ccache` only uploads the entries the last successful build of the package used or made, which ccache
   dates of their last use: not those of the older builds, which the local cache keeps.
