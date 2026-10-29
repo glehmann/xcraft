@@ -26,6 +26,13 @@ def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_environment: Non
     return root
 
 
+def test_recipe_of_all_architectures(root: Path) -> None:
+    # the repositories of the build environment differ by architecture, not the build keys
+    projects = [Project.find(arch) for arch in ("x86_64_v2", "aarch64")]
+    assert projects[0].repos.keys() != projects[1].repos.keys()
+    assert buildid._recipe(projects[0]) == buildid._recipe(projects[1])  # noqa: SLF001
+
+
 def git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", "-c", "user.name=test", "-c", "user.email=test@example.com", *args],
