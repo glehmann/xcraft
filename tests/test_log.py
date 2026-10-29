@@ -33,6 +33,16 @@ def test_activity_logs_are_throttled(monkeypatch: pytest.MonkeyPatch, capsys: py
     assert "publishing finished in" in output
 
 
+def test_activity_still_running(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr("xcraft.display._STILL_INTERVAL", 0.2)
+    monkeypatch.setenv("CI", "true")
+    with activity("[1/1] building foo", still="building foo") as update:
+        update("\x1b[1mgcc -c foo.c\x1b[0m")
+        time.sleep(0.3)
+    # first, then after the interval, with the last line, plain
+    assert capsys.readouterr().out == "[1/1] building foo\n  still building foo (0s): gcc -c foo.c\n"
+
+
 LOG = """\
 Installing build dependencies
 Executing(%prep): /bin/sh -e /var/tmp/rpm-tmp.1

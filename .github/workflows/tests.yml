@@ -24,5 +24,5 @@ jobs:
       - run: command -v podman || { sudo apt-get update -q && sudo apt-get install -qy podman; }
       - run: podman info --format '{{.Version.Version}} {{.Host.Security.Rootless}}'
       # pytest's colours only: FORCE_COLOR, or GITHUB_ACTIONS for typer, would make the output of xcraft the one of a
-      # terminal, which the tests do not expect; GitHub does not let the workflows set GITHUB_ACTIONS
-      - run: env -u GITHUB_ACTIONS pytest tests/ -v --color=yes
+      # terminal, and CI the one of CI, which the tests do not expect; GitHub does not let the workflows set them
+      - run: env -u GITHUB_ACTIONS -u CI pytest tests/ -v --color=yes

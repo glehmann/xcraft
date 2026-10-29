@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 # output of CI coloured, like a terminal's: its logs would have each frame of the progress, with cursor movements
 console = Console(highlight=False, soft_wrap=True, force_interactive=None if sys.stdout.isatty() else False)
 _LOG_INTERVAL = 30
+_STILL_INTERVAL = 60
 
 _STEP_RE = re.compile(r"^Executing\(%(\w+)\):")
 _ERROR_RE = re.compile(r"\b(?:error|errors):|\bFAILED\b", re.IGNORECASE)
@@ -52,6 +53,11 @@ def _colorize(line: str) -> Text:
         for m in pattern.finditer(text.plain):
             text.stylize(style, m.start(), m.end())
     return text
+
+
+def in_ci() -> bool:
+    """Return whether the output is a log of CI: not a terminal, with CI set, like GitHub Actions and others do."""
+    return not console.is_interactive and bool(os.environ.get("CI"))
 
 
 def print_log_line(line: str) -> None:
@@ -197,13 +203,21 @@ class _ExpectedBar(ProgressColumn):
 
 
 @contextlib.contextmanager
-def activity(description: str, expected: float | None = None, *, log: bool = False) -> Generator[Callable[[str], None]]:
+def activity(
+    description: str, expected: float | None = None, *, log: bool = False, still: str | None = None
+) -> Generator[Callable[[str], None]]:
     """Show `description` with the elapsed time, and the last line given to the returned function.
 
-    With an `expected` duration in seconds, a bar shows the elapsed time over it. With `log`, non-interactive output
-    shows the phase and progress at most every 30 seconds.
+    With an `expected` duration in seconds, a bar shows the elapsed time over it. In CI, it shows `description`, then
+    every minute that it is still running, as `still` or `description`, with the elapsed time and the last line, even
+    when no line came. With `log`, other non-interactive output shows the phase and progress at most every 30 seconds.
     """
     if not console.is_interactive:
+        if in_ci() and not log:
+            console.print(description)
+            with _still(still or Text.from_markup(description).plain) as update:
+                yield update
+            return
         if not log:
             yield lambda _: None
             return
@@ -234,6 +248,30 @@ def activity(description: str, expected: float | None = None, *, log: bool = Fal
     ) as progress:
         task = progress.add_task(description, line="")
         yield lambda line: progress.update(task, line=Text.from_ansi(line).plain.strip()[:100])
+
+
+@contextlib.contextmanager
+def _still(what: str) -> Generator[Callable[[str], None]]:
+    """Print every minute that `what` is still running, with the elapsed time and the last line given to the returned
+    function.
+    """  # noqa: D205
+    started, last, done = time.monotonic(), "", threading.Event()
+
+    def update(line: str) -> None:
+        nonlocal last
+        last = Text.from_ansi(line).plain.strip()[:200]
+
+    def report() -> None:
+        while not done.wait(_STILL_INTERVAL):
+            console.print(f"  still {what} ({duration(time.monotonic() - started)}): {last}", markup=False)
+
+    thread = threading.Thread(target=report, daemon=True)
+    thread.start()
+    try:
+        yield update
+    finally:
+        done.set()
+        thread.join()
 
 
 def download_progress(on_line: Callable[[str], None], prefix: str = "") -> Callable[[int, int, int], None]:
