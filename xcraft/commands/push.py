@@ -159,10 +159,11 @@ def _push_builds(
 
 @app.command("ccache")
 def caches(packages: Packages = None, arch: Arch = None, key: Key = None, to: To = "dev") -> None:
-    """Upload the compiler caches of the given packages, all by default, replacing those of the remote storage, for CI.
+    """Upload the compiler caches of the given packages, all by default, replacing those of the remote storage, for CI,
+    with the pages of their directories.
 
     They are not uploaded by xcraft push without a command: they are large, and change with each build.
-    """
+    """  # noqa: D205
     project = load(packages, arch=arch)
     storage = remote_storage(project, to)
     pushed = [
@@ -172,6 +173,9 @@ def caches(packages: Packages = None, arch: Arch = None, key: Key = None, to: To
     ]
     for name in pushed:
         console.print(f"[green]↑[/] {name}")
+    if pushed:
+        with activity("making the pages of the directories"):
+            remote.update_pages(project, storage, [f"{ccache.remote_path(project, name)}/" for name in pushed])
     console.print(f"{len(pushed)} pushed")
 
 
