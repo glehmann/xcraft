@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 from xcraft import process
 from xcraft.display import activity, download_progress
-from xcraft.project import write_atomically
+from xcraft.project import INTERNAL, write_atomically
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -61,7 +61,7 @@ class SourceError(RuntimeError):
 
 def source_path(filename: str, digest: str) -> str:
     """Return the path of a source archive in the remote storage."""
-    return f"sources/{digest}/{filename}"
+    return f"{INTERNAL}/sources/{digest}/{filename}"
 
 
 def _fetch_source(project: Project, name: str, filename: str, digest: str) -> bool:

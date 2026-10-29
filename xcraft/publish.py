@@ -30,6 +30,7 @@ from xcraft.container import BUILDENV, DNF_LOCK, image_tag, run
 from xcraft.display import activity, console
 from xcraft.localrepo import OUTPUT_MARKER, LocalRepo, extra_rpms, fresh_dir, link
 from xcraft.lock import Locked, load_lock, save_lock
+from xcraft.project import INTERNAL
 from xcraft.resolution import lock_installed, prepare, resolve, resolve_image
 from xcraft.signing import Signer, check_signatures, dev_signer, signing_key
 from xcraft.sources import sha256_of
@@ -290,7 +291,7 @@ def _srpm_names(project: Project, names: list[str], work: Path, volumes: list[st
 
 def _signed_path(project: Project, signer: Signer, name: str, key: str) -> str:
     """Return the path of the tree of a signed build in the remote storage."""
-    return f"signed/{signer.key}/{project.arch}/{name}/{key}"
+    return f"{INTERNAL}/signed/{signer.key}/{project.arch}/{name}/{key}"
 
 
 def _signed_build(project: Project, signer: Signer, name: str, key: str, *, storage: Remote | None) -> Path:
@@ -565,7 +566,7 @@ def upload_snapshot(  # noqa: PLR0913
             for path, digest in remote.read_manifest(storage, tree, trusted=dev_signer(project)).items():
                 if repo := {"RPMS": f"{REPO}/{platform.arch}", "SRPMS": f"{REPO}/Source"}.get(path.split("/")[0]):
                     stored[f"{repo}/{Path(path).name}"] = (f"{tree}/{path}", digest)
-    signed = [f"signed/{signer.key}/{platform.arch}/" for platform, _ in platforms] if signer else []
+    signed = [f"{INTERNAL}/signed/{signer.key}/{platform.arch}/" for platform, _ in platforms] if signer else []
     repos, latest = _tree(project, "repos", name), _tree(project, "repos", "latest")
     _upload(
         storage,

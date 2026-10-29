@@ -63,6 +63,9 @@ _HOST: dict[str, Platform] = {"x86_64": "linux/amd64", "aarch64": "linux/arm64"}
 
 
 Destination = Literal["main", "dev"]
+INTERNAL = ".xcraft"
+"""The directory of the remote storage with what xcraft keeps for itself: the source archives, the builds, the
+signed builds, the compiler caches, the keys and the ISOs, apart from the published repositories and ISOs."""
 
 
 class Remote(BaseModel):

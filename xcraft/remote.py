@@ -1,7 +1,10 @@
 """The shared storage: public reads over http(s), authenticated writes with S3.
 
-It has the source archives, as ``sources/<sha256>/<filename>`` like the local
-source cache, and the builds, as ``builds/<arch>/<package>/<key>/`` trees.
+It has the published repositories and ISOs, in ``repos/`` and ``isos/``, and,
+in ``.xcraft/``, what xcraft keeps for itself: the source archives, as
+``.xcraft/sources/<sha256>/<filename>`` like the local source cache, and the
+builds, as ``.xcraft/builds/<arch>/<package>/<key>/`` trees, with the signed
+builds, the compiler caches, the public keys and the ISOs of the checkouts.
 Garage, like other S3 storages, stores identical files once: copies cost
 nothing, so builds are stored as their files, for the published repositories
 to be copies of them.
@@ -33,6 +36,7 @@ from pydantic import BaseModel, field_validator
 from xcraft import process
 from xcraft.display import download_progress
 from xcraft.process import log
+from xcraft.project import INTERNAL
 from xcraft.signing import Signer, SigningError, dev_signer
 from xcraft.sources import sha256_of
 
@@ -260,6 +264,8 @@ def delete(storage: Remote, paths: list[str]) -> None:
             s3.delete_objects(Bucket=storage.bucket, Delete={"Objects": [{"Key": p} for p in paths[i : i + 1000]]})
 
 
+KEYS = f"{INTERNAL}/keys"
+"""The public keys of the signed trees, by fingerprint, in the storage."""
 MANIFEST = "manifest.json"
 """The files of a tree in the storage, with their SHA-256, uploaded last: a tree without it is incomplete."""
 SIGNATURE = f"{MANIFEST}.asc"
@@ -305,8 +311,8 @@ def forget() -> None:
 def _forget(storage: Remote, paths: list[str]) -> None:
     """Forget what was read of the manifests and keys of `paths`, which are written."""
     for path in paths:
-        if path.startswith("keys/"):
-            _keys.pop((storage.url, path.removeprefix("keys/").removesuffix(".asc")), None)
+        if path.startswith(f"{KEYS}/"):
+            _keys.pop((storage.url, path.removeprefix(f"{KEYS}/").removesuffix(".asc")), None)
         elif path.endswith((f"/{MANIFEST}", f"/{SIGNATURE}")):
             prefix = path.rsplit("/", 1)[0]
             for key in [k for k in _checked if k[:2] == (storage.url, prefix)]:
@@ -319,7 +325,7 @@ def _build_key(storage: Remote, fingerprint: str) -> str | None:
         with tempfile.TemporaryDirectory(prefix="xcraft-key-") as tmp:
             key, found = Path(tmp) / "key.asc", None
             try:
-                if download(storage, f"keys/{fingerprint}.asc", key):
+                if download(storage, f"{KEYS}/{fingerprint}.asc", key):
                     shown = Signer(key="", gnupghome=Path(tmp)).gpg("--with-colons", "--show-keys", str(key))
                     if [line.split(":")[9] for line in shown.splitlines() if line.startswith("fpr:")][:1] == [
                         fingerprint
@@ -477,7 +483,7 @@ def write_manifest(storage: Remote, prefix: str, manifest: dict[str, str], *, si
         signature = signer.sign_file(payload)
         key = work / "key.asc"
         key.write_text(signer.public_key())
-        upload(storage, f"keys/{signer.key}.asc", key)
+        upload(storage, f"{KEYS}/{signer.key}.asc", key)
         upload(storage, f"{prefix}/{SIGNATURE}", signature)
         upload(storage, f"{prefix}/{MANIFEST}", file)
 
@@ -606,8 +612,8 @@ def update_pages(project: Project, storage: Remote, prefixes: list[str]) -> int:
     pages: dict[str, tuple[_Dirs, dict[str, _Entry]]] = {}
     parents: set[str] = set()
     with _writing(storage, "make the directory pages") as s3:
-        if _objects(s3, storage.bucket, "keys/", below=True)[1]:
-            prefixes = [*prefixes, "keys/"]
+        if _objects(s3, storage.bucket, f"{KEYS}/", below=True)[1]:
+            prefixes = [*prefixes, f"{KEYS}/"]
         # those under another one are in its listing
         for prefix in sorted(p for p in set(prefixes) if not any(p != q and p.startswith(q) for q in prefixes)):
             pages.setdefault(prefix, ({}, {}))

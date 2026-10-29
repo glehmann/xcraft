@@ -23,6 +23,7 @@ from xcraft.cache import inputs
 from xcraft.container import BUILDENV, DNF_LOCK, run
 from xcraft.display import activity, console
 from xcraft.lock import Locked, load_lock, save_lock
+from xcraft.project import INTERNAL
 from xcraft.publish import REPO, snapshot
 from xcraft.resolution import lock_installed, prepare, resolve_image
 from xcraft.signing import signing_key
@@ -124,7 +125,7 @@ def isos_available(project: Project, *, signer: Signer | None) -> bool:
 
 def iso_path(project: Project, key: str) -> str:
     """Return the input-keyed ISO tree's path in remote storage."""
-    return f"isos/builds/{project.arch}/{key}"
+    return f"{INTERNAL}/isos/{project.arch}/{key}"
 
 
 def _checkout(project: Project) -> tuple[dict[str, str], str, str]:
