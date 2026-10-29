@@ -464,7 +464,7 @@ region = "garage"
 The writes use the credentials of `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. The top of the storage only has
 the published repositories, in `repos/`, the published ISOs, in `isos/`, and what xcraft keeps for itself, in
 `.xcraft/`, like the local state of a checkout: `.xcraft/sources/<sha256>/<filename>`,
-`.xcraft/builds/<arch>/<package>/<key>+b<n>/`, with a `manifest.json` of the build's files, and the signed builds,
+`.xcraft/builds/<arch>/<package>/<key>+b<n>/`, with a `manifest.asc` of the build's files, and the signed builds,
 the compiler caches, the public keys and the ISOs of the checkouts, in `.xcraft/signed/`, `.xcraft/ccache/`,
 `.xcraft/keys/` and `.xcraft/isos/`.
 
@@ -510,8 +510,10 @@ key; it cannot be combined with `--key` or `--dev-key`.
 `remote.main.build_keys` only lists trusted public keys for verification; its order does not select the signing key.
 The checkout also trusts its own developer key, without any configuration change.
 Public keys are uploaded to `.xcraft/keys/<fingerprint>.asc` and checked against the configured
-fingerprints. Each `manifest.json` has the files of its tree, with their SHA-256, and a detached signature of
-the UTF-8 tree path, a newline, and the files as JSON, sorted, one by line.
+fingerprints. Each `manifest.asc` is signed in clear: its text is the tree path, then a line by file of the tree,
+sorted, as `sha256sum` writes them, so that `gpg --decrypt manifest.asc | tail -n +2 | sha256sum -c` checks a
+downloaded tree.
+Only the text gpg verified is read.
 Missing or invalid signatures make a remote tree unavailable. There is no unsigned-tree fallback.
 Only the manifest and public keys are downloaded before verifying the signer and signature. Build
 files and compiler-cache tarballs are downloaded only after verification, then checked against the signed digests.
