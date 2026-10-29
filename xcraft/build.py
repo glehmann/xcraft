@@ -492,10 +492,17 @@ def _failed(project: Project, name: str, results: dict[str, Result]) -> list[str
 
 
 def _show_failure(project: Project, name: str, error: Exception, *, verbose: bool) -> None:
-    """Show why the build of `name` failed, with the end of its log when it failed in the build environment."""
+    """Show why the build of `name` failed, with the end of its log when it failed in the build environment, after
+    the whole log in CI, to debug it there: folded on GitHub Actions.
+    """  # noqa: D205
     console.print(f"[bold red]✗[/] {name}: {escape(str(error))}")
     if isinstance(error, ContainerError) and not verbose:
-        for line in log_step(read_tail(project.log(name)))[-40:]:
+        lines = read_tail(project.log(name), 16 * 2**20)
+        if in_ci():
+            fold = os.environ.get("GITHUB_ACTIONS") == "true"
+            console.file.write(f"::group::the log of {name}\n" if fold else f"the log of {name}:\n")
+            console.file.write("".join(f"{line}\n" for line in lines) + ("::endgroup::\n" if fold else ""))
+        for line in log_step(lines)[-40:]:
             print_log_line(line)
         console.print(f"[dim]full log: xcraft log {name}[/]")
 

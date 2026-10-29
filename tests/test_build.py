@@ -222,13 +222,18 @@ def test_build_back_to_a_cached_key(root: Path) -> None:
     assert not list((root / f".xcraft/cache/builds/{ARCH}/trivial").glob(".*"))
 
 
-def test_failed_build_skips_dependents(root: Path) -> None:
+def test_failed_build_skips_dependents(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace('echo "hello"', 'echo "build failure"; exit 3'))
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
     code, output = xcraft("build", "with-deps")
     assert code == 1
     assert "✗ trivial: failed, see " in output
-    assert "echo 'build failure'" in output  # the failed rpmbuild step is shown
+    # the whole log, folded, in CI, then the failed rpmbuild step
+    log = output[output.index("::group::the log of trivial\n") : output.index("::endgroup::\n")]
+    assert "Executing(%prep)" in log
+    assert "echo 'build failure'" in output[output.index("::endgroup::\n") :]
     assert "- with-deps skipped, needs trivial" in output
     assert output.splitlines()[-1] == "1 failed, 1 skipped"
     code, output = xcraft("log", "trivial", "--step", "build", "--grep", "failure")
