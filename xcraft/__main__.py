@@ -12,7 +12,7 @@ import typer
 from rich.logging import RichHandler
 from typer import rich_utils
 
-from xcraft import process
+from xcraft import process, remote
 from xcraft.commands import (
     ack,
     boot,
@@ -66,11 +66,12 @@ app.add_typer(vm.app, name="vm", rich_help_panel="Host")
 
 @app.callback()
 def options(
-    trace: Annotated[bool, typer.Option("--trace", help="Show stack traces on errors.")] = False,
-    debug: Annotated[bool, typer.Option("--debug", help="Show the commands xcraft runs.")] = False,
+    trace: Annotated[bool, typer.Option("--trace", help="Show stack traces on errors.")] = False,  # noqa: ARG001
+    debug: Annotated[bool, typer.Option("--debug", help="Show the commands xcraft runs.")] = False,  # noqa: ARG001
 ) -> None:
     """Build the XCP-ng distribution."""
     # --trace and --debug are handled in main(), they are declared here for --help
+    remote.forget()  # what another command, in the same process like the tests, read
 
 
 def main() -> None:

@@ -814,6 +814,14 @@ def test_publish_from_latest_metadata(root: Path, tmp_path: Path, caplog: pytest
         code, output = xcraft("publish", "repos", "--to", "main", "--unsigned", "--stage", stage)
     assert code == 0, output
     assert not [m for m in caplog.messages if "downloading " in m and ".rpm to " in m]
+    # each manifest checked once
+    manifests = [m.split()[1] for m in caplog.messages if m.startswith("downloading ") and "/manifest.json to " in m]
+    assert len(manifests) == len(set(manifests))
+    # the unchanged packages are already in latest
+    latest = f"s3://xcraft/repos/9.0/{stage}/latest/"
+    copied = [m.split(" to ")[-1] for m in caplog.messages if m.startswith("copying ") and f" to {latest}" in m]
+    assert copied
+    assert all(Path(f).name.startswith(("trivial-", "with-deps-")) for f in copied if f.endswith(".rpm"))
     # only those rebuilt, trivial and the package built against it, not the upstream ones
     local = {p.name for p in root.glob(".xcraft/publish/**/*.rpm")}
     assert local

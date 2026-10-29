@@ -8,6 +8,7 @@ dependencies = [
     "pydantic>=2.0",
     "pyte>=0.8.2",
     "boto3>=1.35",
+    "urllib3>=2.0",
     "rpm-version>=0.5.1",
 ]
 
