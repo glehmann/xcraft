@@ -505,9 +505,10 @@ key; it cannot be combined with `--key` or `--dev-key`.
 `remote.main.build_keys` only lists trusted public keys for verification; its order does not select the signing key.
 The checkout also trusts its own developer key, without any configuration change.
 Public keys are uploaded to `.xcraft/keys/<fingerprint>.asc` and checked against the configured
-fingerprints. Each detached `manifest.json.asc` signs the UTF-8 tree path, a newline, and the exact manifest bytes.
+fingerprints. Each `manifest.json` has the files of its tree, with their SHA-256, and a detached signature of
+the UTF-8 tree path, a newline, and the files as JSON, sorted, one by line.
 Missing or invalid signatures make a remote tree unavailable. There is no unsigned-tree fallback.
-Only the manifest, its signature and public keys are downloaded before verifying the signer and signature. Build
+Only the manifest and public keys are downloaded before verifying the signer and signature. Build
 files and compiler-cache tarballs are downloaded only after verification, then checked against the signed digests.
 
 To rotate CI keys, change the fingerprint passed with `--key`, add it to `remote.main.build_keys`, and retain the old
