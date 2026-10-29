@@ -51,6 +51,8 @@ BUILD = "build"
 """The repository of the upstream packages the builds of ours need, which the base one does not have."""
 ISO_DIR = "iso"
 """The ISOs in a local snapshot, by architecture, published apart from its repositories."""
+SUMS = "SHA256SUMS"
+"""The checksums of the published ISOs, as sha256sum writes them, next to them."""
 INPUTS = "xcraft-inputs.json"
 """Checkout input keys, covered by the snapshot's signed manifest."""
 
@@ -592,14 +594,20 @@ def upload_isos(  # noqa: PLR0913
     signer: Signer | None,
     stored: dict[str, tuple[str, str]] | None = None,
 ) -> None:
-    """Upload the ISOs of the snapshot in `src`, in ISO_DIR, to `storage` as `name`, and make them the latest ones."""
+    """Upload the ISOs of the snapshot in `src`, in ISO_DIR, of all the architectures, to `storage` as `name`, with
+    their checksums, in SHA256SUMS, signed by `signer`, if any, and make them the latest ones.
+    """  # noqa: D205
     from xcraft.iso import iso_inputs  # noqa: PLC0415, iso imports snapshot assembly
 
     isos = src / ISO_DIR
     (isos / INPUTS).write_text(SnapshotInputs(keys={
-        name: key for p in project.all_platforms() if (isos / p.arch).is_dir()
+        name: key for p in project.all_platforms() if any(isos.glob(f"*-{p.arch}.iso"))
         for name, key in iso_inputs(p, signer=signer).items()
     }).model_dump_json())  # fmt: skip
+    sums = isos / SUMS
+    sums.write_text("".join(f"{sha256_of(iso)}  {iso.name}\n" for iso in sorted(isos.glob("*.iso"))))
+    if signer:
+        signer.sign_file(sums)
     files = sorted(f.relative_to(isos).as_posix() for f in isos.rglob("*") if f.is_file())
     _upload(
         storage,
