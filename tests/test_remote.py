@@ -614,6 +614,8 @@ def test_ccache(
 
     assert levels() == {1}  # ccache's, for the builds
     assert xcraft("push", "ccache", "compiled", "--to", "main", *options) == (0, "↑ compiled\n1 pushed\n")
+    assert 'href="compiled.ccache"' in page(f".xcraft/ccache/{ARCH}/compiled/")
+    assert 'href="compiled/"' in page(f".xcraft/ccache/{ARCH}/")
     assert levels() == {1}  # the local cache is left as it is
     shutil.rmtree(cache)
     assert xcraft("fetch", "ccache", "compiled") == (0, "↓ compiled\n1 fetched\n")
