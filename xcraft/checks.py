@@ -174,16 +174,22 @@ def record_rpm_deps(project: Project, names: list[str], keys: dict[str, str], *,
     """Record in the lock what rpm generated for the binary packages of the cached builds of `names`, with `keys`,
     without their release suffixes, and return whether the lock changed.
 
-    What a build generated is kept with it, for the same locked versions and requirements of our specs, and version
-    of the recording, RECORDING. What cannot be recorded yet is shown, unless `quiet`.
+    What a build generated is kept with it, for the same version of the recording, RECORDING, and what the requirements
+    resolve to: the locked versions, the requirements of our specs, the binary packages of ours and their capabilities,
+    the packages of the image, and the extra upstream ones. What cannot be recorded yet is shown, unless `quiet`.
     """
     if not (builds := {n: build for n in names if (build := cached_build(project, n, keys[n])).exists()}):
         return False
-    lock = load_lock(project)
+    lock, config = load_lock(project), project.config
     wanted = sorted({r for p in project.parsed.values() for r in p.requirements})
+    ours = {b.name: b.provides for p in project.parsed.values() for b in p.binaries}
     context = hashlib.sha256(
-        json.dumps([(BUILDENV / "resolve.py").read_text(), lock.sources, wanted]).encode()
-    ).hexdigest()
+        json.dumps(
+            [(BUILDENV / "resolve.py").read_text(), lock.sources, wanted, ours, sorted(config.packages),
+             config.release_suffixes, config.extra_upstream],
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()  # fmt: skip
 
     def found(build: Path) -> dict | None:
         recorded = json.loads(path.read_text()) if (path := build / "rpm-deps.json").exists() else {}

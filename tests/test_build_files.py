@@ -388,6 +388,12 @@ def test_record_rpm_deps(project: Project, monkeypatch: pytest.MonkeyPatch) -> N
     assert load_lock(project).requires.shared == {"foo": ["bar"]}
     monkeypatch.setattr("xcraft.checks.resolve_rpm_deps", lambda *_: pytest.fail("recorded again"))
     assert not record_rpm_deps(project, ["foo"], {"foo": "key"})
+    # but with a package of ours providing it, which it may resolve to instead
+    baz = Binary(name="baz", evr="1.0-1", arch="x86_64", provides=["bar"], requires=[])
+    project.parsed = {"foo": Package(name="foo", binaries=[binary]), "baz": Package(name="baz", binaries=[baz])}
+    monkeypatch.setattr("xcraft.checks.resolve_rpm_deps", lambda *_: Resolved(requires={"foo": ["baz"]}))
+    assert record_rpm_deps(project, ["foo"], {"foo": "key"})
+    assert load_lock(project).requires.shared == {"foo": ["baz"]}
 
 
 def test_builds_still_to_build_again_fail(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
