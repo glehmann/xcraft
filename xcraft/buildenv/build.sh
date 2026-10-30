@@ -3,7 +3,7 @@
 #   stage: the stage of rpmbuild -b<stage>, like a for all, or p for %prep
 #   repo: the id of the repository of our builds
 #   lock: the prefix of the dnf commands, which the containers run one at a time
-#   autorev: the suffix of the release of a test build, or nothing
+#   autorev: the release suffix of the build, %autorev: +b<n> of its build ID, and ~<counter>.<ID> for a development one
 #   replace: the upstream packages of the image to replace by ours, or nothing
 # It installs the build dependencies, including the dynamic ones, then runs rpmbuild, with stdin from /dev/null like
 # koji and mock, so that interactive steps of a build don't wait forever, and without the network, like them too: the

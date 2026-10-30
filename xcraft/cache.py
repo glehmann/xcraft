@@ -50,6 +50,9 @@ _SAME_BUILDS = {
     # made.py and record.py: entry points, and the dependencies of rpm headers in rpmdeps.py
     "cd1db99022f6382f7e7363906e76061130bd36e1aa129d164e8917f48cb9ea3a":
         "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc",
+    # build.sh: the description of autorev, in a comment
+    "01628fd02a2650def128b24cbada7d71b0524ba141bfe0842f67b726a066f698":
+        "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc",
 }  # fmt: skip
 """Recipes making the same packages as an earlier one, by their hash, with the earliest one: their builds keep its
 keys."""
