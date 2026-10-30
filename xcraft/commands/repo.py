@@ -12,7 +12,6 @@ from xcraft import build as builder
 from xcraft import process
 from xcraft.cache import release_suffix
 from xcraft.commands import Arch, Dev, Final, Packages, dev_ident, load
-from xcraft.devbuilds import dev_suffixes
 from xcraft.display import activity, console
 from xcraft.graph import dependents
 from xcraft.signing import check_signatures, dev_signer
@@ -124,8 +123,7 @@ def repo(  # noqa: C901
     if with_dependents:
         names += sorted(dependents(project.deps, names) - set(names))
     with project.lock():
-        results, keys = builder.build(project, names, dev=ident)
-        autorev = dev_suffixes(project, ident)
+        results, keys, autorev = builder.build(project, names, dev=ident)
         if failed := [r.name for r in results if r.failed]:
             msg = f"not built: {', '.join(failed)}"
             raise RuntimeError(msg)

@@ -241,10 +241,14 @@ def _nevra(packages: dict[str, Locked], name: str) -> str:
     return f"{name}-{packages[name].evr}.{packages[name].arch}"
 
 
+def _rpm_name(packages: dict[str, Locked], name: str) -> str:
+    return f"{name}-{packages[name].evr.split(':')[-1]}.{packages[name].arch}.rpm"
+
+
 def _upstream_rpms(project: Project, names: list[str], on_line: Callable[[str], None]) -> list[Path]:
     """Return the RPMs of locked upstream packages: from the cache, the latest snapshot, or the repositories."""
     locked = resolve_image(project).packages
-    rpms = {name: f"{name}-{locked[name].evr.split(':')[-1]}.{locked[name].arch}.rpm" for name in names}
+    rpms = {name: _rpm_name(locked, name) for name in names}
     cache = _download(project, {rpms[name]: _nevra(locked, name) for name in names}, on_line, source=False, volumes=[])
     for name in names:
         if sha256_of(cache / rpms[name]) != locked[name].sha256:
@@ -309,6 +313,11 @@ def _srpm_names(project: Project, names: list[str], work: Path, volumes: list[st
 def _signed_path(project: Project, signer: Signer, name: str, key: str) -> str:
     """Return the path of the tree of a signed build in the remote storage."""
     return f"{INTERNAL}/signed/{signer.key}/{project.arch}/{name}/{key}"
+
+
+def _stored_path(project: Project, signer: Signer | None, name: str, key: str) -> str:
+    """Return the path of the tree of a build in the remote storage: signed by `signer`, if any."""
+    return _signed_path(project, signer, name, key) if signer else build_path(project, name, key)
 
 
 def _signed_build(project: Project, signer: Signer, name: str, key: str, *, storage: Remote | None) -> Path:
@@ -562,10 +571,11 @@ def upload_snapshot(
     name: str,
     *,
     signer: Signer | None,
+    build: bool,
     stored: dict[str, tuple[str, str]] | None = None,
 ) -> None:
     """Upload the repositories of the snapshot in `src` of the `platforms` to `storage` as `name`, and make them the
-    latest ones.
+    latest ones: with the build repository, with `build`.
 
     The packages already in the storage, in the latest snapshot or the builds with the keys of the platforms, are
     copied there, and so are those of `stored`, which are not in `src`, by path in the snapshot, with their paths in
@@ -581,7 +591,7 @@ def upload_snapshot(
     stored = dict(stored or {})
     for platform, keys in platforms:
         for package, key in keys.items():
-            tree = _signed_path(platform, signer, package, key) if signer else build_path(platform, package, key)
+            tree = _stored_path(platform, signer, package, key)
             for path, digest in remote.read_manifest(storage, tree, trusted=_trusted(project, signer)).items():
                 if repo := {"RPMS": f"{REPO}/{platform.arch}", "SRPMS": f"{REPO}/Source"}.get(path.split("/")[0]):
                     # those of the metadata, of the snapshot or of the first architecture, for the source packages
@@ -595,7 +605,7 @@ def upload_snapshot(
         repos,
         latest,
         project=project,
-        inputs={p.arch: snapshot_key(p, keys, signer=signer, build=(src / BUILD).is_dir()) for p, keys in platforms},
+        inputs={p.arch: snapshot_key(p, keys, signer=signer, build=build) for p, keys in platforms},
         signer=signer or signing_key(project),
         trusted=_trusted(project, signer),
         stored=stored,
@@ -646,7 +656,7 @@ def upload_isos(
 def _built(project: Project, *, fetch: Fetch) -> dict[str, str]:
     """Build or fetch our packages, but only fetch them on the platforms the host emulates, and return their keys."""
     prepare(project)
-    results, keys = builder.build(project, sorted(project.packages), build_missing=project.native, fetch=fetch)
+    results, keys, _ = builder.build(project, sorted(project.packages), build_missing=project.native, fetch=fetch)
     if failed := [r.name for r in results if r.failed]:
         msg = f"not built for {project.arch}: {', '.join(failed)}"
         raise RuntimeError(msg)
@@ -777,7 +787,7 @@ def _stored_build(project: Project, signer: Signer | None, name: str, key: str, 
     """Return the tree of the build of `name` with `key`, signed by `signer`, if any, in `storage`, or the local
     one when the storage misses it: signed now, and pushed there.
     """
-    tree = _signed_path(project, signer, name, key) if signer else build_path(project, name, key)
+    tree = _stored_path(project, signer, name, key)
     if remote.tree_exists(storage, tree, trusted=_trusted(project, signer)):
         return tree
     if not cached_build(project, name, key).exists() and not builder.fetch_build(project, name, key):
@@ -806,7 +816,7 @@ def _add_ours(plan: _Plan, project: Project, keys: dict[str, str], *, signer: Si
     ) as on_line:
         # their manifests, checked once, concurrently
         trusted = _trusted(project, signer)
-        trees = [_signed_path(project, signer, n, k) if signer else build_path(project, n, k) for n, k in keys.items()]
+        trees = [_stored_path(project, signer, n, k) for n, k in keys.items()]
         with ThreadPoolExecutor(remote.REQUESTS) as pool:
             list(pool.map(lambda tree: remote.read_manifest(storage, tree, trusted=trusted), trees))
         for name in sorted(keys):
@@ -836,7 +846,7 @@ def _add_stored_upstream(plan: _Plan, project: Project, names: list[str], repo: 
     the storage misses: those it has were when added.
     """
     locked = resolve_image(project).packages
-    rpms = {name: f"{name}-{locked[name].evr.split(':')[-1]}.{locked[name].arch}.rpm" for name in names}
+    rpms = {name: _rpm_name(locked, name) for name in names}
     missing = [name for name in names if not plan.reuse(repo, rpms[name], locked[name].sha256)]
     with activity(f"getting the upstream packages for {repo}", log=True) as on_line:
         (plan.dest / repo).mkdir(parents=True, exist_ok=True)
@@ -901,9 +911,7 @@ def materialize(storage: Remote, dest: Path, files: dict[str, tuple[str, str]], 
 
     def fetch(f: str) -> None:
         path, digest = wanted[f]
-        if not remote.download(storage, path, dest / f) or sha256_of(dest / f) != digest:
-            msg = f"{path} is missing or corrupted in the storage"
-            raise BuildError(msg)
+        _put(storage, *path.rsplit("/", 1), dest / f, digest)
 
     with activity(f"downloading the packages of {repo}", log=True), ThreadPoolExecutor(remote.REQUESTS) as pool:
         list(pool.map(fetch, wanted))

@@ -72,6 +72,10 @@ ignore = [
     "TC001",  # typing-only-first-party-import
     "TC003",  # typing-only-standard-library-import
 ]
+# commands passing their options on, as ctx.params
+"xcraft/commands/publish.py" = [
+    "ARG001",  # unused-function-argument
+]
 # a script run in the build environment, not a module
 "xcraft/buildenv/*" = [
     "INP001",  # implicit-namespace-package

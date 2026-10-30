@@ -18,8 +18,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 from rich.markup import escape
 
-from xcraft import buildid, remote
-from xcraft.cache import inputs
+from xcraft import buildid, buildkey, remote
 from xcraft.container import DNF_LOCK, buildenv_hash, run
 from xcraft.display import activity, console
 from xcraft.lock import Locked, load_lock, save_lock
@@ -69,7 +68,7 @@ def iso_key(project: Project, *, netinstall: bool, volid: str | None, signer: Si
     data = [
         project.platform,
         config,
-        inputs(project),
+        buildkey.directories(project),
         # the numbers of the builds, in their releases, and the reuses of builds
         {name: i.model_dump() for name, i in buildid.read(project).items()},
         _templates(project),
@@ -147,7 +146,7 @@ def iso_path(project: Project, key: str) -> str:
 
 
 def _checkout(project: Project) -> tuple[dict[str, str], str, str]:
-    return inputs(project), _templates(project), sha256_of(project.root / "xcraft.toml")
+    return buildkey.directories(project), _templates(project), sha256_of(project.root / "xcraft.toml")
 
 
 def _image(tree: Path) -> Image:

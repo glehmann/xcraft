@@ -16,10 +16,8 @@ import contextlib
 import datetime as dt
 import email.message
 import functools
-import ipaddress
 import math
 import os
-import socket
 import tempfile
 import urllib.error
 import urllib.request
@@ -57,19 +55,6 @@ def _url(storage: Remote, path: str) -> str:
 
 def _s3_url(storage: Remote, path: str) -> str:
     return f"s3://{storage.bucket}/{path}"
-
-
-def on_this_machine(storage: Remote) -> bool:
-    """Return whether the storage is on this machine, like local-s3.sh's: its URLs resolve to loopback addresses."""
-
-    def loopback(url: str) -> bool:
-        try:
-            addresses = {info[4][0] for info in socket.getaddrinfo(urlparse(url).hostname or "", None)}
-        except (OSError, UnicodeError):
-            return False
-        return bool(addresses) and all(ipaddress.ip_address(a).is_loopback for a in addresses)
-
-    return loopback(storage.url) and loopback(storage.s3_endpoint or storage.url)
 
 
 @functools.cache
@@ -416,32 +401,30 @@ def storages(project: Project) -> list[Remote]:
     ]
 
 
-def tree_available(project: Project, prefix: str) -> bool:
-    """Check signed manifests in main, then dev, without downloading tree contents."""
+def _first[T](project: Project, attempt: Callable[[Remote], T]) -> T | None:
+    """Return the first result of `attempt` on main, then dev, that is not empty, or else raise the error of one, if
+    any.
+    """
     error = None
     for storage in storages(project):
         try:
-            if tree_exists(storage, prefix, trusted=dev_signer(project)):
-                return True
+            if result := attempt(storage):
+                return result
         except RemoteError as e:
             error = e
     if error:
         raise error
-    return False
+    return None
+
+
+def tree_available(project: Project, prefix: str) -> bool:
+    """Check signed manifests in main, then dev, without downloading tree contents."""
+    return bool(_first(project, lambda s: tree_exists(s, prefix, trusted=dev_signer(project))))
 
 
 def fetch_tree(project: Project, prefix: str, dest: Path, on_line: Callable[[str], None] = lambda _: None) -> bool:
     """Download a trusted tree from main or dev, checking its signature before its contents."""
-    error = None
-    for storage in storages(project):
-        try:
-            if download_tree(storage, prefix, dest, on_line, trusted=dev_signer(project)):
-                return True
-        except RemoteError as e:
-            error = e
-    if error:
-        raise error
-    return False
+    return bool(_first(project, lambda s: download_tree(s, prefix, dest, on_line, trusted=dev_signer(project))))
 
 
 def update_tree(
@@ -455,17 +438,8 @@ def update_tree(
     `wanted` takes, by path and SHA-256, and return whether a storage has it. Each file is checked against the signed
     manifest, then renamed into `dest`: those missing, corrupted or failing to download are skipped.
     """
-    error, found = None, None
-    for storage in storages(project):
-        try:
-            if (manifest := _manifest(storage, prefix, dev_signer(project))) is not None:
-                found = storage, manifest
-                break
-        except RemoteError as e:
-            error = e
+    found = _first(project, lambda s: (s, m) if (m := _manifest(s, prefix, dev_signer(project))) is not None else None)
     if found is None:
-        if error:
-            raise error
         return False
     storage, manifest = found
     dest.mkdir(parents=True, exist_ok=True)

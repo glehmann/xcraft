@@ -10,7 +10,6 @@ import typer
 from xcraft import build as builder
 from xcraft.cache import cached_build
 from xcraft.commands import Arch, Dev, Final, Packages, dev_ident, load
-from xcraft.devbuilds import dev_suffixes
 from xcraft.display import console
 from xcraft.graph import dependents
 
@@ -51,8 +50,10 @@ def build(
         builder.build(project, names, with_deps=not no_deps, dry_run=True, dev=ident, fetch=fetch)
         return
     with project.lock():
-        results, keys = builder.build(project, names, with_deps=not no_deps, verbose=verbose, dev=ident, fetch=fetch)
-    if autorev := dev_suffixes(project, ident):
+        results, keys, autorev = builder.build(
+            project, names, with_deps=not no_deps, verbose=verbose, dev=ident, fetch=fetch
+        )
+    if autorev:
         for r in results:
             if r.name in autorev and r.status == "built":
                 for rpm in sorted((cached_build(project, r.name, keys[r.name]) / "RPMS").rglob("*.rpm")):

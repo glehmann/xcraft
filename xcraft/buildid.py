@@ -73,7 +73,7 @@ def compute(
     shown: dict[str, dict[str, list]] | None = None,
 ) -> dict[str, BuildId]:
     """Return the build ID of each package, from those of the main branch where the current one forks from it, `fork`,
-    see base(), with the `hashes` of the package directories (see xcraft.cache.inputs()).
+    see base(), with the `hashes` of the package directories (see xcraft.buildkey.directories()).
 
     The build keys are those of xcraft.buildkey, see docs/build-keys.md: their inputs are put in `shown`, by package,
     if given.

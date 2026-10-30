@@ -36,9 +36,12 @@ def _current(
     return ids, build_keys(project, hashes=hashes, ids=ids), proposed(fork, ids)
 
 
-def dev_suffixes(project: Project, ident: str | None, hashes: dict[str, str] | None = None) -> dict[str, str]:
-    """Return the release suffixes of the development builds, ``~<n>.<ident>``: those of the packages whose build ID
-    is not the main branch's, see xcraft.buildid, or none for final builds, without `ident`.
+def dev_keys(
+    project: Project, ident: str | None, hashes: dict[str, str] | None = None
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Return the cache keys of the builds, see xcraft.cache.build_keys(), with the release suffixes of the
+    development builds, ``~<n>.<ident>``, and those suffixes: of the packages whose build ID is not the main branch's,
+    see xcraft.buildid, or none for final builds, without `ident`.
 
     The counter <n> of a package and build number goes up when the inputs of its build or `ident` change, so that a
     development build upgrades the previous ones, whatever their identifiers, and a build of the same inputs is
@@ -46,7 +49,7 @@ def dev_suffixes(project: Project, ident: str | None, hashes: dict[str, str] | N
     The `hashes` of the package directories are those of now by default.
     """
     if ident is None:
-        return {}
+        return build_keys(project, {}, hashes), {}
     counters, (ids, keys, developed) = _counters(project), _current(project, hashes)
     suffixes = {}
     for name in sorted(developed):
@@ -54,7 +57,7 @@ def dev_suffixes(project: Project, ident: str | None, hashes: dict[str, str] | N
         if (key, last) != (keys[name], ident):
             counter += 1
         suffixes[name] = f"~{counter}.{ident}"
-    return suffixes
+    return build_keys(project, suffixes, hashes, ids), suffixes
 
 
 def keep_built(

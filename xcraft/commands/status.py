@@ -12,9 +12,9 @@ from rich.table import Table
 
 from xcraft import build as builder
 from xcraft import buildid, buildkey
-from xcraft.cache import build_keys, cached_build, has_normal_build, inputs, release_suffix
+from xcraft.cache import cached_build, has_normal_build, release_suffix
 from xcraft.commands import Arch, Dev, Final, Packages, dev_ident, load
-from xcraft.devbuilds import dev_suffixes
+from xcraft.devbuilds import dev_keys
 from xcraft.display import console
 
 if TYPE_CHECKING:
@@ -58,20 +58,18 @@ def status(
     if with_inputs:
         _show_inputs(project, sorted(set(packages or project.packages)))
         return
-    keys = build_keys(project, dev_suffixes(project, ident), hashes=inputs(project))
+    keys = dev_keys(project, ident, buildkey.directories(project))[0]
     queue = [name for name in builder.queued(project) if not cached_build(project, name, keys[name]).exists()]
     shown = sorted(set(packages or project.packages))
     table = Table("package", "version", "state", box=None, pad_edge=False, header_style="bold")
     states = Counter[str]()
     for name in shown:
         package = project.packages[name]
-        evr, suffix, dist = (
-            package.binaries[0].evr if package.binaries else "",
-            release_suffix(keys[name]),
-            package.dist,
+        evr = (
+            package.suffixed(e, e, release_suffix(keys[name]))
+            if (e := package.binaries[0].evr if package.binaries else "")
+            else ""
         )
-        if evr:
-            evr = evr.replace(dist, f"{suffix}{dist}") if dist and dist in evr else f"{evr}{suffix}"
         if package.error:
             state = "error"
         elif builder.building(project, name):
