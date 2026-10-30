@@ -44,7 +44,8 @@ def build_keys(
     from xcraft.buildid import base, compute  # noqa: PLC0415, which imports this module
 
     ids = ids if ids is not None else compute(project, base(project), hashes)
-    deps, autorev = project.deps, autorev or {}
+    # of all the architectures, like the build IDs: the same keys on all of them
+    deps, autorev = buildkey.dependencies(buildkey.platforms(project)), autorev or {}
     keys: dict[str, str] = {}
     for component in components(deps):  # the dependencies first
         outside = sorted({dep for name in component for dep in deps[name]} - component)

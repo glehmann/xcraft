@@ -15,6 +15,7 @@ from tests import TOML, copy_project
 from tests.test_build import xcraft
 from xcraft import build as builder
 from xcraft import buildid, buildkey
+from xcraft.cache import build_keys
 from xcraft.iso import build_iso
 from xcraft.lock import load_lock, save_lock
 from xcraft.project import Project
@@ -45,7 +46,10 @@ def test_build_ids_of_all_architectures(root: Path) -> None:
     spec.write_text(text.replace("BuildRequires: trivial\n", "%ifarch aarch64\nBuildRequires: trivial\n%endif\n"))
     projects = [Project.find(arch) for arch in ("x86_64_v2", "aarch64")]
     assert projects[0].deps["with-deps"] != projects[1].deps["with-deps"]
-    assert buildid.compute(projects[0], None) == buildid.compute(projects[1], None)
+    assert (ids := buildid.compute(projects[0], None)) == buildid.compute(projects[1], None)
+    # and the cache keys of their development builds, built against them on any architecture
+    autorev = {"trivial": "~1.dev", "with-deps": "~1.dev"}
+    assert build_keys(projects[0], autorev, ids=ids) == build_keys(projects[1], autorev, ids=ids)
 
 
 def git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
