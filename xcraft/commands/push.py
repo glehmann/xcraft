@@ -13,7 +13,7 @@ from xcraft.devbuilds import developed
 from xcraft.display import activity, console
 from xcraft.iso import push_isos
 from xcraft.project import Project, Remote
-from xcraft.signing import Signer, dev_signer, signing_key
+from xcraft.signing import Signer, signing_key
 from xcraft.sources import cached_source, read_manifest, source_path
 
 app = typer.Typer()
@@ -136,9 +136,7 @@ def _push_builds(
     paths = {name: build_path(project, name, keys[name]) for name in names}
     # first: a build of xcraft build --fetch=needed may be in the storage only
     with activity("checking the remote storage"):
-        present = [
-            name for name, path in paths.items() if remote.tree_exists(storage, path, trusted=dev_signer(project))
-        ]
+        present = [name for name, path in paths.items() if remote.tree_exists(storage, path, trusted=signer)]
     not_built = [n for n in paths if n not in present and not cached_build(project, n, keys[n]).exists()]
     pushed = [name for name in paths if name not in present and name not in not_built]
     for name in pushed:

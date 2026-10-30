@@ -76,6 +76,7 @@ def push(project: Project, storage: Remote, name: str, *, signer: Signer | None)
     """
     if not (cache := local_path(project, name)).is_dir():
         return False
+    signer = remote.required(signer)  # before uploading anything
     since = int(float(last.read_text())) if (last := cache / _LAST_BUILD).exists() else 0
     prefix = remote_path(project, name)
     stored = remote.read_manifest(storage, prefix, trusted=signer)

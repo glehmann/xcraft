@@ -84,10 +84,17 @@ def snapshot_key(project: Project, keys: dict[str, str], *, signer: Signer | Non
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
 
+def _trusted(project: Project, signer: Signer | None) -> Signer | None:
+    """Return the key the trees of the storage are trusted signed with, besides those of xcraft.toml: the one signing
+    the snapshot, or the developer's.
+    """  # noqa: D205
+    return signer or dev_signer(project)
+
+
 def _reusable(
     project: Project, storage: Remote, kind: str, keys: dict[str, str], signer: Signer | None
 ) -> dict[str, str]:
-    latest, trusted = _tree(project, kind, "latest"), signer or dev_signer(project)
+    latest, trusted = _tree(project, kind, "latest"), _trusted(project, signer)
     with project.work("snapshot-inputs") as work:
         try:
             if not remote.download_tree(storage, inputs_tree(latest), work / "inputs", trusted=trusted):
@@ -315,7 +322,7 @@ def _signed_build(project: Project, signer: Signer, name: str, key: str, *, stor
             shutil.copytree(cached_build(project, name, key) / files, work / files)  # copies: signing changes them
         signer.sign_rpms(project, work)
         work.rename(signed)
-    if storage and not remote.tree_exists(storage, path, trusted=dev_signer(project)):
+    if storage and not remote.tree_exists(storage, path, trusted=signer):
         remote.upload_tree(storage, path, signed, ["RPMS", "SRPMS"], signer=signer)
     return signed
 
@@ -569,7 +576,7 @@ def upload_snapshot(  # noqa: PLR0913
     for platform, keys in platforms:
         for package, key in keys.items():
             tree = _signed_path(platform, signer, package, key) if signer else build_path(platform, package, key)
-            for path, digest in remote.read_manifest(storage, tree, trusted=dev_signer(project)).items():
+            for path, digest in remote.read_manifest(storage, tree, trusted=_trusted(project, signer)).items():
                 if repo := {"RPMS": f"{REPO}/{platform.arch}", "SRPMS": f"{REPO}/Source"}.get(path.split("/")[0]):
                     # those of the metadata, of the snapshot or of the first architecture, for the source packages
                     stored.setdefault(f"{repo}/{Path(path).name}", (f"{tree}/{path}", digest))
@@ -584,7 +591,7 @@ def upload_snapshot(  # noqa: PLR0913
         project=project,
         inputs={p.arch: snapshot_key(p, keys, signer=signer, build=(src / BUILD).is_dir()) for p, keys in platforms},
         signer=signer or signing_key(project),
-        trusted=dev_signer(project),
+        trusted=_trusted(project, signer),
         stored=stored,
         pages=signed,
         remote_files={f: digest for f, (_, digest) in stored.items() if f not in files},
@@ -625,7 +632,7 @@ def upload_isos(  # noqa: PLR0913
             for name, key in iso_inputs(p, signer=signer).items()
         },
         signer=signer or signing_key(project),
-        trusted=dev_signer(project),
+        trusted=_trusted(project, signer),
         stored=stored,
     )
 
@@ -721,7 +728,9 @@ class _Plan:
         return {f"{repo}/{name}": stored for repo, files in self.stored.items() for name, stored in files.items()}
 
 
-def _previous(project: Project, storage: Remote) -> tuple[dict[str, tuple[Entry, str]], dict[str, str]]:
+def _previous(
+    project: Project, storage: Remote, signer: Signer | None
+) -> tuple[dict[str, tuple[Entry, str]], dict[str, str]]:
     """Return the metadata of the packages of the latest snapshot, by SHA-256, with their paths in the storage, and
     the SHA-256 of its source packages, by file name.
 
@@ -729,7 +738,7 @@ def _previous(project: Project, storage: Remote) -> tuple[dict[str, tuple[Entry,
     of a repository whose metadata Python cannot decompress, like zstd before Python 3.14.
     """  # noqa: D205
     latest = _tree(project, "repos", "latest")
-    manifest = remote.read_manifest(storage, latest, trusted=dev_signer(project))
+    manifest = remote.read_manifest(storage, latest, trusted=_trusted(project, signer))
     known = {}
     with project.work("previous") as work, activity("reading the metadata of the latest snapshot", log=True):
 
@@ -760,7 +769,7 @@ def _stored_build(project: Project, signer: Signer | None, name: str, key: str, 
     one when the storage misses it: signed now, and pushed there.
     """  # noqa: D205
     tree = _signed_path(project, signer, name, key) if signer else build_path(project, name, key)
-    if remote.tree_exists(storage, tree, trusted=dev_signer(project)):
+    if remote.tree_exists(storage, tree, trusted=_trusted(project, signer)):
         return tree
     if not cached_build(project, name, key).exists() and not builder.fetch_build(project, name, key):
         msg = f"the build of {name} is neither cached nor in the remote storage"
@@ -787,7 +796,7 @@ def _add_ours(plan: _Plan, project: Project, keys: dict[str, str], *, signer: Si
         f"signing our packages for {project.arch}" if signer else "getting our packages", log=True
     ) as on_line:
         # their manifests, checked once, concurrently
-        trusted = dev_signer(project)
+        trusted = _trusted(project, signer)
         trees = [_signed_path(project, signer, n, k) if signer else build_path(project, n, k) for n, k in keys.items()]
         with ThreadPoolExecutor(remote.REQUESTS) as pool:
             list(pool.map(lambda tree: remote.read_manifest(storage, tree, trusted=trusted), trees))
@@ -797,7 +806,7 @@ def _add_ours(plan: _Plan, project: Project, keys: dict[str, str], *, signer: Si
             if isinstance(tree, Path):
                 files = {p.relative_to(tree).as_posix(): sha256_of(p) for p in tree.rglob("*.rpm")}
             else:
-                files = remote.read_manifest(storage, tree, trusted=dev_signer(project))
+                files = remote.read_manifest(storage, tree, trusted=trusted)
             for path, digest in sorted(files.items()):
                 repo, file = {"RPMS": arch, "SRPMS": source}.get(path.split("/")[0]), Path(path).name
                 if not repo or (repo == source and plan.has(repo, file)):
@@ -854,7 +863,7 @@ def remote_snapshot(
     """  # noqa: D205
     project = platforms[0]
     fresh_dir(project, dest)
-    plan = _Plan(project, dest, *_previous(project, storage))
+    plan = _Plan(project, dest, *_previous(project, storage, signer))
     built = []
     for platform in platforms:
         keys = _built(platform, fetch="needed")

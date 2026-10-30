@@ -6,6 +6,7 @@ import fcntl
 import getpass
 import hashlib
 import os
+import re
 import shutil
 import sys
 import tomllib
@@ -105,6 +106,15 @@ class Sign(BaseModel):
     """Fingerprint of the key, which gpg uses: it can be in an HSM, through gpg."""
     gnupghome: str = ""
     """The gpg keyring, gpg's default one when not given."""
+
+    @field_validator("key")
+    @classmethod
+    def fingerprint(cls, key: str) -> str:
+        """Check it is a fingerprint, and put it in uppercase, like the storage has the public keys."""
+        if not re.fullmatch(r"[0-9A-Fa-f]{40}", key):
+            msg = f"not the fingerprint of a key, of 40 hexadecimal digits: {key}"
+            raise ValueError(msg)
+        return key.upper()
 
 
 class Publish(BaseModel):
