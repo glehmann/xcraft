@@ -112,6 +112,8 @@ def test_build_ids_of_main_branch(root: Path) -> None:
     assert update() == {"trivial": 2, "with-deps": 2}
     git(root, "commit", "-qam", "master")
     git(root, "checkout", "-q", "feature")
+    # not until merged: the branch is numbered against its fork only
+    assert update() == {"trivial": 2, "with-deps": 2}
     assert git(root, "merge", "-q", "master").returncode != 0
     assert "<<<<<<<" in (root / ".buildid/trivial").read_text()
     assert update() == {"trivial": 3, "with-deps": 3}

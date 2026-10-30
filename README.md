@@ -210,10 +210,10 @@ Each package has a build ID, in `.buildid/<package>`, to commit: a number and th
 building, and after, with what the builds found.
 
 A package keeps the build ID of the main branch, `main_branch` of `xcraft.toml`, `master` by default, where the
-current branch forks from it, as long as its key is the same, or the one of the main branch's tip. Otherwise it gets
-the next number of both: a branch keeps the same number however many times it changes the package, and once another
-branch got that number on the main branch, merging it conflicts, and computing the file again gives the next one, even
-while the merge is in progress. The packages built against it get new numbers too. The reason of a new number is in
+current branch forks from it, as long as its key is the same. Otherwise it gets the next number: a branch keeps the
+same number however many times it changes the package, whatever the main branch got since, and once another branch got
+that number on the main branch, merging it conflicts, and computing the file again gives the next one, even while the
+merge is in progress. The packages built against it get new numbers too. The reason of a new number is in
 the same commit: a change of the package, of the lock, or of another build ID; or a reuse, see
 [Reusing builds](#reusing-builds). Out of a git repository, or without the
 main branch, there is nothing to number against: the numbers stay those of the working tree, 1 for new packages. A

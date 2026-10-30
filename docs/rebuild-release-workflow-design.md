@@ -82,14 +82,14 @@ and the other `.buildid` files: the reason of a new number is in the same commit
 The main branch is `main_branch` in `xcraft.toml`, `master` by default. Official builds are only made by CI on the
 main branch, so the first-parent history of its `.buildid` files is the record of the official numbers: no server, nor
 registry in the remote storage, is needed. A package keeps the build ID of the main branch, where the current branch
-forks from it, or of the main branch's tip, while its key is the same, the fork's first; otherwise it gets the next
-number of both. So:
+forks from it, while its key is the same; otherwise it gets the next number. So:
 
 - a branch proposes the same number however many times it changes the package;
 - reverting a change brings back the main branch's build ID, withdrawing the proposal;
+- a branch's numbers do not change when the main branch moves on, only when it is merged or rebased;
 - two unmerged branches can both propose 43: number and key on one line, both change it, so merging the second one
-  conflicts, and recomputing the file resolves it to 44, the main branch's tip counting even while the merge is in
-  progress.
+  conflicts, and recomputing the file resolves it to 44, the merge forking from the main branch's tip even while it
+  is in progress.
 
 Out of a git repository, or without the main branch, there is nothing to number against: the numbers stay those of the
 working tree, 1 for new packages.
