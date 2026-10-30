@@ -26,7 +26,7 @@ from rich.markup import escape
 from xcraft import build as builder
 from xcraft import remote, repodata
 from xcraft.cache import BuildError, build_keys, build_path, builds_repo, cached_build
-from xcraft.container import BUILDENV, DNF_LOCK, image_tag, run
+from xcraft.container import BUILDENV, DNF_LOCK, buildenv_hash, image_tag, run
 from xcraft.display import activity, console
 from xcraft.localrepo import OUTPUT_MARKER, LocalRepo, extra_rpms, fresh_dir, link
 from xcraft.lock import Locked, load_lock, save_lock
@@ -34,7 +34,6 @@ from xcraft.project import INTERNAL
 from xcraft.resolution import lock_installed, prepare, resolve, resolve_image
 from xcraft.signing import Signer, check_signatures, dev_signer, signing_key
 from xcraft.sources import sha256_of
-from xcraft.specs import hash_dir
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
@@ -79,7 +78,7 @@ def snapshot_key(project: Project, keys: dict[str, str], *, signer: Signer | Non
         project.config.publish.extra, project.config.iso.installer, project.config.extra_upstream,
         {n: repo.model_dump() for n, repo in project.repos.items()},
         {n: p.model_dump() for n, p in resolve_image(project).packages.items()},
-        signer.key if signer else None, build, hash_dir(BUILDENV),
+        signer.key if signer else None, build, buildenv_hash(),
         [inspect.getsource(f) for f in
          (assemble, _assemble_arch, _assemble_build, _add_upstream, _upstream_rpms, _upstream_srpms, _srpm_names,
           _signed_build, _runtime, _check_installable, LocalRepo, remote_snapshot, _Plan, _add_ours,
