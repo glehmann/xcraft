@@ -96,26 +96,30 @@ xcraft build xcp-ng-release                 # again: everything cached
 ## 6. A change rebuilds only what it impacts
 
 ```
-xcraft bump branding-xcp-ng -m "just a demo"
-xcraft build --dry-run                      # branding-xcp-ng and the packages built against it
-xcraft build xcp-ng-release                 # development builds: +b2~1.dev
+xcraft bump xcp-python-libs -m "just a demo"
+xcraft build --dry-run                      # xcp-python-libs and host-installer, built against it
+xcraft build host-installer                 # ~10s, development builds: +b2~1.dev
 git diff .buildid                           # their new build IDs: number 2, for their new keys
-xcraft status branding-xcp-ng xcp-ng-release xapi       # xapi not built yet
-git restore base/branding-xcp-ng .buildid xcraft.lock   # back to the builds of CI
+xcraft status xcp-python-libs host-installer
+git restore base/xcp-python-libs .buildid xcraft.lock   # back to the builds of CI
 ```
 
-A change of a branch gets development builds, `+b<n>~<counter>.dev`: they upgrade the previous ones, and the final
-build of the same number, made by CI once merged, upgrades them. Only CI makes final builds, on the main branch.
-Another branch giving the same number to another build conflicts on merge, in the file of the package.
+A build of modified code is a development build by default, `+b<n>~<counter>.dev`: it upgrades the previous ones,
+and the final build of the same number, made by CI once merged, upgrades it. `--final` makes final builds, like CI on
+the main branch. Another branch giving the same number to another build conflicts on merge, in the file of the
+package.
 
 ## 7. Shared builds through the remote storage
 
+What CI built is not built again anywhere: a fresh checkout, a developer or another CI job fetches it, after checking
+its signature.
+
 ```
 xcraft clean python-bitarray --builds       # like a fresh checkout
-xcraft build python-bitarray --dry-run      # fetch python-bitarray: built by CI
-xcraft build python-bitarray                # fetched, not built
+xcraft build python-bitarray --dry-run      # fetch python-bitarray: CI built it
+xcraft build python-bitarray                # fetched in a second, not built
 xcraft clean python-bitarray --builds
-xcraft --debug fetch builds python-bitarray     # what xcraft runs, downloads and checks
+xcraft --debug fetch builds python-bitarray     # its signed manifest checked with the key of CI, then its files
 ```
 
 `xcraft fetch` gets what the caches miss: the current builds, and the source archives, from the storage, or else
@@ -138,14 +142,13 @@ publicly over https, with a page for each directory:
 ## 8. Inspecting and debugging a build
 
 ```
-xcraft clean xcp-python-libs --builds
-xcraft build xcp-python-libs --fetch=none   # ~4s: its errors and warnings shown, under the package
+xcraft bump xcp-python-libs -m "debugging"
+xcraft build xcp-python-libs                # ~5s: its errors and warnings shown, under the package; -v: the whole log
 xcraft log xcp-python-libs --grep 'error:|warning:'     # the same, in its whole log
-xcraft clean libempserver --builds
-xcraft build libempserver --fetch=none -v   # the whole log, as it goes
-xcraft log python-bitarray --step build --grep test
-xcraft shell libempserver        # in its build tree, which is .xcraft/build/libempserver/ on the host
-rpmbuild -ba SPECS/libempserver.spec    # in the shell, as it shows: built like by xcraft, without the network
+xcraft log xcp-python-libs --step build     # only a step of rpmbuild
+xcraft shell xcp-python-libs     # in its build tree, which is .xcraft/build/xcp-python-libs/ on the host
+rpmbuild -ba SPECS/xcp-python-libs.spec     # in the shell, as it shows: built like by xcraft, without the network
+git restore base/xcp-python-libs .buildid xcraft.lock
 ```
 
 The builds run without the network, like koji and mock: only the loopback interface, for the test suites. A build only
