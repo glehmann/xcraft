@@ -221,8 +221,19 @@ def reuse(project: Project, names: list[str], sources: list[str]) -> list[str]:
     forked = _at(project, fork)
     forked_lock = parse_lock(_git(project, "show", f"{fork}:./{lock_path(project).name}") or "")
     lock, updated = load_lock(project), set(sources)
-    platforms = buildkey.platforms(project)
-    deps = buildkey.dependencies(platforms)
+    # the inputs of the keys with the lock of the fork, the rest as it is now
+    forked_inputs = buildkey.Inputs(project)
+    forked_inputs.lock = forked_lock
+    component_of = {name: component for component in components(forked_inputs.deps) for name in component}
+
+    def built_alike(name: str) -> bool:
+        """Return whether `name` has the key of the fork with its lock: only the lock changed since, not the recipe,
+        nor the build IDs of the packages it is built against.
+        """  # noqa: D205
+        component = component_of[name]
+        if name not in forked or any(d not in forked for n in component for d in forked_inputs.deps[n] - component):
+            return False
+        return buildkey.key(forked_inputs.of(component, forked), name) == forked[name].key
 
     def changed(path: Path) -> bool:
         """Return whether the files of `path` changed since the fork, untracked ones included."""
@@ -238,11 +249,12 @@ def reuse(project: Project, names: list[str], sources: list[str]) -> list[str]:
             return True
         return (
             bool(updated)
-            and not changed(project.root / "xcraft.toml")
+            and built_alike(name)
+            # the packages it is built against reuse their builds too
             and all((ids[d].number, ids[d].key) == (forked[d].number, forked[d].key)
-                    for d in deps[name] if d in ids and d in forked)
-            and buildkey.lock_inputs(platforms, lock, name, updated)
-            == buildkey.lock_inputs(platforms, forked_lock, name, updated)
+                    for d in forked_inputs.deps[name] if d in ids and d in forked)
+            and buildkey.lock_inputs(forked_inputs.platforms, lock, name, updated)
+            == buildkey.lock_inputs(forked_inputs.platforms, forked_lock, name, updated)
         )  # fmt: skip
 
     return update(project, reusable)
