@@ -28,7 +28,7 @@ from tests.test_iso import cache_image
 from xcraft import buildid, ccache, remote, repodata
 from xcraft import publish as publisher
 from xcraft.container import run
-from xcraft.iso import build_iso, iso_key, iso_name, iso_path, push_isos
+from xcraft.iso import build_iso, fetch_isos, iso_key, iso_name, iso_path, push_isos
 from xcraft.lock import load_lock
 from xcraft.project import Project
 from xcraft.resolution import resolve_image
@@ -1045,6 +1045,11 @@ def test_publish_reuses_remote_snapshot(root: Path, caplog: pytest.LogCaptureFix
     assert not publisher.reuse_published([project], storage, signer=signer, build=False, only="repos", isos=[])
     remote.write_manifest(storage, f"{prefix}/latest", manifest, signer=signer)
     assert publisher.reuse_published([project], storage, signer=signer, build=False, only="repos", isos=[])
+    # nor with a package missing in the latest snapshot: assembled again, as the name of the copy, deleted
+    remote.delete(storage, [f"{prefix}/latest/{next(f for f in manifest if f.endswith('.rpm'))}"])
+    name = publisher.snapshot_name(project, storage)
+    assert not publisher.reuse_published([project], storage, signer=signer, build=False, only="repos", isos=[])
+    assert not remote.listing(storage, f"{prefix}/{name}/")
     # nor with what it was made from changed
     remote.upload(storage, f"{publisher.inputs_tree(f'{prefix}/latest')}/{publisher.INPUTS}", root / "xcraft.toml")
     assert not publisher.reuse_published([project], storage, signer=signer, build=False, only="repos", isos=[])
@@ -1056,6 +1061,39 @@ def test_invalid_publish_stage(root: Path, command: list[str], stage: str) -> No
     code, output = xcraft("publish", *command, "--local", "--stage", stage)
     assert code == 2
     assert "stage must start" in " ".join(output.split())
+
+
+def test_isos_fetched_for_publishing(root: Path, tmp_path: Path) -> None:
+    # ISOs of their own, not to find those of the other tests in the storage
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
+    project = Project.find()
+    signer = release_signer(project)
+    assert signer
+    image = tmp_path / "test.iso"
+    image.write_bytes(secrets.token_bytes(2048))
+    trees = [cache_image(project, image, signer=signer, netinstall=netinstall) for netinstall in (False, True)]
+    assert xcraft("push", "isos")[0] == 0
+    for tree in trees:
+        shutil.rmtree(tree)
+    assert fetch_isos(project, signer=signer)
+    assert all(tree.exists() for tree in trees)
+    # one corrupted: not there, for the publish to get the packages it is made from
+    shutil.rmtree(trees[1])
+    key = iso_key(project, netinstall=True, volid=None, signer=signer)
+    remote.upload(project.config.remote["dev"], f"{iso_path(project, key)}/image.iso", root / "xcraft.toml")
+    assert not fetch_isos(project, signer=signer)
+    # the inputs of the netinstall ISOs too, without the others
+    snapshot = tmp_path / "snapshot"
+    netinstall = snapshot / "iso" / iso_name(project, "8.99.0", netinstall=True, signer=signer)
+    netinstall.parent.mkdir(parents=True)
+    shutil.copy2(image, netinstall)
+    storage = project.config.remote["main"]
+    project.config.publish.stage = f"netinstall-{secrets.token_hex(4)}"
+    publisher.upload_isos(project, snapshot, storage, "netinstall", signer=signer)
+    inputs = publisher.inputs_tree(f"isos/9.0/{project.config.publish.stage}/latest")
+    assert remote.download_tree(storage, inputs, tmp_path / "inputs")
+    assert publisher.SnapshotInputs.model_validate_json((tmp_path / "inputs" / publisher.INPUTS).read_bytes()).keys
 
 
 def test_iso_stages(root: Path, tmp_path: Path) -> None:

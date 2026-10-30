@@ -27,9 +27,9 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Project:
     return Project.find()
 
 
-def cache_image(project: Project, image: Path, *, signer: Signer | None = None) -> Path:
+def cache_image(project: Project, image: Path, *, signer: Signer | None = None, netinstall: bool = False) -> Path:
     """Seed a cached image to exercise lookups and transfers independently of distribution assembly."""
-    tree = cached_iso(project, iso_key(project, netinstall=False, volid=None, signer=signer))
+    tree = cached_iso(project, iso_key(project, netinstall=netinstall, volid=None, signer=signer))
     tree.mkdir(parents=True)
     shutil.copy2(image, tree / "image.iso")
     (tree / "image.json").write_text(Image(version="8.99.0", sha256=sha256_of(image)).model_dump_json())

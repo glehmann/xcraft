@@ -12,7 +12,7 @@ from xcraft import publish as publisher
 from xcraft.build import update_build_ids
 from xcraft.commands import Key, To, choose_signer, complete_arch, load, remote_storage
 from xcraft.display import console
-from xcraft.iso import isos_available, make_isos, push_isos
+from xcraft.iso import fetch_isos, make_isos, push_isos
 from xcraft.project import Destination, Project, Publish
 from xcraft.publish import ISO_DIR, REPO, snapshot
 
@@ -213,7 +213,7 @@ def _publish(  # noqa: C901, PLR0912
             built, stored = snapshot(platforms, dest, signer=signer, storage=storage, build=build), {}
         for platform in with_isos:
             console.print(f"getting the ISOs for {platform.arch}")
-            if storage and stored and not isos_available(platform, signer=signer):  # made from its packages
+            if storage and stored and not fetch_isos(platform, signer=signer):  # made from its packages
                 publisher.materialize(storage, dest, stored, f"{REPO}/{platform.arch}")
             for iso in make_isos(platform, dest / REPO / platform.arch, dest / ISO_DIR, signer=signer):
                 console.print(f"[bold green]✓[/] {iso}")

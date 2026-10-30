@@ -127,13 +127,16 @@ def iso_name(project: Project, version: str, *, netinstall: bool, signer: Signer
     return f"xcp-ng-{version}-{iso_id(project, signer=signer)}-{project.arch}{'-netinstall' if netinstall else ''}.iso"
 
 
-def isos_available(project: Project, *, signer: Signer | None) -> bool:
-    """Return whether the full and netinstall ISOs of the checkout are cached, or in the remote storage."""
+def fetch_isos(project: Project, *, signer: Signer | None) -> bool:
+    """Put the full and netinstall ISOs of the checkout in the cache, fetched from the remote storage when missing,
+    and return whether they are all there.
+    """
     try:
-        return all(
-            cached_iso(project, key).exists() or remote.tree_available(project, iso_path(project, key))
-            for key in iso_inputs(project, signer=signer).values()
-        )
+        with activity("looking for the ISOs in the remote storage"):
+            return all(
+                (tree := cached_iso(project, key)).exists() or remote.fetch_tree(project, iso_path(project, key), tree)
+                for key in iso_inputs(project, signer=signer).values()
+            )
     except remote.RemoteError:
         return False
 
@@ -298,7 +301,8 @@ def make_iso(
                 Image(version=version, sha256=sha256_of(staged / "image.iso")).model_dump_json()
             )
             tree.parent.mkdir(parents=True, exist_ok=True)
-            staged.rename(tree)
+            if not tree.exists():  # of the same inputs, kept from before the lock went back to them
+                staged.rename(tree)
         return _output(project, tree, output, netinstall=netinstall, signer=signer)
 
 
