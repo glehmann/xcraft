@@ -85,6 +85,15 @@ def built(*args: str) -> list[str]:
     return [line.rsplit("/", 1)[-1] for line in output.splitlines() if line.endswith(".rpm")]
 
 
+def test_build_id_files() -> None:
+    key = "ab" * 32
+    assert buildid.BuildId.parse(f"1 {key} accepts {key}\n").text() == f"1 {key} accepts {key}\n"
+    # keys of 64 hexadecimal digits only, which the release suffixes follow in the caches
+    for text in ("1 abc", f"1 {key}0", f"1 {key} accepts {key[1:]}"):
+        with pytest.raises(ValueError, match=r"key|accepts"):
+            buildid.BuildId.parse(text)
+
+
 def test_build_ids(root: Path) -> None:
     code, output = xcraft("build")
     assert code == 0, output

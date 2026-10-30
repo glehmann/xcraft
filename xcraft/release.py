@@ -67,6 +67,7 @@ def add_changelog_entry(spec: str, *, evr: str, author: str, message: str, day: 
     if "%autochangelog" in spec:
         msg = "the spec uses %autochangelog"
         raise ValueError(msg)
+    spec = spec if spec.endswith("\n") else f"{spec}\n"  # for a %changelog at its end
     entry = f"* {day:%a %b %d %Y} {author} - {evr}\n-{f' {message}' if message else ''}\n"
     if not (m := _CHANGELOG_RE.search(spec)):
         return f"{spec.rstrip()}\n\n%changelog\n{entry}"

@@ -47,6 +47,10 @@ def test_add_changelog_entry() -> None:
     assert "- 1.0-2\n-\n\n* Mon Jan 05" in empty
     with pytest.raises(ValueError, match="autochangelog"):
         add_changelog_entry("%changelog\n%autochangelog\n", **entry)
+    # at the end, without a newline
+    assert add_changelog_entry("Name: foo\n%changelog", **entry) == (
+        "Name: foo\n%changelog\n* Mon Oct 19 2026 Me <me@example.com> - 1.0-2\n- Fix it\n\n"
+    )
 
 
 @pytest.mark.parametrize(

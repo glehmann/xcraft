@@ -68,7 +68,7 @@ def test_iso_inputs(project: Project) -> None:
     finally:
         bytecode.unlink()
     # the build IDs: the numbers of the builds, and the reuses of builds
-    for text in ("2 0123", "2 0123 accepts 4567"):
+    for text in (f"2 {'01' * 32}", f"2 {'01' * 32} accepts {'45' * 32}"):
         before = key()
         (project.root / ".buildid").mkdir(exist_ok=True)
         (project.root / ".buildid/trivial").write_text(f"{text}\n")
