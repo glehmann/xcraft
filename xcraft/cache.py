@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
     from pathlib import Path
 
+    from xcraft.buildid import BuildId
     from xcraft.project import Project
 
 RECIPE = hashlib.sha256(
@@ -69,19 +70,23 @@ def inputs(project: Project) -> dict[str, str]:
 
 
 def build_keys(
-    project: Project, autorev: dict[str, str] | None = None, hashes: dict[str, str] | None = None
+    project: Project,
+    autorev: dict[str, str] | None = None,
+    hashes: dict[str, str] | None = None,
+    ids: dict[str, BuildId] | None = None,
 ) -> dict[str, str]:
     """Return the cache key of each package: its build key, the same on all the architectures, then its release
     suffix, %autorev: the number of its build ID, ``+b<n>``, and its development build suffix of `autorev`, if any.
 
     See xcraft.buildid. A development build, or one built against development builds, has the hash of its build key
     and of the cache keys of the builds of ours it is built against rather than its build key, but a reused build. The
-    `hashes` of the package directories are those of inputs(), computed now by default. The lock must be prepared: see
-    resolution.prepare().
+    `hashes` of the package directories are those of inputs(), computed now by default, and the build `ids` are those
+    computed then, unless given. The lock must be prepared: see resolution.prepare().
     """  # noqa: D205
     from xcraft.buildid import base, compute  # noqa: PLC0415, which imports this module
 
-    ids, deps, autorev = compute(project, base(project), hashes), project.deps, autorev or {}
+    ids = ids if ids is not None else compute(project, base(project), hashes)
+    deps, autorev = project.deps, autorev or {}
     keys: dict[str, str] = {}
     for component in components(deps):  # the dependencies first
         outside = sorted({dep for name in component for dep in deps[name]} - component)
