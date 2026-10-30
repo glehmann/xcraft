@@ -206,6 +206,21 @@ def test_development_builds_changed_by_others(root: Path) -> None:
     assert built() == []
 
 
+def test_dynamic_buildrequires_changing_the_build_number(root: Path) -> None:
+    # a dynamic BuildRequires the build environment has already, which the lock of the main branch misses: its build
+    # records it, which changes its key, and its number
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(spec.read_text().replace("%prep", "%generate_buildrequires\necho coreutils\n\n%prep"))
+    commit_base(root)
+    code, output = xcraft("build", "trivial")
+    assert code == 0, output
+    # cached under the release suffix of its RPMs, after its key
+    rpms = list(root.glob(".xcraft/cache/builds/*/trivial/*/RPMS/*/*.rpm"))
+    assert rpms
+    for rpm in rpms:
+        assert rpm.parents[2].name[64:] in rpm.name
+
+
 def test_numbers_given_again_on_main_branch(root: Path) -> None:
     commit_base(root)
     edit(root, "changed")

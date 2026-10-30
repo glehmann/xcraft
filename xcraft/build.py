@@ -115,7 +115,7 @@ def queued(project: Project) -> list[str]:
     return names if _alive(pid) else []
 
 
-def _build_one(  # noqa: PLR0913
+def _build_one(  # noqa: C901, PLR0913
     project: Project,
     name: str,
     keys: dict[str, str],
@@ -133,7 +133,7 @@ def _build_one(  # noqa: PLR0913
     resolved for it, or when it did not make the packages parsed from its
     spec (see xcraft.checks). Raise
     BuildRootChangedError when it found what changes its build root, to build
-    it again, after the packages it needs. The `keys` are those of the
+    it again, after the packages it needs, or its build number. The `keys` are those of the
     `hashes` of the package directories at the start of the builds, computed
     again with them when the build changes the lock.
     """
@@ -176,6 +176,9 @@ def _build_one(  # noqa: PLR0913
     ccache.note_build(project, name, start)
     if check_build(project, name, tree, suffix=suffix):
         keys = build_keys(project, autorev, hashes)  # covering what the build recorded
+        if release_suffix(keys[name]) != suffix:
+            msg = "its dynamic BuildRequires, now in the lock, change its build number: built again with the new one"
+            raise BuildRootChangedError(msg)
     if hash_dir(project.package_dirs[name]) != staged:
         msg = f"{project.package_dirs[name].relative_to(project.root)} changed during the build, build it again"
         raise BuildError(msg)
