@@ -634,3 +634,11 @@ def test_lock_records_image_and_roots(root: Path) -> None:
     assert "-roots.trivial lzo" in output
     assert xcraft("build", "--dry-run")[0] == 0
     assert "lzo" not in load_lock(Project.find()).roots.shared.get("trivial", [])
+    # nor kept for packages removed from the project
+    lock = load_lock(Project.find())
+    gone = Recorded(shared={"gone": ["bash"]}, arches={"aarch64": {"gone": ["zsh"]}})
+    lock.requires, lock.provides, lock.buildrequires = gone, gone, gone
+    save_lock(Project.find(), lock)
+    assert xcraft("build", "--dry-run")[0] == 0
+    lock = load_lock(Project.find())
+    assert lock.requires == lock.provides == lock.buildrequires == Recorded()
