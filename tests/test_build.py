@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -522,6 +523,17 @@ def test_recorded_of_binaries_named_with_their_releases(root: Path) -> None:
     )  # fmt: skip
     code, output = xcraft("build", "trivial")
     assert code == 0, output
+    assert load_lock(Project.find()).requires.shared == {"trivial-lp_1.0_1.xcpng8.99": ["tcl"]}
+    # and recorded again, from a recording of before, of a version without them
+    for recording in root.glob(".xcraft/cache/builds/*/trivial/*/rpm-deps.json"):
+        old = json.loads(recording.read_text())
+        recording.write_text(json.dumps({"context": old["context"], "requires": {}, "provides": {}}))
+    lock = load_lock(Project.find())
+    lock.requires.shared = {}
+    save_lock(Project.find(), lock)
+    code, output = xcraft("build", "trivial")
+    assert code == 0, output
+    assert output.endswith("\n1 cached\n")
     assert load_lock(Project.find()).requires.shared == {"trivial-lp_1.0_1.xcpng8.99": ["tcl"]}
 
 

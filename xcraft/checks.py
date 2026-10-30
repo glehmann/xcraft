@@ -116,6 +116,11 @@ def _rpms(build: Path) -> list[Path]:
     return [p for p in (build / "RPMS").rglob("*.rpm") if not is_debug(p.name.rsplit("-", 2)[0])]
 
 
+RECORDING = 2
+"""The version of how xcraft records what rpm generated for a build, in its rpm-deps.json: changed with it, so that
+the builds recorded before are recorded again. 2: the binary packages named with their releases, recorded."""
+
+
 def _record_new_rpm_deps(
     project: Project, builds: dict[str, Path], keys: dict[str, str], context: str, *, quiet: bool
 ) -> None:
@@ -147,6 +152,7 @@ def _record_new_rpm_deps(
                 )
             continue
         recorded = {
+            "version": RECORDING,
             "context": context,
             "requires": {names[name][b]: result.requires[b] for b in binaries[name] if b in result.requires},
             "provides": {names[name][b]: result.provides[b] for b in binaries[name] if b in result.provides},
@@ -168,8 +174,8 @@ def record_rpm_deps(project: Project, names: list[str], keys: dict[str, str], *,
     """Record in the lock what rpm generated for the binary packages of the cached builds of `names`, with `keys`,
     without their release suffixes, and return whether the lock changed.
 
-    What a build generated is kept with it, for the same locked versions and requirements of our specs. What cannot
-    be recorded yet is shown, unless `quiet`.
+    What a build generated is kept with it, for the same locked versions and requirements of our specs, and version
+    of the recording, RECORDING. What cannot be recorded yet is shown, unless `quiet`.
     """  # noqa: D205
     if not (builds := {n: build for n in names if (build := cached_build(project, n, keys[n])).exists()}):
         return False
@@ -181,7 +187,7 @@ def record_rpm_deps(project: Project, names: list[str], keys: dict[str, str], *,
 
     def found(build: Path) -> dict | None:
         recorded = json.loads(path.read_text()) if (path := build / "rpm-deps.json").exists() else {}
-        return recorded if recorded.get("context") == context else None
+        return recorded if (recorded.get("version"), recorded.get("context")) == (RECORDING, context) else None
 
     if new := {name: build for name, build in builds.items() if not found(build)}:
         _record_new_rpm_deps(project, new, keys, context, quiet=quiet)
