@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import subprocess
 import sys
@@ -543,10 +544,11 @@ def test_doctor(root: Path) -> None:
     assert code == 0, output
     assert output.startswith("✓ podman ")
     assert "✓ git: " in output
-    # with the commands it runs
+    # with the commands it runs, on whole lines however narrow the output
     for args in (["--debug", "doctor"], ["doctor", "--debug"]):
         cmd = [sys.executable, "-m", "xcraft", *args]
-        assert "running podman info --format" in subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+        output = subprocess.run(cmd, capture_output=True, text=True, check=True, env={**os.environ, "COLUMNS": "40"})
+        assert "running podman info --format '{{.Version.Version}} {{.Host.Security.Rootless}}'\n" in output.stdout
 
 
 def test_graph(root: Path) -> None:
