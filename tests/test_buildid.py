@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests import copy_project
+from tests import TOML, copy_project
 from tests.test_build import xcraft
 from xcraft import build as builder
 from xcraft import buildid, buildkey
@@ -92,6 +92,21 @@ def test_build_id_files() -> None:
     for text in ("1 abc", f"1 {key}0", f"1 {key} accepts {key[1:]}"):
         with pytest.raises(ValueError, match=r"key|accepts"):
             buildid.BuildId.parse(text)
+    with pytest.raises(ValueError, match="number"):
+        buildid.BuildId.parse(f"0 {key}")  # the release suffix +b0, before the first build
+
+
+def test_build_id_files_not_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "xcraft.toml").write_text(TOML)
+    monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path))
+    (tmp_path / ".buildid").mkdir()
+    # a merge conflict, which the build IDs given again resolve
+    (tmp_path / ".buildid/trivial").write_text(f"<<<<<<< ours\n1 {'ab' * 32}\n=======\n2 {'cd' * 32}\n>>>>>>> theirs\n")
+    assert buildid.read(Project.find()) == {}
+    # not anything else, which would be numbered again
+    (tmp_path / ".buildid/trivial").write_text("1 truncated")
+    with pytest.raises(buildid.BuildIdError, match=r"\.buildid/trivial is not a build ID: 1 truncated"):
+        buildid.read(Project.find())
 
 
 def test_build_ids(root: Path) -> None:

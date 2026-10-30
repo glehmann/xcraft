@@ -106,7 +106,10 @@ def lock_inputs(on: list[Project], lock: Lock, name: str, ignored: set[str] | No
     """
 
     def versions(sources: list[str]) -> dict[str, str | None]:
-        return {source: None if source in (ignored or set()) else lock.sources.get(source) for source in sources}
+        if missing := [s for s in sources if s not in lock.sources]:  # rather than keys of unknown versions
+            msg = f"the lock has no version of {', '.join(missing)}: see xcraft lock"
+            raise RuntimeError(msg)
+        return {source: None if source in (ignored or set()) else lock.sources[source] for source in sources}
 
     def generated(platform: Project) -> dict[str, list[list[str]]]:
         deps, arch = platform.deps, platform.arch
@@ -157,10 +160,10 @@ def key(inputs: dict[str, list], name: str) -> str:
     return _sha256(f"{json.dumps(inputs, sort_keys=True)}\0{name}")
 
 
-def development_key(component: dict[str, str], outside: list[str], name: str) -> str:
+def development_key(component: dict[str, str], outside: dict[str, str], name: str) -> str:
     """Return the hash of the cache key of a development build of `name`, or of one built against development builds,
     with the build keys of the packages of its `component`, by name, and the cache keys of the packages it is built
-    against, out of it, `outside`, in the order of their names: see The cache key.
+    against, out of it, `outside`, by name: see The cache key.
     """
-    together = _sha256(json.dumps([[component[n] for n in sorted(component)], outside]))
+    together = _sha256(json.dumps([[component[n] for n in sorted(component)], [outside[n] for n in sorted(outside)]]))
     return _sha256(f"{together}\0{name}")
