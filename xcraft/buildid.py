@@ -17,6 +17,7 @@ from xcraft import buildkey, process
 from xcraft.display import console
 from xcraft.graph import components
 from xcraft.lock import load_lock, lock_path, parse_lock
+from xcraft.project import write_atomically
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -35,7 +36,7 @@ class BuildIdError(RuntimeError):
 class BuildId(BaseModel):
     """The build ID of a package."""
 
-    number: int
+    number: int = Field(ge=1)
     key: str = Field(pattern=r"^[0-9a-f]{64}$")
     """The build key, the same on all the architectures."""
     accepts: str | None = Field(None, pattern=r"^[0-9a-f]{64}$")
@@ -108,14 +109,20 @@ def compute(
 
 
 def read(project: Project) -> dict[str, BuildId]:
-    """Return the build IDs of the working tree, but those that cannot be read, like those of a merge conflict."""
-    ids = {}
-    for path in sorted((project.root / DIR).glob("*")):
-        try:
-            ids[path.name] = BuildId.parse(path.read_text())
-        except ValueError:
-            continue
-    return ids
+    """Return the build IDs of the working tree, but those of a merge conflict, which update() gives again."""
+    return {
+        path.name: _parse(text, path.relative_to(project.root).as_posix())
+        for path in sorted((project.root / DIR).glob("*"))
+        if "<<<<<<<" not in (text := path.read_text())
+    }
+
+
+def _parse(text: str, where: str) -> BuildId:
+    try:
+        return BuildId.parse(text)
+    except ValueError as e:
+        msg = f"{where} is not a build ID: {text.strip()}"
+        raise BuildIdError(msg) from e
 
 
 def _git(project: Project, *args: str) -> str | None:
@@ -130,7 +137,7 @@ def _at(project: Project, commit: str) -> dict[str, BuildId]:
     """Return the build IDs of `commit`, a commit id, read once."""
     if (str(project.root), commit) not in _commits:
         _commits[str(project.root), commit] = {
-            path.rsplit("/", 1)[-1]: BuildId.parse(_git(project, "show", f"{commit}:./{path}") or "")
+            path.rsplit("/", 1)[-1]: _parse(_git(project, "show", f"{commit}:./{path}") or "", f"{commit}:{path}")
             for path in (_git(project, "ls-tree", "--name-only", commit, f"{DIR}/") or "").splitlines()
         }
     return _commits[str(project.root), commit]
@@ -208,7 +215,7 @@ def update(project: Project, reuse: Callable[[str, dict[str, BuildId]], bool] | 
     directory.mkdir(exist_ok=True)
     for name in changed:
         if name in ids:
-            (directory / name).write_text(ids[name].text())
+            write_atomically(directory / name, ids[name].text())
         else:
             (directory / name).unlink()
     return changed

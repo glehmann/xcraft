@@ -53,7 +53,7 @@ def build_keys(
             continue
         builds = {n: ids[n].key for n in component}
         for name in component:
-            key = buildkey.development_key(builds, [keys[d] for d in outside], name)
+            key = buildkey.development_key(builds, {d: keys[d] for d in outside}, name)
             keys[name] = f"{key}+b{ids[name].number}{autorev.get(name, '')}"
         # but a reused build, the main branch's, built against its builds
         keys |= {name: f"{ids[name].key}+b{ids[name].number}" for name in component if ids[name].accepts}

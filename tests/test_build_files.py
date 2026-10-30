@@ -309,9 +309,17 @@ def test_recipe(monkeypatch: pytest.MonkeyPatch) -> None:
         f"the recipe changed, to {buildkey.RECIPE}: map it to {current} in _SAME_BUILDS if it makes the same packages, "
         "or else set it here, which rebuilds everything"
     )
+    # hashes of earlier recipes, each mapped to the earliest one, not to another mapped one
+    assert all(re.fullmatch(r"[0-9a-f]{64}", h) for item in buildkey._SAME_BUILDS.items() for h in item)
+    assert not buildkey._SAME_BUILDS.keys() & set(buildkey._SAME_BUILDS.values())
     monkeypatch.setattr(buildkey, "RECIPE", "c")
     monkeypatch.setattr(buildkey, "_SAME_BUILDS", {"c": "a", "b": "a"})
     assert recipe_key() == "a"
+
+
+def test_keys_of_upstream_packages_without_versions(project: Project) -> None:
+    with pytest.raises(RuntimeError, match="the lock has no version of glibc"):
+        buildkey.lock_inputs([project], Lock(image={project.arch: ["glibc"]}), "foo")
 
 
 def test_check_made(project: Project, tmp_path: Path) -> None:
