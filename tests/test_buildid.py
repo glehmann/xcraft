@@ -347,7 +347,7 @@ def test_reused_builds(root: Path) -> None:
     assert output.splitlines()[-1] == "trivial: changed itself, built again"
 
 
-def test_reused_builds_of_upstream_updates(root: Path) -> None:
+def test_reused_builds_of_upstream_updates(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # a script run by toyrun, upstream, which rpm generates a requirement on: with-deps is built against toyrun
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(
@@ -372,6 +372,13 @@ def test_reused_builds_of_upstream_updates(root: Path) -> None:
     code, output = xcraft("reuse", "--dep", "glibc")
     assert code == 0, output
     assert update() == {"trivial": 1, "with-deps": 2}
+    # not with other scripts of the builds, like those of a newer xcraft, which the keys cover too
+    with monkeypatch.context() as patch:
+        patch.setattr(buildkey, "RECIPE", "the recipe of another xcraft")
+        code, output = xcraft("reuse", "--dep", "toyrun")
+        assert code == 0, output
+        assert "reuses" not in output
+    update()
     code, output = xcraft("reuse", "--dep", "toyrun")
     assert code == 0, output
     assert output.splitlines()[-1] == "with-deps: reuses its build 1"
