@@ -217,18 +217,7 @@ def _writing(storage: Remote, action: str) -> Generator[S3Client]:
 
 def upload(storage: Remote, path: str, file: Path) -> None:
     """Upload `file` as `path`, with the S3 credentials of the environment."""
-    log.debug("uploading %s to %s", file, _s3_url(storage, path))
-    _forget(storage, [path])
-    with _writing(storage, f"upload {path}") as s3:
-        s3.upload_file(str(file), storage.bucket, path)
-
-
-def copy(storage: Remote, src: str, dest: str) -> None:
-    """Copy `src` to `dest` in the storage, without transferring it."""
-    log.debug("copying %s to %s", _s3_url(storage, src), _s3_url(storage, dest))
-    _forget(storage, [dest])
-    with _writing(storage, f"copy {src} to {dest}") as s3:
-        s3.copy_object(Bucket=storage.bucket, Key=dest, CopySource={"Bucket": storage.bucket, "Key": src})
+    transfer(storage, {path: file})
 
 
 def transfer(
@@ -530,8 +519,7 @@ def upload_tree(storage: Remote, prefix: str, src: Path, names: list[str], *, si
         raise RemoteError(msg)
     files = sorted(f for name in names for f in [src / name, *(src / name).rglob("*")] if f.is_file())
     manifest = {f.relative_to(src).as_posix(): sha256_of(f) for f in files}
-    for name in manifest:
-        upload(storage, f"{prefix}/{name}", src / name)
+    transfer(storage, {f"{prefix}/{name}": src / name for name in manifest})
     write_manifest(storage, prefix, manifest, signer=signer)
     return manifest
 

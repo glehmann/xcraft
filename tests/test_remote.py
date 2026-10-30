@@ -307,8 +307,7 @@ def test_signed_trees(root: Path, tmp_path: Path) -> None:
     remote.upload(storage, f"{remote.KEYS}/{'0' * 40}.asc", key)
     assert not remote.tree_exists(storage.model_copy(update={"build_keys": ["0" * 40]}), prefix)
     # A signed manifest cannot be transplanted to another build key.
-    for file in ("file", remote.MANIFEST):
-        remote.copy(storage, f"{prefix}/{file}", f"{prefix}-other/{file}")
+    remote.transfer(storage, {f"{prefix}-other/{f}": f"{prefix}/{f}" for f in ("file", remote.MANIFEST)})
     assert not remote.download_tree(storage, f"{prefix}-other", tmp_path / "wrong-path")
     # Changed bytes fail even when the manifest is authentic.
     (src / "file").write_text("tampered")
