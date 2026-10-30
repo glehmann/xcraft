@@ -75,8 +75,8 @@ def _push_sources(project: Project, storage: Remote, packages: list[str] | None,
         if missing:
             raise typer.Exit(1)
         return []
-    absent = [filename for filename, digest in missing if not cached_source(project, filename, digest)]
-    missing = [(filename, digest) for filename, digest in missing if filename not in absent]
+    absent = [archive for archive in missing if not cached_source(project, *archive)]
+    missing = [archive for archive in missing if archive not in absent]
     for filename, digest in missing:
         with activity(f"uploading {filename}"):
             remote.upload(storage, source_path(filename, digest), project.source_cache / digest / filename)
@@ -85,7 +85,7 @@ def _push_sources(project: Project, storage: Remote, packages: list[str] | None,
         with activity("making the pages of the directories"):
             remote.update_pages(project, storage, [f"{source_path(f, d).rsplit('/', 1)[0]}/" for f, d in missing])
     console.print(f"{len(missing)} pushed, {len(archives) - len(missing) - len(absent)} already in the remote storage")
-    return absent
+    return [filename for filename, _ in absent]
 
 
 @app.command()
