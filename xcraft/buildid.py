@@ -234,11 +234,12 @@ def _fork(project: Project) -> str | None:
     return (main := _main(project)) and _git(project, "merge-base", main, "HEAD", *filter(None, [merging]))
 
 
-def proposed(project: Project, ids: dict[str, BuildId]) -> set[str]:
-    """Return the packages whose build ID of `ids` is not the main branch's: those of development builds, none
-    without the main branch. A reused build is the main branch's.
+def proposed(fork: dict[str, BuildId] | None, ids: dict[str, BuildId]) -> set[str]:
+    """Return the packages whose build ID of `ids` is not the one of the main branch where the current one forks from
+    it, `fork`, see base(): those of development builds, none without the main branch. A reused build is the main
+    branch's.
     """  # noqa: D205
-    if (fork := base(project)) is None:
+    if fork is None:
         return set()
     return {name for name, i in ids.items() if not ((j := fork.get(name)) and (j.number, j.key) == (i.number, i.key))}
 
