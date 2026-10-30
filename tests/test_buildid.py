@@ -13,6 +13,7 @@ import pytest
 
 from tests import copy_project
 from tests.test_build import xcraft
+from xcraft import build as builder
 from xcraft import buildid, buildkey
 from xcraft.iso import build_iso
 from xcraft.lock import load_lock, save_lock
@@ -273,6 +274,30 @@ def test_development_builds_changed_by_others(root: Path) -> None:
     # without what the builds recorded: the cached builds record it again, before the keys of those built against them
     git(root, "checkout", "--", "xcraft.lock")
     assert xcraft("build", "--dry-run") == (0, "0 to build, 2 cached\n")
+    assert built() == []
+
+
+def test_development_builds_with_dependencies_edited_meanwhile(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    commit_base(root)
+    git(root, "checkout", "-qb", "feature")
+    edit(root, "changed")
+    spec = root / "base/trivial/trivial.spec"
+    before = spec.read_text()
+    build_shown = builder._build_shown  # noqa: SLF001
+
+    def edited(project: Project, name: str, *args: object, **kwargs: object) -> builder.Result:
+        if name == "with-deps":  # a dependency of the build edited during the build
+            spec.write_text(f"{before}# edited meanwhile\n")
+        return build_shown(project, name, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+
+    monkeypatch.setattr(builder, "_build_shown", edited)
+    assert built() == [
+        "trivial-1.0-1+b2~1.dev.xcpng8.99.noarch.rpm",
+        "with-deps-1.0-1+b2~1.dev.xcpng8.99.noarch.rpm",
+    ]
+    monkeypatch.setattr(builder, "_build_shown", build_shown)
+    # the counters of the inputs the builds had
+    spec.write_text(before)
     assert built() == []
 
 

@@ -25,26 +25,29 @@ def _counters(project: Project) -> dict[str, tuple[int, str, str]]:
     return _COUNTERS.validate_json(path.read_bytes()) if path.exists() else {}
 
 
-def _current(project: Project) -> tuple[dict[str, BuildId], dict[str, str], set[str]]:
+def _current(
+    project: Project, hashes: dict[str, str] | None = None
+) -> tuple[dict[str, BuildId], dict[str, str], set[str]]:
     """Return the build IDs, the cache keys of the final builds, and the packages with development builds, computed
-    once.
+    once, with the `hashes` of the package directories, those of now by default.
     """  # noqa: D205
     fork = base(project)
-    ids = compute(project, fork)
-    return ids, build_keys(project, ids=ids), proposed(fork, ids)
+    ids = compute(project, fork, hashes)
+    return ids, build_keys(project, hashes=hashes, ids=ids), proposed(fork, ids)
 
 
-def dev_suffixes(project: Project, ident: str | None) -> dict[str, str]:
+def dev_suffixes(project: Project, ident: str | None, hashes: dict[str, str] | None = None) -> dict[str, str]:
     """Return the release suffixes of the development builds, ``~<n>.<ident>``: those of the packages whose build ID
     is not the main branch's, see xcraft.buildid, or none for final builds, without `ident`.
 
     The counter <n> of a package and build number goes up when the inputs of its build or `ident` change, so that a
     development build upgrades the previous ones, whatever their identifiers, and a build of the same inputs is
     cached: the suffixes are those the builds have, or would have, until keep_built() keeps the counters of new ones.
+    The `hashes` of the package directories are those of now by default.
     """  # noqa: D205
     if ident is None:
         return {}
-    counters, (ids, keys, developed) = _counters(project), _current(project)
+    counters, (ids, keys, developed) = _counters(project), _current(project, hashes)
     suffixes = {}
     for name in sorted(developed):
         counter, key, last = counters.get(f"{name} {ids[name].number}", (0, "", ""))
@@ -54,13 +57,16 @@ def dev_suffixes(project: Project, ident: str | None) -> dict[str, str]:
     return suffixes
 
 
-def keep_built(project: Project, ident: str | None, autorev: dict[str, str], names: list[str]) -> None:
+def keep_built(
+    project: Project, ident: str | None, autorev: dict[str, str], names: list[str], hashes: dict[str, str]
+) -> None:
     """Keep the counters of the development builds of `names`, just made with the suffixes `autorev`, for the inputs
-    they have once built, with the project's generated files, across `clean`.
+    they have once built, with the project's generated files, across `clean`: the `hashes` of the package directories
+    the builds started with, which may have changed since.
     """  # noqa: D205
     if ident is None or not (built := [name for name in names if name in autorev]):
         return
-    counters, (ids, keys, _) = _counters(project), _current(project)
+    counters, (ids, keys, _) = _counters(project), _current(project, hashes)
     for name in built:
         counters[f"{name} {ids[name].number}"] = (int(autorev[name][1:].split(".")[0]), keys[name], ident)
     project.state.mkdir(exist_ok=True)

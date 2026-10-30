@@ -327,7 +327,7 @@ def _record_cached(project: Project, dev: str | None) -> tuple[dict[str, str], d
     """  # noqa: D205
     hashes = inputs(project)
     for _ in range(5):
-        autorev = dev_suffixes(project, dev)
+        autorev = dev_suffixes(project, dev, hashes)
         keys = build_keys(project, autorev, hashes)
         if not record_rpm_deps(
             project, [n for n, k in keys.items() if cached_build(project, n, k).exists()], keys, quiet=True
@@ -386,7 +386,7 @@ def _build_all(  # noqa: PLR0913
             keys, autorev, recorded = _current(project, keys, autorev, recorded, dev=dev, hashes=hashes)
         results[name] = _build_shown(project, name, keys, hashes, status=status, autorev=autorev, verbose=verbose)
         if results[name].status == "built":
-            keep_built(project, dev, autorev, [name])
+            keep_built(project, dev, autorev, [name], hashes)
     keys, autorev, recorded = _current(project, keys, autorev, recorded, dev=dev, hashes=hashes)
     return _recorded_again(project, results, keys, autorev, recorded, dev=dev, hashes=hashes)
 
@@ -488,7 +488,7 @@ def _current(  # noqa: PLR0913
     if (state := _lock_state(project)) == recorded:
         return keys, autorev, recorded
     prepare(project)
-    autorev = dev_suffixes(project, dev)
+    autorev = dev_suffixes(project, dev, hashes)
     return build_keys(project, autorev, hashes), autorev, state
 
 
