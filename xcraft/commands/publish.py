@@ -67,13 +67,8 @@ def everything(  # noqa: PLR0913, PLR0917
     fetched, built by native builders.
     """
     if ctx.invoked_subcommand:
-        ctx.default_map = {
-            ctx.invoked_subcommand: {
-                "to": to,
-                **({"key": key} if key else {}),
-                **({"stage": stage} if stage is not None else {}),
-            }
-        }
+        # all the options given before the subcommand are its defaults: those given after it win
+        ctx.default_map = {ctx.invoked_subcommand: {k: v for k, v in ctx.params.items() if v is not None}}
         return
     _publish(
         None,

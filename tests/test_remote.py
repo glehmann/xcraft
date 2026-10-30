@@ -791,9 +791,11 @@ def test_publish(root: Path) -> None:
     (root / "xcraft.toml").write_text(REMOTE)
     assert xcraft("build", "--dry-run")[0] == 0  # the lock of the architecture left
     buildid.update(Project.find())  # and the build IDs, which cover all the architectures
-    code, output = xcraft("publish", "--locked", "--local")
-    assert code == 1
-    assert re.search(rf"--locked forbids: .*-runtime\.{ARCH} bc\b", output)
+    # the options of publish apply to its subcommands too, given before them
+    for args in (["--locked", "--local"], ["--locked", "--local", "repos"], ["--locked", "repos", "--local"]):
+        code, output = xcraft("publish", *args)
+        assert code == 1
+        assert re.search(rf"--locked forbids: .*-runtime\.{ARCH} bc\b", output)
     # the upstream packages must be signed with the keys of the repositories
     (root / "xcraft.toml").write_text(f'{REMOTE}extra = ["bc"]\n')
     srpm = root / f".xcraft/cache/srpms/bc-{bc.evr}.src.rpm"
