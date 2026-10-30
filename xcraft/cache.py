@@ -7,16 +7,13 @@ suffix, if any.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 from typing import TYPE_CHECKING
 
-from xcraft.container import BUILDENV
+from xcraft import buildkey
 from xcraft.graph import components, reachable
-from xcraft.localrepo import REPO_FILE, LocalRepo
+from xcraft.localrepo import LocalRepo
 from xcraft.project import INTERNAL
-from xcraft.specs import hash_dir
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -25,43 +22,6 @@ if TYPE_CHECKING:
     from xcraft.buildid import BuildId
     from xcraft.project import Project
 
-RECIPE = hashlib.sha256(
-    "".join(
-        [
-            REPO_FILE,
-            *((BUILDENV / s).read_text() for s in ("build.sh", "offline.py", "record.py", "made.py", "rpmdeps.py")),
-        ]
-    ).encode()
-).hexdigest()
-"""What makes the builds, besides the image and the packages: a change to it rebuilds them all, but see _SAME_BUILDS."""
-_SAME_BUILDS = {
-    # offline.py: an EOF when a process dies first
-    "520edd959d64e226fcbb86a704bf7dbb75e57fa262ef70da5319d4e31f3ec1bc":
-        "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc",
-    # record.py: without the latest versions, which another script looks for
-    "9696604d19c16fc9fdebc6431bacf28b50585465cfb3148b8e041c4ff8153778":
-        "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc",
-    # build.sh and record.py: the providers of the dynamic BuildRequires too
-    "e4d86b87110eac1922b1127fa00c796d08b757136324c97223ea31f34236d20b":
-        "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc",
-    # build.sh, record.py and made.py: the dynamic BuildRequires before installing them, and the packages made
-    "91b1c1f54f53be472170ccaf7f1001959e51a8206718056bb0020a4d383690c5":
-        "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc",
-    # made.py and record.py: entry points, and the dependencies of rpm headers in rpmdeps.py
-    "cd1db99022f6382f7e7363906e76061130bd36e1aa129d164e8917f48cb9ea3a":
-        "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc",
-    # build.sh: the description of autorev, in a comment
-    "01628fd02a2650def128b24cbada7d71b0524ba141bfe0842f67b726a066f698":
-        "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc",
-}  # fmt: skip
-"""Recipes making the same packages as an earlier one, by their hash, with the earliest one: their builds keep its
-keys."""
-
-
-def recipe_key() -> str:
-    """Return the recipe in the build keys: the earliest one making the same packages."""
-    return _SAME_BUILDS.get(RECIPE, RECIPE)
-
 
 class BuildError(RuntimeError):
     """Raised when a package cannot be built."""
@@ -69,7 +29,7 @@ class BuildError(RuntimeError):
 
 def inputs(project: Project) -> dict[str, str]:
     """Return the hash of the directory of each package, its input in the keys."""
-    return {name: hash_dir(path) for name, path in project.package_dirs.items()}
+    return buildkey.directories(project)
 
 
 def build_keys(
@@ -96,9 +56,9 @@ def build_keys(
         if not component & autorev.keys() and all(release_suffix(keys[d]) == f"+b{ids[d].number}" for d in outside):
             keys |= {name: f"{ids[name].key}+b{ids[name].number}" for name in component}
             continue
-        h = hashlib.sha256(json.dumps([[ids[n].key for n in sorted(component)], [keys[d] for d in outside]]).encode())
+        builds = {n: ids[n].key for n in component}
         for name in component:
-            key = hashlib.sha256(f"{h.hexdigest()}\0{name}".encode()).hexdigest()
+            key = buildkey.development_key(builds, [keys[d] for d in outside], name)
             keys[name] = f"{key}+b{ids[name].number}{autorev.get(name, '')}"
         # but a reused build, the main branch's, built against its builds
         keys |= {name: f"{ids[name].key}+b{ids[name].number}" for name in component if ids[name].accepts}

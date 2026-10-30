@@ -14,9 +14,10 @@ import pytest
 import typer
 
 from tests import TOML, config
-from xcraft import build, cache
+from xcraft import build, buildkey, cache
 from xcraft.build import queued
-from xcraft.cache import BuildError, build_keys, previous_duration, recipe_key
+from xcraft.buildkey import recipe_key
+from xcraft.cache import BuildError, build_keys, previous_duration
 from xcraft.checks import _check_made, record_rpm_deps
 from xcraft.clean import clean, repos_disk_usage
 from xcraft.commands import complete_arch, load
@@ -288,11 +289,11 @@ def test_hash_dir_covers_what_builds_get(tmp_path: Path) -> None:
 def test_recipe(monkeypatch: pytest.MonkeyPatch) -> None:
     current = "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc"
     assert recipe_key() == current, (
-        f"the recipe changed, to {cache.RECIPE}: map it to {current} in _SAME_BUILDS if it makes the same packages, "
+        f"the recipe changed, to {buildkey.RECIPE}: map it to {current} in _SAME_BUILDS if it makes the same packages, "
         "or else set it here, which rebuilds everything"
     )
-    monkeypatch.setattr(cache, "RECIPE", "c")
-    monkeypatch.setattr(cache, "_SAME_BUILDS", {"c": "a", "b": "a"})
+    monkeypatch.setattr(buildkey, "RECIPE", "c")
+    monkeypatch.setattr(buildkey, "_SAME_BUILDS", {"c": "a", "b": "a"})
     assert recipe_key() == "a"
 
 

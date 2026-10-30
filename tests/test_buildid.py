@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import shutil
 import subprocess
@@ -11,7 +13,7 @@ import pytest
 
 from tests import copy_project
 from tests.test_build import xcraft
-from xcraft import buildid
+from xcraft import buildid, buildkey
 from xcraft.iso import build_iso
 from xcraft.lock import load_lock, save_lock
 from xcraft.project import Project
@@ -32,7 +34,7 @@ def test_recipe_of_all_architectures(root: Path) -> None:
     # the repositories of the build environment differ by architecture, not the build keys
     projects = [Project.find(arch) for arch in ("x86_64_v2", "aarch64")]
     assert projects[0].repos.keys() != projects[1].repos.keys()
-    assert buildid._recipe(projects[0]) == buildid._recipe(projects[1])  # noqa: SLF001
+    assert buildkey.recipe(projects[0]) == buildkey.recipe(projects[1])
 
 
 def test_build_ids_of_all_architectures(root: Path) -> None:
@@ -105,6 +107,60 @@ def test_build_ids(root: Path) -> None:
     project.frozen = True
     with pytest.raises(buildid.BuildIdError, match="--locked forbids: trivial, with-deps"):
         buildid.update(project)
+
+
+def test_build_key_inputs(root: Path) -> None:
+    def key() -> str:
+        return buildid.compute(Project.find(), None)["trivial"].key
+
+    before = key()
+    config = root / "xcraft.toml"
+    text = config.read_text()
+    # not what does not change the builds: the compiler caches, the remote storage, the publication
+    unrelated = (
+        '[ccache_size]\ntrivial = "1G"\n[remote.main]\nurl = "https://example.com"\n[publish]\nstage = "other"\n'
+    )
+    config.write_text(f"{text}\n{unrelated}")
+    assert key() == before
+    # but the recipe, like the macros of the builds
+    config.write_text(text.replace('xcpng = "9"', 'xcpng = "10"'))
+    assert key() != before
+    config.write_text(text)
+    # the package directory
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(f"{spec.read_text()}# changed\n")
+    assert key() != before
+    spec.write_text(spec.read_text().removesuffix("# changed\n"))
+    assert key() == before
+    # and the lock, on each architecture: the versions of the image
+    inputs = buildkey.Inputs(Project.find())
+    assert buildkey.key(inputs.of({"trivial"}, {}), "trivial") == before
+    for arch in ("x86_64_v2", "aarch64"):
+        source = inputs.lock.image[arch][0]
+        version = inputs.lock.sources[source]
+        inputs.lock.sources[source] = "0-0"
+        assert buildkey.key(inputs.of({"trivial"}, {}), "trivial") != before
+        inputs.lock.sources[source] = version
+
+
+def test_shown_inputs(root: Path) -> None:
+    update()
+    code, output = xcraft("status", "trivial", "with-deps", "--inputs")
+    assert code == 0, output
+    shown = json.loads(output)
+    for name in ("trivial", "with-deps"):
+        # the key, as docs/build-keys.md specifies it: of its inputs and its name, that of its build ID
+        inputs = json.dumps(shown[name]["inputs"], sort_keys=True)
+        key = hashlib.sha256(f"{inputs}\0{name}".encode()).hexdigest()
+        assert shown[name]["key"] == key
+        assert (root / ".buildid" / name).read_text() == f"{shown[name]['build ID']}\n"
+        assert shown[name]["build ID"].split()[1] == key
+    # with-deps is built against trivial: its inputs have its build ID
+    package, recipe, lock, deps = shown["with-deps"]["inputs"]["with-deps"]
+    assert deps == [["trivial", 1, shown["trivial"]["key"]]]
+    assert recipe == shown["trivial"]["inputs"]["trivial"][1]
+    assert sorted(lock) == ["aarch64", "x86_64_v2"]
+    assert package != shown["trivial"]["inputs"]["trivial"][0]
 
 
 def test_build_ids_checked_by_all_the_builds(root: Path) -> None:
