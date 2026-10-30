@@ -9,7 +9,6 @@ import sys
 from typing import Annotated
 
 import typer
-from rich.logging import RichHandler
 from typer import rich_utils
 
 from xcraft import process, remote
@@ -73,15 +72,20 @@ def options(
     remote.forget()  # what another command, in the same process like the tests, read
 
 
+class _Handler(logging.Handler):
+    """Show the log messages on whole lines, above the progress of the activities, like the other messages."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        console.print(self.format(record), markup=False)
+
+
 def main() -> None:
     """Run the command line, showing errors without a stack trace unless --trace is given."""
     socket.setdefaulttimeout(60)  # the downloads, from servers not answering anymore: boto3 has its own
     args = sys.argv[1:]
     end = args.index("--") if "--" in args else len(args)
     if "--debug" in args[:end]:
-        # above the progress of the activities, like the other messages
-        handler = RichHandler(console=console, show_time=False, show_level=False, show_path=False, markup=False)
-        process.log.addHandler(handler)
+        process.log.addHandler(_Handler())
         process.log.setLevel(logging.DEBUG)
     try:
         app(args=[arg for arg in args[:end] if arg != "--debug"] + args[end:])
