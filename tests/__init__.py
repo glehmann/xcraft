@@ -27,8 +27,6 @@ PLATFORM, ARCH = {"x86_64": ("linux/amd64/v2", "x86_64_v2"), "aarch64": ("linux/
 )
 needs_gpg = pytest.mark.skipif(not shutil.which("gpg"), reason="needs gpg")
 needs_git_lfs = pytest.mark.skipif(not shutil.which("git-lfs"), reason="needs git-lfs")
-TEMPLATE: Path | None = None
-"""The project, with its lock and what xcraft resolved for it, made once for all the tests: see conftest.py."""
 
 
 def config() -> Config:
@@ -36,14 +34,16 @@ def config() -> Config:
     return Config.model_validate(tomllib.loads(TOML))
 
 
-def copy_project(dest: Path) -> None:
-    """Copy the project to `dest`, with the lock and the resolutions of the template, when there is one."""
+def copy_project(dest: Path, template: Path = PROJECT) -> None:
+    """Copy the project to `dest`: the `template` of the build_environment fixture has its lock and what xcraft
+    resolved for it.
+    """
 
     def ignored(directory: str, names: list[str]) -> list[str]:
         kept = {".xcraft": ["cache"], ".xcraft/cache": ["base", "resolved", "specs"]}.get(
-            Path(directory).relative_to(TEMPLATE or PROJECT).as_posix()
+            Path(directory).relative_to(template).as_posix()
         )
         return [name for name in names if kept is not None and name not in kept]
 
-    shutil.copytree(TEMPLATE or PROJECT, dest, ignore=ignored)
+    shutil.copytree(template, dest, ignore=ignored)
     (dest / "xcraft.toml").write_text(TOML)

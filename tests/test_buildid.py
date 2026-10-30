@@ -24,9 +24,9 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_environment: None) -> Path:
+def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_environment: Path) -> Path:
     root = tmp_path / "project"
-    copy_project(root)
+    copy_project(root, build_environment)
     monkeypatch.setenv("XCRAFT_PROJECT", str(root))
     return root
 

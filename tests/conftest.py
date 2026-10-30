@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-import tests
 from tests import ARCH, PROJECT, TOML, TOYS, UPSTREAM, config
 from xcraft import container, process
 from xcraft.cache import build_keys
@@ -62,10 +61,10 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
 
 @pytest.fixture(scope="session")
-def build_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+def build_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
     """Build the image of the build environment of the test projects first, and resolve their lock, once for all the
-    workers of pytest-xdist, rather than all of them at once: the tests in containers copy that template, the others
-    do not need it.
+    workers of pytest-xdist, rather than all of them at once, and return that prepared project: the tests in
+    containers copy that template, the others do not need it.
     """
     basetemp = tmp_path_factory.getbasetemp()
     shared = basetemp.parent if "PYTEST_XDIST_WORKER" in os.environ else basetemp  # of all the workers of the session
@@ -81,9 +80,8 @@ def build_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None
             prepare(native)
             build_image(native)
             build_keys(native)
-    tests.TEMPLATE = root
     if "PYTEST_XDIST_WORKER" not in os.environ:
-        yield
+        yield root
         return
     # Workers run real dnf transactions, with separate caches so their locks do not serialize the tests: in volumes,
     # with the others, rather than in the temporary files, often in memory, which the copies of all the workers fill
@@ -107,7 +105,7 @@ def build_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None
         with pytest.MonkeyPatch.context() as patch:
             patch.setattr(container, "_dnf_cache", worker_cache)
             worker_cache(Project(root, config()).on_host())
-            yield
+            yield root
     finally:
         for volume in volumes.values():
             process.run(["podman", "volume", "rm", "-f", volume], check=False, capture=True)

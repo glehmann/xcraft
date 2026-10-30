@@ -34,9 +34,9 @@ runner = CliRunner()
 
 
 @pytest.fixture
-def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_environment: None) -> Path:
+def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_environment: Path) -> Path:
     root = tmp_path / "project"
-    copy_project(root)
+    copy_project(root, build_environment)
     monkeypatch.setenv("XCRAFT_PROJECT", str(root))
     return root
 
@@ -95,9 +95,11 @@ def test_spec_changed_during_build_is_not_cached(root: Path) -> None:
     spec = root / "base/trivial/trivial.spec"
 
     def change() -> None:
-        while not (root / ".xcraft/build/trivial.pid").exists():
+        for _ in range(1200):  # not after the test, whose build fails to start
+            if (root / ".xcraft/build/trivial.pid").exists():
+                spec.write_text(f"{spec.read_text()}# changed\n")
+                return
             time.sleep(0.1)
-        spec.write_text(f"{spec.read_text()}# changed\n")
 
     threading.Thread(target=change, daemon=True).start()
     code, output = xcraft("build", "trivial")
