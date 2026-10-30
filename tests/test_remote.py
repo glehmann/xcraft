@@ -137,11 +137,11 @@ def root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     s3: dict[str, str],
-    build_environment: None,
+    build_environment: Path,
     build_signer: tuple[str, Path],
 ) -> Path:
     root = tmp_path / "project"
-    copy_project(root)
+    copy_project(root, build_environment)
     # builds and snapshots of its own, not to find those of the other tests in the storage, which they share
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")

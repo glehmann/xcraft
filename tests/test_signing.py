@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 import typer
 
-from tests import ARCH, copy_project, needs_gpg
+from tests import ARCH, PROJECT, copy_project, needs_gpg
 from tests.test_build import xcraft
 from xcraft import buildid
 from xcraft.cache import build_keys, cached_build
@@ -24,9 +24,11 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> Iterator[Path]:
     root = tmp_path / "project"
-    copy_project(root)
+    # prepared for the tests in the build environment
+    prepared = "build_environment" in request.fixturenames
+    copy_project(root, request.getfixturevalue("build_environment") if prepared else PROJECT)
     subprocess.run(["git", "init", "-q", str(root)], check=True)
     for key, value in (("user.name", "Test User"), ("user.email", "test@example.com")):
         subprocess.run(["git", "-C", str(root), "config", key, value], check=True)
@@ -74,7 +76,7 @@ def test_signer_selection(root: Path) -> None:
 
 
 @needs_gpg
-def test_development_builds_are_signed(build_environment: None, root: Path) -> None:
+def test_development_builds_are_signed(build_environment: Path, root: Path) -> None:
     def rpms(*args: str) -> list[Path]:
         code, output = xcraft(*args)
         assert code == 0, output
@@ -130,7 +132,7 @@ def test_development_builds_are_signed(build_environment: None, root: Path) -> N
 
 
 @pytest.mark.skipif(ARCH != "x86_64_v2", reason="two architectures the host runs: x86_64_v2 and x86_64")
-def test_signed_builds_of_each_architecture(root: Path, build_environment: None) -> None:
+def test_signed_builds_of_each_architecture(root: Path, build_environment: Path) -> None:
     config = root / "xcraft.toml"
     config.write_text(config.read_text().replace('"linux/arm64"', '"linux/amd64"'))
     assert xcraft("build", "trivial")[0] == 0
