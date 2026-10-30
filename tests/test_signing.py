@@ -60,6 +60,13 @@ def test_signer_selection(root: Path) -> None:
     project.config.sign = Sign(key="B" * 40, gnupghome=str(root / "release-keyring"))
     assert signing_key(project) == Signer("B" * 40, root / "release-keyring")
     assert signing_key(project, "A" * 40) == Signer("A" * 40, root / "release-keyring")
+    # fingerprints, in uppercase, like the storage has the public keys
+    assert signing_key(project, "a" * 40) == Signer("A" * 40, root / "release-keyring")
+    with pytest.raises(SigningError, match="not the fingerprint of a key"):
+        signing_key(project, "Developer")
+    assert Sign(key="b" * 40).key == "B" * 40
+    with pytest.raises(ValueError, match="not the fingerprint of a key"):
+        Sign(key="B" * 39)
     assert choose_signer(project, local=True, unsigned=False, dev_key=True) == developer
     assert choose_signer(project, local=True, unsigned=True, dev_key=False) is None
     for unsigned, dev_key, key in ((False, True, "A" * 40), (True, False, "A" * 40), (True, True, None)):

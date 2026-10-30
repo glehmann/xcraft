@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -115,11 +116,19 @@ def release_signer(project: Project) -> Signer | None:
     return Signer(key=sign.key, gnupghome=Path(sign.gnupghome).expanduser() if sign.gnupghome else None)
 
 
+def fingerprint(key: str) -> str:
+    """Return the fingerprint `key`, of 40 hexadecimal digits, in uppercase, like the storage has the public keys."""
+    if not re.fullmatch(r"[0-9A-Fa-f]{40}", key):
+        msg = f"not the fingerprint of a key, of 40 hexadecimal digits: {key}"
+        raise SigningError(msg)
+    return key.upper()
+
+
 def signing_key(project: Project, key: str | None = None) -> Signer | None:
     """Select an explicit key, the configured release key, or the checkout's developer key."""
     signer = release_signer(project)
     if key:
-        return Signer(key, signer.gnupghome if signer else None)
+        return Signer(fingerprint(key), signer.gnupghome if signer else None)
     return signer or dev_signer(project)
 
 

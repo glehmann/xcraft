@@ -674,6 +674,19 @@ def test_ccache(  # noqa: PLR0915
         assert ccache_hits(cache) == hits
 
 
+def test_ccache_without_key(root: Path) -> None:
+    (root / "xcraft.toml").write_text(re.sub(r"\[sign\]\n.*?(?=\[remote.main\])", "", REMOTE, flags=re.DOTALL))
+    cache = root / ".xcraft/ccache/trivial/0"
+    cache.mkdir(parents=True)
+    (cache / "entry").write_text("cached")
+    # refused before anything is uploaded, which no manifest would list
+    code, output = xcraft("push", "ccache", "trivial", "--to", "main")
+    assert code == 1
+    assert "no key to sign uploads" in output
+    storage = Project.find().config.remote["main"]
+    assert not remote.listing(storage, f".xcraft/ccache/{ARCH}/trivial/")
+
+
 def test_ccache_of_the_last_build(root: Path, tmp_path: Path) -> None:
     write_spec(root, "compiled", files="/usr/lib/compiled/t.o")
     spec = root / "base/compiled/compiled.spec"

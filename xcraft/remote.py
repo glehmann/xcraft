@@ -512,11 +512,17 @@ def download_tree(
     return True
 
 
-def upload_tree(storage: Remote, prefix: str, src: Path, names: list[str], *, signer: Signer | None) -> dict[str, str]:
-    """Upload the entries `names` of the directory `src` as the tree `prefix`, and return its files' SHA-256."""
+def required(signer: Signer | None) -> Signer:
+    """Return `signer`, which the uploads need to sign the manifests of their trees."""
     if signer is None:
         msg = "no key to sign uploads: run xcraft key create, configure [sign], or use --key"
         raise RemoteError(msg)
+    return signer
+
+
+def upload_tree(storage: Remote, prefix: str, src: Path, names: list[str], *, signer: Signer | None) -> dict[str, str]:
+    """Upload the entries `names` of the directory `src` as the tree `prefix`, and return its files' SHA-256."""
+    required(signer)
     files = sorted(f for name in names for f in [src / name, *(src / name).rglob("*")] if f.is_file())
     manifest = {f.relative_to(src).as_posix(): sha256_of(f) for f in files}
     transfer(storage, {f"{prefix}/{name}": src / name for name in manifest})
@@ -531,9 +537,7 @@ def read_manifest(storage: Remote, prefix: str, *, trusted: Signer | None = None
 
 def write_manifest(storage: Remote, prefix: str, manifest: dict[str, str], *, signer: Signer | None) -> None:
     """Write the manifest of the tree `prefix`, which completes it."""
-    if signer is None:
-        msg = "no key to sign uploads: run xcraft key create, configure [sign], or use --key"
-        raise RemoteError(msg)
+    signer = required(signer)
     TreeManifest(files=manifest)
     with tempfile.TemporaryDirectory(prefix="xcraft-sign-") as tmp:
         work = Path(tmp)
