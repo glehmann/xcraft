@@ -155,12 +155,15 @@ def _build_image(project: Project, tag: str, args: dict[str, str], files: dict[s
     from xcraft.resolution import resolve_image  # noqa: PLC0415, which runs containers
 
     _podman_build(project, "image", tag, files, args, show="the build environment image")
-    resolved = {f"{n}-{p.evr}.{p.arch}" for n, p in resolve_image(project).image_packages().items()}
-    if differences := changes(resolved, {f"{n}-{p.evr}.{p.arch}" for n, p in image_packages(project, tag).items()}):
-        process.run(["podman", "rmi", tag], capture=True)
+    try:
+        resolved = {f"{n}-{p.evr}.{p.arch}" for n, p in resolve_image(project).image_packages().items()}
+        if differences := changes(resolved, {f"{n}-{p.evr}.{p.arch}" for n, p in image_packages(project, tag).items()}):
+            msg = f"the build environment image does not have the packages resolved for it: {', '.join(differences)}"
+            raise ContainerError(msg)  # noqa: TRY301, removed like on any error
+    except BaseException:  # not to be used unchecked by the next commands
+        process.run(["podman", "rmi", tag], capture=True, check=False)
         _existing.discard(tag)
-        msg = f"the build environment image does not have the packages resolved for it: {', '.join(differences)}"
-        raise ContainerError(msg)
+        raise
 
 
 def _podman_build(  # noqa: PLR0913

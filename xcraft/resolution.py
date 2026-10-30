@@ -26,6 +26,7 @@ from xcraft.container import BUILDENV, PACKAGES, base_packages, repo_file, run_n
 from xcraft.graph import reachable
 from xcraft.localrepo import extra_rpms
 from xcraft.lock import Locked, choose_versions, load_lock, save_lock
+from xcraft.project import write_atomically
 from xcraft.specs import dep_name
 
 if TYPE_CHECKING:
@@ -102,7 +103,7 @@ def _cached(project: Project, data: dict, *, show: str) -> Resolved:
         if not cache.exists():
             resolved = _run(project, data, show=show)
             cache.parent.mkdir(parents=True, exist_ok=True)
-            cache.write_text(resolved.model_dump_json())
+            write_atomically(cache, resolved.model_dump_json())  # for the commands reading it at once
         _resolved[cache.name] = Resolved.model_validate_json(cache.read_text())
     return _resolved[cache.name]
 
