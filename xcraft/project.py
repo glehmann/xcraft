@@ -161,8 +161,9 @@ class Config(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    base_image: str
-    """Image the build environment is made from, with a digest to pin it."""
+    base_image: str = Field(pattern=r"@sha256:[0-9a-f]{64}$")
+    """Image the build environment is made from, pinned by its digest, which the build keys cover rather than its
+    content."""
     platforms: list[Platform]
     """Platforms of the builds: xcraft works on one at a time, see Project.find()."""
     repos: dict[str, Repo]

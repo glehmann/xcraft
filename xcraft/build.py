@@ -376,7 +376,8 @@ def _build_all(  # noqa: PLR0913
             continue
         if not build_missing or name in reused:  # the build of the main branch, made by CI
             results[name] = Result(name, "failed")
-            _show_failure(project, name, BuildError(f"not in the remote storage, for {project.arch}"), verbose=verbose)
+            why = "not in the remote storage" if use_remote else "not built, and the remote storage is not used"
+            _show_failure(project, name, BuildError(f"{why}, for {project.arch}"), verbose=verbose)
             continue
         status = None if verbose else f"[{i}/{len(plan)}] building {name}{_estimate(project, name)}"
         if use_remote:

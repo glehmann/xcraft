@@ -1241,4 +1241,4 @@ def test_reused_builds_are_fetched(root: Path) -> None:
     shutil.rmtree(root / ".xcraft/cache/builds")
     code, output = xcraft("build", "with-deps", "--fetch=none")
     assert code == 1
-    assert "✗ with-deps: not in the remote storage" in output
+    assert "✗ with-deps: not built, and the remote storage is not used" in output
