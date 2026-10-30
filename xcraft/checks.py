@@ -123,9 +123,22 @@ def _record_new_rpm_deps(
     be recorded yet, shown unless `quiet`: they are recorded again next time, once what they need is there.
     """  # noqa: D205
     current = [rpm for n, k in keys.items() if (build := cached_build(project, n, k)).exists() for rpm in _rpms(build)]
-    binaries = {name: [rpm.name.rsplit("-", 2)[0] for rpm in _rpms(build)] for name, build in builds.items()}
-    parsed = {b.name for p in project.parsed.values() for b in p.binaries}
-    result = resolve_rpm_deps(project, sorted(b for bs in binaries.values() for b in bs if b in parsed), current)
+    # their binary packages, by their names as built, with the release suffix, to their names in the specs
+    names = {
+        name: dict(
+            zip(
+                (package := project.parsed[name]).built_names(release_suffix(keys[name])),
+                (b.name for b in package.binaries),
+                strict=True,
+            )
+        )
+        for name in builds
+    }
+    binaries = {
+        name: [b for rpm in _rpms(build) if (b := rpm.name.rsplit("-", 2)[0]) in names[name]]
+        for name, build in builds.items()
+    }
+    result = resolve_rpm_deps(project, {b: names[n][b] for n, bs in binaries.items() for b in bs}, current)
     for name, build in builds.items():
         if failed := sorted(set(binaries[name]) & result.errors.keys()):
             for binary in [] if quiet else failed:
@@ -135,8 +148,8 @@ def _record_new_rpm_deps(
             continue
         recorded = {
             "context": context,
-            "requires": {b: result.requires[b] for b in binaries[name] if b in result.requires},
-            "provides": {b: result.provides[b] for b in binaries[name] if b in result.provides},
+            "requires": {names[name][b]: result.requires[b] for b in binaries[name] if b in result.requires},
+            "provides": {names[name][b]: result.provides[b] for b in binaries[name] if b in result.provides},
         }
         write_atomically(build / "rpm-deps.json", json.dumps(recorded))
 

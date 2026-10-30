@@ -506,6 +506,25 @@ def test_recorded(root: Path) -> None:
     assert xcraft("build", "with-deps", "--locked")[0] == 0
 
 
+def test_recorded_of_binaries_named_with_their_releases(root: Path) -> None:
+    # like the livepatch packages of the kernel, with a requirement rpm generates, of a script
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(
+        spec.read_text()
+        .replace("%description\n", "%description\nTrivial.\n\n%package -n trivial-lp_%{version}_%{release}\n"
+                 "Summary: Named with its release\n\n%description -n trivial-lp_%{version}_%{release}\n", 1)
+        .replace('echo "hello" > hello.txt',
+                 'echo "hello" > hello.txt\nprintf "#!/usr/bin/tclsh\\nputs hi\\n" > hi.tcl')
+        .replace("cp %{name}-%{version}/hello.txt %{buildroot}/usr/share/%{name}/",
+                 "cp %{name}-%{version}/hello.txt %{buildroot}/usr/share/%{name}/\n"
+                 "install -m 755 %{name}-%{version}/hi.tcl %{buildroot}/usr/share/%{name}/")
+        .replace("%changelog", "%files -n trivial-lp_%{version}_%{release}\n/usr/share/%{name}/hi.tcl\n\n%changelog")
+    )  # fmt: skip
+    code, output = xcraft("build", "trivial")
+    assert code == 0, output
+    assert load_lock(Project.find()).requires.shared == {"trivial-lp_1.0_1.xcpng8.99": ["tcl"]}
+
+
 def test_lock_update_changing_implicit_deps(root: Path) -> None:
     # a script run by toyrun, upstream, which rpm generates a requirement on
     spec = root / "base/trivial/trivial.spec"
