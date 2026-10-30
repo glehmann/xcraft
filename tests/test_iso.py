@@ -57,6 +57,12 @@ def test_iso_inputs(project: Project) -> None:
     lock.sources["kernel"] = "1-1"
     save_lock(project, lock)
     assert key() != before
+    # the build IDs: the numbers of the builds, and the reuses of builds
+    for text in ("2 0123", "2 0123 accepts 4567"):
+        before = key()
+        (project.root / ".buildid").mkdir(exist_ok=True)
+        (project.root / ".buildid/trivial").write_text(f"{text}\n")
+        assert key() != before
 
 
 def test_iso_lookup_before_preparation(project: Project, tmp_path: Path) -> None:
