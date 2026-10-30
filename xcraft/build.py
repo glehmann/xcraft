@@ -386,9 +386,29 @@ def _build_all(  # noqa: PLR0913
         results[name] = _build_shown(project, name, keys, hashes, status=status, autorev=autorev, verbose=verbose)
         if results[name].status == "built":
             keep_built(project, dev, autorev, [name])
-    keys = _current(project, keys, autorev, recorded, dev=dev, hashes=hashes)[0]
-    # Retry cached builds too: packages built or fetched now may provide what they could not resolve before.
-    record_rpm_deps(project, [n for n, k in keys.items() if cached_build(project, n, k).exists()], keys)
+    keys, autorev, recorded = _current(project, keys, autorev, recorded, dev=dev, hashes=hashes)
+    return _recorded_again(project, results, keys, autorev, recorded, dev=dev, hashes=hashes)
+
+
+def _recorded_again(  # noqa: PLR0913
+    project: Project,
+    results: dict[str, Result],
+    keys: dict[str, str],
+    autorev: dict[str, str],
+    recorded: bytes,
+    *,
+    dev: str | None,
+    hashes: dict[str, str],
+) -> tuple[list[Result], dict[str, str]]:
+    """Record what rpm generated for the cached builds again, and return the `results` and the keys: packages built or
+    fetched now may provide what they could not resolve before, which changes the keys of those built against them,
+    then built again.
+    """  # noqa: D205
+    if record_rpm_deps(project, [n for n, k in keys.items() if cached_build(project, n, k).exists()], keys):
+        keys = _current(project, keys, autorev, recorded, dev=dev, hashes=hashes)[0]
+        for name, result in results.items():
+            if result.status in ("built", "fetched", "cached") and not cached_build(project, name, keys[name]).exists():
+                results[name] = Result(name, "again")
     return list(results.values()), keys
 
 
