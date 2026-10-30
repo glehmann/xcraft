@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests import ARCH, PLATFORM, TOML, copy_project
+from tests import ARCH, PLATFORM, TOML, copy_project, needs_gpg
 from tests.test_build import results, write_spec, xcraft
 from tests.test_iso import cache_image
 from xcraft import buildid, ccache, remote, repodata
@@ -118,6 +118,8 @@ REMOTE = (
 
 @pytest.fixture(scope="module")
 def build_signer(tmp_path_factory: pytest.TempPathFactory) -> tuple[str, Path]:
+    if not shutil.which("gpg"):
+        pytest.skip("needs gpg")  # for the manifests of all the trees
     home = tmp_path_factory.mktemp("build-key")
     home.chmod(0o700)
     signer = Signer("", home)
@@ -870,7 +872,7 @@ def test_publish(root: Path) -> None:
     assert "some upstream packages are not signed with the keys of the repositories" in output
 
 
-@pytest.mark.skipif(not shutil.which("gpg"), reason="needs gpg")
+@needs_gpg
 def test_signed_publish(root: Path) -> None:  # noqa: PLR0915
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")

@@ -8,6 +8,8 @@ import shutil
 import tomllib
 from pathlib import Path
 
+import pytest
+
 from xcraft.project import Config
 
 PROJECT = Path(__file__).parent / "project"
@@ -18,8 +20,13 @@ TOYS = (
 """The repository of the upstream packages of the tests, by architecture, made by build.sh from their specs: see
 conftest.py."""
 TOML = (PROJECT / "xcraft.toml").read_text().replace("@TOYS@", str(TOYS))
-# the platform of the host, which the tests build for, natively, like x86_64_v2 on x86_64
-PLATFORM, ARCH = {"x86_64": ("linux/amd64/v2", "x86_64_v2"), "aarch64": ("linux/arm64", "aarch64")}[os.uname().machine]
+# the platform of the host, which the tests build for, natively, like x86_64_v2 on x86_64: none on the others, whose
+# tests are skipped, see conftest.py
+PLATFORM, ARCH = {"x86_64": ("linux/amd64/v2", "x86_64_v2"), "aarch64": ("linux/arm64", "aarch64")}.get(
+    os.uname().machine, ("", "")
+)
+needs_gpg = pytest.mark.skipif(not shutil.which("gpg"), reason="needs gpg")
+needs_git_lfs = pytest.mark.skipif(not shutil.which("git-lfs"), reason="needs git-lfs")
 TEMPLATE: Path | None = None
 """The project, with its lock and what xcraft resolved for it, made once for all the tests: see conftest.py."""
 
