@@ -26,7 +26,7 @@ Unsigned = Annotated[
     bool,
     typer.Option(
         "--unsigned",
-        help="Publish without package signing. By default, use --key, [sign], or the developer's key. "
+        help="Publish without package signing. By default, use --key, \\[sign], or the developer's key. "
         "Remote manifests still need a signing key.",
     ),
 ]
@@ -59,9 +59,9 @@ def everything(  # noqa: PLR0913, PLR0917
     stage: Stage = None,
     arch: Arch = None,
 ) -> None:
-    """Publish a snapshot of the distribution in the remote storage, as the latest one, for all the architectures.
+    r"""Publish a snapshot of the distribution in the remote storage, as the latest one, for all the architectures.
 
-    Without a command: its repositories, and its ISOs, when [iso] in xcraft.toml has the installer's packages. It has
+    Without a command: its repositories, and its ISOs, when \[iso] in xcraft.toml has the installer's packages. It has
     all our packages, built or fetched first, and the upstream packages they need at runtime, and the extra ones of
     xcraft.toml, as locked, and it must be self-contained. Those of the architectures the host emulates are only
     fetched, built by native builders.
