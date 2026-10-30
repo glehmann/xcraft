@@ -71,22 +71,12 @@ def everything(
         # all the options given before the subcommand are its defaults: those given after it win
         ctx.default_map = {ctx.invoked_subcommand: {k: v for k, v in ctx.params.items() if v is not None}}
         return
-    _publish(
-        None,
-        locked=locked,
-        local=local,
-        output=output,
-        unsigned=unsigned,
-        dev_key=dev_key,
-        key=key,
-        to=to,
-        stage=stage,
-        arch=arch,
-    )
+    _publish(None, **ctx.params)
 
 
 @app.command()
 def repos(
+    ctx: typer.Context,
     locked: Locked = False,
     local: Local = False,
     output: Output = None,
@@ -98,22 +88,12 @@ def repos(
     arch: Arch = None,
 ) -> None:
     """Publish repositories as repos/<release>/<stage>/<date>/, and as the stage's latest snapshot."""
-    _publish(
-        "repos",
-        locked=locked,
-        local=local,
-        output=output,
-        unsigned=unsigned,
-        dev_key=dev_key,
-        key=key,
-        to=to,
-        stage=stage,
-        arch=arch,
-    )
+    _publish("repos", **ctx.params)
 
 
 @app.command()
 def isos(
+    ctx: typer.Context,
     locked: Locked = False,
     local: Local = False,
     output: Output = None,
@@ -128,18 +108,7 @@ def isos(
 
     They are made for the x86_64 architectures, like xcraft iso, in the ISO directory of the snapshot.
     """
-    _publish(
-        "isos",
-        locked=locked,
-        local=local,
-        output=output,
-        unsigned=unsigned,
-        dev_key=dev_key,
-        key=key,
-        to=to,
-        stage=stage,
-        arch=arch,
-    )
+    _publish("isos", **ctx.params)
 
 
 def _iso_platforms(project: Project, platforms: list[Project], only: str | None) -> list[Project]:
@@ -225,6 +194,6 @@ def _publish(  # noqa: C901, PLR0912
             }
             name = publisher.snapshot_name(project, storage)
             if only != "isos":
-                publisher.upload_snapshot(built, dest, storage, name, signer=signer, stored=stored)
+                publisher.upload_snapshot(built, dest, storage, name, signer=signer, build=build, stored=stored)
             if with_isos:
                 publisher.upload_isos(project, dest, storage, name, signer=signer, stored=isos)

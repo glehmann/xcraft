@@ -27,11 +27,6 @@ class BuildError(RuntimeError):
     """Raised when a package cannot be built."""
 
 
-def inputs(project: Project) -> dict[str, str]:
-    """Return the hash of the directory of each package, its input in the keys."""
-    return buildkey.directories(project)
-
-
 def build_keys(
     project: Project,
     autorev: dict[str, str] | None = None,
@@ -43,8 +38,8 @@ def build_keys(
 
     See xcraft.buildid. A development build, or one built against development builds, has the hash of its build key
     and of the cache keys of the builds of ours it is built against rather than its build key, but a reused build. The
-    `hashes` of the package directories are those of inputs(), computed now by default, and the build `ids` are those
-    computed then, unless given. The lock must be prepared: see resolution.prepare().
+    `hashes` of the package directories are those of buildkey.directories(), computed now by default, and the build
+    `ids` are those computed then, unless given. The lock must be prepared: see resolution.prepare().
     """
     from xcraft.buildid import base, compute  # noqa: PLC0415, which imports this module
 

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Literal
 from rich.markup import escape
 from rich.text import Text
 
-from xcraft import buildid, ccache, remote
+from xcraft import buildid, buildkey, ccache, remote
 from xcraft.cache import (
     BuildError,
     build_keys,
@@ -27,13 +27,12 @@ from xcraft.cache import (
     builds_repo,
     cached_build,
     deps_repo,
-    inputs,
     previous_duration,
     release_suffix,
 )
 from xcraft.checks import BuildRootChangedError, check_build, check_resolved, record_dynamic, record_rpm_deps
 from xcraft.container import DNF_LOCK, ContainerError, build_image, run
-from xcraft.devbuilds import dev_suffixes, keep_built
+from xcraft.devbuilds import dev_keys, keep_built
 from xcraft.display import (
     activity,
     console,
@@ -266,9 +265,9 @@ def build(
     dev: str | None = None,
     fetch: Fetch = "all",
     build_missing: bool = True,
-) -> tuple[list[Result], dict[str, str]]:
+) -> tuple[list[Result], dict[str, str], dict[str, str]]:
     """Build `targets` and, unless `with_deps` is false, what they need, skipping what is cached, and return how
-    it went, with the keys of all the packages, those of their builds.
+    it went, with the keys of all the packages, those of their builds, and the suffixes of the development builds.
 
     `dev` is the identifier of the development builds, see xcraft.devbuilds, none for final builds. What is
     not cached locally is fetched from the remote storage when it has it, but
@@ -290,10 +289,10 @@ def build(
         plan = build_order(project.deps, targets, with_deps=with_deps)
         if dry_run:
             _show_plan(project, plan, keys, fetch=fetch)
-            return [], keys
+            return [], keys, autorev
         _queue_file(project).parent.mkdir(parents=True, exist_ok=True)
         try:
-            results, keys = _build_all(
+            results, keys, autorev = _build_all(
                 project,
                 plan,
                 keys,
@@ -311,7 +310,7 @@ def build(
         console.print("the builds found what changes the build roots: planning them again")
     update_build_ids(project)  # with what the builds found
     # those to build again still, after the second attempt
-    return [Result(r.name, "failed") if r.status == "again" else r for r in results], keys
+    return [Result(r.name, "failed") if r.status == "again" else r for r in results], keys, autorev
 
 
 def update_build_ids(project: Project) -> None:
@@ -325,10 +324,9 @@ def _record_cached(project: Project, dev: str | None) -> tuple[dict[str, str], d
     """Record what rpm generated for the cached builds of the current keys, and return the keys, with what they
     recorded, the hashes of the package directories they have, and the suffixes of the development builds `dev`.
     """
-    hashes = inputs(project)
+    hashes = buildkey.directories(project)
     for _ in range(5):
-        autorev = dev_suffixes(project, dev, hashes)
-        keys = build_keys(project, autorev, hashes)
+        keys, autorev = dev_keys(project, dev, hashes)
         if not record_rpm_deps(
             project, [n for n, k in keys.items() if cached_build(project, n, k).exists()], keys, quiet=True
         ):
@@ -349,7 +347,7 @@ def _build_all(
     autorev: dict[str, str],
     fetch: Fetch,
     build_missing: bool,
-) -> tuple[list[Result], dict[str, str]]:
+) -> tuple[list[Result], dict[str, str], dict[str, str]]:
     results: dict[str, Result] = {}
     use_remote = fetch != "none" and bool(project.config.remote)
     reused = {name for name, i in buildid.read(project).items() if i.accepts}
@@ -400,17 +398,17 @@ def _recorded_again(
     *,
     dev: str | None,
     hashes: dict[str, str],
-) -> tuple[list[Result], dict[str, str]]:
-    """Record what rpm generated for the cached builds again, and return the `results` and the keys: packages built or
-    fetched now may provide what they could not resolve before, which changes the keys of those built against them,
-    then built again.
+) -> tuple[list[Result], dict[str, str], dict[str, str]]:
+    """Record what rpm generated for the cached builds again, and return the `results`, the keys and the suffixes
+    `autorev`: packages built or fetched now may provide what they could not resolve before, which changes the keys of
+    those built against them, then built again.
     """
     if record_rpm_deps(project, [n for n, k in keys.items() if cached_build(project, n, k).exists()], keys):
-        keys = _current(project, keys, autorev, recorded, dev=dev, hashes=hashes)[0]
+        keys, autorev, _ = _current(project, keys, autorev, recorded, dev=dev, hashes=hashes)
         for name, result in results.items():
             if result.status in ("built", "fetched", "cached") and not cached_build(project, name, keys[name]).exists():
                 results[name] = Result(name, "again")
-    return list(results.values()), keys
+    return list(results.values()), keys, autorev
 
 
 def _stored(project: Project, names: list[str], keys: dict[str, str]) -> dict[str, bool]:
@@ -488,8 +486,7 @@ def _current(
     if (state := _lock_state(project)) == recorded:
         return keys, autorev, recorded
     prepare(project)
-    autorev = dev_suffixes(project, dev, hashes)
-    return build_keys(project, autorev, hashes), autorev, state
+    return *dev_keys(project, dev, hashes), state
 
 
 def _done(project: Project, name: str, keys: dict[str, str], hashes: dict[str, str], *, verbose: bool) -> Result | None:

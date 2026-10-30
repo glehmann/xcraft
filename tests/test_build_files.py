@@ -375,9 +375,9 @@ def test_builds_still_to_build_again_fail(project: Project, monkeypatch: pytest.
     monkeypatch.setattr(build, "update_build_ids", lambda _: None)
     attempts = []
     monkeypatch.setattr(
-        build, "_build_all", lambda *_, **__: attempts.append(1) or ([build.Result("a", "again")], {"a": "key"})
+        build, "_build_all", lambda *_, **__: attempts.append(1) or ([build.Result("a", "again")], {"a": "key"}, {})
     )
-    assert build.build(project, ["a"]) == ([build.Result("a", "failed")], {"a": "key"})
+    assert build.build(project, ["a"]) == ([build.Result("a", "failed")], {"a": "key"}, {})
     assert len(attempts) == 2
 
 
@@ -389,7 +389,7 @@ def test_packages_edited_while_building(project: Project, monkeypatch: pytest.Mo
     project.config.platforms = [project.platform]  # the one of the dependencies given
     project.deps = {"a": set(), "b": {"a"}, "c": set()}
     project.packages = {name: Package(name=name, binaries=[]) for name in ("a", "b", "c")}
-    hashes = cache.inputs(project)
+    hashes = buildkey.directories(project)
     keys = build_keys(project, hashes=hashes)
     (cache.cached_build(project, "b", keys["b"])).mkdir(parents=True)
 
@@ -400,7 +400,7 @@ def test_packages_edited_while_building(project: Project, monkeypatch: pytest.Mo
 
     monkeypatch.setattr(build, "_build_shown", building)
     (project.state / "build").mkdir(parents=True)  # for the queue, which build() makes
-    results, _ = build._build_all(
+    results, _, _ = build._build_all(
         project, ["a", "c", "b"], keys, hashes, verbose=False, dev=None, autorev={}, fetch="none", build_missing=True
     )
     # the builds work on the packages as they were at the start: b fails, rather than b cached with the old a
@@ -415,7 +415,7 @@ def test_keys_changed_by_the_last_recording(project: Project, monkeypatch: pytes
     project.deps = {"a": set(), "b": {"a"}}
     project.packages = {name: Package(name=name, binaries=[]) for name in ("a", "b")}
     monkeypatch.setattr(build, "prepare", lambda _: None)
-    hashes = cache.inputs(project)
+    hashes = buildkey.directories(project)
     keys = build_keys(project, hashes=hashes)
     for name in ("a", "b"):
         cache.cached_build(project, name, keys[name]).mkdir(parents=True)
@@ -431,7 +431,7 @@ def test_keys_changed_by_the_last_recording(project: Project, monkeypatch: pytes
 
     monkeypatch.setattr(build, "record_rpm_deps", record)
     (project.state / "build").mkdir(parents=True)  # for the queue, which build() makes
-    results, after = build._build_all(
+    results, after, _ = build._build_all(
         project, ["a", "b"], keys, hashes, verbose=False, dev=None, autorev={}, fetch="none", build_missing=True
     )
     # b to build again, with its new key, not cached
@@ -441,7 +441,7 @@ def test_keys_changed_by_the_last_recording(project: Project, monkeypatch: pytes
 
 
 def test_recordings_not_converging(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(build, "build_keys", lambda *_: {})
+    monkeypatch.setattr(build, "dev_keys", lambda *_: ({}, {}))
     monkeypatch.setattr(build, "record_rpm_deps", lambda *_, **__: True)
     monkeypatch.setattr(build, "prepare", lambda _: None)
     with pytest.raises(BuildError, match="keeps changing the keys"):
