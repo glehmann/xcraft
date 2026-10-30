@@ -85,28 +85,23 @@ def build_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None
     if "PYTEST_XDIST_WORKER" not in os.environ:
         yield
         return
-    # Workers run real dnf transactions, with separate caches so their locks do not serialize the tests.
+    # Workers run real dnf transactions, with separate caches so their locks do not serialize the tests: in volumes,
+    # with the others, rather than in the temporary files, often in memory, which the copies of all the workers fill
     cache_name = container._dnf_cache
-    volumes: dict[str, tuple[str, Path]] = {}
+    volumes: dict[str, str] = {}
 
     def worker_cache(project: Project) -> str:
         source = cache_name(project)
         if source not in volumes:
-            volume = f"{source}-test-{os.getpid()}"
-            directory = tmp_path_factory.mktemp(f"dnf-{project.arch}")
-            process.run(
-                ["podman", "volume", "create", "--opt", "type=none", "--opt", f"device={directory}",
-                 "--opt", "o=bind", volume],
-                capture=True,
-            )  # fmt: skip
-            volumes[source] = volume, directory
+            volume = volumes[source] = f"{source}-test-{os.getpid()}"
+            process.run(["podman", "volume", "create", volume], capture=True)
             process.run(
                 ["podman", "run", "--rm", "--security-opt", "label=disable", "--volume", f"{source}:/from",
                  "--volume", f"{volume}:/to", container.base_image(project.on_host()), "flock", "--shared",
                  "/from/.xcraft.lock", "cp", "-a", "--reflink=auto", "/from/.", "/to"],
                 capture=True,
             )  # fmt: skip
-        return volumes[source][0]
+        return volumes[source]
 
     try:
         with pytest.MonkeyPatch.context() as patch:
@@ -114,6 +109,5 @@ def build_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None
             worker_cache(Project(root, config()).on_host())
             yield
     finally:
-        for volume, directory in volumes.values():
-            process.run(["podman", "volume", "rm", volume], check=False, capture=True)
-            process.run(["podman", "unshare", "rm", "-rf", str(directory)], capture=True)
+        for volume in volumes.values():
+            process.run(["podman", "volume", "rm", "-f", volume], check=False, capture=True)
