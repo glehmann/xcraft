@@ -49,7 +49,7 @@ from xcraft.lock import lock_path
 from xcraft.resolution import prepare
 from xcraft.rpmbuild import image_replacements, prepare_tree, run_build
 from xcraft.signing import dev_signer
-from xcraft.specs import hash_dir
+from xcraft.specs import hash_dir, is_debug
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -529,7 +529,10 @@ def make_repo(
     if autorev:
         checked = builds_repo(project, keys)
         check += "".join(
-            f" --pkg {n}" for name in names for n in project.packages[name].built_names(release_suffix(keys[name]))
+            f" --pkg {n}"
+            for name in names
+            for n in project.packages[name].built_names(release_suffix(keys[name]))
+            if not is_debug(n)
         )
     # without best=False, repoclosure only considers the newest version of each package, even when the
     # priority of our repository makes dnf install an older one
