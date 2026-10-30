@@ -161,6 +161,12 @@ def test_doctor_invalid_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     assert code == 1
     assert "validation error" in output
     assert "base_image" in output
+    # a tag only, which may name another image later, while the build keys stay the same
+    (tmp_path / "xcraft.toml").write_text('base_image = "ghcr.io/almalinux/10-base:10.2"\n')
+    code, output = xcraft("doctor")
+    assert code == 1
+    assert "base_image" in output
+    assert "sha256" in output
 
 
 def test_subids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
