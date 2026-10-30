@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Self
 import pyte
 from pydantic import BaseModel, Field, JsonValue
 
+from xcraft.project import write_atomically
+
 if TYPE_CHECKING:
     from types import TracebackType
 
@@ -206,7 +208,7 @@ def launch(directory: Path, session: Session) -> subprocess.Popen[bytes]:
     finally:
         os.close(fd)
     session.pid = proc.pid
-    (directory / "session.json").write_text(session.model_dump_json(indent=2) + "\n")
+    write_atomically(directory / "session.json", session.model_dump_json(indent=2) + "\n")
     try:
         for _ in range(200):
             if proc.poll() is not None:
