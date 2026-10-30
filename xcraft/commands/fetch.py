@@ -23,6 +23,8 @@ def everything(ctx: typer.Context, arch: Arch = None) -> None:
     Without a command: the current builds of all the packages, when there is a remote storage, then their sources.
     """
     if ctx.invoked_subcommand:
+        # all the options given before the subcommand are its defaults: those given after it win
+        ctx.default_map = {ctx.invoked_subcommand: {k: v for k, v in ctx.params.items() if v is not None}}
         return
     if Project.find(arch).config.remote:
         builds(arch=arch)
