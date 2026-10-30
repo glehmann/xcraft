@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
-import inspect
 import json
 import shutil
 from concurrent.futures import ThreadPoolExecutor
@@ -79,10 +78,8 @@ def snapshot_key(project: Project, keys: dict[str, str], *, signer: Signer | Non
         {n: repo.model_dump() for n, repo in project.repos.items()},
         {n: p.model_dump() for n, p in resolve_image(project).packages.items()},
         signer.key if signer else None, build, buildenv_hash(),
-        [inspect.getsource(f) for f in
-         (assemble, _assemble_arch, _assemble_build, _add_upstream, _upstream_rpms, _upstream_srpms, _srpm_names,
-          _signed_build, _runtime, _check_installable, LocalRepo, remote_snapshot, _Plan, _add_ours,
-          _add_stored_upstream, repodata)],
+        # how snapshots are made: whole modules, rather than a list of what they use, easy to get incomplete
+        [Path(__file__).with_name(module).read_text() for module in ("publish.py", "localrepo.py", "repodata.py")],
     ]  # fmt: skip
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 

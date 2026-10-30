@@ -79,8 +79,8 @@ def iso_key(project: Project, *, netinstall: bool, volid: str | None, signer: Si
         lock.iso.get(project.arch, []),
         buildenv_hash(),
         [
-            Path(__file__).with_name(f).read_text()
-            for f in (
+            Path(__file__).with_name(module).read_text()
+            for module in (
                 "iso.py",
                 "publish.py",
                 "container.py",
@@ -88,6 +88,7 @@ def iso_key(project: Project, *, netinstall: bool, volid: str | None, signer: Si
                 "specs.py",
                 "resolution.py",
                 "localrepo.py",
+                "repodata.py",
                 "signing.py",
             )
         ],
