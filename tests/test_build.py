@@ -507,6 +507,18 @@ def test_recorded(root: Path) -> None:
     assert xcraft("build", "with-deps", "--locked")[0] == 0
 
 
+def test_names_with_their_releases_by_chance(root: Path) -> None:
+    # the digit of its release in its name, without %dist: not named after its release
+    write_spec(root, "libfoo1")
+    spec = root / "base/libfoo1/libfoo1.spec"
+    spec.write_text(spec.read_text().replace("Release: 1%{?dist}", "Release: 1%{?autorev}"))
+    code, output = xcraft("build", "libfoo1")
+    assert code == 0, output
+    assert [p.name for p in root.glob(".xcraft/cache/builds/*/libfoo1/*/RPMS/*/*.rpm")] == [
+        "libfoo1-1.0-1+b1.noarch.rpm"
+    ]
+
+
 def test_recorded_of_binaries_named_with_their_releases(root: Path) -> None:
     # like the livepatch packages of the kernel, with a requirement rpm generates, of a script
     spec = root / "base/trivial/trivial.spec"

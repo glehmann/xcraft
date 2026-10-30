@@ -333,7 +333,12 @@ def test_check_made(project: Project, tmp_path: Path) -> None:
     # in the names including the release too, like the livepatch packages of the kernel
     for release, built in ((".xcpng", "+b2.xcpng"), ("", "+b2")):
         named = numbered.model_copy(
-            update={"name": f"foo-lp_1.0_2.abc{release}", "evr": f"1.0-2.abc{release}", "provides": []}
+            update={
+                "name": f"foo-lp_1.0_2.abc{release}",
+                "autorev_name": f"foo-lp_1.0_2.abc%{{autorev}}{release}",  # as parsed
+                "evr": f"1.0-2.abc{release}",
+                "provides": [],
+            }
         )
         project.parsed = {"foo": Package(name="foo", dist=".xcpng", binaries=[named])}
         lp = {f"foo-lp_1.0_2.abc{built}": made["foo"] | {"evr": f"1.0-2.abc{built}", "provides": []}}

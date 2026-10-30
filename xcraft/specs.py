@@ -47,6 +47,9 @@ class Binary(BaseModel):
     """Its capabilities, with their versions, like ``foo = 1:2-3``."""
     requires: list[str]
     recommends: list[str] = []
+    autorev_name: str = ""
+    """Its name with ``%{autorev}`` where the release suffix of the builds goes, for those named after their release,
+    like the livepatch packages of the kernel."""
 
 
 class Package(BaseModel):
@@ -80,7 +83,7 @@ class Package(BaseModel):
 
     def built_names(self, suffix: str) -> list[str]:
         """Return the names of its binary packages, as built with the release `suffix`."""
-        return [self.suffixed(b.name, b.evr.split(":")[-1].rsplit("-", 1)[-1], suffix) for b in self.binaries]
+        return [b.autorev_name.replace("%{autorev}", suffix) if b.autorev_name else b.name for b in self.binaries]
 
 
 _Packages = TypeAdapter(dict[str, Package])

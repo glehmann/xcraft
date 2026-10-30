@@ -12,15 +12,35 @@ import sys
 import rpm  # ty: ignore[unresolved-import]
 from rpmdeps import deps  # next to it, in /xcraft
 
+MARKER = "XCRAFTAUTOREV"
+"""What %autorev, the release suffix of the builds, is when parsing the specs to find the names it is in."""
 
-def parse(spec_file: str, target: str) -> dict:
-    """Return the binary packages, BuildRequires, %dist and sources of a spec, or why it cannot be parsed."""
+
+def _load(spec_file: str, target: str, autorev: str | None = None) -> rpm.spec:
+    """Return the spec parsed for `target`, from the configuration of rpm, with %autorev as `autorev`, if given."""
     pkg_dir = pathlib.Path(spec_file).parent
     rpm.reloadConfig(target)
     rpm.addMacro("_sourcedir", str(pkg_dir))
     rpm.addMacro("_specdir", str(pkg_dir))
+    if autorev is not None:
+        rpm.addMacro("autorev", autorev)
+    return rpm.spec(spec_file)
+
+
+def _autorev_names(spec_file: str, target: str) -> list[str]:
+    """Return the names of the binary packages of a spec, with %{autorev} where the release suffix of the builds goes,
+    for those named after their release, like the livepatch packages of the kernel, and nothing for the others.
+    """  # noqa: D205
+    spec = _load(spec_file, target, MARKER)
+    names = [p.header[rpm.RPMTAG_NAME] for p in spec.packages if p.fileList is not None]
+    return [name.replace(MARKER, "%{autorev}") if MARKER in name else "" for name in names]
+
+
+def parse(spec_file: str, target: str) -> dict:
+    """Return the binary packages, BuildRequires, %dist and sources of a spec, or why it cannot be parsed."""
+    pkg_dir = pathlib.Path(spec_file).parent
     try:
-        spec = rpm.spec(spec_file)
+        spec = _load(spec_file, target)
     except ValueError:
         # parse again with rpmspec, to get the error message
         cmd = ["rpmspec", "-D", f"_sourcedir {pkg_dir}", "-q", spec_file]
@@ -28,7 +48,7 @@ def parse(spec_file: str, target: str) -> dict:
             "error": subprocess.run(cmd, capture_output=True, text=True, check=False).stderr.strip()
             or "cannot parse spec"
         }
-    return {
+    parsed = {
         "version": spec.sourceHeader[rpm.RPMTAG_VERSION],
         "binaries": [
             {
@@ -48,6 +68,10 @@ def parse(spec_file: str, target: str) -> dict:
         "source0": next((source for source, n, kind in spec.sources if kind == 1 and n == 0), ""),
         "sources": [source for source, n, kind in sorted(spec.sources, key=lambda s: s[1]) if kind == 1],
     }
+    # parsed again, from the start
+    for binary, autorev_name in zip(parsed["binaries"], _autorev_names(spec_file, target), strict=True):
+        binary["autorev_name"] = autorev_name
+    return parsed
 
 
 def main() -> None:
