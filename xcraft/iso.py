@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 from rich.markup import escape
 
-from xcraft import remote
+from xcraft import buildid, remote
 from xcraft.cache import inputs
 from xcraft.container import BUILDENV, DNF_LOCK, run
 from xcraft.display import activity, console
@@ -71,6 +71,8 @@ def iso_key(project: Project, *, netinstall: bool, volid: str | None, signer: Si
         project.platform,
         config,
         inputs(project),
+        # the numbers of the builds, in their releases, and the reuses of builds
+        {name: i.model_dump() for name, i in buildid.read(project).items()},
         _templates(project),
         lock.sources,
         *[getattr(lock, f).of(project.arch) for f in ("requires", "provides", "buildrequires")],
