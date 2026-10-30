@@ -637,11 +637,13 @@ snapshots' metadata is compressed with gzip; an older snapshot's zstd one is onl
 publication after it may download everything once. The packages of an ISO's architecture are downloaded only when the
 ISO must be made, neither cached nor in the storage.
 
-Published snapshots include `xcraft-inputs.json`, covered by their signed manifest. On a matching checkout,
-`xcraft publish` reuses the latest snapshot by server-side copies into a new dated snapshot, without downloading
-RPMs, assembling repositories or rebuilding ISOs. Its input keys cover package builds, locked upstream packages,
-assembly recipes, architecture, signing identity and relevant repository/ISO configuration. Changed inputs take the
-normal assembly path. Older snapshots need one full publication to acquire the input record.
+What the latest snapshot of a stage was made from is in a signed tree of its own,
+`.xcraft/inputs/<repos|isos>/<release>/<stage>/latest/inputs.json`, with the files of the snapshot. On a matching
+checkout, while the latest snapshot has these files still, `xcraft publish` reuses it by server-side copies into a new
+dated snapshot, without downloading RPMs, assembling repositories or rebuilding ISOs. Its input keys cover package
+builds, locked upstream packages, assembly recipes, architecture, signing identity and relevant repository/ISO
+configuration. Changed inputs take the normal assembly path. Older snapshots need one full publication to acquire the
+input record.
 `--local` and an explicit `--output` still materialize the snapshot locally.
 
 `xcraft publish repos` only publishes the repositories, and `xcraft publish isos` the ISOs, under a snapshot name

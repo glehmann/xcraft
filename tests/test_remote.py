@@ -911,16 +911,25 @@ def test_publish_reuses_remote_snapshot(root: Path, caplog: pytest.LogCaptureFix
     manifest = remote.read_manifest(storage, f"{prefix}/{day}.2")
     assert manifest
     assert manifest == remote.read_manifest(storage, f"{prefix}/latest")
+    # what it was made from is out of it
+    assert not [f for f in manifest if "inputs" in f]
+    assert remote.read_manifest(storage, publisher.inputs_tree(f"{prefix}/latest")).keys() == {publisher.INPUTS}
 
     project.config.publish.extra.append("bc")
     assert not publisher.reuse_published(
         [project], storage, signer=release_signer(project), build=False, only="repos", isos=[]
     )
     project.config.publish.extra.clear()
-    remote.upload(storage, f"{prefix}/latest/{publisher.INPUTS}", root / "xcraft.toml")
-    assert not publisher.reuse_published(
-        [project], storage, signer=release_signer(project), build=False, only="repos", isos=[]
-    )
+    # nor another latest snapshot than the one it was made from
+    signer = release_signer(project)
+    assert signer
+    remote.write_manifest(storage, f"{prefix}/latest", {**manifest, "other": "0" * 64}, signer=signer)
+    assert not publisher.reuse_published([project], storage, signer=signer, build=False, only="repos", isos=[])
+    remote.write_manifest(storage, f"{prefix}/latest", manifest, signer=signer)
+    assert publisher.reuse_published([project], storage, signer=signer, build=False, only="repos", isos=[])
+    # nor with what it was made from changed
+    remote.upload(storage, f"{publisher.inputs_tree(f'{prefix}/latest')}/{publisher.INPUTS}", root / "xcraft.toml")
+    assert not publisher.reuse_published([project], storage, signer=signer, build=False, only="repos", isos=[])
 
 
 @pytest.mark.parametrize("command", [[], ["repos"], ["isos"]])

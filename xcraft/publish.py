@@ -53,14 +53,22 @@ ISO_DIR = "iso"
 """The ISOs in a local snapshot, by architecture, published apart from its repositories."""
 SUMS = "SHA256SUMS"
 """The checksums of the published ISOs, as sha256sum writes them, next to them."""
-INPUTS = "xcraft-inputs.json"
-"""Checkout input keys, covered by the snapshot's signed manifest."""
+INPUTS = "inputs.json"
+"""What the latest snapshot of a stage was made from, a SnapshotInputs, in the tree inputs_tree() of the storage."""
 
 
 class SnapshotInputs(BaseModel):
-    """Input keys of the architectures or ISO variants of a published snapshot."""
+    """The input keys of the architectures or ISO variants of the latest snapshot, and its files, with their SHA-256:
+    it is reused while they are the same.
+    """  # noqa: D205
 
     keys: dict[str, str]
+    files: dict[str, str]
+
+
+def inputs_tree(latest: str) -> str:
+    """Return the tree of what the latest snapshot `latest` was made from, out of it, in the storage."""
+    return f"{INTERNAL}/inputs/{latest}"
 
 
 def snapshot_key(project: Project, keys: dict[str, str], *, signer: Signer | None, build: bool) -> str:
@@ -83,18 +91,16 @@ def snapshot_key(project: Project, keys: dict[str, str], *, signer: Signer | Non
 def _reusable(
     project: Project, storage: Remote, kind: str, keys: dict[str, str], signer: Signer | None
 ) -> dict[str, str]:
-    prefix = _tree(project, kind, "latest")
-    manifest = remote.read_manifest(storage, prefix, trusted=signer or dev_signer(project))
-    if INPUTS not in manifest:
-        return {}
+    latest, trusted = _tree(project, kind, "latest"), signer or dev_signer(project)
     with project.work("snapshot-inputs") as work:
-        path = work / INPUTS
-        if not remote.download(storage, f"{prefix}/{INPUTS}", path) or sha256_of(path) != manifest[INPUTS]:
-            return {}
         try:
-            return manifest if SnapshotInputs.model_validate_json(path.read_bytes()).keys == keys else {}
-        except ValueError:
+            if not remote.download_tree(storage, inputs_tree(latest), work / "inputs", trusted=trusted):
+                return {}
+            inputs = SnapshotInputs.model_validate_json((work / "inputs" / INPUTS).read_bytes())
+        except (OSError, ValueError, remote.RemoteError):
             return {}
+    manifest = remote.read_manifest(storage, latest, trusted=trusted)
+    return manifest if manifest and inputs.keys == keys and inputs.files == manifest else {}
 
 
 def reuse_published(  # noqa: PLR0913
@@ -500,14 +506,15 @@ def _upload(  # noqa: PLR0913
     latest: str,
     *,
     project: Project,
+    inputs: dict[str, str],
     signer: Signer | None,
     trusted: Signer | None,
     stored: dict[str, tuple[str, str]] | None = None,
     pages: list[str] | None = None,
     remote_files: dict[str, str] | None = None,
 ) -> None:
-    """Upload the `files` of `src` as `tree`, and as `latest` too, and write the pages of their directories and of
-    the directories `pages`.
+    """Upload the `files` of `src` as `tree`, and as `latest` too, made from the input keys `inputs`, and write the
+    pages of their directories and of the directories `pages`.
 
     The files the storage has already, in `latest`, or in `stored`, as path and SHA-256 by file, are copied there,
     like `remote_files`, which are not in `src`, with their SHA-256.
@@ -530,8 +537,11 @@ def _upload(  # noqa: PLR0913
             remote.transfer(storage, {f"{latest}/{f}": f"{tree}/{f}" for f in batch}, on_line)
         remote.write_manifest(storage, latest, manifest, signer=signer)
         _delete_stale(storage, latest, keep)
+        with project.work("snapshot-inputs") as work:
+            (work / INPUTS).write_text(SnapshotInputs(keys=inputs, files=manifest).model_dump_json())
+            remote.upload_tree(storage, inputs_tree(latest), work, [INPUTS], signer=signer)
         on_line("the pages of the directories")
-        remote.update_pages(project, storage, [f"{tree}/", f"{latest}/", *(pages or [])])
+        remote.update_pages(project, storage, [f"{tree}/", f"{latest}/", f"{inputs_tree(latest)}/", *(pages or [])])
     console.print(f"[bold green]✓[/] published {tree}, and as {latest}")
 
 
@@ -552,9 +562,6 @@ def upload_snapshot(  # noqa: PLR0913
     the storage and SHA-256.
     """  # noqa: D205
     project = platforms[0][0]
-    (src / INPUTS).write_text(SnapshotInputs(keys={
-        p.arch: snapshot_key(p, keys, signer=signer, build=(src / BUILD).is_dir()) for p, keys in platforms
-    }).model_dump_json())  # fmt: skip
     files = sorted(
         f.relative_to(src).as_posix()
         for f in src.rglob("*")
@@ -577,6 +584,7 @@ def upload_snapshot(  # noqa: PLR0913
         repos,
         latest,
         project=project,
+        inputs={p.arch: snapshot_key(p, keys, signer=signer, build=(src / BUILD).is_dir()) for p, keys in platforms},
         signer=signer or signing_key(project),
         trusted=dev_signer(project),
         stored=stored,
@@ -600,10 +608,6 @@ def upload_isos(  # noqa: PLR0913
     from xcraft.iso import iso_inputs  # noqa: PLC0415, iso imports snapshot assembly
 
     isos = src / ISO_DIR
-    (isos / INPUTS).write_text(SnapshotInputs(keys={
-        name: key for p in project.all_platforms() if any(isos.glob(f"*-{p.arch}.iso"))
-        for name, key in iso_inputs(p, signer=signer).items()
-    }).model_dump_json())  # fmt: skip
     sums = isos / SUMS
     sums.write_text("".join(f"{sha256_of(iso)}  {iso.name}\n" for iso in sorted(isos.glob("*.iso"))))
     if signer:
@@ -616,6 +620,12 @@ def upload_isos(  # noqa: PLR0913
         _tree(project, "isos", name),
         _tree(project, "isos", "latest"),
         project=project,
+        inputs={
+            name: key
+            for p in project.all_platforms()
+            if any(isos.glob(f"*-{p.arch}.iso"))
+            for name, key in iso_inputs(p, signer=signer).items()
+        },
         signer=signer or signing_key(project),
         trusted=dev_signer(project),
         stored=stored,
