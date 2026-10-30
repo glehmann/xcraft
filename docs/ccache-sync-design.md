@@ -77,22 +77,28 @@ kept, with its SHA-256, in the new manifest.
 4. Upload them, concurrently, with `remote.transfer()`.
 5. Write the new signed manifest: the entries the storage has, with their SHA-256 there, and the new ones, with
    their SHA-256 once compressed again.
-6. Delete the entries of the storage the new manifest does not have: those the last build did not use.
+6. List the tree of the cache in the storage, ~20 requests of 1,000 objects for the kernel, and delete what the new
+   manifest does not have: the entries the last build did not use, and the orphans, those a push interrupted before
+   its manifest uploaded, which no manifest lists.
+7. Write the page of the tree, with the total size of the objects listed.
 
 The manifest is written after the entries it lists, and the entries are deleted after the manifest which does not
 list them anymore, like for the trees of the builds, so that a manifest of the storage always lists entries the
-storage has, but those deleted under a reader, below.
+storage has, but those deleted under a reader, below. The push only lists the tree for its page and its deletions:
+what it uploads comes from the manifest of the storage, which is signed, not from the listing, which is not.
 
 ### Fetch
 
 1. Read the manifest of the cache in the storage, checking its signature, before anything else: an unsigned or
    forged manifest makes no entry downloaded.
-2. Download, concurrently, the entries it lists that the local cache does not have with the same SHA-256, each in a
-   temporary file next to its place, checked against the manifest, then renamed into the cache: ccache writes its
-   files that way too, so a build running meanwhile sees either nothing or the whole entry.
+2. Download, concurrently, the entries it lists that the local cache does not have, each in a temporary file next to
+   its place, checked against the manifest, then renamed into the cache: ccache writes its files that way too, so a
+   build running meanwhile sees either nothing or the whole entry. A result the local cache has, by name, is kept,
+   whatever its bytes; a ccache manifest is downloaded when its local bytes have another SHA-256.
 3. An entry missing, or with another SHA-256, is skipped: a cache miss, not an error.
 
-The fetch adds to the local cache, rather than replacing it: the local entries the storage does not have are kept,
+The fetch never lists the storage: what it downloads only comes from the signed manifest. The fetch adds to the local
+cache, rather than replacing it: the local entries the storage does not have are kept,
 and ccache's size limit removes the oldest. A fetch interrupted leaves a valid cache, which the next one completes.
 
 ### A fetch while CI pushes
@@ -116,14 +122,16 @@ pool for the caches only, like 64 requests, is an option if Garage keeps up.
 
 ### The pages
 
-The directory pages stop at the tree of each cache: they list its manifest and its 16 directories, not their ~20,000
-entries.
+The directory pages stop at the tree of each cache: they list its manifest and its directories, not the ~275
+directories below them, nor their ~20,000 entries. Its total size comes from the listing of the push, the sizes of
+the objects in the storage: neither the local sizes, as a result the storage keeps may have other bytes locally, nor
+sizes in the manifest, whose lines are those of `sha256sum`. `update_pages()` gets a depth to stop at.
 
 ### What changes
 
 - `xcraft/ccache.py`: `push()` and `fetch()` as above; the archive and `archive_name()` go.
 - `xcraft/remote.py`: a download of the entries of a tree missing from a local directory, adding to it, and the
-  pages stopping at the caches.
+  pages stopping at a depth.
 - The README and the docstring of `xcraft/ccache.py`, for the new layout.
 - The trees of the caches with an archive are not read anymore: the first push of each cache uploads it all, once.
 
