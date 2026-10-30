@@ -3,8 +3,8 @@
 A package's build ID is in ``.buildid/<package>``, one line: its number and build key. The build key is the same on
 all the architectures: it covers what goes into the package on any of them, from the package directory, the recipe
 and the lock, and the build IDs of the packages of ours it is built against, but not its own number, which it decides.
-A package keeps the build ID of the main branch, where the current branch forks from it, or of its tip, as long as its
-key is the same, and gets the next number of both otherwise.
+A package keeps the build ID of the main branch, where the current branch forks from it, as long as its key is the
+same, and gets the next number otherwise.
 """
 
 from __future__ import annotations
@@ -31,9 +31,6 @@ if TYPE_CHECKING:
 
 DIR = ".buildid"
 """The directory of the build IDs, in the project."""
-
-type Branch = tuple[dict[str, BuildId], dict[str, BuildId]]
-"""The build IDs of the main branch where the current one forks from it, and of its tip."""
 
 
 class BuildIdError(RuntimeError):
@@ -118,27 +115,25 @@ def _lock_inputs(project: Project, lock: Lock, name: str, ignored: set[str] | No
 
 def compute(
     project: Project,
-    branch: Branch | None,
+    fork: dict[str, BuildId] | None,
     hashes: dict[str, str] | None = None,
     reuse: Callable[[str, dict[str, BuildId]], bool] | None = None,
 ) -> dict[str, BuildId]:
-    """Return the build ID of each package, from those of the main `branch`, see base(), with the `hashes` of the
-    package directories (see xcraft.cache.inputs()).
+    """Return the build ID of each package, from those of the main branch where the current one forks from it, `fork`,
+    see base(), with the `hashes` of the package directories (see xcraft.cache.inputs()).
 
     The build key covers the package directory, the recipe, what the lock has for it (see _lock_inputs()), and the
     build IDs of the packages of ours it is built against. Packages depending on each other, in a cycle, get the key
     of them all: they are rebuilt together.
 
-    A package with the key of the main branch where the current one forks from it, or of its tip, keeps its build ID,
-    the fork's first: one unchanged by the current branch keeps it while the main branch changed it. So does one reusing
-    a build for the key, there or in the working tree. Otherwise, a package `reuse` takes, with the build IDs of those
-    before it, reuses the build of the fork, accepting the key; and the others get the next number of both, as a merge
-    of the main branch, even in progress, must not reuse its numbers. Without the main branch, the numbers are those of
-    the working tree, 1 for new packages: there is nothing to number them against.
+    A package with the key of the fork keeps its build ID, and so does one reusing a build for the key, there or in the
+    working tree. Otherwise, a package `reuse` takes, with the build IDs of those before it, reuses the build of the
+    fork, accepting the key; and the others get the next number of the fork's. The numbers the main branch gave since
+    the fork do not count: giving one again conflicts on merge, in the file of the package. Without the main branch,
+    the numbers are those of the working tree, 1 for new packages: there is nothing to number them against.
     """  # noqa: D205
     hashes = hashes or {name: hash_dir(path) for name, path in project.package_dirs.items()}
     lock, deps, current, recipe = load_lock(project), project.deps, read(project), _recipe(project)
-    fork, main = branch or (current, {})
     ids: dict[str, BuildId] = {}
     for component in components(deps):  # the dependencies first
         inputs = {
@@ -153,16 +148,16 @@ def compute(
         together = json.dumps(inputs, sort_keys=True)
         for name in sorted(component):
             key = hashlib.sha256(f"{together}\0{name}".encode()).hexdigest()
-            known = [i for i in (fork.get(name), main.get(name)) if i]
+            known = (current if fork is None else fork).get(name)
             reused = [i for i in (current.get(name),) if i and i.accepts]
-            if found := next((i for i in [*known, *reused] if i.matches(key)), None):
+            if found := next((i for i in [*filter(None, [known]), *reused] if i.matches(key)), None):
                 ids[name] = found
             elif known and reuse and reuse(name, ids):
-                ids[name] = known[0].model_copy(update={"accepts": key})
-            elif branch is None:
-                ids[name] = BuildId(number=known[0].number if known else 1, key=key)
+                ids[name] = known.model_copy(update={"accepts": key})
+            elif fork is None:
+                ids[name] = BuildId(number=known.number if known else 1, key=key)
             else:
-                ids[name] = BuildId(number=max((i.number for i in known), default=0) + 1, key=key)
+                ids[name] = BuildId(number=known.number + 1 if known else 1, key=key)
     return ids
 
 
@@ -203,31 +198,28 @@ def _main(project: Project) -> str | None:
     )
 
 
-def base(project: Project) -> Branch | None:
-    """Return the build IDs of the main branch where the current one forks from it, and of its tip; or None out of a
-    git repository, or without the main branch.
+def base(project: Project) -> dict[str, BuildId] | None:
+    """Return the build IDs of the main branch where the current one forks from it, or None out of a git repository,
+    or without the main branch.
     """  # noqa: D205
-    if (main := _main(project)) and (fork := _fork(project)):
-        return _at(project, fork), _at(project, main)
-    return None
+    return _at(project, fork) if (fork := _fork(project)) else None
 
 
 def _fork(project: Project) -> str | None:
-    """Return the commit of the main branch where the current branch forks from it, if any."""
-    return (main := _main(project)) and _git(project, "merge-base", "HEAD", main)
+    """Return the commit of the main branch where the current branch forks from it, if any: with a merge in progress,
+    where the merge forks from it.
+    """  # noqa: D205
+    merging = _git(project, "rev-parse", "-q", "--verify", "MERGE_HEAD")
+    return (main := _main(project)) and _git(project, "merge-base", main, "HEAD", *filter(None, [merging]))
 
 
 def proposed(project: Project, ids: dict[str, BuildId]) -> set[str]:
     """Return the packages whose build ID of `ids` is not the main branch's: those of development builds, none
     without the main branch. A reused build is the main branch's.
     """  # noqa: D205
-    if (branch := base(project)) is None:
+    if (fork := base(project)) is None:
         return set()
-    return {
-        name
-        for name, i in ids.items()
-        if not any(j and (j.number, j.key) == (i.number, i.key) for j in (branch[0].get(name), branch[1].get(name)))
-    }
+    return {name for name, i in ids.items() if not ((j := fork.get(name)) and (j.number, j.key) == (i.number, i.key))}
 
 
 def on_main(project: Project) -> bool:
