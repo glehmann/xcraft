@@ -13,14 +13,13 @@ if TYPE_CHECKING:
     from xcraft.project import Project
 
 
-def dev_suffixes(project: Project, ident: str | None, *, advance: bool = False) -> dict[str, str]:
+def dev_suffixes(project: Project, ident: str | None) -> dict[str, str]:
     """Return the release suffixes of the development builds, ``~<n>.<ident>``: those of the packages whose build ID
     is not the main branch's, see xcraft.buildid, or none for final builds, without `ident`.
 
     The counter <n> of a package and build number goes up when the inputs of its build or `ident` change, so that a
     development build upgrades the previous ones, whatever their identifiers, and a build of the same inputs is
-    cached. With `advance`, before building, it goes up and is kept, with the project's generated files, across
-    `clean`; otherwise, the suffixes are those the builds have, or would have.
+    cached: the suffixes are those the builds have, or would have, until keep_built() keeps the counters of new ones.
     """  # noqa: D205
     if ident is None:
         return {}
@@ -33,17 +32,13 @@ def dev_suffixes(project: Project, ident: str | None, *, advance: bool = False) 
         counter, key, last = counters.get(entry, [0, "", ""])
         if [key, last] != [keys[name], ident]:
             counter += 1
-            counters[entry] = [counter, keys[name], ident]
         suffixes[name] = f"~{counter}.{ident}"
-    if advance:
-        path.parent.mkdir(exist_ok=True)
-        write_atomically(path, json.dumps(counters, indent=1, sort_keys=True) + "\n")
     return suffixes
 
 
 def keep_built(project: Project, ident: str | None, autorev: dict[str, str], names: list[str]) -> None:
-    """Keep the counters of the development builds of `names`, made with the suffixes `autorev`, for the inputs they
-    have once built: the builds of their dependencies change them, when they change what rpm generates for them.
+    """Keep the counters of the development builds of `names`, just made with the suffixes `autorev`, for the inputs
+    they have once built, with the project's generated files, across `clean`.
     """  # noqa: D205
     if not (built := [name for name in names if name in autorev]):
         return
@@ -52,6 +47,7 @@ def keep_built(project: Project, ident: str | None, autorev: dict[str, str], nam
     ids, keys = compute(project, base(project)), build_keys(project)
     for name in built:
         counters[f"{name} {ids[name].number}"] = [int(autorev[name][1:].split(".")[0]), keys[name], ident]
+    path.parent.mkdir(exist_ok=True)
     write_atomically(path, json.dumps(counters, indent=1, sort_keys=True) + "\n")
 
 

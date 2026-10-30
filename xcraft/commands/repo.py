@@ -12,7 +12,7 @@ from xcraft import build as builder
 from xcraft import process
 from xcraft.cache import release_suffix
 from xcraft.commands import Arch, Dev, Final, Packages, dev_ident, load, update_build_ids
-from xcraft.devbuilds import dev_suffixes, keep_built
+from xcraft.devbuilds import dev_suffixes
 from xcraft.display import activity, console
 from xcraft.graph import dependents
 from xcraft.signing import check_signatures, dev_signer
@@ -69,7 +69,7 @@ def _kept(installed: list[str], rpms: list[str]) -> list[tuple[str, str]]:
     )
 
 
-def repo(  # noqa: C901, PLR0913, PLR0915, PLR0917
+def repo(  # noqa: C901, PLR0913, PLR0917
     ctx: typer.Context,
     packages: Packages = None,
     with_dependents: Annotated[
@@ -125,10 +125,9 @@ def repo(  # noqa: C901, PLR0913, PLR0915, PLR0917
         names += sorted(dependents(project.deps, names) - set(names))
     with project.lock():
         update_build_ids(project)
-        autorev = dev_suffixes(project, ident, advance=True)
-        results, keys = builder.build(project, names, autorev=autorev)
+        results, keys = builder.build(project, names, dev=ident)
         update_build_ids(project)
-        keep_built(project, ident, autorev, [r.name for r in results if r.status == "built"])
+        autorev = dev_suffixes(project, ident)
         if failed := [r.name for r in results if r.failed]:
             msg = f"not built: {', '.join(failed)}"
             raise RuntimeError(msg)
