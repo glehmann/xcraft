@@ -8,14 +8,13 @@ import os
 import re
 import subprocess
 import sys
-import tarfile
 from typing import TYPE_CHECKING
 
 import pytest
 import typer
 
 from tests import TOML, config
-from xcraft import build, cache, ccache
+from xcraft import build, cache
 from xcraft.build import queued
 from xcraft.cache import BuildError, build_keys, previous_duration, recipe_key
 from xcraft.checks import _check_made, record_rpm_deps
@@ -370,22 +369,6 @@ def test_builds_still_to_build_again_fail(project: Project, monkeypatch: pytest.
     )
     assert build.build(project, ["a"]) == ([build.Result("a", "failed")], {"a": "key"})
     assert len(attempts) == 2
-
-
-def test_empty_compiler_cache(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    def download(_storage: object, _path: str, dest: Path, _on_line: object, **_: object) -> bool:
-        dest.mkdir(parents=True)
-        with tarfile.open(dest / ccache.archive_name("foo"), "w"):  # of a build which compiled nothing
-            pass
-        return True
-
-    monkeypatch.setattr(ccache.remote, "fetch_tree", download)
-    cache = ccache.local_path(project, "foo")
-    cache.mkdir(parents=True)
-    (cache / "old").touch()
-    assert ccache.fetch(project, "foo")
-    assert cache.is_dir()
-    assert not list(cache.iterdir())
 
 
 def test_packages_edited_while_building(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:

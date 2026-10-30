@@ -75,7 +75,7 @@ def on_this_machine(storage: Remote) -> bool:
 @functools.cache
 def _pool() -> urllib3.PoolManager:
     """Return the connections to the storages, reused: a new one takes several round trips, with TLS."""
-    return urllib3.PoolManager(maxsize=REQUESTS)
+    return urllib3.PoolManager(maxsize=MANY)
 
 
 def _pooled(url: str) -> bool:
@@ -113,6 +113,11 @@ def exists(storage: Remote, path: str) -> bool:
 
 REQUESTS = 16
 """The requests at the same time to the storage, many of which are only small: the time is in their round trips."""
+MANY = 64
+"""The requests at the same time for the trees of many small files, like the compiler caches: the storage takes ~70ms
+to write each, which more requests at once hide."""
+SINGLE = 8 * 2**20
+"""The size of the files uploaded in one request, rather than in parts: those smaller than the parts of boto3."""
 
 
 def existing(storage: Remote, paths: list[str]) -> set[str]:
@@ -178,7 +183,7 @@ def _s3(endpoint: str, region: str, access_key: str, secret_key: str, session_to
         aws_secret_access_key=secret_key,
         aws_session_token=session_token or None,
         # the concurrent requests, and the parts of the uploads of large files
-        config=Config(max_pool_connections=4 * REQUESTS),
+        config=Config(max_pool_connections=MANY),
     )
 
 
@@ -226,21 +231,32 @@ def copy(storage: Remote, src: str, dest: str) -> None:
         s3.copy_object(Bucket=storage.bucket, Key=dest, CopySource={"Bucket": storage.bucket, "Key": src})
 
 
-def transfer(storage: Remote, files: dict[str, str | Path], on_line: Callable[[str], None] = lambda _: None) -> None:
-    """Write the paths of `files` concurrently: copies of the paths of the storage, or uploads of the local files."""
+def transfer(
+    storage: Remote,
+    files: dict[str, str | Path],
+    on_line: Callable[[str], None] = lambda _: None,
+    *,
+    requests: int = REQUESTS,
+) -> None:
+    """Write the paths of `files`, `requests` at once: copies of the paths of the storage, or uploads of the local
+    files.
+    """  # noqa: D205
     _forget(storage, list(files))
     with _writing(storage, f"write {len(files)} files") as s3:
 
         def write(dest: str, src: str | Path) -> str:
             if isinstance(src, Path):
                 log.debug("uploading %s to %s", src, _s3_url(storage, dest))
-                s3.upload_file(str(src), storage.bucket, dest)
+                if src.stat().st_size < SINGLE:  # without the machinery of the uploads in parts
+                    s3.put_object(Bucket=storage.bucket, Key=dest, Body=src.read_bytes())
+                else:
+                    s3.upload_file(str(src), storage.bucket, dest)
             else:
                 log.debug("copying %s to %s", _s3_url(storage, src), _s3_url(storage, dest))
                 s3.copy_object(Bucket=storage.bucket, Key=dest, CopySource={"Bucket": storage.bucket, "Key": src})
             return dest
 
-        with ThreadPoolExecutor(REQUESTS) as pool:
+        with ThreadPoolExecutor(requests) as pool:
             for dest in pool.map(write, files, files.values()):
                 on_line(dest)
 
@@ -439,6 +455,45 @@ def fetch_tree(project: Project, prefix: str, dest: Path, on_line: Callable[[str
     return False
 
 
+def update_tree(
+    project: Project,
+    prefix: str,
+    dest: Path,
+    wanted: Callable[[str, str], bool],
+    on_line: Callable[[str], None] = lambda _: None,
+) -> bool:
+    """Download into the directory `dest`, MANY at once, the files of the trusted tree `prefix`, from main or dev, that
+    `wanted` takes, by path and SHA-256, and return whether a storage has it. Each file is checked against the signed
+    manifest, then renamed into `dest`: those missing or corrupted in the storage are skipped.
+    """  # noqa: D205
+    error, found = None, None
+    for storage in storages(project):
+        try:
+            if (manifest := _manifest(storage, prefix, dev_signer(project))) is not None:
+                found = storage, manifest
+                break
+        except RemoteError as e:
+            error = e
+    if found is None:
+        if error:
+            raise error
+        return False
+    storage, manifest = found
+    dest.mkdir(parents=True, exist_ok=True)
+    # next to it, to rename them there
+    with tempfile.TemporaryDirectory(dir=dest.parent, prefix=f".{dest.name}-") as tmp:
+
+        def fetch(name: str) -> None:
+            part = Path(tmp) / name
+            if download(storage, f"{prefix}/{name}", part, on_line) and sha256_of(part) == manifest[name]:
+                (dest / name).parent.mkdir(parents=True, exist_ok=True)
+                part.rename(dest / name)
+
+        with ThreadPoolExecutor(MANY) as pool:
+            list(pool.map(fetch, [name for name, digest in manifest.items() if wanted(name, digest)]))
+    return True
+
+
 def download_tree(
     storage: Remote,
     prefix: str,
@@ -619,10 +674,20 @@ def _page(prefix: str, dirs: _Dirs, files: dict[str, _Entry], logo: str | None) 
     )
 
 
+CCACHE = f"{INTERNAL}/ccache"
+"""The compiler caches, a tree by architecture and package, see xcraft.ccache."""
+
+
+def _paged(directory: str) -> bool:
+    """Return whether `directory` has a page: not those in the trees of the compiler caches, too many for their use."""
+    return not directory.startswith(f"{CCACHE}/") or directory.count("/") <= CCACHE.count("/") + 3
+
+
 def update_pages(project: Project, storage: Remote, prefixes: list[str]) -> int:
     """Write the pages of the directories under the directories `prefixes`, and of their parents; return how many.
 
-    The directories are the prefixes ending with ``/``, and ``""`` is the root.
+    The directories are the prefixes ending with ``/``, and ``""`` is the root. Those without page, see _paged(), count
+    in the size of the directory above.
     """
     pages: dict[str, tuple[_Dirs, dict[str, _Entry]]] = {}
     parents: set[str] = set()
@@ -635,10 +700,13 @@ def update_pages(project: Project, storage: Remote, prefixes: list[str]) -> int:
             for path, (size, date) in _objects(s3, storage.bucket, prefix, below=True)[1].items():
                 *parts, name = path.split("/")
                 for i, part in enumerate(parts):
-                    dirs = pages.setdefault(prefix + "".join(f"{p}/" for p in parts[:i]), ({}, {}))[0]
+                    if not _paged(directory := prefix + "".join(f"{p}/" for p in parts[:i])):
+                        break
+                    dirs = pages.setdefault(directory, ({}, {}))[0]
                     below, newest = dirs.get(part, (0, None))
                     dirs[part] = (below + size, max(filter(None, (newest, date))))
-                pages.setdefault(prefix + "".join(f"{p}/" for p in parts), ({}, {}))[1][name] = (size, date)
+                if _paged(directory := prefix + "".join(f"{p}/" for p in parts)):
+                    pages.setdefault(directory, ({}, {}))[1][name] = (size, date)
             above = prefix.rstrip("/").split("/")[:-1] if prefix else []
             parents |= {"", *("".join(f"{p}/" for p in above[: i + 1]) for i in range(len(above)))}
         # the parents are only listed, the deepest first, with the totals of their subdirectories' pages
