@@ -291,6 +291,8 @@ def test_hash_dir_covers_what_builds_get(tmp_path: Path) -> None:
     script.chmod(0o755)
     assert hash_dir(pkg) != before
     executable = hash_dir(pkg)
+    script.chmod(0o700)  # the bit of its owner, as git keeps it, whoever reads it
+    assert hash_dir(pkg) == executable
     (pkg / "sub/origin").write_text("a source")
     assert hash_dir(pkg) != executable
     shared = tmp_path / "shared"
