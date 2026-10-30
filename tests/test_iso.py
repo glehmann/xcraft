@@ -10,6 +10,7 @@ import pytest
 
 from tests import PROJECT, TOML
 from tests.test_build import xcraft
+from xcraft.container import BUILDENV
 from xcraft.iso import Image, build_iso, cached_iso, iso_id, iso_key, iso_name
 from xcraft.lock import load_lock, save_lock
 from xcraft.project import Project, Remote
@@ -57,6 +58,15 @@ def test_iso_inputs(project: Project) -> None:
     lock.sources["kernel"] = "1-1"
     save_lock(project, lock)
     assert key() != before
+    # not the bytecode Python leaves next to the scripts of the build environment, which differs by checkout
+    before = key()
+    bytecode = BUILDENV / "__pycache__/xcraft-test.cpython-0.pyc"
+    bytecode.parent.mkdir(exist_ok=True)
+    bytecode.write_bytes(b"bytecode")
+    try:
+        assert key() == before
+    finally:
+        bytecode.unlink()
     # the build IDs: the numbers of the builds, and the reuses of builds
     for text in ("2 0123", "2 0123 accepts 4567"):
         before = key()

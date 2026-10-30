@@ -38,6 +38,17 @@ MAX_LOG_SIZE = 256 * 2**20
 
 BUILDENV = Path(__file__).parent / "buildenv"
 """The Containerfile of the image, and the scripts run in the containers, which have them in /xcraft."""
+
+
+def buildenv_hash() -> str:
+    """Return a hash of the files of BUILDENV, but the bytecode Python leaves there, which differs by checkout."""
+    h = hashlib.sha256()
+    for path in sorted(p for p in BUILDENV.rglob("*") if p.is_file() and "__pycache__" not in p.parts):
+        h.update(f"{path.relative_to(BUILDENV)}\0".encode())
+        h.update(hashlib.sha256(path.read_bytes()).digest())
+    return h.hexdigest()
+
+
 DNF_LOCK = "sudo flock /var/cache/dnf/.xcraft.lock"
 """Prefix of the dnf commands: the containers share the dnf cache volume, which dnf does not lock across them."""
 

@@ -20,7 +20,7 @@ from rich.markup import escape
 
 from xcraft import buildid, remote
 from xcraft.cache import inputs
-from xcraft.container import BUILDENV, DNF_LOCK, run
+from xcraft.container import DNF_LOCK, buildenv_hash, run
 from xcraft.display import activity, console
 from xcraft.lock import Locked, load_lock, save_lock
 from xcraft.project import INTERNAL
@@ -28,7 +28,6 @@ from xcraft.publish import REPO, snapshot
 from xcraft.resolution import lock_installed, prepare, resolve_image
 from xcraft.signing import signing_key
 from xcraft.sources import sha256_of
-from xcraft.specs import hash_dir
 
 if TYPE_CHECKING:
     from xcraft.project import Project, Remote
@@ -78,7 +77,7 @@ def iso_key(project: Project, *, netinstall: bool, volid: str | None, signer: Si
         *[getattr(lock, f).of(project.arch) for f in ("requires", "provides", "buildrequires")],
         lock.runtime.get(project.arch, []),
         lock.iso.get(project.arch, []),
-        hash_dir(BUILDENV),
+        buildenv_hash(),
         [
             Path(__file__).with_name(f).read_text()
             for f in (
