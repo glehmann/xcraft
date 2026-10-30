@@ -22,7 +22,7 @@ from xcraft.checks import _check_made, record_rpm_deps
 from xcraft.clean import clean, repos_disk_usage
 from xcraft.commands import complete_arch, load
 from xcraft.commands.repo import _kept
-from xcraft.localrepo import RepoError, fresh_dir
+from xcraft.localrepo import OUTPUT_MARKER, RepoError, fresh_dir
 from xcraft.lock import Lock, load_lock, save_lock
 from xcraft.project import Project, ProjectLockedError
 from xcraft.publish import build_dependencies
@@ -103,6 +103,8 @@ def test_clean_keeps_sources_and_current_builds(project: Project) -> None:
     assert repos_disk_usage(project) == 0
     assert clean(project, [keys], ["bar"], all_builds=True) == 8192
     assert not [f for f in files(state) if "bar" in f]
+    assert repos_disk_usage(project) == 0  # of a directory xcraft repo did not make
+    (project.root / "repo" / OUTPUT_MARKER).touch()
     assert repos_disk_usage(project) == 8192  # only repo/ has it now
 
     assert clean(project, [keys]) > 0

@@ -24,18 +24,17 @@ def options(
     arch: Arch = None,
     vm_dir: Annotated[Path | None, typer.Option(help="VM session directory, even outside a project.")] = None,
 ) -> None:
-    """Select the session before the subcommand."""
-    if vm_dir is None:
-        project = Project.find(arch)
-        vm_dir = project.state / "vm" / project.arch
-    ctx.obj = vm_dir.absolute()
+    """Select the session before the subcommand: its directory, or the architecture of the project's, found then, not
+    to need one for --help.
+    """
+    ctx.obj = vm_dir.absolute() if vm_dir else arch
 
 
 def directory(ctx: typer.Context) -> Path:
     """Get the selected session, validating that a launch has been recorded."""
     if not isinstance(ctx.obj, Path):
-        msg = "no VM directory selected"
-        raise TypeError(msg)
+        project = Project.find(ctx.obj)
+        ctx.obj = project.state / "vm" / project.arch
     if not (ctx.obj / "session.json").is_file():
         msg = f"no VM session in {ctx.obj}: run xcraft boot first"
         raise RuntimeError(msg)
