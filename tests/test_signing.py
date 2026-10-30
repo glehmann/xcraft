@@ -9,11 +9,13 @@ from typing import TYPE_CHECKING
 import pytest
 import typer
 
-from tests import copy_project
+from tests import ARCH, copy_project
 from tests.test_build import xcraft
 from xcraft import buildid
+from xcraft.cache import build_keys, cached_build
 from xcraft.commands import choose_signer
 from xcraft.project import Project, Sign
+from xcraft.publish import _signed_build
 from xcraft.signing import Signer, SigningError, check_signatures, create_dev_key, dev_keyring, dev_signer, signing_key
 
 if TYPE_CHECKING:
@@ -119,3 +121,19 @@ def test_development_builds_are_signed(build_environment: None, root: Path) -> N
     assert (repo / "repodata/repomd.xml.asc").exists()
     assert (repo / "RPM-GPG-KEY-xcraft-test").read_text() == signer.public_key()
     assert "gpgcheck=1\nrepo_gpgcheck=1\ngpgkey=file://" in (repo / "xcraft-key.repo").read_text()
+
+
+@pytest.mark.skipif(ARCH != "x86_64_v2", reason="two architectures the host runs: x86_64_v2 and x86_64")
+def test_signed_builds_of_each_architecture(root: Path, build_environment: None) -> None:
+    config = root / "xcraft.toml"
+    config.write_text(config.read_text().replace('"linux/arm64"', '"linux/amd64"'))
+    assert xcraft("build", "trivial")[0] == 0
+    project, other = Project.find(), Project.find("x86_64")
+    signer = create_dev_key(project, "Developer")
+    # the same build key on both: another build for the other architecture, told apart by a file
+    key = build_keys(project)["trivial"]
+    shutil.copytree(cached_build(project, "trivial", key), cached_build(other, "trivial", key))
+    (cached_build(other, "trivial", key) / "RPMS/x86_64").write_text("the build of x86_64")
+    signed = [_signed_build(p, signer, "trivial", key, storage=None) for p in (project, other)]
+    assert not (signed[0] / "RPMS/x86_64").exists()
+    assert (signed[1] / "RPMS/x86_64").read_text() == "the build of x86_64"

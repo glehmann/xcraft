@@ -849,7 +849,7 @@ def test_signed_publish(root: Path) -> None:  # noqa: PLR0915
         storage = Project.find().config.remote.get("main")
         assert storage
         assert remote.exists(storage, f"repos/9.0/{STAGE}/latest/base/{ARCH}/repodata/repomd.xml.asc")
-        signed = list((root / ".xcraft/cache/signed" / signer.key / "trivial").iterdir())
+        signed = list((root / ".xcraft/cache/signed" / signer.key / ARCH / "trivial").iterdir())
         assert remote.tree_exists(storage, f".xcraft/signed/{signer.key}/{ARCH}/trivial/{signed[0].name}")
         # signed once: the next snapshots have the same files
         rpm = signed[0] / "RPMS/noarch/trivial-1.0-1+b1.xcpng8.99.noarch.rpm"

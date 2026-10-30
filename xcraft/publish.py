@@ -309,7 +309,8 @@ def _signed_build(project: Project, signer: Signer, name: str, key: str, *, stor
     storage could not store once for all the snapshots. With `storage`, the signed build goes to that bucket
     when it does not have it: signed now, or by a local publish before.
     """
-    signed = project.state / "cache/signed" / signer.key / name / key
+    # by architecture, as the builds of all of them have the same keys
+    signed = project.state / "cache/signed" / signer.key / project.arch / name / key
     path = _signed_path(project, signer, name, key)
     if not signed.exists() and not remote.fetch_tree(project, path, signed):
         work = signed.with_name(f".{key}")
