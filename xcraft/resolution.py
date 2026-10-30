@@ -198,11 +198,21 @@ def _record(project: Project) -> None:
         lock.roots.arches = {}
         for platform in platforms:
             image, roots = _locked(_image(platform)), _locked(_roots(platform))
+            if error := image.errors.get("image"):
+                msg = f"the build environment image cannot be resolved for {platform.arch}: {error}"
+                raise ResolutionError(msg)
             lock.image[platform.arch] = sorted({image.packages[n].source for n in image.image})
             for name in sorted(project.package_dirs):
-                sources = {roots.packages[n].source for n in roots.buildroots.get(name, [])}
-                arch, first = platform.arch, platforms[0].arch
-                lock.roots.record(arch, first, name, sorted(sources - {*lock.image[platform.arch]}))
+                # what the lock has for those that cannot be resolved, until they can
+                values = (
+                    recorded.roots.of(platform.arch).get(name, [])
+                    if name in roots.errors
+                    else sorted(
+                        {roots.packages[n].source for n in roots.buildroots.get(name, [])}
+                        - {*lock.image[platform.arch]}
+                    )
+                )
+                lock.roots.record(platform.arch, project.first, name, values)
         if lock == recorded:
             return
         with project.lock():
