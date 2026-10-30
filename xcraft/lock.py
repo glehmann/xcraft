@@ -13,9 +13,9 @@ It also has what only builds know, for the build roots computed from the specs
 binary packages resolve to, the capabilities rpm generated for them that our
 specs require, and the dynamic BuildRequires.
 
-When an update changes upstream packages in the build root of one of our
-packages, it gets pending entries, with the versions its release was built
-with, until it gets a new release, or the change is acknowledged.
+An update of upstream packages in the build root of one of our packages changes
+its build key, and so its build ID: it is built again, unless it reuses its
+build of the main branch, see xcraft.buildid.
 """
 
 from __future__ import annotations
