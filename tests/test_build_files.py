@@ -488,6 +488,16 @@ def test_keys_changed_during_the_builds(project: Project, monkeypatch: pytest.Mo
     assert after["b"] != keys["b"]
 
 
+def test_stored_builds_of_keys_changed(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(build, "record_rpm_deps", lambda *_, **__: False)
+    keys = {"a": "1" * 64, "b": "2" * 64}
+    stored = {cache.build_path(project, "a", keys["a"]): True, cache.build_path(project, "b", "3" * 64): True}
+    results = {name: build.Result(name, "stored") for name in keys}
+    # b in the storage with the key it had then, not with the final one: fetched or built again
+    after = build._recorded_again(project, results, keys, {}, b"", stored, dev=None, hashes={})[0]
+    assert after == [build.Result("a", "stored"), build.Result("b", "again")]
+
+
 def test_recordings_not_converging(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(build, "dev_keys", lambda *_: ({}, {}))
     monkeypatch.setattr(build, "record_rpm_deps", lambda *_, **__: True)

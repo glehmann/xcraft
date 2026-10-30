@@ -385,7 +385,7 @@ def _build_all(
         if results[name].status == "built":
             keep_built(project, dev, autorev, [name], hashes)
     keys, autorev, recorded = _current(project, keys, autorev, recorded, dev=dev, hashes=hashes)
-    return _recorded_again(project, results, keys, autorev, recorded, dev=dev, hashes=hashes)
+    return _recorded_again(project, results, keys, autorev, recorded, stored, dev=dev, hashes=hashes)
 
 
 def _recorded_again(
@@ -394,18 +394,22 @@ def _recorded_again(
     keys: dict[str, str],
     autorev: dict[str, str],
     recorded: bytes,
+    stored: dict[str, bool],
     *,
     dev: str | None,
     hashes: dict[str, str],
 ) -> tuple[list[Result], dict[str, str], dict[str, str]]:
     """Record what rpm generated for the cached builds again, and return the `results`, the keys and the suffixes
     `autorev`: packages built or fetched now may provide what they could not resolve before, which changes the keys of
-    those built against them, then built again, like a change of the lock during the builds.
+    those built against them, then built again, like a change of the lock during the builds, or fetched again from
+    the remote storage, which has those of `stored`, by path.
     """
     if record_rpm_deps(project, [n for n, k in keys.items() if cached_build(project, n, k).exists()], keys):
         keys, autorev, _ = _current(project, keys, autorev, recorded, dev=dev, hashes=hashes)
     for name, result in results.items():
-        if result.status in ("built", "fetched", "cached") and not cached_build(project, name, keys[name]).exists():
+        if (result.status == "stored" and not stored.get(build_path(project, name, keys[name]))) or (
+            result.status in ("built", "fetched", "cached") and not cached_build(project, name, keys[name]).exists()
+        ):
             results[name] = Result(name, "again")
     return list(results.values()), keys, autorev
 

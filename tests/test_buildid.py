@@ -425,3 +425,14 @@ def test_reused_builds_of_upstream_updates(root: Path, monkeypatch: pytest.Monke
     assert code == 0, output
     assert output.splitlines()[-1] == "with-deps: reuses its build 1"
     assert update() == {"trivial": 1, "with-deps": 1}
+    # and again, merged in the main branch, for the next update
+    git(root, "commit", "-qam", "reused")
+    git(root, "checkout", "-q", "master")
+    git(root, "merge", "-q", "--ff-only", "feature")
+    git(root, "checkout", "-qb", "next")
+    lock = load_lock(Project.find())
+    lock.sources["toyrun"] = "3-1"  # what the builds would get, which the keys only know from the lock
+    save_lock(Project.find(), lock)
+    assert update() == {"trivial": 1, "with-deps": 2}
+    assert buildid.reuse(Project.find(), [], ["toyrun"]) == ["with-deps"]
+    assert update() == {"trivial": 1, "with-deps": 1}
