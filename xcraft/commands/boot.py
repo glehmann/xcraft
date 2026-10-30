@@ -32,7 +32,7 @@ def _check_host(arch: str, accel: str, *, new_disk: bool) -> None:
         raise RuntimeError(msg)
 
 
-def boot(  # noqa: PLR0913, PLR0917
+def boot(
     iso: Annotated[
         Path | None, typer.Option(exists=True, dir_okay=False, help="Boot an existing ISO instead of generating one.")
     ] = None,

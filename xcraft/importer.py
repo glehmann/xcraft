@@ -57,7 +57,7 @@ def _is_file_to_import(path: Path, top: Path) -> bool:
 def unpack_srpm(project: Project, srpm: Path, dest: Path, *, on_line: Callable[[str], None]) -> None:
     """Unpack the source RPM `srpm` into `dest`, but its archives: they go into the source cache, and the ``sources``
     manifest of `dest`.
-    """  # noqa: D205
+    """
     with tempfile.TemporaryDirectory(prefix="xcraft-srpm-") as content:
         # rpm2cpio is not on every host
         on_line(f"extracting {srpm.name}")
@@ -208,7 +208,7 @@ def import_history(root: Path, pkg_dir: Path, url: str, branches: list[str]) -> 
     """Import the history of the `branches` of `url` into the branches import/<pkg>/<branch> of the git repository of
     `root`, for the package in `pkg_dir`, and return their commits. Missing branches are skipped, and those having
     commits that are not imported refused.
-    """  # noqa: D205
+    """
     repo, start = _repository(root)
     first = start.encode()
     prefix = pkg_dir.resolve().relative_to(repo).as_posix().encode() + b"/"
@@ -278,7 +278,7 @@ def import_srpm(
     """Commit the content of the source RPM `srpm`, of the package in `pkg_dir`, on import/<pkg>/<branch>, the
     srpm_branch of [import] in xcraft.toml,
     started from the first commit of the project for a new one, and return the commit, or None when it is the same.
-    """  # noqa: D205
+    """
     repo, first = _repository(project.root)
     ref = f"refs/heads/import/{pkg_dir.name}/{project.config.import_.srpm_branch}"
     parent = _commit(repo, ref) or first

@@ -115,7 +115,7 @@ def queued(project: Project) -> list[str]:
     return names if _alive(pid) else []
 
 
-def _build_one(  # noqa: C901, PLR0913
+def _build_one(  # noqa: C901
     project: Project,
     name: str,
     keys: dict[str, str],
@@ -193,7 +193,7 @@ def _build_one(  # noqa: C901, PLR0913
 def _cache(project: Project, name: str, key: str, tree: Path, autorev: dict[str, str]) -> Path:
     """Move the build of `name` in `tree` to the cache, with its `key` and the development build suffixes `autorev`, and
     return it there.
-    """  # noqa: D205
+    """
     build_dir = cached_build(project, name, key)
     # assembled next to it, and renamed, not to leave a partial build in the cache
     new = build_dir.with_name(f".{build_dir.name}")
@@ -222,7 +222,7 @@ def fetch_build(project: Project, name: str, key: str) -> bool:
 def _show_plan(project: Project, plan: list[str], keys: dict[str, str], *, fetch: Fetch) -> None:
     """Show what is to build or fetch in `plan`, and how long it took last time, with how many are cached, or only
     in the remote storage.
-    """  # noqa: D205
+    """
     to_build = [name for name in plan if not cached_build(project, name, keys[name]).exists()]
     stored = set()
     if fetch != "none" and project.config.remote:
@@ -256,7 +256,7 @@ def _show_plan(project: Project, plan: list[str], keys: dict[str, str], *, fetch
     console.print(", ".join(summary))
 
 
-def build(  # noqa: PLR0913
+def build(
     project: Project,
     targets: list[str],
     *,
@@ -282,7 +282,7 @@ def build(  # noqa: PLR0913
 
     The build IDs are updated before the builds, and after, with what they found, or checked with --locked: all the
     builds are numbered by them. The lock must be prepared: see resolution.prepare().
-    """  # noqa: D205
+    """
     if not dry_run:
         update_build_ids(project)
     for attempt in range(2):
@@ -324,7 +324,7 @@ def update_build_ids(project: Project) -> None:
 def _record_cached(project: Project, dev: str | None) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
     """Record what rpm generated for the cached builds of the current keys, and return the keys, with what they
     recorded, the hashes of the package directories they have, and the suffixes of the development builds `dev`.
-    """  # noqa: D205
+    """
     hashes = inputs(project)
     for _ in range(5):
         autorev = dev_suffixes(project, dev, hashes)
@@ -338,7 +338,7 @@ def _record_cached(project: Project, dev: str | None) -> tuple[dict[str, str], d
     raise BuildError(msg)
 
 
-def _build_all(  # noqa: PLR0913
+def _build_all(
     project: Project,
     plan: list[str],
     keys: dict[str, str],
@@ -391,7 +391,7 @@ def _build_all(  # noqa: PLR0913
     return _recorded_again(project, results, keys, autorev, recorded, dev=dev, hashes=hashes)
 
 
-def _recorded_again(  # noqa: PLR0913
+def _recorded_again(
     project: Project,
     results: dict[str, Result],
     keys: dict[str, str],
@@ -404,7 +404,7 @@ def _recorded_again(  # noqa: PLR0913
     """Record what rpm generated for the cached builds again, and return the `results` and the keys: packages built or
     fetched now may provide what they could not resolve before, which changes the keys of those built against them,
     then built again.
-    """  # noqa: D205
+    """
     if record_rpm_deps(project, [n for n, k in keys.items() if cached_build(project, n, k).exists()], keys):
         keys = _current(project, keys, autorev, recorded, dev=dev, hashes=hashes)[0]
         for name, result in results.items():
@@ -416,7 +416,7 @@ def _recorded_again(  # noqa: PLR0913
 def _stored(project: Project, names: list[str], keys: dict[str, str]) -> dict[str, bool]:
     """Return whether the remote storage has the builds of `names` with `keys`, by their paths in it, asked
     concurrently: nothing when it cannot be asked, as each one is asked again then.
-    """  # noqa: D205
+    """
     if not project.config.remote:
         return {}
     paths = [build_path(project, name, keys[name]) for name in names]
@@ -427,7 +427,7 @@ def _stored(project: Project, names: list[str], keys: dict[str, str]) -> dict[st
         return {}
 
 
-def _from_storage(  # noqa: PLR0913
+def _from_storage(
     project: Project,
     name: str,
     keys: dict[str, str],
@@ -438,7 +438,7 @@ def _from_storage(  # noqa: PLR0913
 ) -> bool:
     """Fetch the build of `name` from the remote storage, or only note it is there with `fetch` needed, in `results`,
     and return whether the storage has it: as `stored` says, by path, or asked now.
-    """  # noqa: D205
+    """
     if fetch == "needed":  # fetched by _fetch_for(), if a build needs it
         path = build_path(project, name, keys[name])
         if path not in stored and project.config.remote:
@@ -456,7 +456,7 @@ def _from_storage(  # noqa: PLR0913
 def _fetch_for(project: Project, name: str, keys: dict[str, str], results: dict[str, Result]) -> None:
     """Fetch from the remote storage what the build of `name` needs: the compiler cache of the storage, without
     one, and the builds of its dependencies only there, see Fetch.
-    """  # noqa: D205
+    """
     ccache.fetch_missing(project, name)
     try:
         for dep in sorted(reachable(project.deps, project.deps[name])):
@@ -473,7 +473,7 @@ def _fetched(project: Project, name: str, keys: dict[str, str], results: dict[st
     results[name] = Result(name, "fetched")
 
 
-def _current(  # noqa: PLR0913
+def _current(
     project: Project,
     keys: dict[str, str],
     autorev: dict[str, str],
@@ -484,7 +484,7 @@ def _current(  # noqa: PLR0913
 ) -> tuple[dict[str, str], dict[str, str], bytes]:
     """Return the `keys` and the suffixes `autorev` of the development builds `dev` of the lock `recorded`, and the
     lock, computed again when the builds changed it: not with the packages, as they were at the start.
-    """  # noqa: D205
+    """
     if (state := _lock_state(project)) == recorded:
         return keys, autorev, recorded
     prepare(project)
@@ -495,7 +495,7 @@ def _current(  # noqa: PLR0913
 def _done(project: Project, name: str, keys: dict[str, str], hashes: dict[str, str], *, verbose: bool) -> Result | None:
     """Return the result of `name` when it is not to build: failed, as it or one of its dependencies changed since
     they had the `hashes` of the `keys`, or cached.
-    """  # noqa: D205
+    """
     if edited := [n for n in sorted(reachable(project.deps, [name])) if hash_dir(project.package_dirs[n]) != hashes[n]]:
         error = BuildError(f"{', '.join(edited)} changed since the builds started: build again")
         _show_failure(project, name, error, verbose=verbose)
@@ -510,7 +510,7 @@ def _lock_state(project: Project) -> bytes:
     return path.read_bytes() if (path := lock_path(project)).exists() else b""
 
 
-def _build_shown(  # noqa: PLR0913
+def _build_shown(
     project: Project,
     name: str,
     keys: dict[str, str],
@@ -543,7 +543,7 @@ def _failed(project: Project, name: str, results: dict[str, Result]) -> list[str
 def _show_failure(project: Project, name: str, error: Exception, *, verbose: bool) -> None:
     """Show why the build of `name` failed, with the end of its log when it failed in the build environment, after
     the whole log in CI, to debug it there: folded on GitHub Actions.
-    """  # noqa: D205
+    """
     console.print(f"[bold red]✗[/] {name}: {escape(str(error))}")
     if isinstance(error, ContainerError) and not verbose:
         lines = read_tail(project.log(name), 16 * 2**20)

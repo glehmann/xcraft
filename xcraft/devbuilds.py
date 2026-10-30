@@ -30,7 +30,7 @@ def _current(
 ) -> tuple[dict[str, BuildId], dict[str, str], set[str]]:
     """Return the build IDs, the cache keys of the final builds, and the packages with development builds, computed
     once, with the `hashes` of the package directories, those of now by default.
-    """  # noqa: D205
+    """
     fork = base(project)
     ids = compute(project, fork, hashes)
     return ids, build_keys(project, hashes=hashes, ids=ids), proposed(fork, ids)
@@ -44,7 +44,7 @@ def dev_suffixes(project: Project, ident: str | None, hashes: dict[str, str] | N
     development build upgrades the previous ones, whatever their identifiers, and a build of the same inputs is
     cached: the suffixes are those the builds have, or would have, until keep_built() keeps the counters of new ones.
     The `hashes` of the package directories are those of now by default.
-    """  # noqa: D205
+    """
     if ident is None:
         return {}
     counters, (ids, keys, developed) = _counters(project), _current(project, hashes)
@@ -63,7 +63,7 @@ def keep_built(
     """Keep the counters of the development builds of `names`, just made with the suffixes `autorev`, for the inputs
     they have once built, with the project's generated files, across `clean`: the `hashes` of the package directories
     the builds started with, which may have changed since.
-    """  # noqa: D205
+    """
     if ident is None or not (built := [name for name in names if name in autorev]):
         return
     counters, (ids, keys, _) = _counters(project), _current(project, hashes)
@@ -84,7 +84,7 @@ def developed(project: Project) -> set[str]:
 def built_dev_suffixes(project: Project) -> dict[str, str]:
     """Return the release suffixes of the development builds, as last built: those whose inputs did not change since,
     whatever their identifiers.
-    """  # noqa: D205
+    """
     counters, (ids, keys, developed) = _counters(project), _current(project)
     return {
         name: f"~{counter}.{ident}"

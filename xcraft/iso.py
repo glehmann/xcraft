@@ -117,7 +117,7 @@ def iso_inputs(project: Project, *, signer: Signer | None) -> dict[str, str]:
 def iso_id(project: Project, *, signer: Signer | None) -> str:
     """Return the identifier of the ISOs of the checkout, the same for all the architectures, full or netinstall: the
     beginning of a hash of the keys of all of them, which cover what they are made of.
-    """  # noqa: D205
+    """
     keys = sorted(key for platform in project.all_platforms() for key in iso_inputs(platform, signer=signer).values())
     return hashlib.sha256(json.dumps(keys).encode()).hexdigest()[:6]
 
@@ -239,7 +239,7 @@ def build_iso(
 def _lock_tools(project: Project, recorded: dict[str, Locked]) -> bool:
     """Add the upstream packages installed with the tools to the lock, and return whether they have the locked
     versions: not when it locked other ones.
-    """  # noqa: D205
+    """
     image = set(resolve_image(project).image)
     installed = {name: p for name, p in recorded.items() if name not in image}
     if not lock_installed(project, installed):
@@ -269,7 +269,7 @@ def _install_tools(project: Project) -> None:
     raise RuntimeError(msg)
 
 
-def make_iso(  # noqa: PLR0913
+def make_iso(
     project: Project,
     snapshot: Path,
     output: Path | None,
@@ -307,7 +307,7 @@ def _make_iso(
 ) -> tuple[Path, str]:
     """Make the ISO of `snapshot`, its binaries for the architecture, in .xcraft/tmp/, and return it, with the
     version of the distribution it installs.
-    """  # noqa: D205
+    """
     iso = project.config.iso
     _install_tools(project)  # in the versions of the lock, which the ISO is then made with
     with project.work("iso") as work:
@@ -348,7 +348,7 @@ def make_isos(project: Project, snapshot: Path, dest: Path, *, signer: Signer | 
     """Make the ISOs of `snapshot`, its binaries for the architecture, with the packages and netinstall, in `dest`,
     the directory of the ISOs of all the architectures, with their detached signatures by `signer`, if any, and return
     them.
-    """  # noqa: D205
+    """
     dest.mkdir(parents=True, exist_ok=True)
     isos = []
     for netinstall in (False, True):

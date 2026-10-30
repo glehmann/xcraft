@@ -65,7 +65,7 @@ class Recorded(BaseModel):
         """Record the `values` of `name` found on `arch`: in the shared entries for `first`, the first architecture of
         the project, and in those of `arch` otherwise, when they differ, so that the first architecture never gets
         what another one found. The others without their own entries have the shared ones.
-        """  # noqa: D205
+        """
         values = sorted(values)
         if arch == first:
             if values:
@@ -110,7 +110,7 @@ class Lock(BaseModel):
 def choose_versions(available: dict[str, dict[str, list[str]]]) -> dict[str, str]:
     """Return the versions to lock of the source packages of `available`, by architecture, with their versions oldest
     first: the latest one all the architectures having them have, or else the latest one of the first of them.
-    """  # noqa: D205
+    """
     chosen = {}
     for source in sorted({source for versions in available.values() for source in versions}):
         candidates = [versions[source] for versions in available.values() if versions.get(source)]

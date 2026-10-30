@@ -24,7 +24,7 @@ def create(
 ) -> None:
     """Make the developer's key, without passphrase, in its own keyring: it signs the development builds of the
     checkout.
-    """  # noqa: D205
+    """
     project = Project.find()
     if not name:
         user, email = (git("-C", str(project.root), "config", key) for key in ("user.name", "user.email"))

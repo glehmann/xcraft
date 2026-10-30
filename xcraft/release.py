@@ -27,7 +27,7 @@ def bump_release(spec: str) -> str:
 
     That is the XCP-ng part in releases like ``1%{?xsrel}.3%{?dist}``, and not a number in a hash, like in
     ``2.219ab5b``.
-    """  # noqa: D205
+    """
     m = _release(spec)
     release = m.group(1)
     outside_macros = _MACRO_RE.sub(lambda macro: "%" * len(macro.group()), release)

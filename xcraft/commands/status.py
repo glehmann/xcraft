@@ -39,7 +39,7 @@ Inputs = Annotated[
 ]
 
 
-def status(  # noqa: PLR0913, PLR0917
+def status(
     ctx: typer.Context,
     packages: Packages = None,
     dev: Dev = None,
@@ -98,7 +98,7 @@ def status(  # noqa: PLR0913, PLR0917
 def _show_inputs(project: Project, names: list[str]) -> None:
     """Show the build keys of the packages `names`, with their build IDs and what the keys are computed from, as JSON:
     a key is the SHA-256 of its inputs, as JSON, keys sorted, then a NUL and the name of its package.
-    """  # noqa: D205
+    """
     shown: dict[str, dict[str, list]] = {}
     ids = buildid.compute(project, buildid.base(project), shown=shown)
     console.file.write(

@@ -13,7 +13,7 @@ from xcraft.iso import build_iso
 from xcraft.project import Project
 
 
-def iso(  # noqa: PLR0913, PLR0917
+def iso(
     netinstall: Annotated[
         bool, typer.Option("--netinstall", help="Without the packages, installed from a repository on the network.")
     ] = False,

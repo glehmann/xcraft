@@ -15,7 +15,7 @@ from xcraft.display import console
 from xcraft.graph import dependents
 
 
-def build(  # noqa: PLR0913, PLR0917
+def build(
     ctx: typer.Context,
     packages: Packages = None,
     no_deps: Annotated[bool, typer.Option("--no-deps", help="Do not build the dependencies.")] = False,

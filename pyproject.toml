@@ -55,12 +55,15 @@ target-version = "py313"
 select = ["ALL"]
 ignore = [
     "D203",    # incorrect-blank-line-before-class
+    "D205",    # missing-blank-line-after-summary: summaries wrap over several lines
     "D213",    # multi-line-summary-second-line
     "COM812",  # missing-trailing-comma
     "CPY001",  # missing-copyright-notice: no copyright headers in this project
     "FBT002",  # boolean-default-value-positional-argument: typer options are boolean defaults
     "S603",    # subprocess-without-shell-equals-true: running git, podman... is what this tool does
     "S607",    # start-process-with-partial-path
+    "PLR0913", # too-many-arguments: mostly keyword-only options
+    "PLR0917", # too-many-positional-arguments
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -80,6 +83,7 @@ ignore = [
     "D103",     # undocumented-public-function
     "D104",     # undocumented-public-package
     "PLR2004",  # magic-value-comparison
+    "SLF001",   # private-member-access: the tests reach into the internals they test
     "TC003",    # typing-only-standard-library-import
 ]
 

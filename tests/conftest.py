@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 def make_toys(root: Path) -> None:
     """Build the upstream packages of the tests into their repository, TOYS, unless it is there already, in the base
     image of the host, with the repositories of the project but theirs, in `root`.
-    """  # noqa: D205
+    """
     if TOYS.exists():
         return
     config_ = config()
@@ -62,7 +62,7 @@ def build_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None
     """Build the image of the build environment of the test projects first, and resolve their lock, once for all the
     workers of pytest-xdist, rather than all of them at once: the tests in containers copy that template, the others
     do not need it.
-    """  # noqa: D205
+    """
     basetemp = tmp_path_factory.getbasetemp()
     shared = basetemp.parent if "PYTEST_XDIST_WORKER" in os.environ else basetemp  # of all the workers of the session
     with (shared / "build-environment.lock").open("w") as f:
@@ -82,7 +82,7 @@ def build_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None
         yield
         return
     # Workers run real dnf transactions, with separate caches so their locks do not serialize the tests.
-    cache_name = container._dnf_cache  # noqa: SLF001
+    cache_name = container._dnf_cache
     volumes: dict[str, tuple[str, Path]] = {}
 
     def worker_cache(project: Project) -> str:

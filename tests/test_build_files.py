@@ -398,7 +398,7 @@ def test_packages_edited_while_building(project: Project, monkeypatch: pytest.Mo
 
     monkeypatch.setattr(build, "_build_shown", building)
     (project.state / "build").mkdir(parents=True)  # for the queue, which build() makes
-    results, _ = build._build_all(  # noqa: SLF001
+    results, _ = build._build_all(
         project, ["a", "c", "b"], keys, hashes, verbose=False, dev=None, autorev={}, fetch="none", build_missing=True
     )
     # the builds work on the packages as they were at the start: b fails, rather than b cached with the old a
@@ -429,7 +429,7 @@ def test_keys_changed_by_the_last_recording(project: Project, monkeypatch: pytes
 
     monkeypatch.setattr(build, "record_rpm_deps", record)
     (project.state / "build").mkdir(parents=True)  # for the queue, which build() makes
-    results, after = build._build_all(  # noqa: SLF001
+    results, after = build._build_all(
         project, ["a", "b"], keys, hashes, verbose=False, dev=None, autorev={}, fetch="none", build_missing=True
     )
     # b to build again, with its new key, not cached
@@ -443,7 +443,7 @@ def test_recordings_not_converging(project: Project, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(build, "record_rpm_deps", lambda *_, **__: True)
     monkeypatch.setattr(build, "prepare", lambda _: None)
     with pytest.raises(BuildError, match="keeps changing the keys"):
-        build._record_cached(project, None)  # noqa: SLF001
+        build._record_cached(project, None)
 
 
 def test_unknown_packages_before_preparing(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -72,7 +72,7 @@ class Resolved(BaseModel):
 def _run(project: Project, data: dict, *, show: str, rpms: list[Path] = []) -> Resolved:  # noqa: B006
     """Return what resolve.py resolves from `data` for the platform of `project`, with the built `rpms`, in the cache,
     and the extra upstream RPMs.
-    """  # noqa: D205
+    """
     cache = project.state / "cache"
     paths = sorted(f"/cache/{rpm.relative_to(cache)}" for rpm in [*rpms, *extra_rpms(project)])
     data = {"rpms": paths, "record": {}, "wanted": [], "versions": [], **data}
@@ -172,7 +172,7 @@ def prepare(project: Project, *, roots: bool = True) -> None:
 
     With the build roots, those of all the architectures are recorded in the lock, with their images: the build keys
     cover them, on any architecture. Their resolutions are cached, so only a change resolves them again.
-    """  # noqa: D205
+    """
     native = project.on_host()
     for platform in [native] if native == project else [native, project]:
         _locking(platform, _image)
@@ -189,7 +189,7 @@ def _record(project: Project) -> None:
 
     They are resolved from the lock as read, and saved only when it did not change meanwhile, by another command: they
     are resolved again from the new one otherwise.
-    """  # noqa: D205
+    """
     platforms = project.all_platforms()
     for _ in range(3):
         recorded = load_lock(project)
@@ -279,7 +279,7 @@ def resolve_rpm_deps(project: Project, names: dict[str, str], rpms: list[Path]) 
     their generated capabilities that our specs require, from the built `rpms`, theirs and those providing them. The
     `names` are those of the binary packages as built, by their names in the specs, which differ when they include
     the release, like the livepatch packages of the kernel; the result is by the names as built.
-    """  # noqa: D205
+    """
     parsed = {b.name: b for package in project.parsed.values() for b in package.binaries}
     wanted = sorted({dep_name(r) for p in project.parsed.values() for r in p.requirements})
     data = {
@@ -296,7 +296,7 @@ def resolve_rpm_deps(project: Project, names: dict[str, str], rpms: list[Path]) 
 def upstream_sources(project: Project, names: list[str]) -> list[str]:
     """Return the locked upstream source packages of `names`, binary or source names, which the images of all the
     architectures are prepared for, to know the binary ones.
-    """  # noqa: D205
+    """
     lock = load_lock(project)
     platforms = project.all_platforms() if set(names) - lock.sources.keys() else []
     for platform in platforms:
@@ -314,7 +314,7 @@ def lock_installed(project: Project, installed: dict[str, Locked]) -> bool:
     and the packages have to be installed again.
 
     Raise when locked ones were installed in another version, which means the versionlock was not applied.
-    """  # noqa: D205
+    """
 
     def changed() -> list[str]:
         """Return the installed packages of locked sources not in their locked versions, or not in them at all."""

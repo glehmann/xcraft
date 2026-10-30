@@ -49,7 +49,7 @@ def prepare_tree(project: Project, name: str) -> Path:
     return tree
 
 
-def run_build(  # noqa: PLR0913
+def run_build(
     project: Project,
     name: str,
     repo: LocalRepo,

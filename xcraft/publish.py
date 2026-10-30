@@ -58,7 +58,7 @@ INPUTS = "inputs.json"
 class SnapshotInputs(BaseModel):
     """The input keys of the architectures or ISO variants of the latest snapshot, and its files, with their SHA-256:
     it is reused while they are the same.
-    """  # noqa: D205
+    """
 
     keys: dict[str, str]
     files: dict[str, str]
@@ -87,7 +87,7 @@ def snapshot_key(project: Project, keys: dict[str, str], *, signer: Signer | Non
 def _trusted(project: Project, signer: Signer | None) -> Signer | None:
     """Return the key the trees of the storage are trusted signed with, besides those of xcraft.toml: the one signing
     the snapshot, or the developer's.
-    """  # noqa: D205
+    """
     return signer or dev_signer(project)
 
 
@@ -106,7 +106,7 @@ def _reusable(
     return manifest if manifest and inputs.keys == keys and inputs.files == manifest else {}
 
 
-def reuse_published(  # noqa: PLR0913
+def reuse_published(
     platforms: list[Project],
     storage: Remote,
     *,
@@ -145,7 +145,7 @@ def resolve_runtime(project: Project, repo: LocalRepo) -> list[str]:
     return them.
 
     They are resolved again when they need upstream source packages not locked yet, which get other versions.
-    """  # noqa: D205
+    """
     for _ in range(3):
         if lock_installed(project, needed := _runtime(project, repo)):
             break
@@ -358,7 +358,7 @@ def assemble(
         (dest / KEY_FILE).write_text(signer.public_key())
 
 
-def _assemble_arch(  # noqa: PLR0913
+def _assemble_arch(
     project: Project,
     keys: dict[str, str],
     dest: Path,
@@ -493,7 +493,7 @@ def _delete_stale(storage: Remote, prefix: str, keep: set[str]) -> None:
 def _batches(files: list[str]) -> list[list[str]]:
     """Return `files` in the batches to write one after the other: the packages, then the metadata listing them,
     then repomd.xml with its signature, as close as can be.
-    """  # noqa: D205
+    """
     last = [f for f in files if f.endswith(("/repomd.xml", "/repomd.xml.asc"))]
     return [
         [f for f in files if f.endswith(".rpm")],
@@ -502,7 +502,7 @@ def _batches(files: list[str]) -> list[list[str]]:
     ]
 
 
-def _upload(  # noqa: PLR0913
+def _upload(
     storage: Remote,
     src: Path,
     files: list[str],
@@ -522,7 +522,7 @@ def _upload(  # noqa: PLR0913
 
     The files the storage has already, in `latest`, or in `stored`, as path and SHA-256 by file, are copied there,
     like `remote_files`, which are not in `src`, with their SHA-256.
-    """  # noqa: D205
+    """
     manifest = {f: sha256_of(src / f) for f in files} | (remote_files or {})
     files = sorted(manifest)
     previous = remote.read_manifest(storage, latest, trusted=trusted)
@@ -549,7 +549,7 @@ def _upload(  # noqa: PLR0913
     console.print(f"[bold green]✓[/] published {tree}, and as {latest}")
 
 
-def upload_snapshot(  # noqa: PLR0913
+def upload_snapshot(
     platforms: list[tuple[Project, dict[str, str]]],
     src: Path,
     storage: Remote,
@@ -564,7 +564,7 @@ def upload_snapshot(  # noqa: PLR0913
     The packages already in the storage, in the latest snapshot or the builds with the keys of the platforms, are
     copied there, and so are those of `stored`, which are not in `src`, by path in the snapshot, with their paths in
     the storage and SHA-256.
-    """  # noqa: D205
+    """
     project = platforms[0][0]
     files = sorted(
         f.relative_to(src).as_posix()
@@ -598,7 +598,7 @@ def upload_snapshot(  # noqa: PLR0913
     )
 
 
-def upload_isos(  # noqa: PLR0913
+def upload_isos(
     project: Project,
     src: Path,
     storage: Remote,
@@ -609,7 +609,7 @@ def upload_isos(  # noqa: PLR0913
 ) -> None:
     """Upload the ISOs of the snapshot in `src`, in ISO_DIR, of all the architectures, to `storage` as `name`, with
     their checksums, in SHA256SUMS, signed by `signer`, if any, and make them the latest ones.
-    """  # noqa: D205
+    """
     from xcraft.iso import iso_inputs  # noqa: PLC0415, iso imports snapshot assembly
 
     isos = src / ISO_DIR
@@ -696,7 +696,7 @@ class _Plan:
     def reuse(self, repo: str, name: str, digest: str, path: str | None = None) -> bool:
         """Add the package `name` with `digest` to `repo`, and return whether the storage has it, as `path` or in the
         latest snapshot, with its metadata: otherwise, it must be put in the directory of the repository.
-        """  # noqa: D205
+        """
         if digest not in self.known:
             return False
         self.stored.setdefault(repo, {})[name] = (path or self.known[digest][1], digest)
@@ -736,7 +736,7 @@ def _previous(
 
     Only the metadata matching its trusted manifest is read, for the packages with the SHA-256 of the manifest: none
     of a repository whose metadata Python cannot decompress, like zstd before Python 3.14.
-    """  # noqa: D205
+    """
     latest = _tree(project, "repos", "latest")
     manifest = remote.read_manifest(storage, latest, trusted=_trusted(project, signer))
     known = {}
@@ -767,7 +767,7 @@ def _previous(
 def _stored_build(project: Project, signer: Signer | None, name: str, key: str, storage: Remote) -> Path | str:
     """Return the tree of the build of `name` with `key`, signed by `signer`, if any, in `storage`, or the local
     one when the storage misses it: signed now, and pushed there.
-    """  # noqa: D205
+    """
     tree = _signed_path(project, signer, name, key) if signer else build_path(project, name, key)
     if remote.tree_exists(storage, tree, trusted=_trusted(project, signer)):
         return tree
@@ -825,7 +825,7 @@ def _add_ours(plan: _Plan, project: Project, keys: dict[str, str], *, signer: Si
 def _add_stored_upstream(plan: _Plan, project: Project, names: list[str], repo: str, source: str) -> None:
     """Add the upstream packages `names` to `repo`, and their sources to `source`, checking the signatures of those
     the storage misses: those it has were when added.
-    """  # noqa: D205
+    """
     locked = resolve_image(project).packages
     rpms = {name: f"{name}-{locked[name].evr.split(':')[-1]}.{locked[name].arch}.rpm" for name in names}
     missing = [name for name in names if not plan.reuse(repo, rpms[name], locked[name].sha256)]
@@ -860,7 +860,7 @@ def remote_snapshot(
     The metadata of the packages of the latest snapshot are those of its own metadata, and our packages are only
     fetched when the storage misses their builds: neither is downloaded. The repositories are checked with their
     metadata only.
-    """  # noqa: D205
+    """
     project = platforms[0]
     fresh_dir(project, dest)
     plan = _Plan(project, dest, *_previous(project, storage, signer))

@@ -229,7 +229,7 @@ def transfer(
 ) -> None:
     """Write the paths of `files`, `requests` at once: copies of the paths of the storage, or uploads of the local
     files.
-    """  # noqa: D205
+    """
     _forget(storage, list(files))
     with _writing(storage, f"write {len(files)} files") as s3:
 
@@ -253,7 +253,7 @@ def transfer(
 def listing(storage: Remote, prefix: str) -> list[str]:
     """Return the files below the directory `prefix`, relative to it, but the pages of the directories, with the S3
     credentials, as the public reads cannot list.
-    """  # noqa: D205
+    """
     with _writing(storage, f"list {prefix}") as s3:
         return list(_objects(s3, storage.bucket, prefix, below=True)[1])
 
@@ -454,7 +454,7 @@ def update_tree(
     """Download into the directory `dest`, MANY at once, the files of the trusted tree `prefix`, from main or dev, that
     `wanted` takes, by path and SHA-256, and return whether a storage has it. Each file is checked against the signed
     manifest, then renamed into `dest`: those missing, corrupted or failing to download are skipped.
-    """  # noqa: D205
+    """
     error, found = None, None
     for storage in storages(project):
         try:

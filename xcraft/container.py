@@ -166,7 +166,7 @@ def _build_image(project: Project, tag: str, args: dict[str, str], files: dict[s
         raise
 
 
-def _podman_build(  # noqa: PLR0913
+def _podman_build(
     project: Project, step: str, tag: str, files: dict[str, str], args: dict[str, str], *, show: str
 ) -> None:
     """Build `show`, the image `tag`, from `files` and the build `args`, logged in .xcraft/logs/_<step>.log."""
@@ -268,7 +268,7 @@ def base_packages(project: Project) -> list[str]:
 def run_natively(project: Project, step: str, args: list[str], *, volumes: list[str], show: str) -> None:
     """Run `args` as root in the base image of the host, for the platform of `project`, with its repositories and its
     dnf cache, logged in .xcraft/logs/_<step>.log.
-    """  # noqa: D205
+    """
     native, log = project.on_host(), project.state / f"logs/_{step}.log"
     container = f"xcraft-{step}-{os.getpid()}"
     with project.work(f"{step}-repos") as repos:
@@ -291,7 +291,7 @@ def run_natively(project: Project, step: str, args: list[str], *, volumes: list[
             raise ContainerError(msg)
 
 
-def run(  # noqa: PLR0913
+def run(
     project: Project,
     step: str,
     script: str,
@@ -345,7 +345,7 @@ def signing_image(project: Project) -> str:
     return tag
 
 
-def run_container(  # noqa: PLR0913
+def run_container(
     project: Project,
     script: str,
     *,

@@ -1150,8 +1150,8 @@ def test_directory_totals_behind_proxy(root: Path, tmp_path: Path) -> None:
         thread.start()
         try:
             proxied = storage.model_copy(update={"s3_endpoint": f"http://localhost:{proxy.server_port}"})
-            with remote._writing(proxied, "read cached totals") as s3:  # noqa: SLF001
-                size, newest = remote._stored_total(s3, storage.bucket, "cased/")  # noqa: SLF001
+            with remote._writing(proxied, "read cached totals") as s3:
+                size, newest = remote._stored_total(s3, storage.bucket, "cased/")
             assert size == 1000
             assert newest
         finally:

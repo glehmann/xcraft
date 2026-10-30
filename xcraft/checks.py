@@ -33,7 +33,7 @@ def check_resolved(project: Project, name: str) -> Resolved:
     Those are packages of ours its build should get, but for those of the image
     in the builds of the packages ours need. It happens with requirements xcraft
     cannot see in the specs: files, versions.
-    """  # noqa: D205
+    """
     resolved = resolve(project)
     if error := resolved.errors.get(name):
         msg = f"its build root cannot be resolved: {error}"
@@ -126,7 +126,7 @@ def _record_new_rpm_deps(
 ) -> None:
     """Keep with the `builds` what rpm generated for their binary packages, in `context`, but for those which cannot
     be recorded yet, shown unless `quiet`: they are recorded again next time, once what they need is there.
-    """  # noqa: D205
+    """
     current = [rpm for n, k in keys.items() if (build := cached_build(project, n, k)).exists() for rpm in _rpms(build)]
     # their binary packages, by their names as built, with the release suffix, to their names in the specs
     names = {
@@ -163,7 +163,7 @@ def _record_new_rpm_deps(
 def _unsuffixed(project: Project, name: str, value: str, suffix: str) -> str:
     """Return `value`, what rpm generated for a build of `name`, without its release `suffix`, %autorev: at the start of
     %dist, or at the end of the release of the package defining %dist.
-    """  # noqa: D205
+    """
     dist = project.parsed[name].dist
     if suffix and dist and f"{suffix}{dist}" in value:
         return value.replace(f"{suffix}{dist}", dist)
@@ -176,7 +176,7 @@ def record_rpm_deps(project: Project, names: list[str], keys: dict[str, str], *,
 
     What a build generated is kept with it, for the same locked versions and requirements of our specs, and version
     of the recording, RECORDING. What cannot be recorded yet is shown, unless `quiet`.
-    """  # noqa: D205
+    """
     if not (builds := {n: build for n in names if (build := cached_build(project, n, keys[n])).exists()}):
         return False
     lock = load_lock(project)
@@ -212,7 +212,7 @@ def record_rpm_deps(project: Project, names: list[str], keys: dict[str, str], *,
 def check_build(project: Project, name: str, tree: Path, *, suffix: str) -> bool:
     """Record the dynamic BuildRequires of the build of `name` in `tree`, check what it installed and made, with its
     release `suffix`, and return whether the lock changed.
-    """  # noqa: D205
+    """
     changed = record_dynamic(project, name, tree)
     installed = json.loads((tree / "buildroot.json").read_text())["installed"]
     try:

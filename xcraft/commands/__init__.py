@@ -54,7 +54,7 @@ def load(names: list[str] | None = None, *, locked: bool = False, arch: str | No
     lock has the upstream packages the builds need, which it may lock (see resolution.prepare()).
 
     With `locked`, the lock cannot change: it fails instead.
-    """  # noqa: D205
+    """
     project = Project.find(arch)
     project.frozen = locked
     # before preparing, which may run containers

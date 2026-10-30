@@ -65,7 +65,7 @@ def _new_archives(project: Project, before: dict[str, Package], after: dict[str,
         write_manifest(manifest, {**entries, archive_name(url): digests[url]})
 
 
-def _update_specs(  # noqa: PLR0913
+def _update_specs(
     project: Project, before: dict[str, Package], names: list[str], *, version: str, author: str, message: str
 ) -> dict[str, Package]:
     """Bump the specs of `names`, or set their `version`, with a changelog entry, and return the packages after.
