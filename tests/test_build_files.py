@@ -22,7 +22,7 @@ from xcraft.checks import _check_made, record_rpm_deps
 from xcraft.clean import clean, repos_disk_usage
 from xcraft.commands import complete_arch, load
 from xcraft.commands.repo import _kept
-from xcraft.localrepo import OUTPUT_MARKER, RepoError, fresh_dir
+from xcraft.localrepo import OUTPUT_MARKER, RepoError, fresh_dir, link
 from xcraft.lock import Lock, load_lock, save_lock
 from xcraft.project import Project, ProjectLockedError
 from xcraft.publish import build_dependencies
@@ -68,6 +68,19 @@ def test_stage_like_a_packaging_repository(project: Project, tmp_path: Path) -> 
         prepare_tree(project, "foo")
 
 
+def test_link_replaces(tmp_path: Path) -> None:
+    # the builds of two keys, with packages of the same name, in a repository
+    first, second, repo = tmp_path / "first.rpm", tmp_path / "second.rpm", tmp_path / "repo.rpm"
+    first.write_text("first")
+    second.write_text("second")
+    link(first, repo)
+    link(second, repo)
+    assert repo.read_text() == "second"
+    assert first.read_text() == "first"  # in the cache, as built
+    link(second, repo)  # again
+    assert repo.samefile(second)
+
+
 def test_main_spec(tmp_path: Path) -> None:
     (tmp_path / "grub").mkdir()
     (tmp_path / "grub/grub2.spec").write_text("")
@@ -97,9 +110,9 @@ def test_clean_keeps_sources_and_current_builds(project: Project) -> None:
     assert {"build/foo/SPECS/foo.spec", "cache/builds/x86_64_v2/foo/old/RPMS/foo.rpm"} <= set(files(state))
     # what the local repository, the snapshot and the repositories of xcraft repo still link
     rpm = state / "cache/builds/x86_64_v2/bar/current/RPMS/bar.rpm"
-    for link in (state / "repo/bar.rpm", state / "publish/base/x86_64_v2/bar.rpm", project.root / "repo/bar.rpm"):
-        link.parent.mkdir(parents=True, exist_ok=True)
-        link.hardlink_to(rpm)
+    for linked in (state / "repo/bar.rpm", state / "publish/base/x86_64_v2/bar.rpm", project.root / "repo/bar.rpm"):
+        linked.parent.mkdir(parents=True, exist_ok=True)
+        linked.hardlink_to(rpm)
     assert repos_disk_usage(project) == 0
     assert clean(project, [keys], ["bar"], all_builds=True) == 8192
     assert not [f for f in files(state) if "bar" in f]
