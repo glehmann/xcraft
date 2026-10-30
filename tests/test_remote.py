@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import getpass
 import http.client
 import http.server
 import logging
@@ -48,7 +47,8 @@ WORKER = int(os.environ.get("PYTEST_XDIST_WORKER", "gw0").removeprefix("gw"))
 CONTAINER = f"xcraft-test-garage-{WORKER}"
 S3_PORT, WEB_PORT = 13900 + 10 * WORKER, 13902 + 10 * WORKER
 WEB = f"http://xcraft.web.garage.localhost:{WEB_PORT}"
-STAGE = getpass.getuser()
+STAGE = ""
+"""The stage of the snapshots of the test, of its own: see root()."""
 
 
 def garage(*args: str) -> str:
@@ -142,13 +142,17 @@ def root(
 ) -> Path:
     root = tmp_path / "project"
     copy_project(root)
+    # builds and snapshots of its own, not to find those of the other tests in the storage, which they share
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
+    monkeypatch.setattr("tests.test_remote.STAGE", stage := f"test-{secrets.token_hex(4)}")
     monkeypatch.setattr(
         "tests.test_remote.REMOTE",
         REMOTE.replace(
             "[remote.main]",
             f'[sign]\nkey = "{build_signer[0]}"\ngnupghome = "{build_signer[1]}"\n'
             f'[remote.main]\nbuild_keys = ["{build_signer[0]}"]',
-        ),
+        ).replace("[publish]\n", f'[publish]\nstage = "{stage}"\n'),
     )
     (root / "xcraft.toml").write_text(REMOTE)
     monkeypatch.setenv("GNUPGHOME", str(tmp_path / "unused-keyring"))
@@ -491,9 +495,6 @@ def test_builds_shared_by_checkouts(
     # CI selects its key without a private-key setting in the project.
     (root / "xcraft.toml").write_text(re.sub(r"\[sign\]\n.*?(?=\[remote.main\])", "", REMOTE, flags=re.DOTALL))
     monkeypatch.setenv("GNUPGHOME", str(build_signer[1]))
-    # a key of its own, not to find the builds of the other tests in the storage
-    spec = root / "base/trivial/trivial.spec"
-    spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
     assert xcraft("build", "trivial")[0] == 0
     assert xcraft("push", "builds", "trivial", "--key", build_signer[0], "--to", "main")[0] == 0
     assert xcraft("push", "--key", build_signer[0], "--to", "main", "builds", "trivial")[0] == 0
@@ -509,9 +510,7 @@ def test_builds_shared_by_checkouts(
 
 
 def test_push_everything(root: Path, tmp_path: Path) -> None:
-    # keys and an archive of its own, not to find those of the other tests in the storage
-    spec = root / "base/trivial/trivial.spec"
-    spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
+    # an archive of its own
     archive = tmp_path / f"trivial-{secrets.token_hex(4)}.tar.gz"
     archive.write_text(archive.name)
     write_manifest(root / "base/trivial/sources", {archive.name: cache_source(Project.find().source_cache, archive)})
@@ -806,7 +805,7 @@ def test_publish_source_packages_of_all_architectures(root: Path, tmp_path: Path
     assert all(sha256_of(srpm) in indexed for srpm in sources.glob("*.src.rpm"))
 
 
-def test_publish(root: Path) -> None:
+def test_publish(root: Path) -> None:  # noqa: PLR0915
     # the architectures the host runs, built for all: two on x86_64
     arches = [ARCH, "x86_64"] if ARCH == "x86_64_v2" else [ARCH]
     platforms = ", ".join(f'"{p}"' for p in [PLATFORM, "linux/amd64"][: len(arches)])
@@ -818,7 +817,7 @@ def test_publish(root: Path) -> None:
     assert bc.repo == "baseos"
     storage = Project.find().config.remote.get("main")
     assert storage
-    day = datetime.now(UTC).date().isoformat()
+    day = output.split(f"published repos/9.0/{STAGE}/")[1].split(",")[0]  # of the publish, which may be yesterday
     for name in (day, "latest"):
         base = f"repos/9.0/{STAGE}/{name}/base"
         for repo in (*arches, "Source"):
@@ -835,11 +834,12 @@ def test_publish(root: Path) -> None:
     assert f"published repos/9.0/{STAGE}/{day}.2, and as repos/9.0/{STAGE}/latest" in output
     assert not remote.tree_exists(storage, f"isos/9.0/{STAGE}/latest")
     # An explicit stage has an independent snapshot sequence and latest tree.
-    code, output = xcraft("publish", "--to", "main", "--stage", "incoming", "repos", "--locked", "--unsigned")
+    incoming = f"{STAGE}-incoming"
+    code, output = xcraft("publish", "--to", "main", "--stage", incoming, "repos", "--locked", "--unsigned")
     assert code == 0, output
-    assert f"published repos/9.0/incoming/{day}, and as repos/9.0/incoming/latest" in output
+    assert f"published repos/9.0/{incoming}/{day}, and as repos/9.0/{incoming}/latest" in output
     assert remote.tree_exists(storage, f"repos/9.0/{STAGE}/latest")
-    assert remote.tree_exists(storage, "repos/9.0/incoming/latest")
+    assert remote.tree_exists(storage, f"repos/9.0/{incoming}/latest")
     code, output = xcraft("publish", "isos", "--to", "main", "--unsigned")
     assert code == 2
     assert "no ISO to publish: see [iso] in xcraft.toml" in output
@@ -874,8 +874,6 @@ def test_publish(root: Path) -> None:
 
 @needs_gpg
 def test_signed_publish(root: Path) -> None:  # noqa: PLR0915
-    spec = root / "base/trivial/trivial.spec"
-    spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
     unsigned = re.sub(r"\[sign\]\n.*?(?=\[remote.main\])", "", REMOTE, flags=re.DOTALL)
     (root / "xcraft.toml").write_text(unsigned)
     code, output = xcraft("publish", "--to", "main")
@@ -1008,8 +1006,6 @@ def test_publish_from_latest_metadata(root: Path, tmp_path: Path, caplog: pytest
 
 def test_publish_reuses_remote_snapshot(root: Path, caplog: pytest.LogCaptureFixture) -> None:
     stage = f"reuse-{secrets.token_hex(4)}"
-    spec = root / "base/trivial/trivial.spec"
-    spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
     code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
     assert code == 0, output
     project = Project.find()
@@ -1027,8 +1023,7 @@ def test_publish_reuses_remote_snapshot(root: Path, caplog: pytest.LogCaptureFix
     )
     storage = project.config.remote["main"]
     prefix = f"repos/9.0/{stage}"
-    day = datetime.now(UTC).date().isoformat()
-    manifest = remote.read_manifest(storage, f"{prefix}/{day}.2")
+    manifest = remote.read_manifest(storage, output.split("✓ published ")[1].split(",")[0])
     assert manifest
     assert manifest == remote.read_manifest(storage, f"{prefix}/latest")
     # what it was made from is out of it
@@ -1066,9 +1061,6 @@ def test_invalid_publish_stage(root: Path, command: list[str], stage: str) -> No
 
 
 def test_isos_fetched_for_publishing(root: Path, tmp_path: Path) -> None:
-    # ISOs of their own, not to find those of the other tests in the storage
-    spec = root / "base/trivial/trivial.spec"
-    spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
     project = Project.find()
     signer = release_signer(project)
     assert signer
@@ -1107,13 +1099,14 @@ def test_iso_stages(root: Path, tmp_path: Path) -> None:
     isos.mkdir(parents=True)
     image = isos / "install.iso"
     day = datetime.now(UTC).date().isoformat()
-    for stage in ("incoming", "testing"):
+    stages = [f"{STAGE}-incoming", f"{STAGE}-testing"]
+    for stage in stages:
         project.config.publish.stage = stage
         assert publisher.snapshot_name(project, storage) == day
         image.write_text(stage)
         publisher.upload_isos(project, tmp_path, storage, day, signer=signer)
         assert publisher.snapshot_name(project, storage) == f"{day}.2"
-    for stage in ("incoming", "testing"):
+    for stage in stages:
         for name in (day, "latest"):
             prefix = f"isos/9.0/{stage}/{name}"
             assert remote.download_tree(storage, prefix, tmp_path / stage / name)
@@ -1258,9 +1251,6 @@ def test_reused_builds_are_fetched(root: Path) -> None:
         subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@e", *args], cwd=root, check=True,
                        capture_output=True)  # fmt: skip
 
-    # keys of their own, not to find the builds of the other tests in the storage
-    spec = root / "base/with-deps/with-deps.spec"
-    spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
     assert xcraft("build")[0] == 0
     git("init", "-q", "-b", "master")
     buildid.update(Project.find())
