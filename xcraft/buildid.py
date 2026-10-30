@@ -60,6 +60,10 @@ class BuildId(BaseModel):
         """Return whether a package of build `key` has this build ID: built from it, or reusing it for it."""
         return key in (self.key, self.accepts)
 
+    def same(self, other: BuildId | None) -> bool:
+        """Return whether `other` is the same build: of the same number and key."""
+        return other is not None and (self.number, self.key) == (other.number, other.key)
+
 
 def compute(
     project: Project,
@@ -75,10 +79,11 @@ def compute(
     if given.
 
     A package with the key of the fork keeps its build ID, and so does one reusing a build for the key, there or in the
-    working tree. Otherwise, a package `reuse` takes, with the build IDs of those before it, reuses the build of the
-    fork, accepting the key; and the others get the next number of the fork's. The numbers the main branch gave since
-    the fork do not count: giving one again conflicts on merge, in the file of the package. Without the main branch,
-    the numbers are those of the working tree, 1 for new packages: there is nothing to number them against.
+    working tree, while it is the fork's. Otherwise, a package `reuse` takes, with the build IDs of those before it,
+    reuses the build of the fork, accepting the key; and the others get the next number of the fork's. The numbers the
+    main branch gave since the fork do not count: giving one again conflicts on merge, in the file of the package.
+    Without the main branch, the numbers are those of the working tree, 1 for new packages: there is nothing to number
+    them against.
     """  # noqa: D205
     inputs, current = buildkey.Inputs(project, hashes), read(project)
     ids: dict[str, BuildId] = {}
@@ -89,7 +94,8 @@ def compute(
             if shown is not None:
                 shown[name] = of
             known = (current if fork is None else fork).get(name)
-            reused = [i for i in (current.get(name),) if i and i.accepts]
+            # still the fork's build
+            reused = [i for i in (current.get(name),) if i and i.accepts and (fork is None or i.same(fork.get(name)))]
             if found := next((i for i in [*filter(None, [known]), *reused] if i.matches(key)), None):
                 ids[name] = found
             elif known and reuse and reuse(name, ids):
@@ -160,7 +166,7 @@ def proposed(fork: dict[str, BuildId] | None, ids: dict[str, BuildId]) -> set[st
     """  # noqa: D205
     if fork is None:
         return set()
-    return {name for name, i in ids.items() if not ((j := fork.get(name)) and (j.number, j.key) == (i.number, i.key))}
+    return {name for name, i in ids.items() if not i.same(fork.get(name))}
 
 
 def on_main(project: Project) -> bool:
@@ -251,8 +257,7 @@ def reuse(project: Project, names: list[str], sources: list[str]) -> list[str]:
             bool(updated)
             and built_alike(name)
             # the packages it is built against reuse their builds too
-            and all((ids[d].number, ids[d].key) == (forked[d].number, forked[d].key)
-                    for d in forked_inputs.deps[name] if d in ids and d in forked)
+            and all(ids[d].same(forked[d]) for d in forked_inputs.deps[name] if d in ids and d in forked)
             and buildkey.lock_inputs(forked_inputs.platforms, lock, name, updated)
             == buildkey.lock_inputs(forked_inputs.platforms, forked_lock, name, updated)
         )  # fmt: skip

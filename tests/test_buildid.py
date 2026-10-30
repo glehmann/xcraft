@@ -358,6 +358,14 @@ def test_reused_builds(root: Path) -> None:
     assert update() == {"trivial": 2, "with-deps": 1}
     git(root, "commit", "-qam", "reused")
     assert update() == {"trivial": 2, "with-deps": 1}
+    # not once the main branch has another build, merged
+    git(root, "checkout", "-q", "master")
+    (root / ".buildid/with-deps").write_text(f"2 {base['with-deps'].key}\n")
+    git(root, "commit", "-qam", "renumbered")
+    git(root, "checkout", "-q", "feature")
+    git(root, "merge", "-q", "-X", "ours", "-m", "merged", "master")
+    assert update() == {"trivial": 2, "with-deps": 3}
+    git(root, "reset", "-q", "--hard", "HEAD~")
     assert built("with-deps") == ["trivial-1.0-1+b2~1.dev.xcpng8.99.noarch.rpm"]
     assert "with-deps-1.0-1+b1.xcpng8.99.noarch.rpm" in {
         p.name for p in root.glob(".xcraft/cache/builds/*/with-deps/*/RPMS/*/*.rpm")
