@@ -22,14 +22,16 @@ def _release(spec: str) -> re.Match[str]:
 
 
 def bump_release(spec: str) -> str:
-    """Return `spec` with the last number of its Release, outside of macros, incremented.
+    """Return `spec` with the last number of its Release, outside of macros, incremented: the last part of it between
+    dots and macros which is a number.
 
-    That is the XCP-ng part in releases like ``1%{?xsrel}.3%{?dist}``.
-    """
+    That is the XCP-ng part in releases like ``1%{?xsrel}.3%{?dist}``, and not a number in a hash, like in
+    ``2.219ab5b``.
+    """  # noqa: D205
     m = _release(spec)
     release = m.group(1)
     outside_macros = _MACRO_RE.sub(lambda macro: "%" * len(macro.group()), release)
-    if not (numbers := list(re.finditer(r"\d+", outside_macros))):
+    if not (numbers := list(re.finditer(r"(?<![^.%])\d+(?![^.%])", outside_macros))):
         msg = f"no number to bump in Release: {release}"
         raise ValueError(msg)
     n = numbers[-1]

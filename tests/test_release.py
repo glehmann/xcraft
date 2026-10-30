@@ -20,6 +20,7 @@ from xcraft.specs import Binary, Package
         ("5%{?dist}", "6%{?dist}"),
         ("0.ydi.25%{?dist}", "0.ydi.26%{?dist}"),
         ("9", "10"),
+        ("2.219ab5b%{?autorev}", "3.219ab5b%{?autorev}"),
     ],
 )
 def test_bump_release(release: str, bumped: str) -> None:
