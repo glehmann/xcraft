@@ -550,10 +550,13 @@ def test_builds(root: Path) -> None:
 
 def test_fetch_needed(root: Path) -> None:
     # trivial and other in the storage, with-deps, built against trivial, not yet
+    lock = (root / "xcraft.lock").read_text()
     write_spec(root, "other")
     assert xcraft("build", "trivial", "other")[0] == 0
     assert xcraft("push", "builds", "trivial", "other", "--to", "main")[0] == 0
     shutil.rmtree(root / ".xcraft/cache/builds")
+    # without what rpm generated for trivial in the lock: fetched for with-deps, it changes the key of with-deps
+    (root / "xcraft.lock").write_text(lock)
     builds = root / f".xcraft/cache/builds/{ARCH}"
     # only trivial is fetched, for the build of with-deps
     code, output = xcraft("build", "--dry-run", "--fetch=needed")
@@ -819,7 +822,8 @@ def test_signed_publish(root: Path) -> None:  # noqa: PLR0915
 
 def test_publish_rebuilt_package(root: Path, tmp_path: Path) -> None:
     """A rebuild keeping its version-release is published, not the previous build of the storage."""
-    assert xcraft("publish", "--to", "main", "--unsigned")[0] == 0
+    code, output = xcraft("publish", "--to", "main", "--unsigned")
+    assert code == 0, output
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace('echo "hello"', 'echo "hello, rebuilt"'))
     code, output = xcraft("publish", "--to", "main", "--unsigned")
@@ -838,7 +842,8 @@ def test_publish_from_latest_metadata(root: Path, tmp_path: Path, caplog: pytest
     """A snapshot has the metadata of the packages of the latest one, without downloading them."""
     stage = f"metadata-{secrets.token_hex(4)}"
     (root / "xcraft.toml").write_text(f'{REMOTE}extra = ["bc"]\n')
-    assert xcraft("publish", "repos", "--to", "main", "--unsigned", "--stage", stage)[0] == 0
+    code, output = xcraft("publish", "repos", "--to", "main", "--unsigned", "--stage", stage)
+    assert code == 0, output
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace('echo "hello"', 'echo "hello, rebuilt"'))
     with caplog.at_level(logging.DEBUG, logger="xcraft"):
