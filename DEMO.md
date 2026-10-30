@@ -176,8 +176,6 @@ git diff .buildid/xapi                      # accepts <key>: say why in the comm
 git restore .buildid xcraft.lock            # back to the builds of CI
 ```
 
-Every day, CI updates the lock, and proposes it in a pull request: see `.github/workflows/lock-update.yml`.
-
 A new upstream version, with the archive downloaded from the `Source0` of the spec:
 
 ```
