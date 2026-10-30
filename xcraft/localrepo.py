@@ -39,7 +39,10 @@ def repo_id(project: Project) -> str:
 
 
 def link(src: Path, dest: Path) -> None:
-    """Make `dest` a hard link to `src`, or a copy on another file system."""
+    """Make `dest` a hard link to `src`, or a copy on another file system, replacing the file it was: never writing
+    into it, which may be hard linked to the cache, like a build of another key of the same file name.
+    """
+    dest.unlink(missing_ok=True)
     try:
         dest.hardlink_to(src)
     except OSError:
