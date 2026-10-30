@@ -46,11 +46,11 @@ xcraft --install-completion  # optional
 | `xcraft push builds [<pkg>...]` | Upload the current builds missing from the remote storage, for CI |
 | `xcraft push isos [--unsigned] [--to main\|dev]` | Upload cached full and netinstall ISOs matching the checkout |
 | `xcraft push index` | Make the `index.html` pages of all the directories of the remote storage |
-| `xcraft push ccache [<pkg>...]` | Upload the compiler caches of the packages, replacing those of the remote storage, for CI |
+| `xcraft push ccache [<pkg>...]` | Update the compiler caches of the remote storage with those of the packages, for CI |
 | `xcraft fetch` | Download everything the caches miss: the current builds of all packages, then their source archives |
 | `xcraft fetch sources [<pkg>...]` | Download the source archives missing from the source cache, from the remote storage, or else from the source of the spec with their URL |
 | `xcraft fetch builds [<pkg>...]` | Download the current builds missing from the build cache |
-| `xcraft fetch ccache [<pkg>...]` | Download the compiler caches of the packages, replacing the local ones |
+| `xcraft fetch ccache [<pkg>...]` | Add to the local compiler caches of the packages the entries of the remote storage |
 | `xcraft lock` | Show the lock of upstream packages, the same for all the architectures |
 | `xcraft lock --outdated [<pkg>...]` | Show what `--update` would change, without changing it, and fail then, for CI |
 | `xcraft lock --update [<pkg>...]` | Update locked packages, all or some (binary or source names), to the latest version all the architectures have, looked for natively, on any machine |
@@ -483,12 +483,14 @@ the compiler caches, the public keys and the ISOs of the checkouts, in `.xcraft/
   leaves in the storage the builds it has, only fetching those of the dependencies of the packages it builds.
 - A build without the compiler cache of its package downloads the one of the storage first, unless `--fetch=none`: the
   one CI pushes after its builds, with `xcraft push ccache`, so that rebuilding a modified package, like the kernel
-  with a patch, mostly finds its objects. The cache of a package is a tarball, `.xcraft/ccache/<arch>/<package>/<package>.ccache`, rather
-  than read by ccache from the storage, as the builds run without the network. `xcraft fetch ccache` gets it again.
-  `xcraft push ccache` only uploads the entries the last successful build of the package used or made, which ccache
-  dates of their last use: not those of the older builds, which the local cache keeps. The builds compress the entries
-  with zstd's fast level 1, ccache's, and the push compresses them again with level 19, in a copy, `ccache
-  --recompress`: for the kernel, a quarter less to transfer.
+  with a patch, mostly finds its objects. The cache of a package is a signed tree, `.xcraft/ccache/<arch>/<package>/`,
+  with an object by entry, rather than read by ccache from the storage, as the builds run without the network. `xcraft
+  fetch ccache` adds to the local cache the entries it does not have. `xcraft push ccache` only keeps the entries the
+  last successful build of the package used or made, which ccache dates of their last use: not those of the older
+  builds, which the local cache keeps. The local cache is compressed again first, in place, from zstd's fast level 1,
+  ccache's, to level 9, `ccache --recompress`: for the kernel, 15% less to transfer, in 20s on 8 CPUs, once, as it
+  stays so. Then only the entries the storage does not have are uploaded, 64 at once. See
+  [the design](docs/ccache-sync-design.md).
 
 Without network, or when the storage is unavailable, everything still works with what is local.
 

@@ -54,7 +54,7 @@ def sources(packages: Packages = None, arch: Arch = None) -> None:
 
 @app.command("ccache")
 def caches(packages: Packages = None, arch: Arch = None) -> None:
-    """Download the compiler caches of the given packages, all by default, replacing the local ones.
+    """Add to the local compiler caches of the given packages, all by default, the entries of the remote storage.
 
     They are not downloaded by xcraft fetch without a command, but a build gets the one of its package when it has
     none.

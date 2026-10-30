@@ -159,8 +159,8 @@ def _push_builds(
 
 @app.command("ccache")
 def caches(packages: Packages = None, arch: Arch = None, key: Key = None, to: To = "dev") -> None:
-    """Upload the compiler caches of the given packages, all by default, replacing those of the remote storage, for CI,
-    with the pages of their directories.
+    """Update the compiler caches of the remote storage with those of the given packages, all by default, for CI, with
+    the pages of their directories.
 
     They are not uploaded by xcraft push without a command: they are large, and change with each build.
     """  # noqa: D205

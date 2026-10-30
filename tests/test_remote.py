@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import threading
 import time
+import urllib.error
 import urllib.request
 from contextlib import closing
 from datetime import UTC, datetime
@@ -32,7 +33,7 @@ from xcraft.lock import load_lock
 from xcraft.project import Project
 from xcraft.resolution import resolve_image
 from xcraft.rpmbuild import prepare_tree
-from xcraft.signing import Signer, check_signatures, create_dev_key, release_signer
+from xcraft.signing import Signer, check_signatures, create_dev_key, dev_signer, release_signer
 from xcraft.sources import SourceError, cache_source, sha256_of, source_path, write_manifest
 
 if TYPE_CHECKING:
@@ -446,13 +447,13 @@ def test_developer_storage(root: Path, tmp_path: Path) -> None:
     # Compiler caches also fall back to dev when main cannot be reached.
     (root / "xcraft.toml").write_text(config + '\n[remote.main]\nurl = "http://localhost:1"\n')
     cache = root / ".xcraft/ccache/trivial"
-    cache.mkdir(parents=True, exist_ok=True)
-    (cache / "entry").write_text("cached object")
+    (cache / "0").mkdir(parents=True, exist_ok=True)  # like those of ccache
+    (cache / "0/entry").write_text("cached object")
     assert xcraft("push", "ccache", "trivial")[0] == 0
     shutil.rmtree(cache)
     code, output = xcraft("fetch", "ccache", "trivial")
     assert code == 0, output
-    assert (cache / "entry").read_text() == "cached object"
+    assert (cache / "0/entry").read_text() == "cached object"
     (root / "xcraft.toml").write_text(re.sub(r"\[remote.dev\]\n.*?(?=\[publish\])", "", config, flags=re.DOTALL))
     code, output = xcraft("push", "sources")
     assert code == 2
@@ -591,8 +592,13 @@ def ccache_hits(cache: Path) -> int:
 
 
 @pytest.mark.parametrize("developer", [False, True])
-def test_ccache(
-    root: Path, monkeypatch: pytest.MonkeyPatch, build_signer: tuple[str, Path], *, developer: bool
+def test_ccache(  # noqa: PLR0915
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    build_signer: tuple[str, Path],
+    caplog: pytest.LogCaptureFixture,
+    *,
+    developer: bool,
 ) -> None:
     config = re.sub(r"\[sign\]\n.*?(?=\[remote.main\])", "", REMOTE, flags=re.DOTALL)
     if developer:
@@ -621,14 +627,45 @@ def test_ccache(
         return {path.read_bytes()[5] for path in cache.rglob("*R")}  # in the header of ccache's entries
 
     assert levels() == {1}  # ccache's, for the builds
-    assert xcraft("push", "ccache", "compiled", "--to", "main", *options) == (0, "↑ compiled\n1 pushed\n")
-    assert 'href="compiled.ccache"' in page(f".xcraft/ccache/{ARCH}/compiled/")
+
+    def push() -> list[str]:
+        """Push the cache, and return the entries uploaded."""
+        caplog.clear()
+        with caplog.at_level(logging.DEBUG, logger="xcraft"):
+            assert xcraft("push", "ccache", "compiled", "--to", "main", *options) == (0, "↑ compiled\n1 pushed\n")
+        return sorted(m.split(f"/{tree}/")[1] for m in caplog.messages if m.startswith("uploading ") and tree in m)
+
+    tree = f".xcraft/ccache/{ARCH}/compiled"
+    storage = Project.find().config.remote["main"]
+    entries = [p.relative_to(cache).as_posix() for p in results]
+    dates = {p: p.stat().st_mtime for p in cache.rglob("*") if p.is_file()}
+    assert set(entries) <= set(push())
+    assert [m for m in caplog.messages if "--recompress" in m]
+    # compressed again in place, once, with the dates which tell the entries of the last build
+    assert levels() == {ccache.LEVEL}
+    assert {p: p.stat().st_mtime for p in dates} == dates
+    # an object by entry, in a signed tree, with a page, but not its directories, too many
+    stored = remote.read_manifest(storage, tree, trusted=dev_signer(Project.find()))
+    assert set(entries) <= stored.keys()
+    assert sorted(remote.listing(storage, f"{tree}/")) == sorted([*stored, remote.MANIFEST])
+    assert 'href="manifest.asc"' in page(f"{tree}/")
     assert 'href="compiled/"' in page(f".xcraft/ccache/{ARCH}/")
-    assert levels() == {1}  # the local cache is left as it is
+    with pytest.raises(urllib.error.HTTPError):
+        page(f"{tree}/{entries[0].split('/')[0]}/")
+    # only what the storage does not have is uploaded, and compressed: nothing
+    assert push() == []
+    assert not [m for m in caplog.messages if "--recompress" in m]
     shutil.rmtree(cache)
     assert xcraft("fetch", "ccache", "compiled") == (0, "↓ compiled\n1 fetched\n")
     assert sorted(cache.rglob("*R")) == results
-    assert levels() == {ccache.LEVEL}  # compressed again, for smaller archives
+    assert levels() == {ccache.LEVEL}  # compressed again, for smaller transfers
+    # a fetch adds what the local cache misses to it
+    (results[0]).unlink()
+    (cache / "local").write_text("kept")
+    assert xcraft("fetch", "ccache", "compiled") == (0, "↓ compiled\n1 fetched\n")
+    assert sorted(cache.rglob("*R")) == results
+    assert (cache / "local").read_text() == "kept"
+    (cache / "local").unlink()
     # a build without a compiler cache gets the one of the remote storage, and uses it, unless --fetch=none
     for release, options, hits in (("2", ["--fetch=none"], 0), ("3", [], 1)):
         shutil.rmtree(cache)
@@ -637,7 +674,7 @@ def test_ccache(
         assert ccache_hits(cache) == hits
 
 
-def test_ccache_of_the_last_build(root: Path) -> None:
+def test_ccache_of_the_last_build(root: Path, tmp_path: Path) -> None:
     write_spec(root, "compiled", files="/usr/lib/compiled/t.o")
     spec = root / "base/compiled/compiled.spec"
     template = (
@@ -665,6 +702,21 @@ def test_ccache_of_the_last_build(root: Path) -> None:
     assert xcraft("fetch", "ccache", "compiled") == (0, "↓ compiled\n1 fetched\n")
     assert sorted(cache.rglob("*R")) == [second]  # not first, of the first build
     assert first != second
+    # the next push deletes what the last build did not use, and what a push interrupted before its manifest left
+    storage = Project.find().config.remote["main"]
+    tree = f".xcraft/ccache/{ARCH}/compiled"
+    remote.upload(storage, f"{tree}/orphan", spec)
+    build("4", "4")
+    assert xcraft("push", "ccache", "compiled", "--to", "main") == (0, "↑ compiled\n1 pushed\n")
+    stored = remote.read_manifest(storage, tree, trusted=dev_signer(Project.find()))
+    assert second.relative_to(cache).as_posix() not in stored
+    assert sorted(remote.listing(storage, f"{tree}/")) == sorted([*stored, remote.MANIFEST])
+    # the archive of a cache of an older xcraft is not an entry
+    (tmp_path / "compiled.ccache").write_text("archive")
+    remote.upload_tree(storage, tree, tmp_path, ["compiled.ccache"], signer=release_signer(Project.find()))
+    shutil.rmtree(cache)
+    assert xcraft("fetch", "ccache", "compiled") == (0, "↓ compiled\n1 fetched\n")
+    assert not (cache / "compiled.ccache").exists()
 
 
 def test_unavailable_remote_storage(root: Path) -> None:

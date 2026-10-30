@@ -1,6 +1,6 @@
 # Design: syncing the compiler caches entry by entry
 
-Status: proposed, not implemented.
+Status: implemented, in `xcraft/ccache.py`.
 
 ## The problem
 
@@ -57,11 +57,11 @@ it the results of the new combinations of included files it sees.
 So an entry is uploaded when:
 
 - **a result**: its name is not in the manifest of the storage;
-- **a ccache manifest**: its name is not in the manifest of the storage, or its local bytes have another SHA-256.
+- **a ccache manifest**: its bytes, compressed again at the level of the shared caches, have another SHA-256 than in
+  the manifest of the storage, if any: the zstd compression gives the same bytes for the same content and level, so
+  the ccache manifests the build did not change are not uploaded.
 
-CI starts from the fetched cache, which has the bytes of the storage: the ccache manifests the build did not change
-keep the SHA-256 of the manifest of the storage, and are not uploaded. A developer's push of a fetched cache uploads
-nothing either.
+A push of a cache the storage has, unchanged, uploads nothing, not even the manifest.
 
 A result the storage has is never uploaded again, even when the local one has other bytes: the one of the storage is
 kept, with its SHA-256, in the new manifest.
@@ -70,17 +70,18 @@ kept, with its SHA-256, in the new manifest.
 
 1. Read the manifest of the cache in the storage, checking its signature against the trusted keys. Without one, like
    for the first push, or untrusted, everything is new.
-2. Split the entries the last build used or made, those ccache dates after its start, in those the storage has, and
-   the new ones, as above.
-3. Hard-link only the new ones into the staging directory, and compress them again with `ccache --recompress 19`
-   there: ccache only compresses what it finds there, and replaces the files, so the local cache keeps its own.
-4. Upload them, concurrently, with `remote.transfer()`.
-5. Write the new signed manifest: the entries the storage has, with their SHA-256 there, and the new ones, with
-   their SHA-256 once compressed again.
-6. List the tree of the cache in the storage, ~20 requests of 1,000 objects for the kernel, and delete what the new
+2. Compress the local cache again, in place, with `ccache --recompress 9`, when an entry the last build used or made,
+   one ccache dates after its start, is not at level 9: ccache keeps the dates of the entries, and leaves those at
+   that level already, so each entry is compressed once, and the entries of the cache fetched from the storage not
+   at all. The local cache stays at level 9: zstd decompresses as fast at any level, and the builds write their new
+   entries at ccache's level 1.
+3. Upload, 64 at once, with `remote.transfer()`, those the storage does not have so, as above.
+4. Write the new signed manifest, when it changes: the results the storage has, with their SHA-256 there, and the
+   others, with their SHA-256 once compressed again.
+5. List the tree of the cache in the storage, ~20 requests of 1,000 objects for the kernel, and delete what the new
    manifest does not have: the entries the last build did not use, and the orphans, those a push interrupted before
    its manifest uploaded, which no manifest lists.
-7. Write the page of the tree, with the total size of the objects listed.
+6. Write the page of the tree, with the total size of the objects listed.
 
 The manifest is written after the entries it lists, and the entries are deleted after the manifest which does not
 list them anymore, like for the trees of the builds, so that a manifest of the storage always lists entries the
@@ -125,21 +126,41 @@ pool for the caches only, like 64 requests, is an option if Garage keeps up.
 The directory pages stop at the tree of each cache: they list its manifest and its directories, not the ~275
 directories below them, nor their ~20,000 entries. Its total size comes from the listing of the push, the sizes of
 the objects in the storage: neither the local sizes, as a result the storage keeps may have other bytes locally, nor
-sizes in the manifest, whose lines are those of `sha256sum`. `update_pages()` gets a depth to stop at.
+sizes in the manifest, whose lines are those of `sha256sum`. `update_pages()` makes no page below the trees of the
+caches, for `xcraft push index` too.
 
 ### What changes
 
 - `xcraft/ccache.py`: `push()` and `fetch()` as above; the archive and `archive_name()` go.
-- `xcraft/remote.py`: a download of the entries of a tree missing from a local directory, adding to it, and the
-  pages stopping at a depth.
+- `xcraft/remote.py`: `update_tree()`, a download of the entries of a tree a local directory misses, adding to it,
+  and no pages below the trees of the caches.
 - The README and the docstring of `xcraft/ccache.py`, for the new layout.
-- The trees of the caches with an archive are not read anymore: the first push of each cache uploads it all, once.
+- The trees of the caches with an archive are not read anymore: a fetch leaves out the files at the top of a tree,
+  where ccache has none, and the first push of each cache uploads it all, once, and deletes the archive.
 
-## Before implementing
+## Measurements
 
-Time a push of the kernel's cache in CI, from a fetched cache after a rebuild, split in the compression and the
-upload, to know what this saves; and, once implemented, the objects by second of a first fetch, to choose the size of
-the pool.
+For the kernel's cache, 19,872 entries, 2,046 MiB at ccache's level 1, on 8 CPUs, over a home connection to the test
+storage, ~15 MB/s up, with a round trip of 36 ms:
+
+| zstd level | size | compression |
+|---|---|---|
+| 9 | 1,731 MiB | 20 s |
+| 12 | 1,720 MiB | 36 s |
+| 15 | 1,702 MiB | 77 s |
+| 19 | 1,538 MiB | 224 s |
+
+Level 9 is most of the gain for a tenth of the time of level 19: the CI has the bandwidth for the 11% more.
+
+| | one archive, level 19 | an object by entry, level 19 |
+|---|---|---|
+| first push | 280 s | 392 s, 64 requests at once |
+| full fetch | 30 s | 31 s |
+| push of the same cache | 280 s | 26 s, compressing the ccache manifests, which in place avoids |
+| space in Garage, data and metadata | 1,480 MiB | 1,629 MiB |
+
+The storage takes ~70 ms to write an object: the requests at once hide it, up to the bandwidth. The connections are
+kept, TLS negotiated once by connection.
 
 ## Open questions
 

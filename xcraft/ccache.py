@@ -1,17 +1,14 @@
 """The compiler caches of the packages, shared through the remote storage.
 
-Each package has its own ccache directory, which the builds of CI fill. It is shared as an archive, a tarball,
-``.xcraft/ccache/<arch>/<package>/<package>.ccache``, rather than read from the storage by ccache itself, as the
-builds run without the network: a build without a local compiler cache gets it first. The archive is not compressed
-again: ccache compresses its entries, which are compressed again with a higher level before being shared.
+Each package has its own ccache directory, which the builds of CI fill. It is shared as a signed tree,
+``.xcraft/ccache/<arch>/<package>/``, with an object by entry, at its path in the directory, rather than read from the
+storage by ccache itself, as the builds run without the network: a build without a local compiler cache gets it first.
+Only what one side has and the other has not is transferred, see push() and fetch(). The entries are compressed again
+with a higher level before being shared. See docs/ccache-sync-design.md.
 """
 
 from __future__ import annotations
 
-import shutil
-import tarfile
-import tempfile
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rich.markup import escape
@@ -19,21 +16,19 @@ from rich.markup import escape
 from xcraft import remote
 from xcraft.container import run
 from xcraft.display import activity, console
-from xcraft.project import INTERNAL
+from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from xcraft.project import Project, Remote
     from xcraft.signing import Signer
 
 
-def archive_name(name: str) -> str:
-    """Return the name of the archive of the compiler cache of `name`, a tarball, in the remote storage."""
-    return f"{name}.ccache"
-
-
-LEVEL = 19
+LEVEL = 9
 """The zstd level of the entries of the shared compiler caches: higher than the one of the builds, ccache's, which
-favors their speed, for smaller archives to transfer."""
+favors their speed, for smaller entries to transfer. For the kernel, on 8 CPUs, from 2,046 MiB at level 1: 1,731 MiB
+in 20s at level 9, 1,720 MiB in 36s at 12, 1,702 MiB in 77s at 15, and 1,538 MiB in 224s at 19."""
 _LAST_BUILD = "xcraft-last-build"
 """When the last successful build of the package started: the entries ccache dates after, as it dates them of their
 last use, are those it used or made."""
@@ -48,7 +43,7 @@ def local_path(project: Project, name: str) -> Path:
 
 def remote_path(project: Project, name: str) -> str:
     """Return the tree of the compiler cache of `name` in the remote storage."""
-    return f"{INTERNAL}/ccache/{project.arch}/{name}"
+    return f"{remote.CCACHE}/{project.arch}/{name}"
 
 
 def note_build(project: Project, name: str, start: float) -> None:
@@ -56,62 +51,81 @@ def note_build(project: Project, name: str, start: float) -> None:
     (local_path(project, name) / _LAST_BUILD).write_text(f"{start}\n")
 
 
-def push(project: Project, storage: Remote, name: str, *, signer: Signer | None) -> bool:
-    """Upload the compiler cache of `name`, replacing the one of the storage, and return whether it has one.
+def _result(entry: str) -> bool:
+    """Return whether `entry` is a result: its name is the hash of its inputs, valid whatever its bytes, unlike a ccache
+    manifest, which ccache changes in place.
+    """  # noqa: D205
+    return entry.endswith("R")
 
-    Only the entries its last successful build used or made are uploaded, if it was built: not those of the older
-    builds, which the local cache keeps. Its statistics neither, which would count them. They are compressed again with
-    the zstd `LEVEL`, in a copy of their own: ccache dates the entries of their last use.
+
+def _level(path: Path) -> int:
+    """Return the zstd level of the entry at `path`, in the header ccache writes."""
+    with path.open("rb") as f:
+        return f.read(6)[5]
+
+
+def push(project: Project, storage: Remote, name: str, *, signer: Signer | None) -> bool:
+    """Update the compiler cache of `name` in the storage with the local one, and return whether there is one.
+
+    Only the entries its last successful build used or made are kept, if it was built: not those of the older builds,
+    which the local cache keeps. Its statistics neither, which would count them. The local cache is compressed again
+    first, with the zstd `LEVEL`, in place, once: ccache keeps the dates of the entries, which tell those the last
+    build used, and leaves those compressed so already. Then the entries the storage does not have so are uploaded:
+    those it has with other bytes, but the results, which are the same by name. The others of the storage, and those
+    of pushes interrupted before their manifest, are deleted after the new manifest.
     """
     if not (cache := local_path(project, name)).is_dir():
         return False
     since = int(float(last.read_text())) if (last := cache / _LAST_BUILD).exists() else 0
-    project.state.mkdir(exist_ok=True)
-    # next to the cache, for links to its entries, which ccache replaces when it compresses them again
-    with tempfile.TemporaryDirectory(dir=project.state, prefix=".ccache-") as tmp:
-        staged = Path(tmp) / "cache"
-        staged.mkdir()
-        for path in sorted(cache.iterdir()):
-            if path.name not in _LOCAL:
-                for entry in [path, *path.rglob("*")] if path.is_dir() else [path]:
-                    if entry.is_dir():
-                        (staged / entry.relative_to(cache)).mkdir(exist_ok=True)
-                    elif entry.stat().st_mtime >= since and entry.name != "stats":
-                        (staged / entry.relative_to(cache)).hardlink_to(entry)
-        run(
-            project,
-            "ccache",
-            f"CCACHE_DIR=/ccache ccache --recompress {LEVEL}",
-            volumes=[f"{staged}:/ccache"],
-            show=f"compressing the ccache of {name}",
-            network=False,
+    prefix = remote_path(project, name)
+    stored = remote.read_manifest(storage, prefix, trusted=signer)
+    with project.lock():  # the builds use the cache, which this changes
+        used = sorted(
+            path.relative_to(cache).as_posix()
+            for path in cache.rglob("*")
+            if path.is_file()
+            and path.relative_to(cache).parts[0] not in _LOCAL
+            and path.name != "stats"
+            and path.stat().st_mtime >= since
         )
-        with activity(f"uploading the ccache of {name}"):
-            with tarfile.open(Path(tmp) / archive_name(name), "w") as tar:
-                for path in sorted(staged.iterdir()):
-                    if path.name not in _LOCAL:
-                        tar.add(path, path.name, filter=lambda info: None if Path(info.name).name == "stats" else info)
-            remote.upload_tree(storage, remote_path(project, name), Path(tmp), [archive_name(name)], signer=signer)
+        if any(_level(cache / entry) != LEVEL for entry in used if entry.endswith(("R", "M"))):
+            run(
+                project,
+                "ccache",
+                f"CCACHE_DIR=/ccache ccache --recompress {LEVEL}",
+                volumes=[f"{cache}:/ccache"],
+                show=f"compressing the ccache of {name}",
+                network=False,
+            )
+        manifest = {
+            entry: stored[entry] if _result(entry) and entry in stored else sha256_of(cache / entry) for entry in used
+        }
+        new = [entry for entry in used if manifest[entry] != stored.get(entry)]
+        with activity(f"uploading the ccache of {name}") as on_line:
+            remote.transfer(
+                storage, {f"{prefix}/{entry}": cache / entry for entry in new}, on_line, requests=remote.MANY
+            )
+            if manifest != stored:
+                remote.write_manifest(storage, prefix, manifest, signer=signer)
+            stale = [f for f in remote.listing(storage, f"{prefix}/") if f not in manifest and f != remote.MANIFEST]
+            remote.delete(storage, [f"{prefix}/{f}" for f in stale])
     return True
 
 
 def fetch(project: Project, name: str) -> bool:
-    """Download the compiler cache of `name`, replacing the local one, and return whether the storage has one."""
+    """Add to the local compiler cache of `name` the entries of the storage it does not have, and return whether the
+    storage has one.
+    """  # noqa: D205
     cache = local_path(project, name)
-    cache.parent.mkdir(parents=True, exist_ok=True)
-    # next to it, to move it there
-    with tempfile.TemporaryDirectory(dir=cache.parent, prefix=f".{name}-") as tmp:
-        with activity(f"downloading the ccache of {name}") as on_line:
-            if not remote.fetch_tree(project, remote_path(project, name), Path(tmp) / "tree", on_line):
-                return False
-        # there, even when empty, before the local one is replaced
-        (Path(tmp) / "cache").mkdir()
-        with tarfile.open(Path(tmp) / "tree" / archive_name(name)) as tar:
-            tar.extractall(Path(tmp) / "cache", filter="data")
-        if cache.exists():
-            shutil.rmtree(cache)
-        (Path(tmp) / "cache").rename(cache)
-    return True
+
+    def wanted(entry: str, digest: str) -> bool:
+        # the entries are in the directories of the cache: not the archive of an older xcraft, at the top
+        return "/" in entry and (
+            not (cache / entry).exists() or (not _result(entry) and sha256_of(cache / entry) != digest)
+        )
+
+    with activity(f"downloading the ccache of {name}") as on_line:
+        return remote.update_tree(project, remote_path(project, name), cache, wanted, on_line)
 
 
 def fetch_missing(project: Project, name: str) -> None:
@@ -120,5 +134,5 @@ def fetch_missing(project: Project, name: str) -> None:
         return
     try:
         fetch(project, name)
-    except (remote.RemoteError, tarfile.TarError) as e:
+    except (remote.RemoteError, OSError) as e:
         console.print(f"[yellow]no compiler cache from the remote storage[/]: {escape(str(e))}")
