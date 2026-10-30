@@ -177,6 +177,16 @@ def echo_disk(tmp_path: Path) -> Path:
     return disk
 
 
+def test_vm_help_outside_projects(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path))
+    code, output = xcraft("vm", "status", "--help")
+    assert code == 0, output
+    assert "QEMU status" in output
+    code, output = xcraft("vm", "status")
+    assert code == 1
+    assert "no xcraft.toml" in output
+
+
 @pytest.mark.skipif(not (shutil.which("qemu-system-x86_64") and shutil.which("qemu-img")), reason="needs QEMU")
 def test_detached_vm_controls_and_logs(root: Path, tmp_path: Path, echo_disk: Path) -> None:
     directory = root / ("long-session-name-" * 4)

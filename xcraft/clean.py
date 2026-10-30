@@ -5,6 +5,8 @@ from __future__ import annotations
 import shutil
 from typing import TYPE_CHECKING
 
+from xcraft.localrepo import OUTPUT_MARKER
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -14,7 +16,7 @@ if TYPE_CHECKING:
 def repos_disk_usage(project: Project) -> int:
     """Return the disk usage of the files only the repositories of xcraft repo, repo*/, have."""
     links: dict[int, tuple[int, int, int]] = {}  # inode: links in repo*/, links, blocks
-    for repo in project.root.glob("repo*/"):
+    for repo in (r for r in project.root.glob("repo*/") if (r / OUTPUT_MARKER).exists()):
         for f in repo.rglob("*"):
             if (stat := f.lstat()) and f.is_file():
                 count = links.get(stat.st_ino, (0, 0, 0))[0]
