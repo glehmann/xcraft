@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
+import stat
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, TypeAdapter
@@ -105,12 +105,13 @@ def main_spec(pkg_dir: Path) -> Path:
 def hash_dir(path: Path) -> str:
     """Return a hash of the files in `path`, as the builds get them, except its ``origin``.
 
-    That is their paths, contents, and whether they are executable, like git:
-    the rest of their modes depends on the umask.
+    That is their paths, contents, and whether they are executable by their owners, like git: the rest of their modes
+    depends on the umask, and what the user may run on the mounts, with the ACLs. The files of the symbolic links are
+    those they point to, like in the build trees, and the empty directories are not in it, nor in git.
     """
     h = hashlib.sha256()
     for file in sorted(p for p in path.rglob("*", recurse_symlinks=True) if p.is_file() and p != path / "origin"):
-        h.update(f"{file.relative_to(path)}\0{os.access(file, os.X_OK)}\0".encode())
+        h.update(f"{file.relative_to(path)}\0{bool(file.stat().st_mode & stat.S_IXUSR)}\0".encode())
         h.update(hashlib.sha256(file.read_bytes()).digest())
     return h.hexdigest()
 
