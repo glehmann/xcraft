@@ -41,6 +41,20 @@ def dev_suffixes(project: Project, ident: str | None, *, advance: bool = False) 
     return suffixes
 
 
+def keep_built(project: Project, ident: str | None, autorev: dict[str, str], names: list[str]) -> None:
+    """Keep the counters of the development builds of `names`, made with the suffixes `autorev`, for the inputs they
+    have once built: the builds of their dependencies change them, when they change what rpm generates for them.
+    """  # noqa: D205
+    if not (built := [name for name in names if name in autorev]):
+        return
+    path = project.state / "dev-builds.json"
+    counters: dict[str, list] = json.loads(path.read_text()) if path.exists() else {}
+    ids, keys = compute(project, base(project)), build_keys(project)
+    for name in built:
+        counters[f"{name} {ids[name].number}"] = [int(autorev[name][1:].split(".")[0]), keys[name], ident]
+    write_atomically(path, json.dumps(counters, indent=1, sort_keys=True) + "\n")
+
+
 def developed(project: Project) -> set[str]:
     """Return the packages whose build ID is not the main branch's: their builds are development builds."""
     return proposed(project, compute(project, base(project)))

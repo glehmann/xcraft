@@ -174,6 +174,20 @@ def test_development_builds(root: Path, monkeypatch: pytest.MonkeyPatch) -> None
     assert built() == []
 
 
+def test_development_builds_changed_by_others(root: Path) -> None:
+    commit_base(root)
+    git(root, "checkout", "-qb", "feature")
+    # another release: what rpm generated for trivial, which with-deps is built against, changes with its build
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(spec.read_text().replace("Release: 1%{?dist}", "Release: 2%{?dist}"))
+    assert built() == [
+        "trivial-1.0-2+b2~1.dev.xcpng8.99.noarch.rpm",
+        "with-deps-1.0-1+b2~1.dev.xcpng8.99.noarch.rpm",
+    ]
+    assert re.search(r"^with-deps +1\.0-1\+b2~1\.dev\.xcpng8\.99 +built", xcraft("status")[1], re.MULTILINE)
+    assert built() == []
+
+
 def test_numbers_given_again_on_main_branch(root: Path) -> None:
     commit_base(root)
     edit(root, "changed")
