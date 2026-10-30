@@ -86,19 +86,39 @@ def _recipe(project: Project) -> str:
     ).hexdigest()
 
 
-def _lock_inputs(project: Project, lock: Lock, name: str, ignored: set[str] | None = None) -> dict:
+def _platforms(project: Project) -> list[Project]:
+    """Return the project on all its platforms, the build IDs covering them all, the same on each: itself on its own,
+    with what it computed already.
+    """  # noqa: D205
+    return [project if p.platform == project.platform else p for p in project.all_platforms()]
+
+
+def _deps(platforms: list[Project]) -> dict[str, set[str]]:
+    """Return the packages of ours each package is built against, on any of the `platforms`."""
+    deps: dict[str, set[str]] = {}
+    for platform in platforms:
+        for name, needed in platform.deps.items():
+            deps.setdefault(name, set()).update(needed)
+    return deps
+
+
+def _lock_inputs(platforms: list[Project], lock: Lock, name: str, ignored: set[str] | None = None) -> dict:
     """Return what the build key of `name` covers in `lock`, but the versions of the `ignored` source packages.
 
     That is, on all the architectures, the upstream packages of the image and of its build root, with their versions,
     and what its build root is resolved from: its dynamic BuildRequires, and the requirements and provides rpm
-    generated for the binary packages of ours it may have.
+    generated for the binary packages of ours it may have, on the `platforms`, each with its own packages.
     """
 
     def versions(sources: list[str]) -> dict[str, str | None]:
         return {source: None if source in (ignored or set()) else lock.sources.get(source) for source in sources}
 
-    deps = project.deps
-    binaries = sorted({b.name for dep in reachable(deps, deps[name]) for b in project.packages[dep].binaries})
+    def binaries(platform: Project) -> list[str]:
+        deps = platform.deps
+        return sorted(
+            {b.name for dep in reachable(deps, deps.get(name, set())) for b in platform.packages[dep].binaries}
+        )
+
     return {
         platform.arch: [
             versions(lock.image.get(platform.arch, [])),
@@ -106,10 +126,10 @@ def _lock_inputs(project: Project, lock: Lock, name: str, ignored: set[str] | No
             lock.buildrequires.of(platform.arch).get(name, []),
             {
                 b: [lock.requires.of(platform.arch).get(b, []), lock.provides.of(platform.arch).get(b, [])]
-                for b in binaries
+                for b in binaries(platform)
             },
         ]
-        for platform in project.all_platforms()
+        for platform in platforms
     }
 
 
@@ -123,8 +143,8 @@ def compute(
     see base(), with the `hashes` of the package directories (see xcraft.cache.inputs()).
 
     The build key covers the package directory, the recipe, what the lock has for it (see _lock_inputs()), and the
-    build IDs of the packages of ours it is built against. Packages depending on each other, in a cycle, get the key
-    of them all: they are rebuilt together.
+    build IDs of the packages of ours it is built against, on any architecture: the same on all of them. Packages
+    depending on each other, in a cycle, get the key of them all: they are rebuilt together.
 
     A package with the key of the fork keeps its build ID, and so does one reusing a build for the key, there or in the
     working tree. Otherwise, a package `reuse` takes, with the build IDs of those before it, reuses the build of the
@@ -133,14 +153,15 @@ def compute(
     the numbers are those of the working tree, 1 for new packages: there is nothing to number them against.
     """  # noqa: D205
     hashes = hashes or {name: hash_dir(path) for name, path in project.package_dirs.items()}
-    lock, deps, current, recipe = load_lock(project), project.deps, read(project), _recipe(project)
+    platforms = _platforms(project)
+    lock, deps, current, recipe = load_lock(project), _deps(platforms), read(project), _recipe(project)
     ids: dict[str, BuildId] = {}
     for component in components(deps):  # the dependencies first
         inputs = {
             name: [
                 hashes[name],
                 recipe,
-                _lock_inputs(project, lock, name),
+                _lock_inputs(platforms, lock, name),
                 [[dep, ids[dep].number, ids[dep].key] for dep in sorted(deps[name] - component)],
             ]
             for name in sorted(component)
@@ -280,6 +301,8 @@ def reuse(project: Project, names: list[str], sources: list[str]) -> list[str]:
     forked = _at(project, fork)
     forked_lock = parse_lock(_git(project, "show", f"{fork}:./{lock_path(project).name}") or "")
     lock, updated = load_lock(project), set(sources)
+    platforms = _platforms(project)
+    deps = _deps(platforms)
 
     def changed(path: Path) -> bool:
         """Return whether the files of `path` changed since the fork, untracked ones included."""
@@ -297,8 +320,8 @@ def reuse(project: Project, names: list[str], sources: list[str]) -> list[str]:
             bool(updated)
             and not changed(project.root / "xcraft.toml")
             and all((ids[d].number, ids[d].key) == (forked[d].number, forked[d].key)
-                    for d in project.deps[name] if d in ids and d in forked)
-            and _lock_inputs(project, lock, name, updated) == _lock_inputs(project, forked_lock, name, updated)
+                    for d in deps[name] if d in ids and d in forked)
+            and _lock_inputs(platforms, lock, name, updated) == _lock_inputs(platforms, forked_lock, name, updated)
         )  # fmt: skip
 
     return update(project, reusable)

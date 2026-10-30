@@ -247,6 +247,7 @@ def test_keys_of_cycles(project: Project) -> None:
     for name in ("a", "b", "0foo"):
         (project.root / "base" / name).mkdir(parents=True)
         (project.root / "base" / name / f"{name}.spec").write_text(name)
+    project.config.platforms = [project.platform]  # the one of the dependencies given
     project.packages = {name: Package(name=name, binaries=[]) for name in ("a", "b", "0foo")}
     project.deps = {"a": {"b"}, "b": {"a"}}
     keys = build_keys(project)
@@ -376,6 +377,7 @@ def test_packages_edited_while_building(project: Project, monkeypatch: pytest.Mo
     for name in ("a", "b", "c"):
         (project.root / "base" / name).mkdir(parents=True)
         (project.root / "base" / name / f"{name}.spec").write_text(name)
+    project.config.platforms = [project.platform]  # the one of the dependencies given
     project.deps = {"a": set(), "b": {"a"}, "c": set()}
     project.packages = {name: Package(name=name, binaries=[]) for name in ("a", "b", "c")}
     hashes = cache.inputs(project)
