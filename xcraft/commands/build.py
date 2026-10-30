@@ -9,7 +9,7 @@ import typer
 
 from xcraft import build as builder
 from xcraft.cache import cached_build
-from xcraft.commands import Arch, Dev, Final, Packages, dev_ident, load, update_build_ids
+from xcraft.commands import Arch, Dev, Final, Packages, dev_ident, load
 from xcraft.devbuilds import dev_suffixes
 from xcraft.display import console
 from xcraft.graph import dependents
@@ -51,9 +51,7 @@ def build(  # noqa: PLR0913, PLR0917
         builder.build(project, names, with_deps=not no_deps, dry_run=True, dev=ident, fetch=fetch)
         return
     with project.lock():
-        update_build_ids(project)
         results, keys = builder.build(project, names, with_deps=not no_deps, verbose=verbose, dev=ident, fetch=fetch)
-        update_build_ids(project)  # with what the builds found
     if autorev := dev_suffixes(project, ident):
         for r in results:
             if r.name in autorev and r.status == "built":

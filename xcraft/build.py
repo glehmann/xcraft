@@ -280,8 +280,11 @@ def build(  # noqa: PLR0913
     directory, or one of its dependencies', changed since the start fails: the
     builds work on the packages as they were then.
 
-    The lock must be prepared: see resolution.prepare().
+    The build IDs are updated before the builds, and after, with what they found, or checked with --locked: all the
+    builds are numbered by them. The lock must be prepared: see resolution.prepare().
     """  # noqa: D205
+    if not dry_run:
+        update_build_ids(project)
     for attempt in range(2):
         keys, hashes, autorev = _record_cached(project, dev)
         plan = build_order(project.deps, targets, with_deps=with_deps)
@@ -306,8 +309,16 @@ def build(  # noqa: PLR0913
         if attempt or all(r.status != "again" for r in results):
             break
         console.print("the builds found what changes the build roots: planning them again")
+    update_build_ids(project)  # with what the builds found
     # those to build again still, after the second attempt
     return [Result(r.name, "failed") if r.status == "again" else r for r in results], keys
+
+
+def update_build_ids(project: Project) -> None:
+    """Update the build IDs of the packages, showing the changed ones, or fail with --locked, see xcraft.buildid."""
+    if changed := buildid.update(project):
+        ids = buildid.read(project)
+        console.print("build IDs: " + ", ".join(f"{name} {ids[name].number}" for name in changed if name in ids))
 
 
 def _record_cached(project: Project, dev: str | None) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:

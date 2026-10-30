@@ -7,8 +7,6 @@ from typing import Annotated
 
 import typer
 
-from xcraft import buildid
-from xcraft.display import console
 from xcraft.project import Destination, Project, Remote
 from xcraft.resolution import prepare
 from xcraft.signing import Signer, dev_signer, signing_key
@@ -102,13 +100,6 @@ def dev_ident(ctx: typer.Context, dev: str | None, *, final: bool) -> str | None
         msg = f"the development build ID must be 1 to 16 letters and digits: {ident}"
         raise typer.BadParameter(msg)
     return ident
-
-
-def update_build_ids(project: Project) -> None:
-    """Update the build IDs of the packages, showing the changed ones, or fail with --locked, see xcraft.buildid."""
-    if changed := buildid.update(project):
-        ids = buildid.read(project)
-        console.print("build IDs: " + ", ".join(f"{name} {ids[name].number}" for name in changed if name in ids))
 
 
 Dep = Annotated[
