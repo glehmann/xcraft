@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 from typer.testing import CliRunner
 
-from tests import TOML
+from tests import TOML, needs_git_lfs
 from xcraft.__main__ import app
 from xcraft.container import run
 from xcraft.importer import PackageImportError, import_history
@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 runner = CliRunner()
+
+pytestmark = needs_git_lfs  # for the archives of the packaging repositories
 
 
 def git(repo: Path, *args: str, input: str | None = None) -> str:  # noqa: A002, like subprocess.run

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 import tests
-from tests import PROJECT, TOML, TOYS, UPSTREAM, config
+from tests import ARCH, PROJECT, TOML, TOYS, UPSTREAM, config
 from xcraft import container, process
 from xcraft.cache import build_keys
 from xcraft.container import build_image, run_natively
@@ -49,8 +49,12 @@ def make_toys(root: Path) -> None:
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Mark the tests in the build environment as needing podman, and skip those needing it without it."""
+    """Mark the tests in the build environment as needing podman, and skip those needing it without it, or all of them
+    on an architecture the test project does not build for.
+    """
     for item in items:
+        if not ARCH:
+            item.add_marker(pytest.mark.skip(reason=f"no platform of the tests for {os.uname().machine}"))
         if "build_environment" in getattr(item, "fixturenames", ()):
             item.add_marker(pytest.mark.podman)
         if item.get_closest_marker("podman") and not shutil.which("podman"):

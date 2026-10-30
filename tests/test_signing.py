@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 import typer
 
-from tests import ARCH, copy_project
+from tests import ARCH, copy_project, needs_gpg
 from tests.test_build import xcraft
 from xcraft import buildid
 from xcraft.cache import build_keys, cached_build
@@ -22,8 +22,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-needs_gpg = pytest.mark.skipif(not shutil.which("gpg"), reason="needs gpg")
-
 
 @pytest.fixture
 def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
@@ -34,10 +32,11 @@ def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
         subprocess.run(["git", "-C", str(root), "config", key, value], check=True)
     monkeypatch.setenv("XCRAFT_PROJECT", str(root))
     yield root
-    # the gpg agent of the keyring
-    subprocess.run(["gpgconf", "--homedir", str(root / ".xcraft/key"), "--kill", "gpg-agent"], check=False)
+    if shutil.which("gpgconf"):  # the gpg agent of the keyring
+        subprocess.run(["gpgconf", "--homedir", str(root / ".xcraft/key"), "--kill", "gpg-agent"], check=False)
 
 
+@needs_gpg
 def test_dev_key(root: Path) -> None:
     assert xcraft("key", "show") == (1, "no key: see xcraft key create\n")
     code, output = xcraft("key", "create")
