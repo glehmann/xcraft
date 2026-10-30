@@ -250,7 +250,13 @@ def delete(storage: Remote, paths: list[str]) -> None:
     _forget(storage, paths)
     with _writing(storage, f"delete {len(paths)} files") as s3:
         for i in range(0, len(paths), 1000):  # the most S3 deletes at once
-            s3.delete_objects(Bucket=storage.bucket, Delete={"Objects": [{"Key": p} for p in paths[i : i + 1000]]})
+            deleted = s3.delete_objects(
+                Bucket=storage.bucket, Delete={"Objects": [{"Key": p} for p in paths[i : i + 1000]]}
+            )
+            # those it could not delete, in a response of success, but those it did not have, like Garage reports them
+            if errors := [e for e in deleted.get("Errors", []) if e.get("Code") != "NoSuchKey"]:
+                msg = f"cannot delete {', '.join(f'{e.get("Key")}: {e.get("Message")}' for e in errors)}"
+                raise RemoteError(msg)
 
 
 KEYS = f"{INTERNAL}/keys"

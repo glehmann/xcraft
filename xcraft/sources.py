@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import os
 import shutil
 import tempfile
 import urllib.parse
@@ -74,7 +75,9 @@ def _fetch_source(project: Project, name: str, filename: str, digest: str) -> bo
     archive = project.source_cache / digest / filename
     archive.parent.mkdir(parents=True, exist_ok=True)
     # one of its own, next to it, for the commands downloading it at once
-    part = Path(tempfile.mkstemp(dir=archive.parent, prefix=f".{filename}.", suffix=".part")[1])
+    fd, path = tempfile.mkstemp(dir=archive.parent, prefix=f".{filename}.", suffix=".part")
+    os.close(fd)  # written by path
+    part = Path(path)
     urls = (s for s in project.packages[name].sources if "://" in s and archive_name(s) == filename)
     url, error = next(urls, ""), None
 
