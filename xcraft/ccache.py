@@ -9,6 +9,8 @@ with a higher level before being shared. See docs/ccache-sync-design.md.
 
 from __future__ import annotations
 
+import os
+import time
 from typing import TYPE_CHECKING
 
 from rich.markup import escape
@@ -125,8 +127,16 @@ def fetch(project: Project, name: str) -> bool:
             not (cache / entry).exists() or (not _result(entry) and sha256_of(cache / entry) != digest)
         )
 
+    start = time.time()
     with activity(f"downloading the ccache of {name}") as on_line:
-        return remote.update_tree(project, remote_path(project, name), cache, wanted, on_line)
+        found = remote.update_tree(project, remote_path(project, name), cache, wanted, on_line)
+    # dated before the last build, which did not use them, to push those it used only
+    if (last := cache / _LAST_BUILD).exists():
+        before = float(last.read_text()) - 1
+        for path in cache.rglob("*"):
+            if path.is_file() and path.stat().st_mtime >= start:
+                os.utime(path, (before, before))
+    return found
 
 
 def fetch_missing(project: Project, name: str) -> None:

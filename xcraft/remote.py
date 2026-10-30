@@ -453,7 +453,7 @@ def update_tree(
 ) -> bool:
     """Download into the directory `dest`, MANY at once, the files of the trusted tree `prefix`, from main or dev, that
     `wanted` takes, by path and SHA-256, and return whether a storage has it. Each file is checked against the signed
-    manifest, then renamed into `dest`: those missing or corrupted in the storage are skipped.
+    manifest, then renamed into `dest`: those missing, corrupted or failing to download are skipped.
     """  # noqa: D205
     error, found = None, None
     for storage in storages(project):
@@ -474,7 +474,12 @@ def update_tree(
 
         def fetch(name: str) -> None:
             part = Path(tmp) / name
-            if download(storage, f"{prefix}/{name}", part, on_line) and sha256_of(part) == manifest[name]:
+            try:
+                found = download(storage, f"{prefix}/{name}", part, on_line)
+            except RemoteError as e:  # one of many, which the others need not wait for
+                log.warning("skipping %s/%s: %s", prefix, name, e)
+                return
+            if found and sha256_of(part) == manifest[name]:
                 (dest / name).parent.mkdir(parents=True, exist_ok=True)
                 part.rename(dest / name)
 
@@ -508,7 +513,11 @@ def download_tree(
 
         with ThreadPoolExecutor(REQUESTS) as pool:
             list(pool.map(fetch, manifest, manifest.values()))
-        tree.rename(dest)
+        try:
+            tree.rename(dest)
+        except OSError:
+            if not dest.is_dir():  # but made meanwhile by another command, from the same tree
+                raise
     return True
 
 

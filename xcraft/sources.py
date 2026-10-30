@@ -11,7 +11,9 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import shutil
+import tempfile
 import urllib.parse
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from xcraft import process
@@ -19,8 +21,6 @@ from xcraft.display import activity, download_progress
 from xcraft.project import INTERNAL, write_atomically
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from xcraft.project import Project
 
 
@@ -72,39 +72,35 @@ def _fetch_source(project: Project, name: str, filename: str, digest: str) -> bo
     from xcraft import remote  # noqa: PLC0415, which uses sha256_of()
 
     archive = project.source_cache / digest / filename
-    part = archive.with_name(f"{filename}.part")
-    part.parent.mkdir(parents=True, exist_ok=True)
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    # one of its own, next to it, for the commands downloading it at once
+    part = Path(tempfile.mkstemp(dir=archive.parent, prefix=f".{filename}.", suffix=".part")[1])
     urls = (s for s in project.packages[name].sources if "://" in s and archive_name(s) == filename)
-    url, origin, error = next(urls, ""), "", None
+    url, error = next(urls, ""), None
+
     with activity(f"downloading {filename}") as on_line:
-        for bucket in ("main", "dev"):
-            if source := project.config.remote.get(bucket):
-                try:
-                    if remote.download(source, source_path(filename, digest), part, on_line):
-                        origin = "the remote storage"
-                        break
-                except remote.RemoteError as e:
-                    error = e
-        if not origin and url:
+        # from where it may be, until it matches
+        for origin in [*remote.storages(project), *([url] if url else [])]:
             try:
-                process.download(url, part, download_progress(on_line))
-                origin = url
-            except OSError as e:
+                if isinstance(origin, str):
+                    process.download(origin, part, download_progress(on_line))
+                elif not remote.download(origin, source_path(filename, digest), part, on_line):
+                    continue
+            except (OSError, remote.RemoteError) as e:
                 error = e
-    if not origin:
-        part.unlink(missing_ok=True)
-        with contextlib.suppress(OSError):  # not to leave it empty
-            part.parent.rmdir()
-        if error:
-            msg = f"{filename} is not in the source cache, and cannot be downloaded: {error}"
-            raise SourceError(msg) from error
-        return False
-    if sha256_of(part) != digest:
-        part.unlink()
-        msg = f"{filename} from {origin} does not match the sha256 of the manifest"
-        raise SourceError(msg)
-    part.rename(archive)
-    return True
+                continue
+            if sha256_of(part) == digest:
+                part.rename(archive)
+                return True
+            where = origin if isinstance(origin, str) else origin.url
+            error = SourceError(f"{filename} from {where} does not match the sha256 of the manifest")
+    part.unlink(missing_ok=True)
+    with contextlib.suppress(OSError):  # not to leave it empty
+        archive.parent.rmdir()
+    if error:
+        msg = f"{filename} is not in the source cache, and cannot be downloaded: {error}"
+        raise SourceError(msg) from error
+    return False
 
 
 def fetch_sources(project: Project, name: str) -> list[str]:

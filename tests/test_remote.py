@@ -37,7 +37,9 @@ from xcraft.signing import Signer, check_signatures, create_dev_key, dev_signer,
 from xcraft.sources import SourceError, cache_source, sha256_of, source_path, write_manifest
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
+
+    from xcraft.project import Remote
 
 
 GARAGE = "docker.io/dxflrs/garage:v2.1.0"
@@ -233,6 +235,10 @@ def test_sources(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -
     storage = Project.find().config.remote.get("main")
     assert storage
     remote.upload(storage, source_path(archive.name, digest), root / "xcraft.toml")
+    # the copy of dev rather than the corrupted one of main
+    assert (prepare_tree(Project.find(), "trivial") / "SOURCES" / archive.name).read_text() == archive.name
+    shutil.rmtree(cache)
+    remote.upload(Project.find().config.remote["dev"], source_path(archive.name, digest), root / "xcraft.toml")
     with pytest.raises(SourceError, match="does not match the sha256 of the manifest"):
         prepare_tree(Project.find(), "trivial")
 
@@ -330,6 +336,24 @@ def test_signed_trees(root: Path, tmp_path: Path) -> None:
         (src / remote.MANIFEST).write_text(forged)
         remote.upload(storage, f"{prefix}/{remote.MANIFEST}", src / remote.MANIFEST)
         assert not remote.tree_exists(storage, prefix)
+
+
+def test_update_tree_skips_failed_downloads(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    storage = Project.find().config.remote["main"]
+    for name in ("good", "failing"):
+        (tmp_path / name).write_text(name)
+    prefix = f"trees/{secrets.token_hex(4)}"
+    remote.upload_tree(storage, prefix, tmp_path, ["good", "failing"], signer=release_signer(Project.find()))
+    download = remote.download
+
+    def failing(storage: Remote, path: str, dest: Path, on_line: Callable[[str], None] = print) -> bool:
+        if path.endswith("/failing"):
+            raise remote.RemoteError(path)  # transient, which no storage can do on purpose
+        return download(storage, path, dest, on_line)
+
+    monkeypatch.setattr(remote, "download", failing)
+    assert remote.update_tree(Project.find(), prefix, root / "dest", lambda *_: True)
+    assert [p.name for p in (root / "dest").iterdir()] == ["good"]
 
 
 @pytest.mark.parametrize("kind", ["builds", "ccache"])
@@ -720,6 +744,10 @@ def test_ccache_of_the_last_build(root: Path, tmp_path: Path) -> None:
     tree = f".xcraft/ccache/{ARCH}/compiled"
     remote.upload(storage, f"{tree}/orphan", spec)
     build("4", "4")
+    # nor what a fetch after the last build gets
+    second.unlink()
+    assert xcraft("fetch", "ccache", "compiled") == (0, "↓ compiled\n1 fetched\n")
+    assert second.exists()
     assert xcraft("push", "ccache", "compiled", "--to", "main") == (0, "↑ compiled\n1 pushed\n")
     stored = remote.read_manifest(storage, tree, trusted=dev_signer(Project.find()))
     assert second.relative_to(cache).as_posix() not in stored
