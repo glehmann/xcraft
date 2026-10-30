@@ -80,7 +80,7 @@ xcraft status xen qemu                      # with their build numbers, +b1
 
 ```
 xcraft graph qemu                # every package with C code needs kernel-headers
-xcraft graph branding-xcp-ng --dependents
+xcraft graph sm --dependents
 xcraft graph xen --upstream --flat
 ```
 
