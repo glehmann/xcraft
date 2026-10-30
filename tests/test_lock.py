@@ -3,9 +3,10 @@ from __future__ import annotations
 import pytest
 
 from tests import TOML, config
+from xcraft import resolution
 from xcraft.lock import Lock, Locked, Recorded, choose_versions, load_lock, lock_path, save_lock, versionlock
 from xcraft.project import Project
-from xcraft.resolution import lock_sources
+from xcraft.resolution import Resolved, lock_sources
 
 
 def locked(evr: str, source: str = "foo", arch: str = "x86_64_v2") -> Locked:
@@ -109,3 +110,21 @@ def test_lock_sources_locked_meanwhile(project: Project, monkeypatch: pytest.Mon
     monkeypatch.setattr("xcraft.resolution.available_versions", versions)
     lock_sources(project, ["foo", "bar"])
     assert load_lock(project).sources == {"foo": "2-1", "bar": "3-1"}
+
+
+def test_record_roots_locked_meanwhile(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    resolved = Resolved(packages={"glibc": locked("2.39-1", "glibc")}, image=["glibc"])
+    resolutions = []
+
+    def image(_platform: Project) -> Resolved:
+        if not resolutions:
+            save_lock(project, Lock(sources={"foo": "2-1", "glibc": "2.39-1"}))  # by another command, meanwhile
+        resolutions.append(_platform.arch)
+        return resolved
+
+    monkeypatch.setattr("xcraft.resolution._image", image)
+    monkeypatch.setattr("xcraft.resolution._roots", lambda _: resolved)
+    resolution._record(project)  # noqa: SLF001
+    lock = load_lock(project)
+    assert lock.sources == {"foo": "2-1", "glibc": "2.39-1"}
+    assert lock.image == {platform.arch: ["glibc"] for platform in project.all_platforms()}
