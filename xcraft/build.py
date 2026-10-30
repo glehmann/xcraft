@@ -139,7 +139,6 @@ def _build_one(  # noqa: C901
     if error := project.packages[name].error:
         raise BuildError(error)
     resolved = check_resolved(project, name)
-    staged = hash_dir(project.package_dirs[name])
     replace = image_replacements(resolved, name)
     repo = deps_repo(project, name, keys)
     tree = prepare_tree(project, name)
@@ -178,7 +177,7 @@ def _build_one(  # noqa: C901
         if release_suffix(keys[name]) != suffix:
             msg = "its dynamic BuildRequires, now in the lock, change its build number: built again with the new one"
             raise BuildRootChangedError(msg)
-    if hash_dir(project.package_dirs[name]) != staged:
+    if hash_dir(project.package_dirs[name]) != hashes[name]:  # those of its key, which the build tree copied
         msg = f"{project.package_dirs[name].relative_to(project.root)} changed during the build, build it again"
         raise BuildError(msg)
     # development builds are signed with the developer's key, if any
@@ -401,13 +400,13 @@ def _recorded_again(
 ) -> tuple[list[Result], dict[str, str], dict[str, str]]:
     """Record what rpm generated for the cached builds again, and return the `results`, the keys and the suffixes
     `autorev`: packages built or fetched now may provide what they could not resolve before, which changes the keys of
-    those built against them, then built again.
+    those built against them, then built again, like a change of the lock during the builds.
     """
     if record_rpm_deps(project, [n for n, k in keys.items() if cached_build(project, n, k).exists()], keys):
         keys, autorev, _ = _current(project, keys, autorev, recorded, dev=dev, hashes=hashes)
-        for name, result in results.items():
-            if result.status in ("built", "fetched", "cached") and not cached_build(project, name, keys[name]).exists():
-                results[name] = Result(name, "again")
+    for name, result in results.items():
+        if result.status in ("built", "fetched", "cached") and not cached_build(project, name, keys[name]).exists():
+            results[name] = Result(name, "again")
     return list(results.values()), keys, autorev
 
 
