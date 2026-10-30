@@ -16,6 +16,7 @@ import pytest
 from typer.testing import CliRunner
 
 from tests import ARCH, TOML, TOYS, copy_project
+from xcraft import build as builder
 from xcraft import buildid, container
 from xcraft.__main__ import app
 from xcraft.cache import BuildError
@@ -106,6 +107,21 @@ def test_spec_changed_during_build_is_not_cached(root: Path) -> None:
     assert code == 1
     assert "base/trivial changed during the build, build it again" in output
     assert states() == {"trivial": "missing", "with-deps": "missing"}
+
+
+def test_spec_changed_before_its_build_is_not_cached(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    spec = root / "base/trivial/trivial.spec"
+    check_resolved = builder.check_resolved
+
+    def changed(project: Project, name: str) -> object:
+        # after the check of the directories of the keys, before the build tree has its files
+        spec.write_text(f"{spec.read_text()}# changed\n")
+        return check_resolved(project, name)
+
+    monkeypatch.setattr(builder, "check_resolved", changed)
+    code, output = xcraft("build", "trivial")
+    assert code == 1
+    assert "base/trivial changed during the build, build it again" in output
 
 
 def write_spec(root: Path, name: str, requires: str = "", files: str = "/usr/share/doc/%{name}") -> None:

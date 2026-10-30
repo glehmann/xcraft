@@ -409,6 +409,7 @@ def test_packages_edited_while_building(project: Project, monkeypatch: pytest.Mo
     def building(_project: Project, name: str, *_: object, **__: object) -> build.Result:
         if name == "c":  # a, which b depends on, edited meanwhile
             (project.root / "base/a/a.spec").write_text("a edited")
+        cache.cached_build(project, name, keys[name]).mkdir(parents=True)
         return build.Result(name, "built")
 
     monkeypatch.setattr(build, "_build_shown", building)
@@ -450,6 +451,38 @@ def test_keys_changed_by_the_last_recording(project: Project, monkeypatch: pytes
     # b to build again, with its new key, not cached
     assert results == [build.Result("a", "cached"), build.Result("b", "again")]
     assert (after["a"], after["b"]) == (keys["a"], after["b"])
+    assert after["b"] != keys["b"]
+
+
+def test_keys_changed_during_the_builds(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("a", "b", "c"):
+        (project.root / "base" / name).mkdir(parents=True)
+        (project.root / "base" / name / f"{name}.spec").write_text(name)
+    project.config.platforms = [project.platform]  # the one of the dependencies given
+    project.deps = {"a": set(), "b": {"a"}, "c": set()}
+    project.packages = {name: Package(name=name, binaries=[]) for name in ("a", "b", "c")}
+    monkeypatch.setattr(build, "prepare", lambda _: None)
+    hashes = buildkey.directories(project)
+    keys = build_keys(project, hashes=hashes)
+    for name in ("a", "b", "c"):
+        cache.cached_build(project, name, keys[name]).mkdir(parents=True)
+    monkeypatch.setattr(build, "record_rpm_deps", lambda *_, **__: False)  # the last recording changes nothing
+    done = build._done
+
+    def changing(project: Project, name: str, *args: object, **kwargs: object) -> build.Result | None:
+        if name == "c":  # what changes the build root of b, found after it, like by another command
+            lock = load_lock(project)
+            lock.buildrequires.shared["b"] = ["found"]
+            save_lock(project, lock)
+        return done(project, name, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+
+    monkeypatch.setattr(build, "_done", changing)
+    (project.state / "build").mkdir(parents=True)  # for the queue, which build() makes
+    results, after, _ = build._build_all(
+        project, ["a", "b", "c"], keys, hashes, verbose=False, dev=None, autorev={}, fetch="none", build_missing=True
+    )
+    # b to build again, with its new key, not cached
+    assert results == [build.Result("a", "cached"), build.Result("b", "again"), build.Result("c", "cached")]
     assert after["b"] != keys["b"]
 
 
