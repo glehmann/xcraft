@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import http.client
 import http.server
 import logging
@@ -231,6 +232,11 @@ def test_sources(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -
     # a fresh checkout downloads it
     shutil.rmtree(cache)
     assert (prepare_tree(Project.find(), "trivial") / "SOURCES" / archive.name).read_text() == archive.name
+    opened = []
+    for fd in Path("/proc/self/fd").iterdir():
+        with contextlib.suppress(OSError):  # the one listing them, closed since
+            opened.append(str(fd.readlink()))
+    assert not [path for path in opened if archive.name in path]  # closed, once downloaded
     shutil.rmtree(cache)
     with caplog.at_level(logging.DEBUG, logger="xcraft"):
         assert xcraft("fetch", "sources") == (0, "all the source archives are in the source cache\n")
@@ -295,6 +301,16 @@ def test_sources_from_the_spec(root: Path, tmp_path: Path) -> None:
         f"✗ trivial: {archive.name} found nowhere: not in the remote storage, nor at a URL of the spec\n"
     )
     assert not (Project.find().source_cache / ("0" * 64)).exists()
+
+
+def test_files_not_deleted(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    storage = Project.find().config.remote["main"]
+    with remote._writing(storage, "delete") as s3:
+        # in a response of success, which no storage gives on purpose
+        error = {"Key": "file", "Code": "InternalError", "Message": "We encountered an internal error"}
+        monkeypatch.setattr(s3, "delete_objects", lambda **_: {"Deleted": [], "Errors": [error]})
+    with pytest.raises(remote.RemoteError, match="cannot delete file: We encountered an internal error"):
+        remote.delete(storage, ["file"])
 
 
 def test_signed_trees(root: Path, tmp_path: Path) -> None:
