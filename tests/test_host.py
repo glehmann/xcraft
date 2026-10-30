@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from tests import PROJECT
 from tests.test_build import xcraft
 from xcraft import host
 from xcraft.host import Fix
@@ -167,6 +168,12 @@ def test_doctor_invalid_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     assert code == 1
     assert "base_image" in output
     assert "sha256" in output
+    # a platform at least
+    toml = (PROJECT / "xcraft.toml").read_text()
+    (tmp_path / "xcraft.toml").write_text(toml.replace('["linux/amd64/v2", "linux/arm64"]', "[]"))
+    code, output = xcraft("doctor")
+    assert code == 1
+    assert "platforms" in output
 
 
 def test_subids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

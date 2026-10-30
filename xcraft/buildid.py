@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from xcraft import buildkey, process
 from xcraft.display import console
@@ -36,9 +36,9 @@ class BuildId(BaseModel):
     """The build ID of a package."""
 
     number: int
-    key: str
+    key: str = Field(pattern=r"^[0-9a-f]{64}$")
     """The build key, the same on all the architectures."""
-    accepts: str | None = None
+    accepts: str | None = Field(None, pattern=r"^[0-9a-f]{64}$")
     """The build key a reused build is accepted for, the current one: an equivalence, chosen with xcraft reuse."""
 
     @classmethod

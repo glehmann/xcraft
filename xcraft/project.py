@@ -164,7 +164,7 @@ class Config(BaseModel):
     base_image: str = Field(pattern=r"@sha256:[0-9a-f]{64}$")
     """Image the build environment is made from, pinned by its digest, which the build keys cover rather than its
     content."""
-    platforms: list[Platform]
+    platforms: list[Platform] = Field(min_length=1)
     """Platforms of the builds: xcraft works on one at a time, see Project.find()."""
     repos: dict[str, Repo]
     """The only repositories of the build environment, with the local builds."""
@@ -259,7 +259,12 @@ class Project:
 
     def on_host(self) -> Project:
         """Return the project on a platform the host runs natively: one of the configuration's, or else the host's."""
-        return next((p for p in self.all_platforms() if p.native), replace(self, platform=_HOST[os.uname().machine]))
+        if native := next((p for p in self.all_platforms() if p.native), None):
+            return native
+        if (machine := os.uname().machine) not in _HOST:
+            msg = f"the host runs none of the platforms of the project, nor a supported one: {machine}"
+            raise RuntimeError(msg)
+        return replace(self, platform=_HOST[machine])
 
     @property
     def repos(self) -> dict[str, Repo]:

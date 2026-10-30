@@ -35,7 +35,10 @@ def _podman() -> tuple[list[tuple[str, str]], list[str], list[host.Fix]]:
     info = ["podman", "info", "--format", "{{.Version.Version}} {{.Host.Security.Rootless}}"]
     podman = process.run(info, check=False, capture=True)
     if podman.returncode == 0:
-        return [("ok", f"podman {podman.stdout.split()[0]}, rootless")], [], []
+        version, rootless = podman.stdout.split()
+        if rootless != "true":  # like a podman remote of root
+            return [("error", f"podman {version}: not rootless, while xcraft runs it rootless")], [], []
+        return [("ok", f"podman {version}, rootless")], [], []
     error = (podman.stderr.strip().splitlines() or ["failed"])[-1]
     checks = [("error", f"podman: not working rootless, and the builds run in its containers: {error}")]
     if shutil.which("newuidmap"):
