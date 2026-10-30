@@ -63,15 +63,20 @@ class Recorded(BaseModel):
 
     def record(self, arch: str, first: str, name: str, values: list[str]) -> None:
         """Record the `values` of `name` found on `arch`: in the shared entries for `first`, the first architecture of
-        the project, or when there is none yet, and in those of `arch` otherwise.
+        the project, and in those of `arch` otherwise, when they differ, so that the first architecture never gets
+        what another one found. The others without their own entries have the shared ones.
         """  # noqa: D205
         values = sorted(values)
-        if arch == first or name not in self.shared:
+        if arch == first:
             if values:
                 self.shared[name] = values
             else:
                 self.shared.pop(name, None)
-        if values == self.shared.get(name, []):
+            # those found the same elsewhere
+            for entries in self.arches.values():
+                if entries.get(name) == values:
+                    entries.pop(name)
+        elif values == self.shared.get(name, []):
             self.arches.get(arch, {}).pop(name, None)
         else:
             self.arches.setdefault(arch, {})[name] = values

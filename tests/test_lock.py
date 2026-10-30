@@ -44,25 +44,34 @@ def test_save_and_load(tmp_path) -> None:  # noqa: ANN001
 
 def test_record() -> None:
     recorded = Recorded()
-    # what another architecture finds first is shared, until the first architecture finds it otherwise
-    recorded.record("aarch64", "x86_64_v2", "qemu", ["pixman", "libpng"])
+
+    def record(arch: str, name: str, values: list[str]) -> None:
+        recorded.record(arch, "x86_64_v2", name, values)
+
+    # what another architecture finds is its own, while the first one has not found it
+    record("aarch64", "qemu", ["pixman", "libpng"])
+    assert (recorded.shared, recorded.arches) == ({}, {"aarch64": {"qemu": ["libpng", "pixman"]}})
+    # what the first one finds is shared, and the same elsewhere is not their own anymore
+    record("x86_64_v2", "qemu", ["pixman", "libpng"])
     assert (recorded.shared, recorded.arches) == ({"qemu": ["libpng", "pixman"]}, {})
-    recorded.record("x86_64_v2", "x86_64_v2", "qemu", ["pixman", "libpng", "libaio"])
+    record("x86_64_v2", "qemu", ["pixman", "libpng", "libaio"])
     assert recorded.of("aarch64") == {"qemu": ["libaio", "libpng", "pixman"]}
     # then the other architectures have their own entries, which replace the shared ones, with less too
-    recorded.record("aarch64", "x86_64_v2", "qemu", ["pixman"])
-    recorded.record("aarch64", "x86_64_v2", "xen", ["lzo"])
-    recorded.record("aarch64", "x86_64_v2", "vmss", [])
-    assert recorded.arches == {"aarch64": {"qemu": ["pixman"]}}
-    assert recorded.of("aarch64") == {"qemu": ["pixman"], "xen": ["lzo"]}
-    recorded.record("aarch64", "x86_64_v2", "xen", [])
-    assert recorded.of("aarch64") == {"qemu": ["pixman"], "xen": []}
+    record("aarch64", "qemu", ["pixman"])
+    record("aarch64", "xen", ["lzo"])
+    record("aarch64", "vmss", [])
+    assert recorded.arches == {"aarch64": {"qemu": ["pixman"], "xen": ["lzo"]}}
+    assert recorded.of("x86_64_v2") == {"qemu": ["libaio", "libpng", "pixman"]}
     # finding the shared entry again removes their own
-    recorded.record("aarch64", "x86_64_v2", "qemu", ["libaio", "libpng", "pixman"])
-    recorded.record("aarch64", "x86_64_v2", "xen", ["lzo"])
+    record("aarch64", "qemu", ["libaio", "libpng", "pixman"])
+    record("aarch64", "xen", [])
     assert recorded.arches == {}
-    recorded.record("x86_64_v2", "x86_64_v2", "xen", [])
-    assert recorded.shared == {"qemu": ["libaio", "libpng", "pixman"]}
+    # the first one finding nothing, and another one something, in any order: the first one does not get it
+    for order in (["x86_64_v2", "aarch64"], ["aarch64", "x86_64_v2"]):
+        recorded = Recorded()
+        for arch in order:
+            record(arch, "xen", [] if arch == "x86_64_v2" else ["lzo"])
+        assert (recorded.of("x86_64_v2"), recorded.of("aarch64")) == ({}, {"xen": ["lzo"]})
 
 
 def test_versionlock() -> None:
