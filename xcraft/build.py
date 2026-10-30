@@ -364,6 +364,7 @@ def _build_all(  # noqa: PLR0913
         status = None if verbose else f"[{i}/{len(plan)}] building {name}{_estimate(project, name)}"
         if use_remote:
             _fetch_for(project, name, keys, results)
+            keys, recorded = _current(project, keys, recorded, autorev, hashes)  # for what they recorded
         results[name] = _build_shown(project, name, keys, hashes, status=status, autorev=autorev, verbose=verbose)
     keys = _current(project, keys, recorded, autorev, hashes)[0]
     # Retry cached builds too: packages built or fetched now may provide what they could not resolve before.
