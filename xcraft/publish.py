@@ -574,7 +574,8 @@ def upload_snapshot(  # noqa: PLR0913
             tree = _signed_path(platform, signer, package, key) if signer else build_path(platform, package, key)
             for path, digest in remote.read_manifest(storage, tree, trusted=dev_signer(project)).items():
                 if repo := {"RPMS": f"{REPO}/{platform.arch}", "SRPMS": f"{REPO}/Source"}.get(path.split("/")[0]):
-                    stored[f"{repo}/{Path(path).name}"] = (f"{tree}/{path}", digest)
+                    # those of the metadata, of the snapshot or of the first architecture, for the source packages
+                    stored.setdefault(f"{repo}/{Path(path).name}", (f"{tree}/{path}", digest))
     signed = [f"{INTERNAL}/signed/{signer.key}/{platform.arch}/" for platform, _ in platforms] if signer else []
     repos, latest = _tree(project, "repos", name), _tree(project, "repos", "latest")
     _upload(

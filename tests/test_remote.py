@@ -740,6 +740,29 @@ def test_push_needs_the_credentials(root: Path, monkeypatch: pytest.MonkeyPatch)
     assert "pushing needs the S3 credentials" in output
 
 
+def test_publish_source_packages_of_all_architectures(root: Path, tmp_path: Path) -> None:
+    arches = [ARCH, "x86_64"] if ARCH == "x86_64_v2" else [ARCH]
+    platforms = ", ".join(f'"{p}"' for p in [PLATFORM, "linux/amd64"][: len(arches)])
+    (root / "xcraft.toml").write_text(REMOTE.replace(f'["{PLATFORM}"]', f"[{platforms}]"))
+    storage = Project.find().config.remote["main"]
+    # with the builds of all the architectures in the storage, like CI pushes them, and a change of with-deps only:
+    # the source package of trivial, reused from the latest snapshot, is the one of its metadata
+    assert xcraft("build")[0] == 0
+    for arch in arches:
+        if arch != ARCH:
+            assert xcraft("build", "--arch", arch)[0] == 0
+        assert xcraft("push", "builds", "--to", "main", "--arch", arch)[0] == 0
+    stage = f"sources-{secrets.token_hex(4)}"
+    assert xcraft("publish", "repos", "--to", "main", "--unsigned", "--stage", stage)[0] == 0
+    spec = root / "base/with-deps/with-deps.spec"
+    spec.write_text(spec.read_text().replace('echo "with-deps"', 'echo "with-deps, changed"'))
+    assert xcraft("publish", "repos", "--to", "main", "--unsigned", "--stage", stage)[0] == 0
+    assert remote.download_tree(storage, f"repos/9.0/{stage}/latest", tmp_path / "latest")
+    sources = tmp_path / "latest/base/Source"
+    indexed = repodata.read(sources) or {}
+    assert all(sha256_of(srpm) in indexed for srpm in sources.glob("*.src.rpm"))
+
+
 def test_publish(root: Path) -> None:
     # the architectures the host runs, built for all: two on x86_64
     arches = [ARCH, "x86_64"] if ARCH == "x86_64_v2" else [ARCH]
