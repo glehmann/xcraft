@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 from typing import TYPE_CHECKING
 
@@ -134,7 +135,10 @@ def test_main_branch_setting(root: Path) -> None:
 
 
 def test_development_builds(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # a main branch with what the builds record in its lock, like those CI checks
+    assert xcraft("build")[0] == 0
     commit_base(root)
+    shutil.rmtree(root / ".xcraft/cache/builds")
     # on the main branch, final builds only
     assert built() == []
     git(root, "checkout", "-qb", "feature")
@@ -185,6 +189,10 @@ def test_development_builds_changed_by_others(root: Path) -> None:
         "with-deps-1.0-1+b2~1.dev.xcpng8.99.noarch.rpm",
     ]
     assert re.search(r"^with-deps +1\.0-1\+b2~1\.dev\.xcpng8\.99 +built", xcraft("status")[1], re.MULTILINE)
+    assert built() == []
+    # without what the builds recorded: the cached builds record it again, before the keys of those built against them
+    git(root, "checkout", "--", "xcraft.lock")
+    assert xcraft("build", "--dry-run") == (0, "0 to build, 2 cached\n")
     assert built() == []
 
 

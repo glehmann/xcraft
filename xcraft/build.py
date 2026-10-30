@@ -33,6 +33,7 @@ from xcraft.cache import (
 )
 from xcraft.checks import BuildRootChangedError, check_build, check_resolved, record_dynamic, record_rpm_deps
 from xcraft.container import DNF_LOCK, ContainerError, build_image, run
+from xcraft.devbuilds import dev_suffixes, keep_built
 from xcraft.display import (
     activity,
     console,
@@ -259,14 +260,14 @@ def build(  # noqa: PLR0913
     with_deps: bool = True,
     dry_run: bool = False,
     verbose: bool = False,
-    autorev: dict[str, str] | None = None,
+    dev: str | None = None,
     fetch: Fetch = "all",
     build_missing: bool = True,
 ) -> tuple[list[Result], dict[str, str]]:
     """Build `targets` and, unless `with_deps` is false, what they need, skipping what is cached, and return how
     it went, with the keys of all the packages, those of their builds.
 
-    `autorev` has the release suffixes of the development builds, by package. What is
+    `dev` is the identifier of the development builds, see xcraft.devbuilds, none for final builds. What is
     not cached locally is fetched from the remote storage when it has it, but
     only the builds of the dependencies of the packages to build with `fetch`
     needed, or nothing with none: it is built then. Without `build_missing`,
@@ -278,9 +279,8 @@ def build(  # noqa: PLR0913
 
     The lock must be prepared: see resolution.prepare().
     """  # noqa: D205
-    autorev = autorev or {}
     for attempt in range(2):
-        keys, hashes = _record_cached(project, autorev)
+        keys, hashes, autorev = _record_cached(project, dev)
         plan = build_order(project.deps, targets, with_deps=with_deps)
         if dry_run:
             _show_plan(project, plan, keys, fetch=fetch)
@@ -293,6 +293,7 @@ def build(  # noqa: PLR0913
                 keys,
                 hashes,
                 verbose=verbose,
+                dev=dev,
                 autorev=autorev,
                 fetch=fetch,
                 build_missing=build_missing,
@@ -306,17 +307,18 @@ def build(  # noqa: PLR0913
     return [Result(r.name, "failed") if r.status == "again" else r for r in results], keys
 
 
-def _record_cached(project: Project, autorev: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
+def _record_cached(project: Project, dev: str | None) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
     """Record what rpm generated for the cached builds of the current keys, and return the keys, with what they
-    recorded, and the hashes of the package directories they have.
+    recorded, the hashes of the package directories they have, and the suffixes of the development builds `dev`.
     """  # noqa: D205
     hashes = inputs(project)
     for _ in range(5):
+        autorev = dev_suffixes(project, dev)
         keys = build_keys(project, autorev, hashes)
         if not record_rpm_deps(
             project, [n for n, k in keys.items() if cached_build(project, n, k).exists()], keys, quiet=True
         ):
-            return keys, hashes
+            return keys, hashes, autorev
         prepare(project)  # for what they recorded
     msg = "what the cached builds recorded keeps changing the keys"
     raise BuildError(msg)
@@ -329,6 +331,7 @@ def _build_all(  # noqa: PLR0913
     hashes: dict[str, str],
     *,
     verbose: bool,
+    dev: str | None,
     autorev: dict[str, str],
     fetch: Fetch,
     build_missing: bool,
@@ -342,7 +345,7 @@ def _build_all(  # noqa: PLR0913
     recorded = _lock_state(project)
     for i, name in enumerate(plan, 1):
         _queue_file(project).write_text("\n".join([str(os.getpid()), *plan[i:]]) + "\n")
-        keys, recorded = _current(project, keys, recorded, autorev, hashes)
+        keys, autorev, recorded = _current(project, keys, autorev, recorded, dev=dev, hashes=hashes)
         if done := _done(project, name, keys, hashes, verbose=verbose):
             results[name] = done
             continue
@@ -364,9 +367,12 @@ def _build_all(  # noqa: PLR0913
         status = None if verbose else f"[{i}/{len(plan)}] building {name}{_estimate(project, name)}"
         if use_remote:
             _fetch_for(project, name, keys, results)
-            keys, recorded = _current(project, keys, recorded, autorev, hashes)  # for what they recorded
+            # for what they recorded
+            keys, autorev, recorded = _current(project, keys, autorev, recorded, dev=dev, hashes=hashes)
         results[name] = _build_shown(project, name, keys, hashes, status=status, autorev=autorev, verbose=verbose)
-    keys = _current(project, keys, recorded, autorev, hashes)[0]
+        if results[name].status == "built":
+            keep_built(project, dev, autorev, [name])
+    keys = _current(project, keys, autorev, recorded, dev=dev, hashes=hashes)[0]
     # Retry cached builds too: packages built or fetched now may provide what they could not resolve before.
     record_rpm_deps(project, [n for n, k in keys.items() if cached_build(project, n, k).exists()], keys)
     return list(results.values()), keys
@@ -432,16 +438,23 @@ def _fetched(project: Project, name: str, keys: dict[str, str], results: dict[st
     results[name] = Result(name, "fetched")
 
 
-def _current(
-    project: Project, keys: dict[str, str], recorded: bytes, autorev: dict[str, str], hashes: dict[str, str]
-) -> tuple[dict[str, str], bytes]:
-    """Return the `keys` of the lock `recorded`, and the lock, computed again when the builds changed it: not with
-    the packages, as they were at the start.
+def _current(  # noqa: PLR0913
+    project: Project,
+    keys: dict[str, str],
+    autorev: dict[str, str],
+    recorded: bytes,
+    *,
+    dev: str | None,
+    hashes: dict[str, str],
+) -> tuple[dict[str, str], dict[str, str], bytes]:
+    """Return the `keys` and the suffixes `autorev` of the development builds `dev` of the lock `recorded`, and the
+    lock, computed again when the builds changed it: not with the packages, as they were at the start.
     """  # noqa: D205
     if (state := _lock_state(project)) == recorded:
-        return keys, recorded
+        return keys, autorev, recorded
     prepare(project)
-    return build_keys(project, autorev, hashes), state
+    autorev = dev_suffixes(project, dev)
+    return build_keys(project, autorev, hashes), autorev, state
 
 
 def _done(project: Project, name: str, keys: dict[str, str], hashes: dict[str, str], *, verbose: bool) -> Result | None:

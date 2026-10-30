@@ -363,7 +363,7 @@ def test_builds_still_to_build_again_fail(project: Project, monkeypatch: pytest.
     project.deps = {"a": set()}
     monkeypatch.setattr(build, "prepare", lambda _: None)
     monkeypatch.setattr(build, "build_image", lambda _: "image")
-    monkeypatch.setattr(build, "_record_cached", lambda *_: ({"a": "key"}, {}))
+    monkeypatch.setattr(build, "_record_cached", lambda *_: ({"a": "key"}, {}, {}))
     attempts = []
     monkeypatch.setattr(
         build, "_build_all", lambda *_, **__: attempts.append(1) or ([build.Result("a", "again")], {"a": "key"})
@@ -407,7 +407,7 @@ def test_packages_edited_while_building(project: Project, monkeypatch: pytest.Mo
     monkeypatch.setattr(build, "_build_shown", building)
     (project.state / "build").mkdir(parents=True)  # for the queue, which build() makes
     results, _ = build._build_all(  # noqa: SLF001
-        project, ["a", "c", "b"], keys, hashes, verbose=False, autorev={}, fetch="none", build_missing=True
+        project, ["a", "c", "b"], keys, hashes, verbose=False, dev=None, autorev={}, fetch="none", build_missing=True
     )
     # the builds work on the packages as they were at the start: b fails, rather than b cached with the old a
     assert results == [build.Result("a", "built"), build.Result("c", "built"), build.Result("b", "failed")]
@@ -418,7 +418,7 @@ def test_recordings_not_converging(project: Project, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(build, "record_rpm_deps", lambda *_, **__: True)
     monkeypatch.setattr(build, "prepare", lambda _: None)
     with pytest.raises(BuildError, match="keeps changing the keys"):
-        build._record_cached(project, {})  # noqa: SLF001
+        build._record_cached(project, None)  # noqa: SLF001
 
 
 def test_unknown_packages_before_preparing(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
