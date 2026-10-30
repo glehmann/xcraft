@@ -34,6 +34,16 @@ def test_recipe_of_all_architectures(root: Path) -> None:
     assert buildid._recipe(projects[0]) == buildid._recipe(projects[1])  # noqa: SLF001
 
 
+def test_build_ids_of_all_architectures(root: Path) -> None:
+    # with-deps built against trivial on aarch64 only: %ifarch is noarch for noarch packages
+    spec = root / "base/with-deps/with-deps.spec"
+    text = spec.read_text().replace("BuildArch: noarch\n", "")
+    spec.write_text(text.replace("BuildRequires: trivial\n", "%ifarch aarch64\nBuildRequires: trivial\n%endif\n"))
+    projects = [Project.find(arch) for arch in ("x86_64_v2", "aarch64")]
+    assert projects[0].deps["with-deps"] != projects[1].deps["with-deps"]
+    assert buildid.compute(projects[0], None) == buildid.compute(projects[1], None)
+
+
 def git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", "-c", "user.name=test", "-c", "user.email=test@example.com", *args],
