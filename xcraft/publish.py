@@ -128,11 +128,17 @@ def reuse_published(
     if not manifests or not all(manifests.values()):
         return False
     name = snapshot_name(project, storage)
-    for kind, manifest in manifests.items():
+    for i, (kind, manifest) in enumerate(manifests.items()):
         latest, target = _tree(project, kind, "latest"), _tree(project, kind, name)
         with activity(f"reusing the published {kind} as {target}", log=True) as on_line:
-            for files in _batches(list(manifest)):
-                remote.transfer(storage, {f"{target}/{f}": f"{latest}/{f}" for f in files}, on_line)
+            try:
+                for files in _batches(list(manifest)):
+                    remote.transfer(storage, {f"{target}/{f}": f"{latest}/{f}" for f in files}, on_line)
+            except remote.RemoteError as e:  # a file missing in the latest snapshot: all assembled again, as `name`
+                console.print(f"[yellow]the published {kind} cannot be reused[/]: {escape(str(e))}")
+                for copied in list(manifests)[: i + 1]:
+                    _delete_stale(storage, _tree(project, copied, name), set())
+                return False
             remote.write_manifest(storage, target, manifest, signer=signer or signing_key(project))
             _delete_stale(storage, target, {*manifest, remote.MANIFEST})
             remote.update_pages(project, storage, [f"{target}/", f"{latest}/"])
@@ -628,7 +634,7 @@ def upload_isos(
         inputs={
             name: key
             for p in project.all_platforms()
-            if any(isos.glob(f"*-{p.arch}.iso"))
+            if any(iso.name.endswith((f"-{p.arch}.iso", f"-{p.arch}-netinstall.iso")) for iso in isos.glob("*.iso"))
             for name, key in iso_inputs(p, signer=signer).items()
         },
         signer=signer or signing_key(project),
@@ -743,8 +749,11 @@ def _previous(
     with project.work("previous") as work, activity("reading the metadata of the latest snapshot", log=True):
 
         def fetch(path: str) -> bool:
-            return remote.download(storage, f"{latest}/{path}", work / path) and sha256_of(work / path) == manifest.get(
-                path
+            # of the manifest only, whose paths stay in the tree
+            return (
+                path in manifest
+                and remote.download(storage, f"{latest}/{path}", work / path)
+                and (sha256_of(work / path) == manifest[path])
             )
 
         for repomd in (f for f in manifest if f.endswith("/repodata/repomd.xml")):
