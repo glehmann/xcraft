@@ -239,7 +239,7 @@ def reuse(project: Project, names: list[str], sources: list[str]) -> list[str]:
         component = component_of[name]
         if name not in forked or any(d not in forked for n in component for d in forked_inputs.deps[n] - component):
             return False
-        return buildkey.key(forked_inputs.of(component, forked), name) == forked[name].key
+        return forked[name].matches(buildkey.key(forked_inputs.of(component, forked), name))  # or reuses its build
 
     def changed(path: Path) -> bool:
         """Return whether the files of `path` changed since the fork, untracked ones included."""
