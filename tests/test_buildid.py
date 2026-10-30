@@ -12,6 +12,7 @@ import pytest
 from tests import copy_project
 from tests.test_build import xcraft
 from xcraft import buildid
+from xcraft.iso import build_iso
 from xcraft.lock import load_lock, save_lock
 from xcraft.project import Project
 
@@ -104,6 +105,19 @@ def test_build_ids(root: Path) -> None:
     project.frozen = True
     with pytest.raises(buildid.BuildIdError, match="--locked forbids: trivial, with-deps"):
         buildid.update(project)
+
+
+def test_build_ids_checked_by_all_the_builds(root: Path) -> None:
+    assert xcraft("build")[0] == 0  # the lock complete, with what the builds record
+    edit(root, "changed")  # without its build ID
+    code, output = xcraft("build", "--locked")
+    assert code == 1
+    assert "--locked forbids: trivial, with-deps" in output
+    # those of the ISOs too
+    project = Project.find()
+    project.frozen = True
+    with pytest.raises(buildid.BuildIdError, match="--locked forbids: trivial, with-deps"):
+        build_iso(project)
 
 
 def test_build_ids_of_main_branch(root: Path) -> None:

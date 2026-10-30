@@ -364,6 +364,7 @@ def test_builds_still_to_build_again_fail(project: Project, monkeypatch: pytest.
     monkeypatch.setattr(build, "prepare", lambda _: None)
     monkeypatch.setattr(build, "build_image", lambda _: "image")
     monkeypatch.setattr(build, "_record_cached", lambda *_: ({"a": "key"}, {}, {}))
+    monkeypatch.setattr(build, "update_build_ids", lambda _: None)
     attempts = []
     monkeypatch.setattr(
         build, "_build_all", lambda *_, **__: attempts.append(1) or ([build.Result("a", "again")], {"a": "key"})
