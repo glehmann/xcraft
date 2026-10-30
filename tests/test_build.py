@@ -594,6 +594,14 @@ def test_doctor(root: Path) -> None:
         assert "running podman info --format '{{.Version.Version}} {{.Host.Security.Rootless}}'\n" in output.stdout
 
 
+def test_options_before_subcommands(root: Path) -> None:
+    # those of fetch and push apply to their subcommands too, given before them
+    for args in (["fetch", "--arch", "sparc", "sources"], ["push", "--arch", "sparc", "builds"]):
+        code, output = xcraft(*args)
+        assert code == 1, output
+        assert "sparc is not an architecture of the project" in output
+
+
 def test_graph(root: Path) -> None:
     assert xcraft("graph", "with-deps") == (0, "with-deps\n└── trivial\n")
     assert xcraft("graph", "with-deps", "--flat") == (0, "trivial\nwith-deps\n")

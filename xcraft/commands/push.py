@@ -28,7 +28,8 @@ def everything(ctx: typer.Context, arch: Arch = None, key: Key = None, to: To = 
     not build, and the packages not built, do not keep the others from being pushed, then fail it.
     """
     if ctx.invoked_subcommand:
-        ctx.default_map = {ctx.invoked_subcommand: {"to": to, **({"key": key} if key else {})}}
+        # all the options given before the subcommand are its defaults: those given after it win
+        ctx.default_map = {ctx.invoked_subcommand: {k: v for k, v in ctx.params.items() if v is not None}}
         return
     project = load(arch=arch)
     storage = remote_storage(project, to)
