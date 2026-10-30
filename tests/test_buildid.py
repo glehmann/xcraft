@@ -283,7 +283,7 @@ def test_development_builds_with_dependencies_edited_meanwhile(root: Path, monke
     edit(root, "changed")
     spec = root / "base/trivial/trivial.spec"
     before = spec.read_text()
-    build_shown = builder._build_shown  # noqa: SLF001
+    build_shown = builder._build_shown
 
     def edited(project: Project, name: str, *args: object, **kwargs: object) -> builder.Result:
         if name == "with-deps":  # a dependency of the build edited during the build

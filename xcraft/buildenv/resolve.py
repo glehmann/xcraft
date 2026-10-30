@@ -44,7 +44,7 @@ OURS = ["xcraft-ours", "@commandline"]
 def canonical(sourcerpm: str, suffixes: list[str]) -> tuple[str, str]:
     """Return the name and the version-release of a source package, without the release `suffixes` of an
     architecture.
-    """  # noqa: D205
+    """
     name, version, release = sourcerpm.removesuffix(".src.rpm").rsplit("-", 2)
     vr = f"{version}-{release}"
     for suffix in suffixes:
@@ -110,7 +110,7 @@ def write_repo(path: Path, ours: list[dict]) -> None:
 class Resolver:
     """dnf, on the repositories of the architecture of `data`, with the upstream packages of the locked versions only,
     and ours.
-    """  # noqa: D205
+    """
 
     def __init__(self, data: dict) -> None:
         """Load the repositories, with the upstream packages of the other versions excluded."""
@@ -165,7 +165,7 @@ class Resolver:
     def unmet_weak(self, packages: list) -> list:
         """Return the providers of the weak dependencies of `packages` they do not have, like
         exclude_from_weak_autodetect of dnf: they are not installed as weak dependencies after them.
-        """  # noqa: D205
+        """
         names = {p.name for p in packages}
         available = self.base.sack.query().available()
         providers = [p for p in available.filter(supplements=packages) if p.name not in names]
@@ -186,7 +186,7 @@ class Resolver:
     ) -> list:
         """Return the packages to install for `packages`, and the requirements `deps`, on the `installed` ones, which
         those replacing them, by obsoleting them, can leave out, like xcp-ng-release almalinux-release.
-        """  # noqa: D205
+        """
         base = self.base
         base.reset(goal=True)
         base.conf.install_weak_deps = weak
@@ -207,7 +207,7 @@ class Resolver:
     def image(self, errors: dict[str, str]) -> list:
         """Return the packages of the image, like the Containerfile installs them: without weak dependencies, and
         without ours.
-        """  # noqa: D205
+        """
         ours = self.base.sack.query().filter(reponame=OURS)
         self.base.sack.add_excludes(ours)
         # those of the base image the repositories do not have stay as they are
@@ -226,7 +226,7 @@ class Resolver:
     def buildroot(self, image: list, build: dict, unmet_weak: list) -> list:
         """Return the build root of the `build` of a package of ours, on the `image`, like dnf builddep, with the weak
         dependencies, but the `unmet_weak` ones of the image.
-        """  # noqa: D205
+        """
         allowed = set(build["allowed"])
         # those of ours replacing the image's, like kernel-headers, in the builds of the packages needing them
         packages = [self.ours[p.name] for p in image if p.name in allowed]
@@ -244,7 +244,7 @@ class Resolver:
     def generated(self, image: list, name: str, declared: dict) -> tuple[list[str], list[str]]:
         """Return the packages the generated requirements of the built package `name` resolve to, but those of the
         `image`, and its generated capabilities and files the specs require, but those it `declared`.
-        """  # noqa: D205
+        """
         built = self.built[name]
         installed = self.resolve([built], [], weak=False, installed=image)
         others = self.base.sack.query().filter(pkg=installed).filter(name__neq=[name, *(p.name for p in image)])

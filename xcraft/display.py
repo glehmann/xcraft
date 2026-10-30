@@ -254,7 +254,7 @@ def activity(
 def _still(what: str) -> Generator[Callable[[str], None]]:
     """Print every minute that `what` is still running, with the elapsed time and the last line given to the returned
     function.
-    """  # noqa: D205
+    """
     started, last, done = time.monotonic(), "", threading.Event()
 
     def update(line: str) -> None:

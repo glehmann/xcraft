@@ -303,7 +303,7 @@ class Project:
     def packages(self) -> dict[str, Package]:
         """The packages, by name, from their specs, with what their builds found in the lock: the requirements and
         capabilities rpm generated for their binary packages, and their dynamic BuildRequires.
-        """  # noqa: D205
+        """
         from xcraft.lock import load_lock  # noqa: PLC0415
 
         lock = load_lock(self)

@@ -45,7 +45,7 @@ def build_keys(
     and of the cache keys of the builds of ours it is built against rather than its build key, but a reused build. The
     `hashes` of the package directories are those of inputs(), computed now by default, and the build `ids` are those
     computed then, unless given. The lock must be prepared: see resolution.prepare().
-    """  # noqa: D205
+    """
     from xcraft.buildid import base, compute  # noqa: PLC0415, which imports this module
 
     ids = ids if ids is not None else compute(project, base(project), hashes)
@@ -93,7 +93,7 @@ def has_normal_build(project: Project, name: str) -> bool:
 def builds_repo(project: Project, keys: dict[str, str], names: Iterable[str] | None = None) -> LocalRepo:
     """Return the repository the builds run against, with the cached builds matching `keys`, of `names` only, or of
     all the packages.
-    """  # noqa: D205
+    """
     repo = LocalRepo(project, project.state / "repo")
     repo.reset()
     for name in keys if names is None else names:
@@ -105,7 +105,7 @@ def builds_repo(project: Project, keys: dict[str, str], names: Iterable[str] | N
 def deps_repo(project: Project, name: str, keys: dict[str, str]) -> LocalRepo:
     """Return the repository the build of `name` runs against: the builds of its dependencies, with their `keys`,
     which its build root can have.
-    """  # noqa: D205
+    """
     return builds_repo(project, keys, reachable(project.deps, project.deps[name]))
 
 

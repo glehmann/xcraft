@@ -128,7 +128,7 @@ def _push_builds(
 ) -> list[str]:
     """Upload the current builds of `packages`, all by default, and return those not built: the final builds, but
     of the packages with development builds, unless `final`.
-    """  # noqa: D205
+    """
     keys, skipped = build_keys(project), set() if final else developed(project)
     if shown := sorted(skipped & {*(packages or project.packages)}):
         console.print(f"development builds, not pushed: {', '.join(shown)}")
@@ -162,7 +162,7 @@ def caches(packages: Packages = None, arch: Arch = None, key: Key = None, to: To
     the pages of their directories.
 
     They are not uploaded by xcraft push without a command: they are large, and change with each build.
-    """  # noqa: D205
+    """
     project = load(packages, arch=arch)
     storage = remote_storage(project, to)
     pushed = [

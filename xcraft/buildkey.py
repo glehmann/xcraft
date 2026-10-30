@@ -85,14 +85,14 @@ def recipe(project: Project) -> str:
 def platforms(project: Project) -> list[Project]:
     """Return the project on all its architectures, which the keys cover: itself on its own, with what it computed
     already.
-    """  # noqa: D205
+    """
     return [project if p.platform == project.platform else p for p in project.all_platforms()]
 
 
 def dependencies(on: list[Project]) -> dict[str, set[str]]:
     """Return the packages of ours each package is built against, on any of the architectures `on`: see The
     dependencies.
-    """  # noqa: D205
+    """
     deps: dict[str, set[str]] = {}
     for platform in on:
         for name, needed in platform.deps.items():
@@ -103,7 +103,7 @@ def dependencies(on: list[Project]) -> dict[str, set[str]]:
 def lock_inputs(on: list[Project], lock: Lock, name: str, ignored: set[str] | None = None) -> dict[str, list]:
     """Return what `lock` has for `name` on the architectures `on`, but the versions of the upstream source packages
     `ignored`, those xcraft reuse ignores the updates of: see The lock.
-    """  # noqa: D205
+    """
 
     def versions(sources: list[str]) -> dict[str, str | None]:
         return {source: None if source in (ignored or set()) else lock.sources.get(source) for source in sources}
@@ -130,7 +130,7 @@ class Inputs:
     def __init__(self, project: Project, hashes: dict[str, str] | None = None) -> None:
         """Compute them for `project`, with the `hashes` of its package directories, those of directories() unless
         given.
-        """  # noqa: D205
+        """
         self.platforms = platforms(project)
         self.lock = load_lock(project)
         self.deps = dependencies(self.platforms)
@@ -140,7 +140,7 @@ class Inputs:
     def of(self, component: set[str], ids: dict[str, BuildId]) -> dict[str, list]:
         """Return the inputs of the packages of `component`, by name, with the build `ids` of their dependencies: see
         The build key, and Cycles.
-        """  # noqa: D205
+        """
         return {
             name: [
                 self.hashes[name],
@@ -161,6 +161,6 @@ def development_key(component: dict[str, str], outside: list[str], name: str) ->
     """Return the hash of the cache key of a development build of `name`, or of one built against development builds,
     with the build keys of the packages of its `component`, by name, and the cache keys of the packages it is built
     against, out of it, `outside`, in the order of their names: see The cache key.
-    """  # noqa: D205
+    """
     together = _sha256(json.dumps([[component[n] for n in sorted(component)], outside]))
     return _sha256(f"{together}\0{name}")

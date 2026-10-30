@@ -76,7 +76,7 @@ class Package(BaseModel):
     def suffixed(self, text: str, evr: str, suffix: str) -> str:
         """Return `text`, of a binary package of release, or epoch-version-release, `evr`, as built with the release
         `suffix`, %autorev: at the start of %dist, wherever the spec has it, or else after the release.
-        """  # noqa: D205
+        """
         if self.dist and self.dist in evr:
             return text.replace(self.dist, f"{suffix}{self.dist}")
         return text.replace(evr, f"{evr}{suffix}") if suffix else text

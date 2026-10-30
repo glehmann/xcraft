@@ -140,7 +140,7 @@ def check_stopped(directory: Path) -> None:
         raise RuntimeError(msg)
 
 
-def command(  # noqa: PLR0913
+def command(
     directory: Path,
     *,
     name: str,

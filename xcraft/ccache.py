@@ -56,7 +56,7 @@ def note_build(project: Project, name: str, start: float) -> None:
 def _result(entry: str) -> bool:
     """Return whether `entry` is a result: its name is the hash of its inputs, valid whatever its bytes, unlike a ccache
     manifest, which ccache changes in place.
-    """  # noqa: D205
+    """
     return entry.endswith("R")
 
 
@@ -118,7 +118,7 @@ def push(project: Project, storage: Remote, name: str, *, signer: Signer | None)
 def fetch(project: Project, name: str) -> bool:
     """Add to the local compiler cache of `name` the entries of the storage it does not have, and return whether the
     storage has one.
-    """  # noqa: D205
+    """
     cache = local_path(project, name)
 
     def wanted(entry: str, digest: str) -> bool:

@@ -48,7 +48,7 @@ Arch = Annotated[
 
 
 @app.callback(invoke_without_command=True)
-def everything(  # noqa: PLR0913, PLR0917
+def everything(
     ctx: typer.Context,
     locked: Locked = False,
     local: Local = False,
@@ -86,7 +86,7 @@ def everything(  # noqa: PLR0913, PLR0917
 
 
 @app.command()
-def repos(  # noqa: PLR0913, PLR0917
+def repos(
     locked: Locked = False,
     local: Local = False,
     output: Output = None,
@@ -113,7 +113,7 @@ def repos(  # noqa: PLR0913, PLR0917
 
 
 @app.command()
-def isos(  # noqa: PLR0913, PLR0917
+def isos(
     locked: Locked = False,
     local: Local = False,
     output: Output = None,
@@ -145,7 +145,7 @@ def isos(  # noqa: PLR0913, PLR0917
 def _iso_platforms(project: Project, platforms: list[Project], only: str | None) -> list[Project]:
     """Return the `platforms` of the ISOs to publish, unless `only` the repos: those of x86_64, for their boot loaders,
     when [iso] has the installer's packages.
-    """  # noqa: D205
+    """
     if only == "isos" and not project.config.iso.installer:
         msg = "no ISO to publish: see [iso] in xcraft.toml"
         raise typer.BadParameter(msg)
@@ -157,7 +157,7 @@ def _iso_platforms(project: Project, platforms: list[Project], only: str | None)
     return found
 
 
-def _publish(  # noqa: C901, PLR0912, PLR0913
+def _publish(  # noqa: C901, PLR0912
     only: str | None,
     *,
     locked: bool,

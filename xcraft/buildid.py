@@ -84,7 +84,7 @@ def compute(
     main branch gave since the fork do not count: giving one again conflicts on merge, in the file of the package.
     Without the main branch, the numbers are those of the working tree, 1 for new packages: there is nothing to number
     them against.
-    """  # noqa: D205
+    """
     inputs, current = buildkey.Inputs(project, hashes), read(project)
     ids: dict[str, BuildId] = {}
     for component in components(inputs.deps):  # the dependencies first
@@ -147,14 +147,14 @@ def _main(project: Project) -> str | None:
 def base(project: Project) -> dict[str, BuildId] | None:
     """Return the build IDs of the main branch where the current one forks from it, or None out of a git repository,
     or without the main branch.
-    """  # noqa: D205
+    """
     return _at(project, fork) if (fork := _fork(project)) else None
 
 
 def _fork(project: Project) -> str | None:
     """Return the commit of the main branch where the current branch forks from it, if any: with a merge in progress,
     where the merge forks from it.
-    """  # noqa: D205
+    """
     merging = _git(project, "rev-parse", "-q", "--verify", "MERGE_HEAD")
     return (main := _main(project)) and _git(project, "merge-base", main, "HEAD", *filter(None, [merging]))
 
@@ -163,7 +163,7 @@ def proposed(fork: dict[str, BuildId] | None, ids: dict[str, BuildId]) -> set[st
     """Return the packages whose build ID of `ids` is not the one of the main branch where the current one forks from
     it, `fork`, see base(): those of development builds, none without the main branch. A reused build is the main
     branch's.
-    """  # noqa: D205
+    """
     if fork is None:
         return set()
     return {name for name, i in ids.items() if not i.same(fork.get(name))}
@@ -178,7 +178,7 @@ def check_first_parent(project: Project, ids: dict[str, BuildId]) -> None:
     """On the main branch, check that the packages whose build key changed since the first parent of the current
     commit have greater numbers: one number is never given to two different builds, even by a merge conflict resolved
     by keeping one side.
-    """  # noqa: D205
+    """
     if not on_main(project):
         return
     if not (parent := _git(project, "rev-parse", "-q", "--verify", "HEAD^")):
@@ -196,7 +196,7 @@ def update(project: Project, reuse: Callable[[str, dict[str, BuildId]], bool] | 
     """Write the build IDs of the packages, and return those changed, those `reuse` takes reusing their builds, see
     compute(). When the project is frozen, fail instead if they would change, or, on the main branch, if they reuse the
     numbers of the previous commit for other builds.
-    """  # noqa: D205
+    """
     ids, current = compute(project, base(project), reuse=reuse), read(project)
     changed = sorted(name for name in ids.keys() | current.keys() if ids.get(name) != current.get(name))
     if project.frozen:
@@ -220,7 +220,7 @@ def reuse(project: Project, names: list[str], sources: list[str]) -> list[str]:
     packages `sources`, and return those changed.
 
     The packages built against them keep their builds too, unless they changed otherwise.
-    """  # noqa: D205
+    """
     if not (fork := _fork(project)):
         msg = f"reusing builds needs the main branch, {project.config.main_branch}, in a git repository"
         raise BuildIdError(msg)
@@ -235,7 +235,7 @@ def reuse(project: Project, names: list[str], sources: list[str]) -> list[str]:
     def built_alike(name: str) -> bool:
         """Return whether `name` has the key of the fork with its lock: only the lock changed since, not the recipe,
         nor the build IDs of the packages it is built against.
-        """  # noqa: D205
+        """
         component = component_of[name]
         if name not in forked or any(d not in forked for n in component for d in forked_inputs.deps[n] - component):
             return False

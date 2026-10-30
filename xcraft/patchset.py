@@ -92,7 +92,7 @@ class Update:
 def _place(spec: Path, pkg_dir: Path, subjects: set[str]) -> tuple[list[str], int, int, list[str], list[str]]:
     """Return the lines of `spec`, where its patchset block goes, from its start to its end, the patches it replaces,
     and those of them outside of a block, previous exports of the commits of the `subjects`.
-    """  # noqa: D205
+    """
     lines = spec.read_text().splitlines(keepends=True)
     if (start := next((i for i, line in enumerate(lines) if line.startswith(BEGIN)), None)) is not None:
         if (end := next((i + 1 for i in range(start, len(lines)) if lines[i].startswith(END)), None)) is None:

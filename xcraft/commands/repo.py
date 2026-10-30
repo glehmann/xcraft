@@ -35,7 +35,7 @@ def _hosts(hosts: list[str] | None) -> list[str] | None:
 def _copy_to_host(host: str, output: Path, ident: str, binaries: list[str], *, upgrade: bool) -> None:
     """Copy the repository of development builds in `output` to `host`, with its .repo file, and maybe upgrade
     `binaries`.
-    """  # noqa: D205
+    """
     remote = f"{REMOTE}/{ident}"
     with activity(f"copying the repository to {host}"):
         process.run(["ssh", host, f"mkdir -p {remote}"], capture=True)
@@ -58,7 +58,7 @@ def _copy_to_host(host: str, output: Path, ident: str, binaries: list[str], *, u
 def _kept(installed: list[str], rpms: list[str]) -> list[tuple[str, str]]:
     """Return the `installed` packages, as rpm -q gives them, which are not the builds of the repository `rpms`, but
     of the same names, with them: after an upgrade, those installed are newer, or held.
-    """  # noqa: D205
+    """
     built = {rpm.removesuffix(".rpm").rsplit("-", 2)[0]: rpm.removesuffix(".rpm") for rpm in rpms}
     return sorted(
         (nevra, built[name])
@@ -69,7 +69,7 @@ def _kept(installed: list[str], rpms: list[str]) -> list[tuple[str, str]]:
     )
 
 
-def repo(  # noqa: C901, PLR0913, PLR0917
+def repo(  # noqa: C901
     ctx: typer.Context,
     packages: Packages = None,
     with_dependents: Annotated[

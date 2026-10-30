@@ -133,7 +133,7 @@ def test_record_roots_locked_meanwhile(project: Project, monkeypatch: pytest.Mon
 
     monkeypatch.setattr("xcraft.resolution._image", image)
     monkeypatch.setattr("xcraft.resolution._roots", lambda _: resolved)
-    resolution._record(project)  # noqa: SLF001
+    resolution._record(project)
     lock = load_lock(project)
     assert lock.sources == {"foo": "2-1", "glibc": "2.39-1"}
     assert lock.image == {platform.arch: ["glibc"] for platform in project.all_platforms()}
@@ -147,11 +147,11 @@ def test_record_roots_not_resolved(project: Project, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr("xcraft.resolution._image", lambda _: image)
     # a build root not resolved keeps what the lock has for it
     monkeypatch.setattr("xcraft.resolution._roots", lambda _: image.model_copy(update={"errors": {"foo": "no zlib"}}))
-    resolution._record(project)  # noqa: SLF001
+    resolution._record(project)
     assert load_lock(project).roots.shared == {"foo": ["zlib"]}
     # an image not resolved is not recorded
     monkeypatch.setattr(
         "xcraft.resolution._image", lambda _: image.model_copy(update={"errors": {"image": "no glibc"}})
     )
     with pytest.raises(ResolutionError, match="cannot be resolved for x86_64_v2: no glibc"):
-        resolution._record(project)  # noqa: SLF001
+        resolution._record(project)
