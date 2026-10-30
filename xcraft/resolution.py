@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from functools import cache
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
@@ -185,17 +186,26 @@ def prepare(project: Project, *, roots: bool = True) -> None:
 
 def _record(project: Project) -> None:
     """Record in the lock the upstream source packages of the images and of the build roots of all the architectures,
-    those of the packages and architectures of the project only.
+    and keep in it what the builds found for the packages and architectures of the project only.
 
     They are resolved from the lock as read, and saved only when it did not change meanwhile, by another command: they
     are resolved again from the new one otherwise.
     """
     platforms = project.all_platforms()
+
+    @cache
+    def binaries() -> set[str]:
+        return {b.name for p in platforms for package in p.parsed.values() for b in package.binaries}
+
     for _ in range(3):
         recorded = load_lock(project)
         lock = recorded.model_copy(deep=True)
         lock.image = {}
-        lock.roots.shared = {name: v for name, v in lock.roots.shared.items() if name in project.package_dirs}
+        for kept in (lock.requires, lock.provides):
+            if kept.shared or kept.arches:  # the specs parsed only then
+                kept.keep(binaries())
+        lock.buildrequires.keep({*project.package_dirs})
+        lock.roots.keep({*project.package_dirs})
         lock.roots.arches = {}
         for platform in platforms:
             image, roots = _locked(_image(platform)), _locked(_roots(platform))

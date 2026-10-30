@@ -82,6 +82,15 @@ class Recorded(BaseModel):
             self.arches.setdefault(arch, {})[name] = values
         self.arches = {a: entries for a, entries in self.arches.items() if entries}
 
+    def keep(self, names: set[str]) -> None:
+        """Keep the entries of `names` only."""
+        self.shared = {name: values for name, values in self.shared.items() if name in names}
+        self.arches = {
+            arch: kept
+            for arch, entries in self.arches.items()
+            if (kept := {n: v for n, v in entries.items() if n in names})
+        }
+
 
 class Lock(BaseModel):
     """The content of the lock file."""
