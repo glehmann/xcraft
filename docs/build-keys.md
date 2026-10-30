@@ -48,12 +48,15 @@ The hash of a package directory is the SHA-256 of, for each file below it, symbo
 in the order of their paths:
 
 ```text
-<path relative to the directory> \0 <True|False: whether it is executable> \0 <the SHA-256 of its content, 32 bytes>
+<path relative to the directory> \0 <True|False: whether its owner may run it> \0 <the SHA-256 of its content, 32 bytes>
 ```
 
-That is what the builds get, like git: the rest of the file modes depends on the umask. The spec, its patches, and its
-`sources` manifest, which has the SHA-256 of the archives, so the archives are covered without being in git. See
-`buildkey.directories()`, with `xcraft.specs.hash_dir()`, which the cache of the parsed specs uses too.
+That is what the builds get, like git: the rest of the file modes depends on the umask, and who may run a file on the
+mounts, with the ACLs. A symbolic link brings the files it points to, wherever they are, like in the build tree: those
+pointing out of the project make the key depend on the machine, which xcraft import refuses. The empty directories are
+not in it, nor in git. The spec, its patches, and its `sources` manifest, which has the SHA-256 of the archives, so
+the archives are covered without being in git. See `buildkey.directories()`, with `xcraft.specs.hash_dir()`, which
+the cache of the parsed specs uses too.
 
 ## The recipe
 
@@ -151,6 +154,22 @@ On purpose:
 - **The remote storage, the signing keys, the publication settings**: they do not change the builds.
 - **The version of xcraft**, but the scripts of the builds: a change of how xcraft computes what the builds get changes
   what the keys cover, which this document specifies.
+
+Assumed, rather than covered:
+
+- **The upstream repositories do not change a version**: the lock has the versions of the upstream source packages,
+  not the binary packages, nor their SHA-256, which dnf chooses and checks from the repositories, with the scripts of
+  the build environment resolving them, like `resolve.py`. A version published again with other contents, or another
+  choice of binary packages of the same versions, is not a change of the keys.
+- **The URLs of `extra_upstream` do not change their RPMs**: they are covered by URL, like the base image by digest.
+- **The order of `macros` and of the repositories in `xcraft.toml` does not change the builds**: macros are expanded
+  when used, and the repositories have the same priority.
+- **`source_baseurl` of the repositories** is covered, though only publishing uses it: excluding it changes all the
+  keys, for the next change rebuilding all the packages anyway.
+
+What rpm generated for a build is recorded again when what it resolves to may change: the locked versions, the
+requirements and the binary packages of our specs and their capabilities, the packages of the image, and the extra
+upstream packages, see `checks.record_rpm_deps()`.
 
 ## Checking a key
 
