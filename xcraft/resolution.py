@@ -185,21 +185,32 @@ def prepare(project: Project, *, roots: bool = True) -> None:
 def _record(project: Project) -> None:
     """Record in the lock the upstream source packages of the images and of the build roots of all the architectures,
     those of the packages and architectures of the project only.
+
+    They are resolved from the lock as read, and saved only when it did not change meanwhile, by another command: they
+    are resolved again from the new one otherwise.
     """  # noqa: D205
-    platforms, lock = project.all_platforms(), load_lock(project)
-    recorded = lock.model_copy(deep=True)
-    lock.image = {}
-    lock.roots.shared = {name: v for name, v in lock.roots.shared.items() if name in project.package_dirs}
-    lock.roots.arches = {}
-    for platform in platforms:
-        image, roots = _locked(_image(platform)), _locked(_roots(platform))
-        lock.image[platform.arch] = sorted({image.packages[n].source for n in image.image})
-        for name in sorted(project.package_dirs):
-            sources = {roots.packages[n].source for n in roots.buildroots.get(name, [])}
-            lock.roots.record(platform.arch, platforms[0].arch, name, sorted(sources - {*lock.image[platform.arch]}))
-    if lock != recorded:
+    platforms = project.all_platforms()
+    for _ in range(3):
+        recorded = load_lock(project)
+        lock = recorded.model_copy(deep=True)
+        lock.image = {}
+        lock.roots.shared = {name: v for name, v in lock.roots.shared.items() if name in project.package_dirs}
+        lock.roots.arches = {}
+        for platform in platforms:
+            image, roots = _locked(_image(platform)), _locked(_roots(platform))
+            lock.image[platform.arch] = sorted({image.packages[n].source for n in image.image})
+            for name in sorted(project.package_dirs):
+                sources = {roots.packages[n].source for n in roots.buildroots.get(name, [])}
+                arch, first = platform.arch, platforms[0].arch
+                lock.roots.record(arch, first, name, sorted(sources - {*lock.image[platform.arch]}))
+        if lock == recorded:
+            return
         with project.lock():
-            save_lock(project, lock)
+            if load_lock(project) == recorded:
+                save_lock(project, lock)
+                return
+    msg = "the lock keeps changing, by other commands"
+    raise ResolutionError(msg)
 
 
 def _image(project: Project) -> Resolved:
