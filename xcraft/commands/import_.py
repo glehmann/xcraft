@@ -31,18 +31,18 @@ def import_(
         str | None, typer.Option(help="Packaging repository of a package. Defaults to xcp-ng-rpms'.")
     ] = None,
     branch: Annotated[
-        str | None, typer.Option(help="Branch to import. Defaults to the branches of [import] in xcraft.toml.")
+        str | None, typer.Option(help="Branch to import. Defaults to the branches of \\[import] in xcraft.toml.")
     ] = None,
     repo: Annotated[
         str, typer.Option(help="Repository of the new packages, one of the project's. Others stay in theirs.")
     ] = "base",
     all_: All = False,
 ) -> None:
-    """Import packages into the git branches import/<pkg>/<branch>, which the project merges: git merge <branch>.
+    r"""Import packages into the git branches import/<pkg>/<branch>, which the project merges: git merge <branch>.
 
-    The history of a package's packaging repository, for the branches of [import] in xcraft.toml, rewritten for the
+    The history of a package's packaging repository, for the branches of \[import] in xcraft.toml, rewritten for the
     project the same way each time: importing again gives the new commits on top. A source RPM, like XenServer's, as a
-    new commit of the srpm_branch of [import]. --all imports again the packages which have import branches of
+    new commit of the srpm_branch of \[import]. --all imports again the packages which have import branches of
     histories.
     """
     project = Project.find()
