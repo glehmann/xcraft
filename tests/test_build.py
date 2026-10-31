@@ -19,7 +19,7 @@ from typer.testing import CliRunner
 
 from tests import ARCH, TOML, TOYS, copy_project
 from xcraft import build as builder
-from xcraft import buildid, container, pinned
+from xcraft import buildid, container, pinned, process
 from xcraft.__main__ import app
 from xcraft.cache import BuildError
 from xcraft.iso import _install_tools
@@ -28,6 +28,7 @@ from xcraft.lock import Locked, Recorded, load_lock, lock_path, save_lock
 from xcraft.project import Project
 from xcraft.publish import _check_installable
 from xcraft.resolution import ResolutionError, lock_installed, resolve
+from xcraft.signing import check_signatures
 from xcraft.sources import write_manifest
 
 runner = CliRunner()
@@ -742,6 +743,14 @@ def test_pinned_store_checked(root: Path, monkeypatch: pytest.MonkeyPatch) -> No
         assert hashlib.sha256((repo / pinned.file_name("bash", pin)).read_bytes()).hexdigest() == pin.sha256
     finally:
         subprocess.run(["podman", "volume", "rm", "-f", volume], check=False, capture_output=True)
+
+
+def test_signatures_of_the_keys_of_the_repositories(root: Path, tmp_path: Path) -> None:
+    # signed with the key of AlmaLinux's EPEL, of a URL, which the build image does not have, as it installs the pinned
+    # packages without the keys
+    srpm = tmp_path / "htop-3.3.0-5.el10_0.alma_altarch.src.rpm"
+    process.download(f"https://epel.vault.almalinux.org/10/Source/Packages/{srpm.name}", srpm)
+    check_signatures(Project.find(), tmp_path, [srpm.name], what="upstream source packages")
 
 
 def test_lock_upgrade(root: Path) -> None:

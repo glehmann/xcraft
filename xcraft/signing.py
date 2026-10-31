@@ -164,18 +164,32 @@ def create_dev_key(project: Project, name: str) -> Signer:
     return signer
 
 
+def _keys(urls: list[str], work: Path) -> list[str]:
+    """Return the paths of the keys of `urls` in the containers: those of files of the image as they are, the others
+    downloaded into `work`, mounted on /work, as the checks have no network.
+    """
+    paths = []
+    for i, url in enumerate(urls):
+        if url.startswith("file://"):
+            paths.append(url.removeprefix("file://"))
+        else:
+            process.download(url, work / f"key-{i}.asc")
+            paths.append(f"/work/key-{i}.asc")
+    return paths
+
+
 def check_signatures(
     project: Project, root: Path, files: list[str], *, what: str, public_key: str | None = None
 ) -> None:
-    """Check the packages `files`, relative to `root`, are signed with `public_key`, or the keys of the build image.
-
-    The build image has those of the upstream repositories, which dnf checks when installing, not when downloading.
+    """Check the packages `files`, relative to `root`, are signed with `public_key`, or the keys of the repositories
+    of xcraft.toml, rather than those the build image has, which installs the pinned packages without them.
     """
     if not files:
         return
     # all: a package without signature fails too
     check = "xargs -a /work/packages rpmkeys --checksig --define '_pkgverify_level all'"
-    context = hashlib.sha256(json.dumps([image_tag(project), check, public_key]).encode()).hexdigest()
+    keys = sorted({key for repo in project.config.repos.values() for key in (repo.gpgkey or "").split()})
+    context = hashlib.sha256(json.dumps([image_tag(project), check, public_key, keys]).encode()).hexdigest()
     cache = project.state / "cache/checks/signatures" / context
     digests = {f: sha256_of(root / f) for f in files}
     files = [f for f in files if not (cache / digests[f]).exists()]
@@ -185,8 +199,12 @@ def check_signatures(
         (work / "packages").write_text("".join(f"/checked/{f}\n" for f in files))
         if public_key:
             (work / "key.asc").write_text(public_key)
-            db = "--define '_dbpath /tmp/keys'"
-            check = f"mkdir /tmp/keys && rpmkeys {db} --import /work/key.asc && {check} {db}"
+            imported = ["/work/key.asc"]
+        else:
+            imported = _keys(keys, work)
+        db = "--define '_dbpath /tmp/keys'"
+        importing = f"rpmkeys {db} --import {' '.join(imported)} && " if imported else ""
+        check = f"mkdir /tmp/keys && {importing}{check} {db}"
         try:
             run(
                 project,
