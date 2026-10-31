@@ -21,12 +21,13 @@ app = typer.Typer()
 
 
 @app.callback(invoke_without_command=True)
-def everything(ctx: typer.Context, arch: Arch = None, key: Key = None, to: To = "dev") -> None:
+def everything(ctx: typer.Context, final: Final = False, arch: Arch = None, key: Key = None, to: To = "dev") -> None:
     """Upload to the remote storage what it does not have yet.
 
-    Without a command: the sources and the builds of all the packages, with the pages of the directories of what is
-    pushed: xcraft push index makes them all. The sources not in the source cache, like those of the packages which did
-    not build, and the packages not built, do not keep the others from being pushed, then fail it.
+    Without a command: the sources and the builds of all the packages, but the development ones, unless --final, which
+    uploads their final builds, with the pages of the directories of what is pushed: xcraft push index makes them all.
+    The sources not in the source cache, like those of the packages which did not build, and the packages not built, do
+    not keep the others from being pushed, then fail it.
     """
     if ctx.invoked_subcommand:
         # all the options given before the subcommand are its defaults: those given after it win
@@ -35,7 +36,7 @@ def everything(ctx: typer.Context, arch: Arch = None, key: Key = None, to: To = 
     project = load(arch=arch)
     storage = remote_storage(project, to)
     absent = _push_sources(project, storage, None)
-    not_built = _push_builds(project, storage, None, signer=signing_key(project, key), final=False)
+    not_built = _push_builds(project, storage, None, signer=signing_key(project, key), final=final)
     if problems := [
         *([f"not in the source cache: {', '.join(absent)}"] if absent else []),
         *([f"not built: {', '.join(not_built)}"] if not_built else []),

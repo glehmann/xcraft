@@ -1260,6 +1260,11 @@ def test_development_builds_are_neither_pushed_nor_fetched(root: Path) -> None:
     code, output = xcraft("push", "builds", "trivial", "--final", "--to", "main")
     assert code == 0, output
     assert "↑ trivial" in output
+    # and with the sources, of all the packages
+    assert xcraft("build", "--final")[0] == 0
+    code, output = xcraft("push", "--final", "--to", "main")
+    assert code == 0, output
+    assert "↑ with-deps" in output
 
 
 def test_reused_builds_are_fetched(root: Path) -> None:
