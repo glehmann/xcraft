@@ -72,9 +72,11 @@ def compute(
     hashes: dict[str, str] | None = None,
     reuse: Callable[[str, dict[str, BuildId]], bool] | None = None,
     shown: dict[str, dict[str, list]] | None = None,
+    inputs: buildkey.Inputs | None = None,
 ) -> dict[str, BuildId]:
     """Return the build ID of each package, from those of the main branch where the current one forks from it, `fork`,
-    see base(), with the `hashes` of the package directories (see xcraft.buildkey.directories()).
+    see base(), from the `inputs` of the keys, read with the `hashes` of the package directories unless given (see
+    xcraft.buildkey.Inputs).
 
     The build keys are those of xcraft.buildkey, see docs/build-keys.md: their inputs are put in `shown`, by package,
     if given.
@@ -86,7 +88,7 @@ def compute(
     Without the main branch, the numbers are those of the working tree, 1 for new packages: there is nothing to number
     them against.
     """
-    inputs, current = buildkey.Inputs(project, hashes), read(project)
+    inputs, current = inputs or buildkey.Inputs(project, hashes), read(project)
     ids: dict[str, BuildId] = {}
     for component in components(inputs.deps):  # the dependencies first
         of = inputs.of(component, ids)
@@ -235,8 +237,7 @@ def reuse(project: Project, names: list[str], sources: list[str]) -> list[str]:
     forked_lock = parse_lock(_git(project, "show", f"{fork}:./{lock_path(project).name}") or "")
     lock, updated = load_lock(project), set(sources)
     # the inputs of the keys with the lock of the fork, the rest as it is now
-    forked_inputs = buildkey.Inputs(project)
-    forked_inputs.lock = forked_lock
+    forked_inputs = buildkey.Inputs(project, lock=forked_lock)
     component_of = {name: component for component in components(forked_inputs.deps) for name in component}
 
     def built_alike(name: str) -> bool:

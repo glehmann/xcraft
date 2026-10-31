@@ -9,14 +9,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests import TOML, config
+from tests import TOML, config, ours
 from xcraft import buildid, buildkey
 from xcraft.buildid import BuildId
 from xcraft.buildkey import recipe_key
 from xcraft.cache import build_keys
 from xcraft.lock import Lock, Recorded, save_lock
 from xcraft.project import Project
-from xcraft.specs import Binary, Package, hash_dir
+from xcraft.specs import hash_dir
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -42,12 +42,10 @@ def test_formulas() -> None:
     assert buildkey.key(inputs, "a") == hashlib.sha256(f"{json.dumps(inputs, sort_keys=True)}\0a".encode()).hexdigest()
 
 
-def test_build_key_inputs(project: Project) -> None:
+def test_build_key_inputs(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     arch = project.arch
     # b built against a: the binary packages of a, what they need, and what it needs to be built
-    project.deps = {"a": set(), "b": {"a"}}
-    binary = Binary(name="a-libs", evr="1-1", arch="x86_64", provides=[], requires=[])
-    project.packages = {"a": Package(name="a", binaries=[binary]), "b": Package(name="b", binaries=[])}
+    ours(project, monkeypatch, {"a": set(), "b": {"a"}})
     hashes = {"a": "1" * 64, "b": "2" * 64}
     lock = Lock(
         sources={"glibc": "1-1", "zlib": "1-1"}, image={arch: ["glibc"]}, roots=Recorded(shared={"b": ["zlib"]})
@@ -62,8 +60,8 @@ def test_build_key_inputs(project: Project) -> None:
         (lambda: lock.sources.update(glibc="1-2"), {"a", "b"}),  # of the image
         (lambda: lock.sources.update(zlib="1-2"), {"b"}),  # of the build root of b
         (lambda: lock.buildrequires.shared.update(b=["foo"]), {"b"}),
-        (lambda: lock.requires.shared.update({"a-libs": ["bar"]}), {"b"}),  # of a, which b gets
-        (lambda: lock.provides.shared.update({"a-libs": ["libbar.so.1"]}), {"b"}),
+        (lambda: lock.requires.shared.update(a=["bar"]), {"b"}),  # of the binary package a, which b gets
+        (lambda: lock.provides.shared.update(a=["libbar.so.1"]), {"b"}),
         (lambda: lock.roots.arches.update({"aarch64": {"b": ["zlib"]}}), set()),  # not an architecture of the project
         (lambda: lock.runtime.update({arch: ["bash"]}), set()),  # what publishing gets
         (lambda: lock.iso.update({arch: ["xorriso"]}), set()),
@@ -76,21 +74,39 @@ def test_build_key_inputs(project: Project) -> None:
         before = after
 
 
-def test_keys_of_cycles(project: Project) -> None:
+def test_inputs_read_once(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    ours(project, monkeypatch, {"a": set(), "b": {"a"}, "c": set()})
+    save_lock(project, Lock())
+    hashes = {name: digit * 64 for name, digit in zip("abc", "123", strict=True)}
+    expected = buildid.compute(project, None, hashes)
+    # not the dependencies the project has from another lock, read before
+    project.deps = {"a": set(), "b": set(), "c": {"b"}}
+    assert buildid.compute(project, None, hashes) == expected
+    # but those of the lock given, like the one of another commit, with its dynamic BuildRequires
+    other = buildkey.Inputs(project, hashes, Lock(buildrequires=Recorded(shared={"c": ["a"]})))
+    assert (other.deps["c"], buildkey.Inputs(project, hashes).deps["c"]) == ({"a"}, set())
+    # and nothing more after
+    monkeypatch.setattr(buildkey, "load_lock", lambda _: pytest.fail("read again"))
+    monkeypatch.setattr("xcraft.resolution.resolve_image", lambda _: pytest.fail("resolved again"))
+    project.parsed = {}
+    ids = {name: BuildId(number=1, key=hashes[name]) for name in hashes}
+    assert buildkey.key(other.of({"c"}, ids), "c") != buildkey.key(other.of({"a"}, ids), "a")
+
+
+def test_keys_of_cycles(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     for name in ("a", "b", "0foo"):
         (project.root / "base" / name).mkdir(parents=True)
         (project.root / "base" / name / f"{name}.spec").write_text(name)
     project.config.platforms = [project.platform]  # the one of the dependencies given
-    project.packages = {name: Package(name=name, binaries=[]) for name in ("a", "b", "0foo")}
-    project.deps = {"a": {"b"}, "b": {"a"}}
+    ours(project, monkeypatch, {"a": {"b"}, "b": {"a"}, "0foo": set()})
     keys = build_keys(project)
     # not the order the cycle is reached in: from a package depending on b, first in name order
-    project.deps = {"a": {"b"}, "b": {"a"}, "0foo": {"b"}}
+    ours(project, monkeypatch, {"a": {"b"}, "b": {"a"}, "0foo": {"b"}})
     more = build_keys(project)
     assert (more["a"], more["b"]) == (keys["a"], keys["b"])
     assert keys["a"] != keys["b"]
     (project.root / "base/b/b.spec").write_text("b changed")
-    project.deps = {"a": {"b"}, "b": {"a"}}
+    ours(project, monkeypatch, {"a": {"b"}, "b": {"a"}, "0foo": set()})
     assert build_keys(project)["a"] != keys["a"]
 
 
@@ -170,15 +186,15 @@ def test_recipe_inputs(project: Project, monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_keys_of_upstream_packages_without_versions(project: Project) -> None:
     with pytest.raises(RuntimeError, match="the lock has no version of glibc"):
-        buildkey.lock_inputs([project], Lock(image={project.arch: ["glibc"]}), "foo")
+        buildkey.lock_inputs([buildkey.Platform(project.arch, {}, {})], Lock(image={project.arch: ["glibc"]}), "foo")
 
 
-def test_cache_keys_of_development_builds(project: Project) -> None:
+def test_cache_keys_of_development_builds(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     project.config.platforms = [project.platform]  # the one of the dependencies given
     ids = {name: BuildId(number=1, key=digit * 64) for name, digit in zip("abcde", "12345", strict=True)}
 
     def keys(deps: dict[str, set[str]], autorev: dict[str, str]) -> dict[str, str]:
-        project.deps = deps
+        ours(project, monkeypatch, deps)
         return build_keys(project, autorev, ids=ids)
 
     chain = {"a": set(), "b": {"a"}, "c": {"b"}}

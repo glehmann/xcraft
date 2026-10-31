@@ -10,7 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from xcraft.project import Config
+from xcraft.project import Config, Project
+from xcraft.resolution import Resolved
+from xcraft.specs import Binary, Package
 
 PROJECT = Path(__file__).parent / "project"
 UPSTREAM = Path(__file__).parent / "upstream"
@@ -47,3 +49,19 @@ def copy_project(dest: Path, template: Path = PROJECT) -> None:
 
     shutil.copytree(template, dest, ignore=ignored)
     (dest / "xcraft.toml").write_text(TOML)
+
+
+def ours(project: Project, monkeypatch: pytest.MonkeyPatch, deps: dict[str, set[str]]) -> None:
+    """Give `project` packages of ours, as parsed, built against `deps`: each one with a binary package of its name,
+    which those built against it require, in an image without packages of ours.
+    """
+    project.parsed = {
+        name: Package(
+            name=name,
+            buildrequires=sorted(needed),
+            binaries=[Binary(name=name, evr="1-1", arch="noarch", provides=[], requires=[])],
+        )
+        for name, needed in deps.items()
+    }
+    project.refresh()
+    monkeypatch.setattr("xcraft.resolution.resolve_image", lambda _: Resolved())
