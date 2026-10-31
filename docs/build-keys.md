@@ -59,8 +59,8 @@ uses too.
 
 The build tree has exactly what the hash covers, from the same reads of the files, and nothing more, see
 `rpmbuild.prepare_tree()`: the main spec in `SPECS/`, the other files in `SOURCES/`, but the `sources` manifest, whose
-archives are there instead. The files have the mode 0644, or 0755 when their owner may run them, the archives 0444, and
-all of them, directories included, the same time, `STAGED_TIME`, 1980-01-01. A build whose package directory does not
+archives are there instead. The files have the mode 0644, or 0755 when their owner may run them, the archives 0444, the
+directories 0755, and all of them the same time, `STAGED_TIME`, 1980-01-01. A build whose package directory does not
 have the hash of its key when its tree is made fails, rather than being cached under a key of other files: the same
 key, the same tree, whatever the checkout, its umask, its file times, and its empty directories.
 

@@ -79,6 +79,30 @@ def test_stage_like_a_packaging_repository(project: Project, tmp_path: Path) -> 
         prepare_tree(project, "foo")
 
 
+def test_stage_whatever_the_umask(project: Project) -> None:
+    pkg = project.root / "base/foo"
+    (pkg / "sub").mkdir(parents=True)
+    for name in ("foo.spec", "sub/conf"):
+        (pkg / name).write_text(name)
+
+    def staged(umask: int) -> dict[str, tuple[int, float, bytes]]:
+        previous = os.umask(umask)
+        try:
+            tree = prepare_tree(project, "foo", hash_dir(pkg, project.root))
+        finally:
+            os.umask(previous)
+        return {
+            p.relative_to(tree).as_posix(): (
+                p.stat().st_mode,
+                p.stat().st_mtime,
+                p.read_bytes() if p.is_file() else b"",
+            )
+            for p in [tree, *tree.rglob("*")]
+        }
+
+    assert staged(0o077) == staged(0o022)
+
+
 def test_stage_archives_of_the_manifest_hashed(
     project: Project, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
