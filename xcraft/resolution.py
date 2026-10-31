@@ -179,14 +179,17 @@ def prepare(project: Project, *, roots: bool = True, repin: set[str] | None = No
     """
     if repin:
         _forget(project)
-    native = project.on_host()
-    for platform in [native] if native == project else [native, project]:
+    native, repinned = project.on_host(), frozenset(repin or ())
+    images = [native] if native == project else [native, project]
+    for platform in images:
         _locking(platform, _image)
+    # pinned, for the images to be built: the one of the host parses the specs, which the build roots need
+    _saved(project, lambda recorded, lock: _record_images(images, recorded, lock, repinned))
     if roots:
         for platform in project.all_platforms():
             _locking(platform, _image)
             _locking(platform, _roots)
-        _record(project, frozenset(repin or ()))
+        _record(project, repinned)
 
 
 def _forget(project: Project) -> None:
@@ -230,12 +233,41 @@ def _pins(
     return pins
 
 
+def _saved(project: Project, record: Callable[[Lock, Lock], None]) -> None:
+    """Change the lock as `record` does, from the lock as read, and to a copy of it, which is saved only when it did
+    not change meanwhile, by another command: changed again from the new one otherwise.
+    """
+    for _ in range(3):
+        recorded = load_lock(project)
+        lock = recorded.model_copy(deep=True)
+        record(recorded, lock)
+        if lock == recorded:
+            return
+        with project.lock():
+            if load_lock(project) == recorded:
+                save_lock(project, lock)
+                return
+    msg = "the lock keeps changing, by other commands"
+    raise ResolutionError(msg)
+
+
+def _record_images(platforms: list[Project], recorded: Lock, lock: Lock, repin: frozenset[str]) -> None:
+    """Record in the `lock` the upstream binary packages of the images of the `platforms`, pinned, see _pins(), with
+    those the `recorded` lock pins for the build roots.
+    """
+    for platform in platforms:
+        image = _locked(_image(platform))
+        if error := image.errors.get("image"):
+            msg = f"the build environment image cannot be resolved for {platform.arch}: {error}"
+            raise ResolutionError(msg)
+        lock.image[platform.arch] = sorted(image.image)
+        pinned = _pins(platform.arch, recorded, [image], set(image.image), repin)
+        lock.binaries[platform.arch] = {**recorded.binaries.get(platform.arch, {}), **pinned}
+
+
 def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
     """Record in the lock the upstream binary packages of the images and of the build roots of all the architectures,
-    pinned, and keep in it what the builds found for the packages and architectures of the project only.
-
-    They are resolved from the lock as read, and saved only when it did not change meanwhile, by another command: they
-    are resolved again from the new one otherwise. The binary packages pinned already keep their pins, see _pins().
+    pinned, see _pins(), and keep in it what the builds found for the packages and architectures of the project only.
     """
     platforms = project.all_platforms()
 
@@ -243,9 +275,7 @@ def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
     def binaries() -> set[str]:
         return {b.name for p in platforms for package in p.parsed.values() for b in package.binaries}
 
-    for _ in range(3):
-        recorded = load_lock(project)
-        lock = recorded.model_copy(deep=True)
+    def record(recorded: Lock, lock: Lock) -> None:
         lock.image, lock.binaries = {}, {}
         for kept in (lock.requires, lock.provides):
             if kept.shared or kept.arches:  # the specs parsed only then
@@ -269,14 +299,8 @@ def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
                 lock.roots.record(platform.arch, project.first, name, values)
             names = {*image.image, *(n for values in lock.roots.of(platform.arch).values() for n in values)}
             lock.binaries[platform.arch] = _pins(platform.arch, recorded, [image, roots], names, repin)
-        if lock == recorded:
-            return
-        with project.lock():
-            if load_lock(project) == recorded:
-                save_lock(project, lock)
-                return
-    msg = "the lock keeps changing, by other commands"
-    raise ResolutionError(msg)
+
+    _saved(project, record)
 
 
 def _image(project: Project) -> Resolved:

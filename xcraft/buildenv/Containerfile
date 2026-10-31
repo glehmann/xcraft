@@ -2,14 +2,15 @@ ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 ARG PACKAGES
 RUN rm -f /etc/yum.repos.d/*.repo
-COPY upstream.repo /etc/yum.repos.d/
+COPY upstream.repo pinned.repo /etc/yum.repos.d/
 COPY macros.xcraft /etc/rpm/
 COPY versionlock.list /etc/dnf/plugins/
-# keep the downloaded packages in the dnf cache volume; the base image packages
-# get the locked versions, or the latest ones when they are not locked yet
+# only the pinned packages, from their repository on /pinned, checked against their SHA-256 in the lock: the base
+# image packages get their pinned versions, and keep those of its digest otherwise
 RUN echo keepcache=1 >> /etc/dnf/dnf.conf \
-    && dnf -y install python3-dnf-plugin-versionlock && dnf -y distro-sync \
-    && dnf -y --setopt=install_weak_deps=False install ${PACKAGES} && dnf clean all
+    && pinned="--disablerepo=* --enablerepo=xcraft-pinned" \
+    && dnf -y $pinned install python3-dnf-plugin-versionlock && dnf -y $pinned distro-sync \
+    && dnf -y $pinned --setopt=install_weak_deps=False install ${PACKAGES} && dnf clean all
 # without the account check of PAM, whose helper cannot read /etc/shadow in some rootless containers, like in CI
 RUN useradd -u 1000 builder \
     && printf 'builder ALL=(ALL) NOPASSWD: ALL\nDefaults:builder !pam_acct_mgmt\n' > /etc/sudoers.d/builder

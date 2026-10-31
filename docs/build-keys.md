@@ -116,6 +116,14 @@ publish other contents for it, until `xcraft lock --update` pins it again: a bui
 another RPM. See `buildkey.lock_inputs()`, and the format of the lock, `lock.FORMAT`, which `xcraft lock --upgrade`
 upgrades.
 
+The image and the build roots get the pinned packages only: they install from a repository of the pinned RPMs of
+their architecture, and nothing else upstream, see `xcraft.pinned`. Each RPM is downloaded once, into a store of the
+machine the projects share, and kept there only when it has the SHA-256 of its pin; a dynamic BuildRequires not
+pinned yet is not installed: the build records it, it is pinned, and the package built again. The packages the base
+image has already, in their pinned versions, are not installed again: they are those of its digest. What the builds
+installed is checked against the pins too, by name, version and architecture, see `checks.check_build()`. The image
+is tagged by its pins, so other pins build another image.
+
 ## The dependencies
 
 The packages of ours a package is built against are those whose binary packages its build root installs: those of
