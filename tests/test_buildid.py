@@ -289,6 +289,24 @@ def test_development_builds(root: Path, monkeypatch: pytest.MonkeyPatch) -> None
     assert built() == []
 
 
+def test_development_builds_against_other_ones(root: Path) -> None:
+    commit_base(root)
+    git(root, "checkout", "-qb", "feature")
+    edit(root, "changed")
+    edit(root, "changed", name="with-deps")
+    assert built("--dev", "dev") == [
+        "trivial-1.0-1+b2~1.dev.xcpng8.99.noarch.rpm",
+        "with-deps-1.0-1+b2~1.dev.xcpng8.99.noarch.rpm",
+    ]
+    assert built("trivial", "--dev", "other") == ["trivial-1.0-1+b2~2.other.xcpng8.99.noarch.rpm"]
+    # with-deps built again against another trivial: of a newer release, for the hosts to upgrade it
+    assert built("--dev", "dev") == [
+        "trivial-1.0-1+b2~3.dev.xcpng8.99.noarch.rpm",
+        "with-deps-1.0-1+b2~2.dev.xcpng8.99.noarch.rpm",
+    ]
+    assert built("--dev", "dev") == []
+
+
 def test_development_builds_changed_by_others(root: Path) -> None:
     commit_base(root)
     git(root, "checkout", "-qb", "feature")
