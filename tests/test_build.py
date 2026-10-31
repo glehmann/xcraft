@@ -125,6 +125,9 @@ def test_spec_changed_before_its_build_is_not_cached(root: Path, monkeypatch: py
     assert "base/trivial changed since the builds started, build it again" in output
 
 
+UP_TO_DATE = "versions up to date, not looking for other contents of the same versions: xcraft lock --update does"
+
+
 def write_spec(root: Path, name: str, requires: str = "", files: str = "/usr/share/doc/%{name}") -> None:
     """Write a minimal noarch package installing `files`, with the BuildRequires `requires`."""
     (root / "base" / name).mkdir()
@@ -396,7 +399,7 @@ def test_lock(root: Path) -> None:
     assert "lzo" in load_lock(Project.find()).sources
     assert xcraft("build", "trivial", "--locked") == (0, "1 cached\n")
     assert xcraft("lock", "--update", "lzo-devel")[1] == "0 updated\n"
-    assert xcraft("lock", "--outdated", "lzo") == (0, "up to date\n")
+    assert xcraft("lock", "--outdated", "lzo") == (0, f"{UP_TO_DATE}\n")
 
 
 def test_lock_versions_of_all_the_architectures(root: Path) -> None:
@@ -405,7 +408,7 @@ def test_lock_versions_of_all_the_architectures(root: Path) -> None:
     spec.write_text(spec.read_text().replace("BuildArch: noarch", "BuildArch: noarch\nBuildRequires: toyarch"))
     assert xcraft("build", "trivial")[0] == 0
     assert load_lock(Project.find()).sources["toyarch"] == "1-1"
-    assert xcraft("lock", "--outdated", "toyarch") == (0, "up to date\n")
+    assert xcraft("lock", "--outdated", "toyarch") == (0, f"{UP_TO_DATE}\n")
     # by binary name, of the locked versions only
     assert xcraft("lock", "--outdated", "toyarch-new")[1].endswith("not locked: toyarch-new")
     # toyrun, locked in an older version, has a newer one all the architectures have
@@ -665,6 +668,46 @@ def test_pinned_packages(root: Path) -> None:
         container.ContainerError, match=rf"bash-0:0-0\.{pin.arch}: pinned, but in no repository anymore"
     ):
         pinned.repository(Project.find())
+
+
+def test_images_of_other_contents(root: Path, tmp_path: Path) -> None:
+    # two RPMs of a package the base image does not have, of the same name, version and architecture, but other contents
+    (specs := tmp_path / "specs").mkdir()
+    (specs / "toypayload.spec").write_text(
+        "Name: toypayload\nVersion: 1\nRelease: 1\nSummary: test\nLicense: MIT\nBuildArch: noarch\n%description\ntest\n"
+        "%install\nmkdir -p %{buildroot}/usr/share\necho %{payload} > %{buildroot}/usr/share/toypayload\n"
+        "%files\n/usr/share/toypayload\n"
+    )
+    (rpms := tmp_path / "rpms").mkdir()
+    build = "dnf -q -y install rpm-build createrepo_c"
+    for payload in ("a", "b"):
+        build += (
+            f" && rpmbuild -bb --define '_topdir /tmp/{payload}' --define '_rpmdir /out/{payload}'"
+            f" --define 'payload {payload}' /specs/toypayload.spec && createrepo_c -q /out/{payload}"
+        )
+    container.run_natively(
+        Project.find().on_host(), "payloads", ["bash", "-c", build], volumes=[f"{specs}:/specs:ro", f"{rpms}:/out"],
+        show="the payloads",
+    )  # fmt: skip
+    repo = tmp_path / "repo"
+    shutil.copytree(rpms / "a", repo)
+    config = (root / "xcraft.toml").read_text().replace('"bash", "bzip2"', '"toypayload", "bash", "bzip2"')
+    (root / "xcraft.toml").write_text(f'{config}\n[repos.payload]\nbaseurl = "file://{repo}/"\n')
+    assert xcraft("build", "--dry-run")[0] == 0
+    images = []
+    for payload in ("a", "b"):
+        if payload == "b":  # published again, pinned again on purpose
+            shutil.rmtree(repo)
+            shutil.copytree(rpms / "b", repo)
+            code, output = xcraft("lock", "--update", "toypayload")
+            assert code == 0, output
+            assert "pinned again, of the same versions: toypayload" in output
+        images.append(image := container.build_image(Project.find()))
+        # with the layers of the cache of podman: those of the pins of the image only
+        cat = ["podman", "run", "--rm", image, "cat", "/usr/share/toypayload"]
+        installed = subprocess.run(cat, capture_output=True, text=True, check=True)
+        assert installed.stdout == f"{payload}\n"
+    subprocess.run(["podman", "rmi", *images], capture_output=True, check=False)
 
 
 def test_pinned_store_checked(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:

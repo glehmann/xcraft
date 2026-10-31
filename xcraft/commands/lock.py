@@ -76,7 +76,11 @@ def _update(project: Project, packages: list[str], *, write: bool) -> int:
     for source, version in changed.items():
         console.print(f"[bold]{source}[/] {current.sources[source]} -> {version}")
     if not write:
-        console.print(f"{len(changed)} to update: xcraft lock --update updates them" if changed else "up to date")
+        # not what other contents of the same versions the repositories may have, which only --update pins
+        up_to_date = (
+            "versions up to date, not looking for other contents of the same versions: xcraft lock --update does"
+        )
+        console.print(f"{len(changed)} to update: xcraft lock --update updates them" if changed else up_to_date)
         return len(changed)
     current = load_lock(project)  # which may have locked new ones
     current.sources |= changed
