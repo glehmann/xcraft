@@ -182,7 +182,9 @@ dynamic `BuildRequires`. Its key is right after its build, which records it, and
 - **`xcraft lock --update`** takes for each source package the latest version all the architectures have, as today,
   resolving their metadata natively. `--arch`, `--available` and `--check` go away.
 - **`xcraft impacts`** works on the computed build roots, by source package, for all the architectures at once.
-- **`runtime`** stays as it is: `xcraft publish` resolves it from the built packages, which it has.
+- **`runtime`** and **`iso`**, what is published and the tools making the ISO, are resolved and pinned with the build
+  roots, from the specs and what the builds found, rather than by `xcraft publish` from the built packages: a lock
+  missing them fails with `--locked`, rather than being completed when publishing.
 
 ## Workflows
 

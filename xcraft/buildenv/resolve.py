@@ -13,12 +13,15 @@ The input has:
   binary packages of ours, of its dependencies, to resolve its build root;
 - ``record``, for built binary packages of ours, the ``requires`` and ``provides`` their specs declare, and ``wanted``,
   the capabilities our specs require, to resolve what rpm generated for them;
-- ``versions``, upstream source packages to give the available versions of.
+- ``versions``, upstream source packages to give the available versions of;
+- ``runtime``, with ours, what the published repositories need: the ``extra`` upstream packages published, the
+  ``installer``'s, and the ``tools`` making the ISO.
 
 The output has the locked binary ``packages``, the ``image``, the upstream ``buildroots`` and the ``ours`` binary
 packages of each build root, the ``requires`` and ``provides`` of the recorded binary packages, the ``errors``, by
-package, ``image`` for the image, the ``unlocked`` source packages needed, and the ``versions`` of those and of the
-given ones, oldest first.
+package, ``image`` for the image, the upstream packages of the ``runtime``, with its ``runtime_errors``, and of the
+``tools``, besides the image's, with their ``tools_error``, the ``unlocked`` source packages needed, and the
+``versions`` of those and of the given ones, oldest first.
 """
 
 import functools
@@ -241,6 +244,43 @@ class Resolver:
         finally:
             self.base.sack.remove_excludes(others)
 
+    def runtime(self, extra: list[str], installer: list[str], errors: dict[str, str]) -> list[str]:
+        """Return the upstream packages our binary packages, the extra upstream RPMs, and the `extra` upstream packages
+        need, each resolved alone, on an empty system, without weak dependencies, as some of ours conflict with others,
+        and the packages of the `installer` together: some only need others along with another, like
+        (libsss_sudo if sudo).
+        """
+        packages = {**self.binaries, **self.ours, **self.built}  # like dnf install, ours rather than upstream ones
+        roots = [n for n in {*self.ours, *self.built} if not n.endswith(("-debuginfo", "-debugsource"))]
+        groups = [*((n, [n]) for n in sorted({*roots, *extra})), *([("install.img", installer)] if installer else [])]
+        needed = set()
+        for name, group in groups:
+            try:
+                installed = self.resolve(
+                    [packages[n] for n in group if n in packages], [n for n in group if n not in packages], weak=False
+                )
+                needed |= {p.name for p in installed if p.reponame not in OURS}
+            except dnf.exceptions.Error as e:
+                errors[name] = str(e)
+        return sorted(needed)
+
+    def tools(self, image: list, tools: list[str]) -> tuple[list[str], str]:
+        """Return the upstream packages installed with the `tools` on the `image`, without weak dependencies, but the
+        image's, or why they cannot be.
+        """
+        ours = self.base.sack.query().filter(reponame=OURS)
+        self.base.sack.add_excludes(ours)
+        try:
+            packages = [self.binaries[n] for n in tools if n in self.binaries]
+            installed = self.resolve(
+                packages, [n for n in tools if n not in self.binaries], weak=False, installed=image
+            )
+        except dnf.exceptions.Error as e:
+            return [], str(e)
+        finally:
+            self.base.sack.remove_excludes(ours)
+        return sorted({p.name for p in installed} - {p.name for p in image}), ""
+
     def generated(self, image: list, name: str, declared: dict) -> tuple[list[str], list[str]]:
         """Return the packages the generated requirements of the built package `name` resolve to, but those of the
         `image`, and its generated capabilities and files the specs require, but those it `declared`.
@@ -272,7 +312,7 @@ def main() -> None:
     """Resolve the input of the command line into its output."""
     data = json.loads(Path(sys.argv[1]).read_text())
     resolver = Resolver(data)
-    result: dict = {"buildroots": {}, "ours": {}, "errors": {}, "requires": {}, "provides": {}}
+    result: dict = {"buildroots": {}, "ours": {}, "errors": {}, "requires": {}, "provides": {}, "runtime_errors": {}}
     image = resolver.image(result["errors"])
     result["image"] = sorted(p.name for p in image)
     unmet_weak = resolver.unmet_weak(image)
@@ -289,6 +329,10 @@ def main() -> None:
             result["requires"][name], result["provides"][name] = resolver.generated(image, name, declared)
         except dnf.exceptions.Error as e:
             result["errors"][name] = str(e)
+    if runtime := data.get("runtime"):
+        result["runtime"] = resolver.runtime(runtime["extra"], runtime["installer"], result["runtime_errors"])
+        if runtime["tools"]:
+            result["tools"], result["tools_error"] = resolver.tools(image, runtime["tools"])
     locked = data["sources"]
     result["packages"] = {
         name: {"evr": p.evr, "arch": p.arch, "source": source, "repo": p.reponame, "sha256": p.chksum[1].hex()}

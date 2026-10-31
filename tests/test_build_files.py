@@ -23,7 +23,7 @@ from xcraft.clean import clean, repos_disk_usage
 from xcraft.commands import complete_arch, load
 from xcraft.commands.repo import _kept
 from xcraft.localrepo import OUTPUT_MARKER, RepoError, extra_rpms, fresh_dir, link
-from xcraft.lock import Lock, load_lock, save_lock
+from xcraft.lock import Lock, Pin, load_lock, save_lock
 from xcraft.project import Extra, Project, ProjectLockedError
 from xcraft.publish import build_dependencies
 from xcraft.resolution import Resolved
@@ -333,7 +333,9 @@ def test_build_dependencies(project: Project, monkeypatch: pytest.MonkeyPatch) -
     project.packages = {"kernel": Package(name="kernel", binaries=[binary])}
     resolved = Resolved(image=["bash", "gcc", "kernel-headers"], buildroots={"xen": ["zlib-devel", "gcc"]})
     monkeypatch.setattr("xcraft.publish.resolve", lambda _: resolved)
-    save_lock(project, Lock(runtime={project.arch: ["bash"]}))
+    pin = Pin(evr="1-1", arch="x86_64_v2", sha256="ab" * 32, source="bash")
+    lock = Lock(sources={"bash": "1-1"}, binaries={project.arch: {"bash": pin}}, runtime={project.arch: ["bash"]})
+    save_lock(project, lock)
     assert build_dependencies(project) == ["gcc", "zlib-devel"]  # but ours, and those of the base repository
 
 

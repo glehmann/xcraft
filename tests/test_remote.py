@@ -869,13 +869,15 @@ def test_publish(root: Path) -> None:  # noqa: PLR0915
         assert code == 0, output
         assert "warning" not in output
         assert sorted(p.name for p in (root / ".xcraft/publish/base").iterdir()) == ["Source", "x86_64"]
-    # what our packages need at runtime is checked
-    (root / "xcraft.toml").write_text(REMOTE)
+    # what our packages need at runtime is locked when preparing, like the build roots
+    (root / "xcraft.toml").write_text(f'{REMOTE}extra = ["bc"]\n')
     assert xcraft("build", "--dry-run")[0] == 0  # the lock of the architecture left
     buildid.update(Project.find())  # and the build IDs, which cover all the architectures
+    (root / "xcraft.toml").write_text(REMOTE)
     # the options of publish apply to its subcommands too, given before them
-    for args in (["--locked", "--local"], ["--locked", "--local", "repos"], ["--locked", "repos", "--local"]):
-        code, output = xcraft("publish", *args)
+    for args in (["publish", "--locked", "--local"], ["publish", "--locked", "--local", "repos"],
+                 ["publish", "--locked", "repos", "--local"], ["build", "--locked", "--dry-run"]):  # fmt: skip
+        code, output = xcraft(*args)
         assert code == 1
         assert re.search(rf"--locked forbids: .*-runtime\.{ARCH} bc\b", output)
     # the upstream packages must be signed with the keys of the repositories

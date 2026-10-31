@@ -49,8 +49,8 @@ def test_save_and_load(tmp_path) -> None:  # noqa: ANN001
         },
         requires=Recorded(shared={"qemu": ["libpng", "pixman"]}, arches={"aarch64": {"qemu": ["pixman"]}}),
         buildrequires=Recorded(shared={"xcp-python-libs": ["python3-wheel"]}),
-        runtime={"x86_64_v2": ["bash"]},
-        iso={"aarch64": ["xorriso"]},
+        runtime={"aarch64": ["glibc"]},
+        iso={"aarch64": ["pixman"]},
         image={"aarch64": ["glibc"]},
         roots=Recorded(shared={"qemu": ["pixman"]}),
     )
@@ -64,7 +64,7 @@ def test_save_and_load(tmp_path) -> None:  # noqa: ANN001
     assert '[roots]  # the upstream binary packages of the build roots, but the image\'s\n"qemu" = [\n' in text
     # the binary packages, pinned by architecture, in a format of its own
     assert text.startswith(
-        "# written by xcraft: the versions of the upstream packages, for all the architectures\n\nversion = 2\n"
+        "# written by xcraft: the versions of the upstream packages, for all the architectures\n\nversion = 3\n"
     )
     assert f'"glibc" = "2.39-145.el10_2 aarch64 {"ab" * 32} glibc"\n' in text
 
@@ -76,21 +76,35 @@ def test_lock_validation(tmp_path: Path) -> None:
         with pytest.raises(ValueError, match=r"pinned binary package|sha256"):
             Pin.parse(text)
     pin = Pin(evr="1-1", arch="aarch64", sha256="ab" * 32, source="glibc")
-    # the packages of the images and of the build roots, all pinned, of locked sources
+    # the packages of the images, of the build roots, of the published repositories and of the tools making the ISO,
+    # all pinned, of locked sources
     for invalid, problem in (
-        ({"image": {"aarch64": ["glibc"]}}, "images or build roots without pinned binary packages: aarch64"),
-        ({"roots": Recorded(arches={"aarch64": {"qemu": ["glibc"]}})}, "build roots without pinned binary packages"),
+        ({"image": {"aarch64": ["glibc"]}}, "architectures without pinned binary packages: aarch64"),
+        ({"roots": Recorded(arches={"aarch64": {"qemu": ["glibc"]}})}, "without pinned binary packages: aarch64"),
+        ({"runtime": {"aarch64": ["glibc"]}}, "without pinned binary packages: aarch64"),
+        ({"iso": {"aarch64": ["glibc"]}}, "without pinned binary packages: aarch64"),
         ({"binaries": {"aarch64": {"glibc": pin}}, "image": {"aarch64": ["bash"]}}, "not pinned in the lock: bash"),
         ({"binaries": {"aarch64": {"glibc": pin}}, "roots": Recorded(shared={"qemu": ["bash"]})}, "not pinned"),
+        ({"binaries": {"aarch64": {"glibc": pin}}, "runtime": {"aarch64": ["bash"]}}, "not pinned in the lock: bash"),
+        ({"binaries": {"aarch64": {"glibc": pin}}, "iso": {"aarch64": ["bash"]}}, "not pinned in the lock: bash"),
         ({"binaries": {"aarch64": {"glibc": pin}}, "sources": {}}, "of source packages not locked: glibc"),
     ):
         with pytest.raises(ValueError, match=problem):
             Lock.model_validate({"sources": {"glibc": "1-1"}, **invalid})
     # a lock of an older xcraft, upgraded only on purpose
     lock_path(project).write_text('[sources]\n"glibc" = "1-1"\n\n[image]\n"aarch64" = ["glibc"]\n')
-    with pytest.raises(LockFormatError, match="the lock has the format 1, not 2: xcraft lock --upgrade upgrades it"):
+    with pytest.raises(LockFormatError, match="the lock has the format 1, not 3: xcraft lock --upgrade upgrades it"):
         load_lock(project)
     assert upgrade_lock(project) == Lock(sources={"glibc": "1-1"})
+    # of format 2, with the published packages and the tools making the ISO without pins, but the others kept
+    lock_path(project).write_text(
+        f'version = 2\n\n[sources]\n"glibc" = "1-1"\n\n[binaries.aarch64]\n"glibc" = "{pin.text()}"\n\n'
+        '[image]\n"aarch64" = ["glibc"]\n\n[runtime]\n"aarch64" = ["bash"]\n\n[iso]\n"aarch64" = ["xorriso"]\n'
+    )
+    with pytest.raises(LockFormatError, match="the lock has the format 2, not 3"):
+        load_lock(project)
+    expected = Lock(sources={"glibc": "1-1"}, binaries={"aarch64": {"glibc": pin}}, image={"aarch64": ["glibc"]})
+    assert upgrade_lock(project) == expected
 
 
 def test_record() -> None:

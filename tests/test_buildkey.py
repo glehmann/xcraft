@@ -84,7 +84,7 @@ def test_build_key_inputs(project: Project, monkeypatch: pytest.MonkeyPatch) -> 
             set(),
         ),
         (lambda: lock.runtime.update({arch: ["bash"]}), set()),  # what publishing gets
-        (lambda: lock.iso.update({arch: ["xorriso"]}), set()),
+        (lambda: lock.iso.update({arch: ["bash"]}), set()),
         (lambda: hashes.update(a="3" * 64), {"a", "b"}),  # the files of a, which change its build ID
         (lambda: hashes.update(b="4" * 64), {"b"}),
     ):

@@ -22,12 +22,12 @@ from xcraft import build as builder
 from xcraft import buildid, container, pinned, process
 from xcraft.__main__ import app
 from xcraft.cache import BuildError
-from xcraft.iso import _install_tools
+from xcraft.iso import _INSTALL_TOOLS, _check_tools
 from xcraft.localrepo import LocalRepo, link
-from xcraft.lock import Locked, Recorded, load_lock, lock_path, save_lock
+from xcraft.lock import Recorded, load_lock, lock_path, save_lock
 from xcraft.project import Project
 from xcraft.publish import _check_installable
-from xcraft.resolution import ResolutionError, lock_installed, resolve
+from xcraft.resolution import ISO_TOOLS, ResolutionError, published, resolve
 from xcraft.signing import check_signatures
 from xcraft.sources import write_manifest
 
@@ -426,34 +426,41 @@ def test_lock_versions_of_all_the_architectures(root: Path) -> None:
     assert load_lock(Project.find()).sources["toyrun"] == "2-1"
 
 
-def test_lock_installed(root: Path) -> None:
-    project = Project.find()
-
-    def installed(name: str, evr: str) -> dict[str, Locked]:
-        return {name: Locked(evr=evr, arch=ARCH.removesuffix("_v2"), source="toyarch", repo="toys", sha256="")}
-
-    # installed in its latest version, but locked in the one all the architectures have: to install again
-    assert not lock_installed(project, installed("toyarch", "2-1"))
-    assert load_lock(project).sources["toyarch"] == "1-1"
-    assert lock_installed(project, installed("toyarch", "1-1"))
-    with pytest.raises(ResolutionError, match="installed in another version than locked: toyarch"):
-        lock_installed(project, installed("toyarch", "2-1"))
-    # a package of the version installed only, once toyarch is locked
-    lock = load_lock(project)
-    del lock.sources["toyarch"]
-    save_lock(project, lock)
-    assert not lock_installed(project, installed("toyarch-new", "2-1"))
-    assert load_lock(project).sources["toyarch"] == "1-1"
+def test_lock_records_runtime(root: Path) -> None:
+    (root / "xcraft.toml").write_text(f'{TOML}\n[publish]\nextra = ["bc"]\n')
+    assert xcraft("build", "--dry-run")[0] == 0
+    lock = load_lock(Project.find())
+    # what is published, pinned when preparing, for all the architectures
+    assert lock.runtime.keys() == {"x86_64_v2", "aarch64"}
+    assert {"bc", "glibc"} <= set(lock.runtime[ARCH]) <= lock.binaries[ARCH].keys()
+    # what the lock has, until it can be resolved, which publishing needs
+    (root / "xcraft.toml").write_text(f'{TOML}\n[publish]\nextra = ["no-such-package"]\n')
+    assert xcraft("build", "--dry-run")[0] == 0
+    assert load_lock(Project.find()).runtime == lock.runtime
+    with pytest.raises(ResolutionError, match=f"cannot install, on {ARCH}: no-such-package"):
+        published(Project.find())
 
 
 @pytest.mark.skipif(ARCH != "x86_64_v2", reason="the tools of the ISO are for x86_64")
 def test_iso_tools(root: Path) -> None:
+    (root / "xcraft.toml").write_text(f'{TOML}\n[iso]\ninstaller = ["bash"]\n')
+    assert xcraft("build", "--dry-run")[0] == 0
     project = Project.find()
-    _install_tools(project)
     lock = load_lock(project)
-    assert {"dosfstools", "memtest86+", "mtools", "syslinux-nonlinux", "xorriso"} <= set(lock.iso[project.arch])
+    # pinned when preparing, with what the installer needs
+    assert set(ISO_TOOLS) <= set(lock.iso[project.arch]) <= lock.binaries[project.arch].keys()
+    assert {"bash", "glibc"} <= set(lock.runtime[project.arch]) <= lock.binaries[project.arch].keys()
     assert {"dosfstools", "libisoburn", "memtest86+", "mtools", "syslinux"} <= lock.sources.keys()  # by source
     assert lock.iso.keys() == {project.arch}
+    # installed from the pinned packages
+    with project.work("tools") as work:
+        record = f"{container.DNF_LOCK} python3 /xcraft/record.py /work/tools.json"
+        container.run(project, "tools", f"{_INSTALL_TOOLS} && {record}", volumes=[f"{work}:/work"])
+        _check_tools(project, work / "tools.json")
+        del lock.iso[project.arch][0]
+        save_lock(project, lock)
+        with pytest.raises(RuntimeError, match="the tools making the ISO are not those pinned in the lock: "):
+            _check_tools(project, work / "tools.json")
 
 
 def test_snapshots_checked_in_turn(root: Path, tmp_path: Path) -> None:
@@ -759,7 +766,7 @@ def test_lock_upgrade(root: Path) -> None:
     lock_path(project).write_text("[sources]\n" + "".join(f'"{s}" = "{v}"\n' for s, v in sources.items()))
     code, output = xcraft("build", "--dry-run")
     assert code == 1
-    assert "the lock has the format 1, not 2: xcraft lock --upgrade upgrades it" in output
+    assert "the lock has the format 1, not 3: xcraft lock --upgrade upgrades it" in output
     code, output = xcraft("lock", "--upgrade")
     assert code == 0, output
     assert load_lock(project).binaries[ARCH]["bash"].source == "bash"

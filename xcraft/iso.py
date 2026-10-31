@@ -2,7 +2,7 @@
 
 Its repository is the closure of xcp-ng-deps in the snapshot, and install.img, the installer's root filesystem, is
 installed from the snapshot too, which has its packages. The tools making it, which are not in the build
-environment image, are installed in its containers, in the versions of the lock.
+environment image, are installed in its containers, from the packages pinned for them in the lock.
 """
 
 from __future__ import annotations
@@ -20,11 +20,12 @@ from rich.markup import escape
 
 from xcraft import buildid, buildkey, remote
 from xcraft.container import DNF_LOCK, buildenv_hash, run
-from xcraft.display import activity, console
-from xcraft.lock import Locked, load_lock, save_lock
+from xcraft.display import activity, changes, console
+from xcraft.lock import load_lock
+from xcraft.pinned import REPO_ID
 from xcraft.project import INTERNAL
 from xcraft.publish import REPO, snapshot
-from xcraft.resolution import lock_installed, prepare, resolve_image
+from xcraft.resolution import ISO_TOOLS, prepare, resolve
 from xcraft.signing import signing_key
 from xcraft.sources import sha256_of
 
@@ -32,8 +33,11 @@ if TYPE_CHECKING:
     from xcraft.project import Project, Remote
     from xcraft.signing import Signer
 
-TOOLS = ["dosfstools", "memtest86+", "mtools", "syslinux-nonlinux", "xorriso"]
-_INSTALL_TOOLS = f"{DNF_LOCK} dnf -q -y --setopt=install_weak_deps=False install {' '.join(TOOLS)}"
+_INSTALL_TOOLS = (
+    f"{DNF_LOCK} dnf -q -y --disablerepo='*' --enablerepo={REPO_ID} --setopt=install_weak_deps=False install "
+    + " ".join(ISO_TOOLS)
+)
+"""Installs the tools making the ISO, which the image does not have, from the pinned packages only."""
 KEY_FILE = "RPM-GPG-KEY-xcpng"
 """The public key of the signed repository of the ISO, as named in its .treeinfo."""
 
@@ -74,8 +78,10 @@ def iso_key(project: Project, *, netinstall: bool, volid: str | None, signer: Si
         _templates(project),
         lock.sources,
         *[getattr(lock, f).of(project.arch) for f in ("requires", "provides", "buildrequires")],
-        lock.runtime.get(project.arch, []),
-        lock.iso.get(project.arch, []),
+        *(
+            {n: lock.binaries[project.arch][n].text() for n in getattr(lock, f).get(project.arch, [])}
+            for f in ("runtime", "iso")
+        ),
         buildenv_hash(),
         [
             Path(__file__).with_name(module).read_text()
@@ -238,37 +244,20 @@ def build_iso(
         return make_iso(project, dest / REPO / project.arch, output, netinstall=netinstall, volid=volid, signer=signer)
 
 
-def _lock_tools(project: Project, recorded: dict[str, Locked]) -> bool:
-    """Add the upstream packages installed with the tools to the lock, and return whether they have the locked
-    versions: not when it locked other ones.
+def _check_tools(project: Project, recorded: Path) -> None:
+    """Raise when the tools making the ISO, `recorded` by record.py, are not those pinned in the lock, besides the
+    image's.
     """
-    image = set(resolve_image(project).image)
-    installed = {name: p for name, p in recorded.items() if name not in image}
-    if not lock_installed(project, installed):
-        return False
-    with project.lock():
-        lock = load_lock(project)
-        lock.iso[project.arch] = sorted(installed)
-        save_lock(project, lock)
-    return True
-
-
-def _install_tools(project: Project) -> None:
-    """Lock the upstream packages of the tools making the ISO, installed until they have the locked versions."""
-    for _ in range(3):
-        with project.work("tools") as work:
-            run(
-                project,
-                "tools",
-                f"{_INSTALL_TOOLS} && {DNF_LOCK} python3 /xcraft/record.py /work/tools.json",
-                volumes=[f"{work}:/work"],
-                show="installing the tools making the ISO",
-            )
-            recorded = json.loads((work / "tools.json").read_text())["installed"]
-        if _lock_tools(project, {name: Locked.model_validate(p) for name, p in recorded.items()}):
-            return
-    msg = "the tools making the ISO are not available in the versions locked for all the architectures"
-    raise RuntimeError(msg)
+    lock = load_lock(project)
+    pinned, image = lock.binaries.get(project.arch, {}), {*lock.image.get(project.arch, [])}
+    installed = json.loads(recorded.read_text())["installed"]
+    differences = changes(
+        {f"{n}-{pinned[n].evr}.{pinned[n].arch}" for n in lock.iso.get(project.arch, [])},
+        {f"{n}-{p['evr']}.{p['arch']}" for n, p in installed.items() if n not in image},
+    )
+    if differences:
+        msg = f"the tools making the ISO are not those pinned in the lock: {', '.join(differences)}"
+        raise RuntimeError(msg)
 
 
 def make_iso(
@@ -312,7 +301,9 @@ def _make_iso(
     version of the distribution it installs.
     """
     iso = project.config.iso
-    _install_tools(project)  # in the versions of the lock, which the ISO is then made with
+    if error := resolve(project).tools_error:
+        msg = f"the tools making the ISO cannot be installed: {error}"
+        raise RuntimeError(msg)
     with project.work("iso") as work:
         (work / "config.json").write_text(
             json.dumps({
@@ -324,10 +315,12 @@ def _make_iso(
         run(
             project,
             "iso",
-            f"{_INSTALL_TOOLS} && sudo python3 /xcraft/iso.py /work/config.json",
+            f"{_INSTALL_TOOLS} && {DNF_LOCK} python3 /xcraft/record.py /work/tools.json"
+            " && sudo python3 /xcraft/iso.py /work/config.json",
             volumes=volumes,
             show="making the tree of the ISO",
         )
+        _check_tools(project, work / "tools.json")
         tree = work / "tree"
         if signer and not netinstall:
             signer.sign_file(tree / "repodata/repomd.xml")
