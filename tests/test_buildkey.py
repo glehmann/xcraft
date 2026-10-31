@@ -14,7 +14,7 @@ from xcraft import buildid, buildkey
 from xcraft.buildid import BuildId
 from xcraft.buildkey import recipe_key
 from xcraft.cache import build_keys
-from xcraft.lock import Lock, Recorded, save_lock
+from xcraft.lock import Lock, Pin, Recorded, save_lock
 from xcraft.project import Project
 from xcraft.specs import hash_dir
 
@@ -47,9 +47,21 @@ def test_build_key_inputs(project: Project, monkeypatch: pytest.MonkeyPatch) -> 
     # b built against a: the binary packages of a, what they need, and what it needs to be built
     ours(project, monkeypatch, {"a": set(), "b": {"a"}})
     hashes = {"a": "1" * 64, "b": "2" * 64}
+    pin = Pin(evr="1-1", arch="noarch", sha256="1" * 64, source="glibc")
+    pins = {
+        "glibc": pin,
+        "zlib": pin.model_copy(update={"source": "zlib"}),
+        "bash": pin.model_copy(update={"source": "bash"}),
+    }
     lock = Lock(
-        sources={"glibc": "1-1", "zlib": "1-1"}, image={arch: ["glibc"]}, roots=Recorded(shared={"b": ["zlib"]})
+        sources={"glibc": "1-1", "zlib": "1-1", "bash": "1-1"},
+        binaries={arch: pins},
+        image={arch: ["glibc"]},
+        roots=Recorded(shared={"b": ["zlib"]}),
     )
+
+    def repin(name: str, **update: str) -> None:
+        lock.binaries[arch][name] = lock.binaries[arch][name].model_copy(update=update)
 
     def keys() -> dict[str, str]:
         save_lock(project, lock)
@@ -57,8 +69,12 @@ def test_build_key_inputs(project: Project, monkeypatch: pytest.MonkeyPatch) -> 
 
     before = keys()
     for change, changed in (
-        (lambda: lock.sources.update(glibc="1-2"), {"a", "b"}),  # of the image
-        (lambda: lock.sources.update(zlib="1-2"), {"b"}),  # of the build root of b
+        (lambda: repin("glibc", sha256="2" * 64), {"a", "b"}),  # of the image: other contents, of the same version
+        (lambda: repin("glibc", evr="1-2"), {"a", "b"}),
+        (lambda: repin("zlib", sha256="2" * 64), {"b"}),  # of the build root of b
+        (lambda: repin("bash", sha256="2" * 64), set()),  # of no image nor build root of the project
+        (lambda: lock.image[arch].append("bash"), {"a", "b"}),
+        (lambda: lock.sources.update(zlib="1-2"), set()),  # what its binary packages have
         (lambda: lock.buildrequires.shared.update(b=["foo"]), {"b"}),
         (lambda: lock.requires.shared.update(a=["bar"]), {"b"}),  # of the binary package a, which b gets
         (lambda: lock.provides.shared.update(a=["libbar.so.1"]), {"b"}),
@@ -91,6 +107,41 @@ def test_inputs_read_once(project: Project, monkeypatch: pytest.MonkeyPatch) -> 
     project.parsed = {}
     ids = {name: BuildId(number=1, key=hashes[name]) for name in hashes}
     assert buildkey.key(other.of({"c"}, ids), "c") != buildkey.key(other.of({"a"}, ids), "a")
+
+
+def test_image_of_the_lock(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    ours(project, monkeypatch, {"a": set(), "b": set()})
+    save_lock(project, Lock())
+    # a lock of another commit, whose image has a binary package that a of ours replaces, like kernel-headers: b is
+    # built against a there, not with the current lock
+    pin = Pin(evr="1-1", arch="noarch", sha256="1" * 64, source="a-upstream")
+    other = Lock(sources={"a-upstream": "1-1"}, binaries={project.arch: {"a": pin}}, image={project.arch: ["a"]})
+    hashes = {"a": "1" * 64, "b": "2" * 64}
+    assert (buildkey.Inputs(project, hashes, other).deps["b"], buildkey.Inputs(project, hashes).deps["b"]) == (
+        {"a"},
+        set(),
+    )
+
+
+def test_lock_inputs_of_reused_builds() -> None:
+    pin = Pin(evr="1-1", arch="noarch", sha256="1" * 64, source="zlib")
+    platforms = [buildkey.Platform("x86_64_v2", {"b": frozenset()}, {"b": ()})]
+
+    def inputs(*binaries: tuple[str, Pin]) -> dict[str, list]:
+        lock = Lock(
+            sources={"zlib": "1-1", "zlib-ng": "1-1"},
+            binaries={"x86_64_v2": dict(binaries)},
+            image={"x86_64_v2": []},
+            roots=Recorded(shared={"b": [name for name, _ in binaries]}),
+        )
+        return buildkey.lock_inputs(platforms, lock, "b", {"zlib"})
+
+    before = inputs(("zlib", pin))
+    # an update of zlib, which xcraft reuse --dep ignores: other versions and contents of the same packages
+    assert inputs(("zlib", pin.model_copy(update={"evr": "1-2", "sha256": "2" * 64}))) == before
+    # but not other packages, nor packages of another source
+    assert inputs(("zlib", pin), ("zlib-ng", pin)) != before
+    assert inputs(("zlib", pin.model_copy(update={"source": "zlib-ng"}))) != before
 
 
 def test_keys_of_cycles(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -185,8 +236,10 @@ def test_recipe_inputs(project: Project, monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_keys_of_upstream_packages_without_versions(project: Project) -> None:
-    with pytest.raises(RuntimeError, match="the lock has no version of glibc"):
-        buildkey.lock_inputs([buildkey.Platform(project.arch, {}, {})], Lock(image={project.arch: ["glibc"]}), "foo")
+    with pytest.raises(RuntimeError, match="the lock has no pinned glibc"):
+        buildkey.lock_inputs(
+            [buildkey.Platform(project.arch, {}, {})], Lock.model_construct(image={project.arch: ["glibc"]}), "foo"
+        )
 
 
 def test_cache_keys_of_development_builds(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
