@@ -29,8 +29,8 @@ def prepare_tree(project: Project, name: str, expected: str | None = None) -> Pa
     The main spec is in SPECS/, everything else in SOURCES/, with the archives
     from the source cache, downloaded when missing (see fetch_sources). The
     files have the modes 0644, or 0755 for those their owners may run, and
-    0444 for the archives, and all of them, directories included, have the
-    time STAGED_TIME: the same trees for the same hash.
+    0444 for the archives, the directories 0755, whatever the umask, and all
+    of them have the time STAGED_TIME: the same trees for the same hash.
     """
     pkg_dir = project.package_dirs[name]
     spec = main_spec(pkg_dir)
@@ -63,6 +63,8 @@ def prepare_tree(project: Project, name: str, expected: str | None = None) -> Pa
         archive.chmod(0o444)
         link(archive, tree / "SOURCES" / filename)
     for path in [tree, *tree.rglob("*")]:
+        if path.is_dir():
+            path.chmod(0o755)
         os.utime(path, (STAGED_TIME, STAGED_TIME))
     return tree
 

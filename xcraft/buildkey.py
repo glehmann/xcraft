@@ -22,11 +22,12 @@ if TYPE_CHECKING:
     from xcraft.lock import Lock
     from xcraft.project import Project
 
-FORMAT = 3
+FORMAT = 4
 """The version of how xcraft gives the builds what their keys cover, besides the scripts of the builds, like the build
 trees, see rpmbuild.prepare_tree(): changed with it, to build them all again. 2: the build trees of the files of the
 keys, from the same reads, with the same modes and times, the configuration of the image in an order of its own. 3:
-the pinned upstream packages only, checked against their SHA-256, see xcraft.pinned."""
+the pinned upstream packages only, checked against their SHA-256, see xcraft.pinned. 4: the directories of the build
+trees of the same modes, whatever the umask."""
 SCRIPTS = ("build.sh", "offline.py", "record.py", "made.py", "rpmdeps.py")
 """The scripts of the builds, in xcraft/buildenv/: see The recipe."""
 RECIPE = hashlib.sha256("".join([REPO_FILE, *((BUILDENV / s).read_text() for s in SCRIPTS)]).encode()).hexdigest()
