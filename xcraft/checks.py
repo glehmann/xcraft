@@ -6,18 +6,16 @@ its spec.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from typing import TYPE_CHECKING
 
 from rich.markup import escape
 
 from xcraft.cache import BuildError, cached_build, release_suffix
-from xcraft.container import BUILDENV
 from xcraft.display import changes, console
 from xcraft.lock import Locked, load_lock, save_lock
 from xcraft.project import write_atomically
-from xcraft.resolution import Resolved, prepare, resolve, resolve_rpm_deps
+from xcraft.resolution import Resolved, prepare, resolve, resolve_rpm_deps, rpm_deps_context
 from xcraft.specs import is_debug
 
 if TYPE_CHECKING:
@@ -123,23 +121,23 @@ packages of ours they need, by their names in the specs."""
 
 
 def _record_new_rpm_deps(
-    project: Project, builds: dict[str, Path], keys: dict[str, str], context: str, *, quiet: bool
+    project: Project, builds: dict[str, Path], supplied: dict[str, str], context: str, *, quiet: bool
 ) -> None:
-    """Keep with the `builds` what rpm generated for their binary packages, in `context`, but for those which cannot
-    be recorded yet, shown unless `quiet`: they are recorded again next time, once what they need is there.
+    """Keep with the `builds` what rpm generated for their binary packages, in `context`, resolved with the builds of
+    ours `supplied`, by package and cache key, but for those which cannot be recorded yet, shown unless `quiet`: they
+    are recorded again next time, once what they need is there.
     """
-    built = [n for n, k in keys.items() if cached_build(project, n, k).exists()]
-    current = [rpm for n in built for rpm in _rpms(cached_build(project, n, keys[n]))]
+    current = [rpm for n, k in supplied.items() for rpm in _rpms(cached_build(project, n, k))]
     # the binary packages of the builds, by their names as built, with the release suffix, to their names in the specs
     names = {
         name: dict(
             zip(
-                (package := project.parsed[name]).built_names(release_suffix(keys[name])),
+                (package := project.parsed[name]).built_names(release_suffix(supplied[name])),
                 (b.name for b in package.binaries),
                 strict=True,
             )
         )
-        for name in built
+        for name in supplied
     }
     in_specs = {as_built: parsed for binaries in names.values() for as_built, parsed in binaries.items()}
     binaries = {
@@ -182,29 +180,22 @@ def record_rpm_deps(project: Project, names: list[str], keys: dict[str, str], *,
     """Record in the lock what rpm generated for the binary packages of the cached builds of `names`, with `keys`,
     without their release suffixes, and return whether the lock changed.
 
-    What a build generated is kept with it, for the same version of the recording, RECORDING, and what the requirements
-    resolve to: the locked versions, the requirements of our specs, the binary packages of ours and their capabilities,
-    the packages of the image, and the extra upstream ones. What cannot be recorded yet is shown, unless `quiet`.
+    What a build generated is kept with it, for the same version of the recording, RECORDING, and what its requirements
+    are resolved with, the builds of ours included: see rpm_deps_context(). What cannot be recorded yet is shown,
+    unless `quiet`.
     """
-    if not (builds := {n: build for n in names if (build := cached_build(project, n, keys[n])).exists()}):
+    # the builds the requirements may resolve to
+    supplied = {n: k for n, k in keys.items() if cached_build(project, n, k).exists()}
+    if not (builds := {n: cached_build(project, n, keys[n]) for n in names if n in supplied}):
         return False
-    lock, config = load_lock(project), project.config
-    wanted = sorted({r for p in project.parsed.values() for r in p.requirements})
-    ours = {b.name: b.provides for p in project.parsed.values() for b in p.binaries}
-    context = hashlib.sha256(
-        json.dumps(
-            [(BUILDENV / "resolve.py").read_text(), lock.sources, wanted, ours, sorted(config.packages),
-             config.release_suffixes, config.extra_upstream],
-            sort_keys=True,
-        ).encode()
-    ).hexdigest()  # fmt: skip
+    context = rpm_deps_context(project, supplied)
 
     def found(build: Path) -> dict | None:
         recorded = json.loads(path.read_text()) if (path := build / "rpm-deps.json").exists() else {}
         return recorded if (recorded.get("version"), recorded.get("context")) == (RECORDING, context) else None
 
     if new := {name: build for name, build in builds.items() if not found(build)}:
-        _record_new_rpm_deps(project, new, keys, context, quiet=quiet)
+        _record_new_rpm_deps(project, new, supplied, context, quiet=quiet)
     # what dry runs do too, without the lock of the project otherwise
     with project.lock():
         lock = load_lock(project)

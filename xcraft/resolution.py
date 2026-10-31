@@ -291,16 +291,36 @@ def resolve_rpm_deps(project: Project, names: dict[str, str], rpms: list[Path]) 
     the release, like the livepatch packages of the kernel; the result is by the names as built.
     """
     parsed = {b.name: b for package in project.parsed.values() for b in package.binaries}
-    wanted = sorted({dep_name(r) for p in project.parsed.values() for r in p.requirements})
     data = {
         **_image_data(project),
         "record": {
             built: {"requires": parsed[name].requires, "provides": parsed[name].provides}
             for built, name in names.items()
         },
-        "wanted": wanted,
+        "wanted": _wanted(project),
     }
     return _run(project, data, show="recording what rpm generated for the packages built", rpms=rpms)
+
+
+def _wanted(project: Project) -> list[str]:
+    """Return the capabilities our specs require, which the resolution of what rpm generated records the providers
+    of.
+    """
+    return sorted({dep_name(r) for p in project.parsed.values() for r in p.requirements})
+
+
+def rpm_deps_context(project: Project, builds: dict[str, str]) -> str:
+    """Return the hash of what resolve_rpm_deps() resolves with, but the binary packages it records, which their
+    builds cover: its script, the repositories, the request of _image_data(), with the base image by digest rather
+    than its packages, the capabilities our specs require, the extra upstream RPMs, and the `builds` of ours it gets,
+    by package and cache key.
+    """
+    config = project.config
+    inputs = [
+        _SCRIPT.read_text(), repo_file(project), project.arch, config.release_suffixes, load_lock(project).sources,
+        config.base_image, sorted({*config.packages, *PACKAGES}), _wanted(project), config.extra_upstream, builds,
+    ]  # fmt: skip
+    return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
 
 
 def upstream_sources(project: Project, names: list[str]) -> list[str]:
