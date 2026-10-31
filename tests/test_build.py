@@ -121,7 +121,7 @@ def test_spec_changed_before_its_build_is_not_cached(root: Path, monkeypatch: py
     monkeypatch.setattr(builder, "check_resolved", changed)
     code, output = xcraft("build", "trivial")
     assert code == 1
-    assert "base/trivial changed during the build, build it again" in output
+    assert "base/trivial changed since the builds started, build it again" in output
 
 
 def write_spec(root: Path, name: str, requires: str = "", files: str = "/usr/share/doc/%{name}") -> None:

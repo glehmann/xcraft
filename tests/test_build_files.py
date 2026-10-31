@@ -30,7 +30,7 @@ from xcraft.publish import build_dependencies
 from xcraft.resolution import Resolved
 from xcraft.rpmbuild import prepare_tree
 from xcraft.sources import cache_source, write_manifest
-from xcraft.specs import Binary, Package, hash_dir, main_spec
+from xcraft.specs import STAGED_TIME, Binary, Package, hash_dir, main_spec
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -54,11 +54,23 @@ def test_stage_like_a_packaging_repository(project: Project, tmp_path: Path) -> 
     (tmp_path / "foo-1.0.tar.gz").write_text("archive")
     write_manifest(pkg / "sources", {"foo-1.0.tar.gz": cache_source(project.source_cache, tmp_path / "foo-1.0.tar.gz")})
 
-    tree = prepare_tree(project, "foo")
+    (pkg / "fix.patch").chmod(0o700)
+    (pkg / "empty").mkdir()
+    tree = prepare_tree(project, "foo", hash_dir(pkg, project.root))
     # other specs are sources of the main one
     assert files(tree) == ["SOURCES/fix.patch", "SOURCES/foo-1.0.tar.gz", "SOURCES/foo-helper.spec", "SOURCES/sub/conf",
                            "SPECS/foo.spec"]  # fmt: skip
     assert (tree / "SOURCES/foo-1.0.tar.gz").samefile(next(project.source_cache.glob("*/foo-1.0.tar.gz")))
+    # what the hash covers only: the same tree for the same hash, whatever the checkout
+    assert not (tree / "SOURCES/empty").exists()
+    modes = {path.relative_to(tree).as_posix(): path.stat().st_mode & 0o777 for path in tree.rglob("*")}
+    assert modes == {"SOURCES": 0o755, "SOURCES/fix.patch": 0o755, "SOURCES/foo-1.0.tar.gz": 0o444,
+                     "SOURCES/foo-helper.spec": 0o644, "SOURCES/sub": 0o755, "SOURCES/sub/conf": 0o644,
+                     "SPECS": 0o755, "SPECS/foo.spec": 0o644}  # fmt: skip
+    assert {path.stat().st_mtime for path in [tree, *tree.rglob("*")]} == {STAGED_TIME}
+    # nor another one than the one of the key
+    with pytest.raises(BuildError, match="base/foo changed since the builds started"):
+        prepare_tree(project, "foo", "0" * 64)
 
     write_manifest(pkg / "sources", {"foo-2.0.tar.gz": "0" * 64})
     project.packages = {"foo": Package(name="foo", source0="foo-2.0.tar.gz")}  # not a URL to download it from
@@ -296,12 +308,19 @@ def test_hash_dir_covers_what_builds_get(tmp_path: Path) -> None:
     assert hash_dir(pkg) == executable
     (pkg / "sub/origin").write_text("a source")
     assert hash_dir(pkg) != executable
+    # a link is the file of the project it points to, like the sources of another package
     shared = tmp_path / "shared"
-    shared.mkdir()
+    shared.write_text("shared")
     (pkg / "linked").symlink_to(shared)
-    linked = hash_dir(pkg)
-    (shared / "file").write_text("in a linked directory")
-    assert hash_dir(pkg) != linked
+    linked = hash_dir(pkg, tmp_path)
+    shared.write_text("changed")
+    assert hash_dir(pkg, tmp_path) != linked
+    # not one out of it, which depends on the machine, nor a directory, nor nothing
+    for target in (shared, tmp_path, tmp_path / "missing"):
+        (pkg / "linked").unlink()
+        (pkg / "linked").symlink_to(target)
+        with pytest.raises(ValueError, match="is a link to"):
+            hash_dir(pkg, pkg if target == shared else tmp_path)
 
 
 def test_recipe(monkeypatch: pytest.MonkeyPatch) -> None:
