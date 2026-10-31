@@ -43,21 +43,22 @@ def import_(
     The history of a package's packaging repository, for the branches of \[import] in xcraft.toml, rewritten for the
     project the same way each time: importing again gives the new commits on top. A source RPM, like XenServer's, as a
     new commit of the srpm_branch of \[import]. --all imports again the packages which have import branches of
-    histories.
+    histories, on the branches they have import branches of, like ydi/9.
     """
     project = Project.find()
     imports = project.config.import_
+    imported: dict[str, list[str]] = {}
     if all_:
         heads = git("-C", str(project.root), "for-each-ref", "--format=%(refname:lstrip=3)", "refs/heads/import/")
-        history = set(imports.branches) - {imports.srpm_branch}
-        sources = sorted(
-            {pkg for pkg, _, branch in (head.partition("/") for head in heads.splitlines()) if branch in history}
-        )
+        for pkg, _, name in sorted(head.partition("/") for head in heads.splitlines()):
+            imported.setdefault(pkg, []).append(name)
+        # but those of source RPMs only
+        imported = {pkg: names for pkg, names in imported.items() if set(names) - {imports.srpm_branch}}
+        sources = list(imported)
     if not sources:
         msg = "no package given"
         raise typer.BadParameter(msg)
     names = _names(project, sources, repo, url)
-    branches = [branch] if branch else imports.branches
     with project.lock():
         if any(source.endswith(".src.rpm") for source in sources):
             prepare(project, roots=False)  # for the build environment, which unpacks them
@@ -65,6 +66,7 @@ def import_(
             pkg_dir = project.package_dirs.get(name, project.root / repo / name)
             with project.work("import") as work, activity(f"[{i}/{len(sources)}] importing {source}") as on_line:
                 if not source.endswith(".src.rpm"):
+                    branches = [branch] if branch else imported.get(name, imports.branches)
                     heads = import_history(project.root, pkg_dir, url or DEFAULT_URL.format(name=name), branches)
                 elif commit := import_srpm(project, _download(source, work, on_line), pkg_dir, on_line=on_line):
                     heads = {imports.srpm_branch: commit}

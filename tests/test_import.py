@@ -193,6 +193,16 @@ def test_import_all(root: Path, upstream: Path) -> None:
     assert result.exit_code == 0, result.output
     assert git(root, "rev-parse", "import/foo/master~") == master
     assert git(root, "branch", "--list", "import/bar/*").split() == ["import/bar/XS-9.0"]
+    # on the branches of its import branches, rather than those of [import]
+    git(upstream, "checkout", "-qb", "ydi/9")
+    assert runner.invoke(app, ["import", "foo", "--url", f"file://{upstream}", "--branch", "ydi/9"]).exit_code == 0
+    git(root, "branch", "-qD", "import/foo/master", "import/foo/XS-9.0")
+    commit_files(upstream, {"SPECS/foo.spec": "Name: foo\nVersion: 4.0\n"})
+    ydi = git(root, "rev-parse", "import/foo/ydi/9")
+    result = runner.invoke(app, ["import", "--all", "--url", f"file://{upstream}"])
+    assert result.exit_code == 0, result.output
+    assert git(root, "rev-parse", "import/foo/ydi/9~") == ydi
+    assert git(root, "branch", "--list", "import/foo/*").split() == ["import/foo/ydi/9"]
 
 
 def test_import_flat(root: Path, tmp_path: Path) -> None:
