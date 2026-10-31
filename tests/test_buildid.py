@@ -428,6 +428,18 @@ def test_reused_builds(root: Path) -> None:
     assert output.splitlines()[-1] == "trivial: changed itself, built again"
 
 
+def test_reused_builds_of_files_changed_through_links(root: Path) -> None:
+    # a file of with-deps, which is the one of trivial
+    (root / "base/trivial/notes").write_text("notes")
+    (root / "base/with-deps/notes").symlink_to("../trivial/notes")
+    commit_base(root)
+    git(root, "checkout", "-qb", "feature")
+    (root / "base/trivial/notes").write_text("changed")
+    code, output = xcraft("reuse", "with-deps")
+    assert code == 0, output
+    assert output.splitlines()[-1] == "with-deps: changed itself, built again"
+
+
 def test_reused_builds_of_upstream_updates(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # a script run by toyrun, upstream, which rpm generates a requirement on: with-deps is built against toyrun
     spec = root / "base/trivial/trivial.spec"

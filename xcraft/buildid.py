@@ -250,10 +250,13 @@ def reuse(project: Project, names: list[str], sources: list[str]) -> list[str]:
         return forked[name].matches(buildkey.key(forked_inputs.of(component, forked), name))  # or reuses its build
 
     def changed(path: Path) -> bool:
-        """Return whether the files of `path` changed since the fork, untracked ones included."""
-        relative = path.relative_to(project.root).as_posix()
-        return _git(project, "diff", "--quiet", fork, "--", relative) is None or bool(
-            _git(project, "ls-files", "--others", "--exclude-standard", "--", relative)
+        """Return whether the files of `path` changed since the fork, untracked ones included, with those its links
+        point to, like those of another package: what its hash covers, see specs.hash_dir().
+        """
+        links = [p.resolve() for p in path.rglob("*") if p.is_symlink()]
+        paths = [p.relative_to(project.root).as_posix() for p in [path, *links]]
+        return _git(project, "diff", "--quiet", fork, "--", *paths) is None or bool(
+            _git(project, "ls-files", "--others", "--exclude-standard", "--", *paths)
         )
 
     def reusable(name: str, ids: dict[str, BuildId]) -> bool:
