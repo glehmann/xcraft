@@ -10,7 +10,6 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from xcraft import resolution
 from xcraft.container import BUILDENV, PACKAGES
 from xcraft.graph import build_deps, reachable
 from xcraft.localrepo import REPO_FILE
@@ -84,9 +83,9 @@ class Platform:
 
     @classmethod
     def of(cls, project: Project, lock: Lock) -> Platform:
-        """Return what the keys cover of the architecture of `project`, with `lock`."""
+        """Return what the keys cover of the architecture of `project`, with `lock`, and its image."""
         packages = locked_packages(project.parsed, lock, project.arch)
-        deps = build_deps(packages, resolution.resolve_image(project).image)
+        deps = build_deps(packages, lock.image.get(project.arch, []))
         return cls(
             project.arch,
             {name: frozenset(needed) for name, needed in deps.items()},
@@ -95,15 +94,20 @@ class Platform:
 
 
 def lock_inputs(on: list[Platform], lock: Lock, name: str, ignored: set[str] | None = None) -> dict[str, list]:
-    """Return what `lock` has for `name` on the architectures `on`, but the versions of the upstream source packages
-    `ignored`, those xcraft reuse ignores the updates of: see The lock.
+    """Return what `lock` has for `name` on the architectures `on`, but the versions and the SHA-256 of the binary
+    packages of the upstream source packages `ignored`, those xcraft reuse ignores the updates of: see The lock.
     """
 
-    def versions(sources: list[str]) -> dict[str, str | None]:
-        if missing := [s for s in sources if s not in lock.sources]:  # rather than keys of unknown versions
-            msg = f"the lock has no version of {', '.join(missing)}: see xcraft lock"
+    def pinned(arch: str, names: list[str]) -> dict[str, list[str]]:
+        pins = lock.binaries.get(arch, {})
+        if missing := [n for n in names if n not in pins]:  # rather than keys of unknown packages
+            msg = f"the lock has no pinned {', '.join(missing)} for {arch}: see xcraft lock"
             raise RuntimeError(msg)
-        return {source: None if source in (ignored or set()) else lock.sources[source] for source in sources}
+        return {
+            n: [p.arch, p.source] if p.source in (ignored or set()) else [p.evr, p.arch, p.sha256, p.source]
+            for n in names
+            for p in [pins[n]]
+        }
 
     def generated(platform: Platform) -> dict[str, list[list[str]]]:
         deps, arch = platform.deps, platform.arch
@@ -112,8 +116,8 @@ def lock_inputs(on: list[Platform], lock: Lock, name: str, ignored: set[str] | N
 
     return {
         platform.arch: [
-            versions(lock.image.get(platform.arch, [])),
-            versions(lock.roots.of(platform.arch).get(name, [])),
+            pinned(platform.arch, lock.image.get(platform.arch, [])),
+            pinned(platform.arch, lock.roots.of(platform.arch).get(name, [])),
             lock.buildrequires.of(platform.arch).get(name, []),
             generated(platform),
         ]

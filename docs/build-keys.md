@@ -94,18 +94,27 @@ The versions of the upstream packages of the image are not in the recipe, but in
 
 For each architecture, what `xcraft.lock` has for the package, an array of:
 
-1. **The image**: the upstream source packages of the image of the architecture, by name, with their locked versions.
-2. **The build root**: the upstream source packages of its build root, but those of the image, by name, with their
-   locked versions.
+1. **The image**: the upstream binary packages of the image of the architecture, by name, each as its pin in the lock.
+2. **The build root**: the upstream binary packages of its build root, but those of the image, by name, each as its
+   pin in the lock.
 3. **Its dynamic BuildRequires**, those its `%generate_buildrequires` asks for, as recorded by its builds.
 4. **What rpm generated** for the binary packages of the packages it is built against, directly or not, on that
    architecture: by binary package, an array of the requirements they resolve to, and of their capabilities our specs
    require. They are what the build root is resolved from, with the BuildRequires of the spec, which the package
    directory covers.
 
-The build root and the image are resolved from the specs and the lock by dnf, for each architecture, on any machine:
-the lock has their versions, so the key covers what the build environment installs, without resolving anything. See
-`buildkey.lock_inputs()`.
+The pin of a binary package is an array of its epoch-version-release, its architecture, the SHA-256 of its RPM, and
+the name of its source package: the RPM the builds get, whatever the repositories have now. For `xcraft reuse --dep`,
+the pins of the binary packages of the source packages it ignores the updates of are only their architectures and
+their source packages: their names stay in the image and the build root, so an update adding or removing a binary
+package is not reused.
+
+The image and the build roots are resolved from the specs and the lock by dnf, for each architecture, on any
+machine, and pinned in the lock, see `resolution.prepare()`: the key covers what the build environment installs,
+without resolving anything. A pin stays as long as the version of its source package does, even when the repositories
+publish other contents for it, until `xcraft lock --update` pins it again: a build then fails, rather than getting
+another RPM. See `buildkey.lock_inputs()`, and the format of the lock, `lock.FORMAT`, which `xcraft lock --upgrade`
+upgrades.
 
 ## The dependencies
 
@@ -121,7 +130,11 @@ with `%ifarch`, has it as a dependency on all of them, for the same key everywhe
 All the inputs of the keys are read once, from one read of the lock: the dependencies come from the specs parsed for
 each architecture, with what that lock recorded, rather than from what the project computed before, maybe with
 another lock, and nothing is read after, from the project or the files. A lock of another commit gives its own
-dependencies, like for `xcraft reuse`. See `buildkey.Inputs`, with `buildkey.Platform`.
+dependencies and image, like for `xcraft reuse`. See `buildkey.Inputs`, with `buildkey.Platform`.
+
+The specs are parsed in the build environment image of the machine running xcraft, see `xcraft.specs`: the keys of a
+lock of another commit take them as parsed now, not as they were then, in its image. A spec whose meaning depends on
+the image, like on its macros, may then have another one.
 
 ## Cycles
 
@@ -181,10 +194,8 @@ On purpose:
 
 Assumed, rather than covered:
 
-- **The upstream repositories do not change a version**: the lock has the versions of the upstream source packages,
-  not the binary packages, nor their SHA-256, which dnf chooses and checks from the repositories, with the scripts of
-  the build environment resolving them, like `resolve.py`. A version published again with other contents, or another
-  choice of binary packages of the same versions, is not a change of the keys.
+- **The pinned RPMs stay available**: the repositories may remove them, which fails the builds then, rather than
+  getting other ones.
 - **The URLs of `extra_upstream` do not change their RPMs**: they are covered by URL, like the base image by digest.
 
 What rpm generated for a build is recorded again when what it resolves to may change: the locked versions, the

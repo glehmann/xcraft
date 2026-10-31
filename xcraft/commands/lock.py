@@ -8,7 +8,7 @@ import typer
 
 from xcraft.build import update_build_ids
 from xcraft.display import console
-from xcraft.lock import choose_versions, load_lock, lock_path, save_lock
+from xcraft.lock import choose_versions, load_lock, lock_path, save_lock, upgrade_lock
 from xcraft.project import Project
 from xcraft.resolution import available_versions, prepare, upstream_sources
 
@@ -22,17 +22,29 @@ def lock(
     outdated: Annotated[
         bool, typer.Option("--outdated", help="Show what --update would change, without changing it, and fail then.")
     ] = False,
+    upgrade: Annotated[
+        bool, typer.Option("--upgrade", help="Upgrade a lock of an older xcraft, pinning its packages again.")
+    ] = False,
 ) -> None:
     """Show the lock of upstream packages, or update it.
 
     --update takes the latest version all the architectures have, but the suffixes of the releases of release_suffixes
-    in xcraft.toml, looking for them natively, on any machine. --outdated, for CI, fails when an update would change
-    the lock.
+    in xcraft.toml, looking for them natively, on any machine, and pins their binary packages again, by their SHA-256,
+    even in the same versions, like those published again. Otherwise, the pinned packages are kept, whatever the
+    repositories have now: a build fails rather than getting other ones. --outdated, for CI, fails when an update
+    would change the versions in the lock.
     """
     if packages and not (update or outdated):
         msg = "packages to update need --update or --outdated"
         raise typer.BadParameter(msg)
     project = Project.find()
+    if upgrade:
+        with project.lock():
+            save_lock(project, upgrade_lock(project))
+            prepare(project)
+            update_build_ids(project)
+        console.print(f"{lock_path(project).relative_to(project.root)} upgraded")
+        return
     if update or outdated:
         with project.lock():
             changed = _update(project, packages or [], write=update)
@@ -62,11 +74,19 @@ def _update(project: Project, packages: list[str], *, write: bool) -> int:
     if not write:
         console.print(f"{len(changed)} to update: xcraft lock --update updates them" if changed else "up to date")
         return len(changed)
-    if changed:
-        current = load_lock(project)  # which may have locked new ones
-        current.sources |= changed
-        save_lock(project, current)
-        prepare(project)  # the images and build roots of the updated packages
-        update_build_ids(project)  # the packages built with them get new numbers
+    current = load_lock(project)  # which may have locked new ones
+    current.sources |= changed
+    save_lock(project, current)
+    prepare(project, repin=set(sources))  # the images and build roots of the updated packages, pinned again
+    update_build_ids(project)  # the packages built with them get new numbers
+    pins = {arch: dict(pins) for arch, pins in current.binaries.items()}
+    repinned = sorted(
+        f"{name} ({arch})"
+        for arch, now in load_lock(project).binaries.items()
+        for name, pin in now.items()
+        if pin.source not in changed and pins.get(arch, {}).get(name, pin) != pin
+    )
+    if repinned:
+        console.print(f"pinned again, of the same versions: {', '.join(repinned)}")
     console.print(f"{len(changed)} updated")
-    return len(changed)
+    return len(changed) + len(repinned)

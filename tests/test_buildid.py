@@ -161,15 +161,15 @@ def test_build_key_inputs(root: Path) -> None:
     assert key() != before
     spec.write_text(spec.read_text().removesuffix("# changed\n"))
     assert key() == before
-    # and the lock, on each architecture: the versions of the image
+    # and the lock, on each architecture: the pinned binary packages of the image
     inputs = buildkey.Inputs(Project.find())
     assert buildkey.key(inputs.of({"trivial"}, {}), "trivial") == before
     for arch in ("x86_64_v2", "aarch64"):
-        source = inputs.lock.image[arch][0]
-        version = inputs.lock.sources[source]
-        inputs.lock.sources[source] = "0-0"
+        name = inputs.lock.image[arch][0]
+        pin = inputs.lock.binaries[arch][name]
+        inputs.lock.binaries[arch][name] = pin.model_copy(update={"sha256": "0" * 64})
         assert buildkey.key(inputs.of({"trivial"}, {}), "trivial") != before
-        inputs.lock.sources[source] = version
+        inputs.lock.binaries[arch][name] = pin
 
 
 def test_shown_inputs(root: Path) -> None:
@@ -184,6 +184,8 @@ def test_shown_inputs(root: Path) -> None:
         assert shown[name]["key"] == key
         assert (root / ".buildid" / name).read_text() == f"{shown[name]['build ID']}\n"
         assert shown[name]["build ID"].split()[1] == key
+        # with the image of the machine the specs are parsed in, which the keys do not cover
+        assert shown[name]["specs parsed in"].startswith("localhost/xcraft-build:")
     # with-deps is built against trivial: its inputs have its build ID
     package, recipe, lock, deps = shown["with-deps"]["inputs"]["with-deps"]
     assert deps == [["trivial", 1, shown["trivial"]["key"]]]
@@ -451,6 +453,10 @@ def test_reused_builds_of_upstream_updates(root: Path, monkeypatch: pytest.Monke
     git(root, "checkout", "-qb", "next")
     lock = load_lock(Project.find())
     lock.sources["toyrun"] = "3-1"  # what the builds would get, which the keys only know from the lock
+    for pins in lock.binaries.values():
+        pins |= {
+            n: p.model_copy(update={"evr": "3-1", "sha256": "3" * 64}) for n, p in pins.items() if p.source == "toyrun"
+        }
     save_lock(Project.find(), lock)
     assert update() == {"trivial": 1, "with-deps": 2}
     assert buildid.reuse(Project.find(), [], ["toyrun"]) == ["with-deps"]

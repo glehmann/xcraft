@@ -14,6 +14,7 @@ from xcraft import build as builder
 from xcraft import buildid, buildkey
 from xcraft.cache import cached_build, has_normal_build, release_suffix
 from xcraft.commands import Arch, Dev, Final, Packages, dev_ident, load
+from xcraft.container import image_tag
 from xcraft.devbuilds import dev_keys
 from xcraft.display import console
 
@@ -95,10 +96,11 @@ def status(
 
 def _show_inputs(project: Project, names: list[str]) -> None:
     """Show the build keys of the packages `names`, with their build IDs and what the keys are computed from, as JSON:
-    a key is the SHA-256 of its inputs, as JSON, keys sorted, then a NUL and the name of its package.
+    a key is the SHA-256 of its inputs, as JSON, keys sorted, then a NUL and the name of its package. The image the
+    specs were parsed in, which depends on the machine, is shown too, but not in the keys.
     """
     shown: dict[str, dict[str, list]] = {}
-    ids = buildid.compute(project, buildid.base(project), shown=shown)
+    ids, parsed_in = buildid.compute(project, buildid.base(project), shown=shown), image_tag(project.on_host())
     console.file.write(
         json.dumps(
             {
@@ -106,6 +108,7 @@ def _show_inputs(project: Project, names: list[str]) -> None:
                     "key": buildkey.key(shown[name], name),
                     "build ID": ids[name].text().strip(),
                     "inputs": shown[name],
+                    "specs parsed in": parsed_in,
                 }
                 for name in names
             },

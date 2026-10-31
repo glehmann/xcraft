@@ -1,11 +1,29 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 from tests import TOML, config
 from xcraft import resolution
-from xcraft.lock import Lock, Locked, Recorded, choose_versions, load_lock, lock_path, save_lock, versionlock
+from xcraft.lock import (
+    Lock,
+    Locked,
+    LockFormatError,
+    Pin,
+    Recorded,
+    choose_versions,
+    load_lock,
+    lock_path,
+    save_lock,
+    upgrade_lock,
+    versionlock,
+)
 from xcraft.project import Project
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
 from xcraft.resolution import ResolutionError, Resolved, lock_sources
 
 
@@ -23,8 +41,12 @@ def project(tmp_path, monkeypatch: pytest.MonkeyPatch) -> Project:  # noqa: ANN0
 
 def test_save_and_load(tmp_path) -> None:  # noqa: ANN001
     project = Project(tmp_path, config())
+    pin = Pin(evr="2.39-145.el10_2", arch="aarch64", sha256="ab" * 32, source="glibc")
     lock = Lock(
-        sources={"glibc": "2.39-145.el10_2", "openssl": "1:3.5.8-1.el10_2"},
+        sources={"glibc": "2.39-145.el10_2", "openssl": "1:3.5.8-1.el10_2", "pixman": "0.43.4-2.el10"},
+        binaries={
+            "aarch64": {"glibc": pin, "pixman": pin.model_copy(update={"evr": "0.43.4-2.el10", "source": "pixman"})}
+        },
         requires=Recorded(shared={"qemu": ["libpng", "pixman"]}, arches={"aarch64": {"qemu": ["pixman"]}}),
         buildrequires=Recorded(shared={"xcp-python-libs": ["python3-wheel"]}),
         runtime={"x86_64_v2": ["bash"]},
@@ -39,7 +61,35 @@ def test_save_and_load(tmp_path) -> None:  # noqa: ANN001
     # one line per package, for readable diffs, and the differences of an architecture in its own table
     assert '[sources]\n"glibc" = "2.39-145.el10_2"\n' in text
     assert '[requires.aarch64]\n"qemu" = [\n    "pixman",\n]\n' in text
-    assert '[roots]  # the upstream source packages of the build roots, but the image\'s\n"qemu" = [\n' in text
+    assert '[roots]  # the upstream binary packages of the build roots, but the image\'s\n"qemu" = [\n' in text
+    # the binary packages, pinned by architecture, in a format of its own
+    assert text.startswith(
+        "# written by xcraft: the versions of the upstream packages, for all the architectures\n\nversion = 2\n"
+    )
+    assert f'"glibc" = "2.39-145.el10_2 aarch64 {"ab" * 32} glibc"\n' in text
+
+
+def test_lock_validation(tmp_path: Path) -> None:
+    project = Project(tmp_path, config())
+    # pins of one format, in full
+    for text in ("1-1 aarch64", f"1-1 aarch64 {'ab' * 31} glibc", f"1-1 aarch64 {'ab' * 32} glibc extra"):
+        with pytest.raises(ValueError, match=r"pinned binary package|sha256"):
+            Pin.parse(text)
+    pin = Pin(evr="1-1", arch="aarch64", sha256="ab" * 32, source="glibc")
+    # the packages of the images and of the build roots, all pinned, of locked sources
+    for invalid, problem in (
+        ({"image": {"aarch64": ["glibc"]}}, "images without pinned binary packages: aarch64"),
+        ({"binaries": {"aarch64": {"glibc": pin}}, "image": {"aarch64": ["bash"]}}, "not pinned in the lock: bash"),
+        ({"binaries": {"aarch64": {"glibc": pin}}, "roots": Recorded(shared={"qemu": ["bash"]})}, "not pinned"),
+        ({"binaries": {"aarch64": {"glibc": pin}}, "sources": {}}, "of source packages not locked: glibc"),
+    ):
+        with pytest.raises(ValueError, match=problem):
+            Lock.model_validate({"sources": {"glibc": "1-1"}, **invalid})
+    # a lock of an older xcraft, upgraded only on purpose
+    lock_path(project).write_text('[sources]\n"glibc" = "1-1"\n\n[image]\n"aarch64" = ["glibc"]\n')
+    with pytest.raises(LockFormatError, match="the lock has the format 1, not 2: xcraft lock --upgrade upgrades it"):
+        load_lock(project)
+    assert upgrade_lock(project) == Lock(sources={"glibc": "1-1"})
 
 
 def test_record() -> None:
@@ -137,6 +187,37 @@ def test_record_roots_locked_meanwhile(project: Project, monkeypatch: pytest.Mon
     lock = load_lock(project)
     assert lock.sources == {"foo": "2-1", "glibc": "2.39-1"}
     assert lock.image == {platform.arch: ["glibc"] for platform in project.all_platforms()}
+
+
+def test_record_pins(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    published = {"sha256": "ab" * 32}
+
+    def image(_platform: Project) -> Resolved:
+        glibc = Locked(evr="2.39-1", arch="x86_64_v2", source="glibc", repo="baseos", sha256=published["sha256"])
+        return Resolved(packages={"glibc": glibc}, image=["glibc"])
+
+    monkeypatch.setattr("xcraft.resolution._image", image)
+    monkeypatch.setattr("xcraft.resolution._roots", image)
+    save_lock(project, Lock(sources={"glibc": "2.39-1"}))
+
+    def pinned() -> set[str]:
+        return {pins["glibc"].sha256 for pins in load_lock(project).binaries.values()}
+
+    resolution._record(project)
+    assert pinned() == {"ab" * 32}
+    # published again, with other contents: the pin is kept, until pinned again on purpose
+    published["sha256"] = "cd" * 32
+    resolution._record(project)
+    assert pinned() == {"ab" * 32}
+    resolution._record(project, frozenset({"glibc"}))
+    assert pinned() == {"cd" * 32}
+    # one name of two packages
+    other = Locked(evr="2.39-2", arch="x86_64_v2", source="glibc", repo="baseos", sha256="ef" * 32)
+    monkeypatch.setattr(
+        "xcraft.resolution._roots", lambda p: image(p).model_copy(update={"packages": {"glibc": other}})
+    )
+    with pytest.raises(ResolutionError, match=r"glibc resolved for .* as 2\.39-1 .*, and as 2\.39-2"):
+        resolution._record(project)
 
 
 def test_record_roots_not_resolved(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
