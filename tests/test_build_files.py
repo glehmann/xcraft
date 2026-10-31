@@ -16,6 +16,7 @@ import typer
 from tests import TOML, config
 from xcraft import build, buildkey, cache
 from xcraft.build import queued
+from xcraft.buildid import BuildId
 from xcraft.buildkey import recipe_key
 from xcraft.cache import BuildError, build_keys, previous_duration
 from xcraft.checks import _check_made, record_rpm_deps
@@ -510,6 +511,28 @@ def test_stored_builds_of_keys_changed(project: Project, monkeypatch: pytest.Mon
     # b in the storage with the key it had then, not with the final one: fetched or built again
     after = build._recorded_again(project, results, keys, {}, b"", stored, dev=None, hashes={})[0]
     assert after == [build.Result("a", "stored"), build.Result("b", "again")]
+
+
+def test_cache_keys_of_development_builds(project: Project) -> None:
+    project.config.platforms = [project.platform]  # the one of the dependencies given
+    ids = {name: BuildId(number=1, key=digit * 64) for name, digit in zip("abcde", "12345", strict=True)}
+
+    def keys(deps: dict[str, set[str]], autorev: dict[str, str]) -> dict[str, str]:
+        project.deps = deps
+        return build_keys(project, autorev, ids=ids)
+
+    chain = {"a": set(), "b": {"a"}, "c": {"b"}}
+    # final builds, against final builds: their build keys
+    assert keys(chain, {}) == {name: f"{ids[name].key}+b1" for name in chain}
+    # a development build of a: those built against it, even through a build of a final suffix, have other keys
+    first, second = keys(chain, {"a": "~1.dev"}), keys(chain, {"a": "~2.dev"})
+    assert first["a"].endswith("+b1~1.dev")
+    assert first["b"].endswith("+b1")
+    assert all(first[name] != f"{ids[name].key}+b1" for name in chain)
+    assert all(first[name] != second[name] for name in chain)
+    # in a cycle of the dependencies of all the architectures: those of each development build of the others
+    cycle = {"d": {"e"}, "e": {"d"}}
+    assert keys(cycle, {"d": "~1.dev", "e": "~1.dev"})["d"] != keys(cycle, {"d": "~1.dev", "e": "~2.dev"})["d"]
 
 
 def test_recordings_not_converging(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:

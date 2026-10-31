@@ -160,10 +160,10 @@ def key(inputs: dict[str, list], name: str) -> str:
     return _sha256(f"{json.dumps(inputs, sort_keys=True)}\0{name}")
 
 
-def development_key(component: dict[str, str], outside: dict[str, str], name: str) -> str:
+def development_key(component: dict[str, list[str]], outside: dict[str, str], name: str) -> str:
     """Return the hash of the cache key of a development build of `name`, or of one built against development builds,
-    with the build keys of the packages of its `component`, by name, and the cache keys of the packages it is built
-    against, out of it, `outside`, by name: see The cache key.
+    with the build key and the development suffix of each package of its `component`, by name, and the cache keys of
+    the packages it is built against, out of it, `outside`, by name: see The cache key.
     """
     together = _sha256(json.dumps([[component[n] for n in sorted(component)], [outside[n] for n in sorted(outside)]]))
     return _sha256(f"{together}\0{name}")

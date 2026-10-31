@@ -47,17 +47,21 @@ def build_keys(
     # of all the architectures, like the build IDs: the same keys on all of them
     deps, autorev = buildkey.dependencies(buildkey.platforms(project)), autorev or {}
     keys: dict[str, str] = {}
+
+    def final(name: str) -> str:
+        return f"{ids[name].key}+b{ids[name].number}"
+
     for component in components(deps):  # the dependencies first
-        outside = sorted({dep for name in component for dep in deps[name]} - component)
-        if not component & autorev.keys() and all(release_suffix(keys[d]) == f"+b{ids[d].number}" for d in outside):
-            keys |= {name: f"{ids[name].key}+b{ids[name].number}" for name in component}
+        outside = {dep: keys[dep] for name in component for dep in deps[name] - component}
+        # final builds against final builds only, whatever the suffixes of those built against development builds
+        if not component & autorev.keys() and all(key == final(dep) for dep, key in outside.items()):
+            keys |= {name: final(name) for name in component}
             continue
-        builds = {n: ids[n].key for n in component}
+        builds = {name: [ids[name].key, autorev.get(name, "")] for name in component}
         for name in component:
-            key = buildkey.development_key(builds, {d: keys[d] for d in outside}, name)
-            keys[name] = f"{key}+b{ids[name].number}{autorev.get(name, '')}"
+            keys[name] = f"{buildkey.development_key(builds, outside, name)}+b{ids[name].number}{builds[name][1]}"
         # but a reused build, the main branch's, built against its builds
-        keys |= {name: f"{ids[name].key}+b{ids[name].number}" for name in component if ids[name].accepts}
+        keys |= {name: final(name) for name in component if ids[name].accepts}
     return keys
 
 

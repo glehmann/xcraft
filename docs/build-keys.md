@@ -136,11 +136,18 @@ A build is cached, in `.xcraft/cache/builds/<arch>/<package>/<cache key>/`, and 
 
 The cache key of a development build, or of a build against development builds, has another hash than its build key:
 the SHA-256, in hexadecimal, of `<hash> \0 <package name>`, where `<hash>` is the SHA-256, in hexadecimal, of the JSON
-of an array of the build keys of the packages of its component, sorted by name, and of the cache keys of the packages
-it is built against on any architecture, like for the build key, out of its component, sorted by name: the same on
-all the architectures. A development build depends on the development builds it
-is built against, which the build keys do not cover. A reused build keeps its build key, as the build of the main
-branch. See `buildkey.development_key()`, and `xcraft.cache.build_keys()`, which chooses between both.
+of an array of:
+
+1. for each package of its component, sorted by name, an array of its build key and its development suffix, like
+   `~1.dev`, or an empty string;
+2. the cache keys of the packages it is built against on any architecture, like for the build key, out of its
+   component, sorted by name: the same on all the architectures.
+
+A build is against development builds when a package it is built against does not have the cache key of its final
+build, `<build key>+b<number>`, even with a final suffix, like a final build against a development build. A
+development build depends on the development builds it is built against, which the build keys do not cover. A reused
+build keeps its build key, as the build of the main branch. See `buildkey.development_key()`, and
+`xcraft.cache.build_keys()`, which chooses between both.
 
 ## What the keys do not cover
 
