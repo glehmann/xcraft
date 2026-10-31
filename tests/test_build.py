@@ -17,12 +17,12 @@ from typer.testing import CliRunner
 
 from tests import ARCH, TOML, TOYS, copy_project
 from xcraft import build as builder
-from xcraft import buildid, container
+from xcraft import buildid, container, pinned
 from xcraft.__main__ import app
 from xcraft.cache import BuildError
 from xcraft.iso import _install_tools
 from xcraft.localrepo import LocalRepo, link
-from xcraft.lock import Locked, Recorded, load_lock, save_lock
+from xcraft.lock import Locked, Recorded, load_lock, lock_path, save_lock
 from xcraft.project import Project
 from xcraft.publish import _check_installable
 from xcraft.resolution import ResolutionError, lock_installed, resolve
@@ -633,6 +633,48 @@ def test_failed_step_shows_its_log(root: Path) -> None:
         container.run(Project.find(), "failing", "echo first; echo boom; false")
 
 
+def test_pinned_packages(root: Path) -> None:
+    assert xcraft("build", "trivial")[0] == 0
+    project = Project.find()
+    lock, tag = load_lock(project), container.image_tag(project)
+    pin = lock.binaries[ARCH]["bash"]
+    # other contents than the repositories have, of the same version: kept by the builds, which fail, in another image
+    lock.binaries[ARCH]["bash"] = pin.model_copy(update={"sha256": "0" * 64})
+    save_lock(project, lock)
+    assert container.image_tag(Project.find()) != tag
+    code, output = xcraft("build", "trivial")
+    assert code == 1
+    assert f"bash-{pin.evr}.{pin.arch}: the repositories have other contents, {pin.sha256}, than pinned" in output
+    assert f"xcraft lock --update {pin.source} pins them" in output
+    assert load_lock(project).binaries[ARCH]["bash"].sha256 == "0" * 64
+    # until pinned again, on purpose
+    code, output = xcraft("lock", "--update", "bash")
+    assert code == 0, output
+    assert load_lock(project).binaries[ARCH]["bash"] == pin
+    assert "pinned again, of the same versions: bash" in output
+    # a version the repositories do not have anymore, which the builds would pin again otherwise, as the lock does
+    # not have it
+    lock = load_lock(project)
+    lock.binaries[ARCH]["bash"] = pin.model_copy(update={"evr": "0:0-0"})
+    save_lock(project, lock)
+    with pytest.raises(
+        container.ContainerError, match=rf"bash-0:0-0\.{pin.arch}: pinned, but in no repository anymore"
+    ):
+        pinned.repository(Project.find())
+
+
+def test_lock_upgrade(root: Path) -> None:
+    project = Project.find()
+    sources = load_lock(project).sources
+    lock_path(project).write_text("[sources]\n" + "".join(f'"{s}" = "{v}"\n' for s, v in sources.items()))
+    code, output = xcraft("build", "--dry-run")
+    assert code == 1
+    assert "the lock has the format 1, not 2: xcraft lock --upgrade upgrades it" in output
+    code, output = xcraft("lock", "--upgrade")
+    assert code == 0, output
+    assert load_lock(project).binaries[ARCH]["bash"].source == "bash"
+
+
 def test_lock_records_image_and_roots(root: Path) -> None:
     spec = root / "base/trivial/trivial.spec"
     original = spec.read_text()
@@ -641,8 +683,8 @@ def test_lock_records_image_and_roots(root: Path) -> None:
     lock = load_lock(Project.find())
     image = set(lock.image[ARCH])
     assert "glibc" in image
-    # the upstream source packages of the build roots, but the image's
-    assert "lzo" in lock.roots.shared["trivial"]
+    # the upstream binary packages of the build roots, but the image's
+    assert "lzo-devel" in lock.roots.shared["trivial"]
     assert not image & {*lock.roots.shared["trivial"], *lock.roots.shared.get("with-deps", [])}
     # recorded again when they change, which --locked forbids
     spec.write_text(original)

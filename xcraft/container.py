@@ -6,7 +6,8 @@ xcraft.resolution). It is tagged with a hash of its definition, so that it is
 built again only when the configuration or the versions of its packages change.
 Its ``builder`` user is mapped to the user running xcraft, and can use sudo.
 
-In the containers, dnf only sees the locked version of a locked package.
+In the containers, dnf only sees the locked version of a locked package. The image, and the builds, install the pinned
+packages only, from their repository, see xcraft.pinned.
 
 The resolution runs in the base image of the host, natively, for any platform.
 """
@@ -23,14 +24,15 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from xcraft import host, process
+from xcraft import host, pinned, process
 from xcraft.display import activity, changes, read_tail
-from xcraft.lock import Locked, versionlock
+from xcraft.lock import Locked, load_lock, versionlock
 from xcraft.project import ProjectLockedError, write_atomically
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from xcraft.lock import Pin
     from xcraft.project import Project
 
 MAX_LOG_SIZE = 256 * 2**20
@@ -95,9 +97,18 @@ def _image_files(project: Project) -> dict[str, str]:
     return {
         "Containerfile": (BUILDENV / "Containerfile").read_text(),
         "upstream.repo": repo_file(project),
+        "pinned.repo": pinned.REPO_FILE,
+        # not in the image, but in its tag: another image for other pins
+        "pins.list": "".join(f"{name} {pin.text()}\n" for name, pin in sorted(_image_pins(project).items())),
         "macros.xcraft": "".join(f"%{name} {value}\n" for name, value in sorted(project.config.macros.items())),
         "versionlock.list": versionlock(resolve_image(project).image_packages()),
     }
+
+
+def _image_pins(project: Project) -> dict[str, Pin]:
+    """Return the pinned binary packages of the image of the platform."""
+    pins = pinned.pins(project)
+    return {name: pins[name] for name in load_lock(project).image.get(project.arch, [])}
 
 
 def _image(project: Project) -> tuple[str, dict[str, str], dict[str, str]]:
@@ -152,11 +163,12 @@ def build_image(project: Project) -> str:
 
 
 def _build_image(project: Project, tag: str, args: dict[str, str], files: dict[str, str]) -> None:
-    from xcraft.resolution import resolve_image  # noqa: PLC0415, which runs containers
 
-    _podman_build(project, "image", tag, files, args, show="the build environment image")
+    _podman_build(
+        project, "image", tag, files, args, show="the build environment image", pinned=pinned.repository(project)
+    )
     try:
-        resolved = {f"{n}-{p.evr}.{p.arch}" for n, p in resolve_image(project).image_packages().items()}
+        resolved = {f"{n}-{p.evr}.{p.arch}" for n, p in _image_pins(project).items()}
         if differences := changes(resolved, {f"{n}-{p.evr}.{p.arch}" for n, p in image_packages(project, tag).items()}):
             msg = f"the build environment image does not have the packages resolved for it: {', '.join(differences)}"
             raise ContainerError(msg)  # noqa: TRY301, removed like on any error
@@ -167,9 +179,18 @@ def _build_image(project: Project, tag: str, args: dict[str, str], files: dict[s
 
 
 def _podman_build(
-    project: Project, step: str, tag: str, files: dict[str, str], args: dict[str, str], *, show: str
+    project: Project,
+    step: str,
+    tag: str,
+    files: dict[str, str],
+    args: dict[str, str],
+    *,
+    show: str,
+    pinned: Path | None = None,
 ) -> None:
-    """Build `show`, the image `tag`, from `files` and the build `args`, logged in .xcraft/logs/_<step>.log."""
+    """Build `show`, the image `tag`, from `files` and the build `args`, logged in .xcraft/logs/_<step>.log, with the
+    repository of the `pinned` packages, if any, on /pinned.
+    """
     _warm_dnf_cache(project)
     with project.work(step) as context:
         for name, content in files.items():
@@ -182,7 +203,8 @@ def _podman_build(
         inspect = ["podman", "volume", "inspect", "--format", "{{.Mountpoint}}", volume]
         cache = process.run(inspect, capture=True).stdout.strip()
         cmd = ["podman", "build", "--platform", project.platform, "--security-opt", "label=disable"]
-        cmd += [a for v in [f"{cache}:/var/cache/dnf:O", *_local_repos(project)] for a in ("--volume", v)]
+        volumes = [f"{cache}:/var/cache/dnf:O", *_local_repos(project), *([f"{pinned}:/pinned:ro"] if pinned else [])]
+        cmd += [a for v in volumes for a in ("--volume", v)]
         cmd += build_args
         cmd += ["--tag", tag, str(context)]
         log = project.state / f"logs/_{step}.log"
@@ -374,7 +396,7 @@ def run_container(
         lock_list.write(versionlock(resolve_image(project).packages))
         lock_list.flush()
         volumes = [*volumes, f"{BUILDENV}:/xcraft:ro", f"{lock_list.name}:/etc/dnf/plugins/versionlock.list:ro"]
-        volumes += _local_repos(project)
+        volumes += [*_local_repos(project), f"{pinned.repository(project)}:/pinned:ro"]
         cmd = [
             # replacing a container of a killed xcraft
             "podman", "run", "--rm", "--replace", "--name", container, "--platform", project.platform,

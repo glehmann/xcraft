@@ -53,14 +53,19 @@ class BuildRootChangedError(BuildError):
 
 
 def _check_build_root(project: Project, name: str, installed: dict[str, Locked]) -> None:
-    """Raise when dnf installed, in the build root of `name`, other packages than those resolved for it."""
-    resolved = resolve(project)
-    expected = {f"{n} ({resolved.packages[n].evr})" for n in resolved.buildroots[name]}
-    expected |= {f"{n} (ours)" for n in resolved.ours[name]}
+    """Raise when dnf installed, in the build root of `name`, other packages than those pinned for it, by name,
+    version and architecture, or than ours resolved for it: the pinned ones were checked when downloaded, see
+    xcraft.pinned.
+    """
+    lock, arch, ours = load_lock(project), project.arch, resolve(project).ours[name]
+    pins = lock.binaries.get(arch, {})
+    # but those of the image ours replace
+    upstream = [n for n in [*lock.image[arch], *lock.roots.of(arch).get(name, [])] if n not in ours]
+    expected = {f"{n} ({pins[n].evr}.{pins[n].arch})" for n in upstream} | {f"{n} (ours)" for n in ours}
     if differences := changes(
-        expected, {f"{n} ({'ours' if p.repo == 'xcraft' else p.evr})" for n, p in installed.items()}
+        expected, {f"{n} ({'ours' if p.repo == 'xcraft' else f'{p.evr}.{p.arch}'})" for n, p in installed.items()}
     ):
-        msg = f"its build root is not the one resolved for it: {', '.join(differences)}"
+        msg = f"its build root is not the one pinned for it: {', '.join(differences)}"
         raise BuildError(msg)
 
 
