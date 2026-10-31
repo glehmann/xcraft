@@ -32,6 +32,7 @@ def build_keys(
     autorev: dict[str, str] | None = None,
     hashes: dict[str, str] | None = None,
     ids: dict[str, BuildId] | None = None,
+    inputs: buildkey.Inputs | None = None,
 ) -> dict[str, str]:
     """Return the cache key of each package: its build key, the same on all the architectures, then its release
     suffix, %autorev: the number of its build ID, ``+b<n>``, and its development build suffix of `autorev`, if any.
@@ -39,13 +40,15 @@ def build_keys(
     See xcraft.buildid. A development build, or one built against development builds, has the hash of its build key
     and of the cache keys of the builds of ours it is built against rather than its build key, but a reused build. The
     `hashes` of the package directories are those of buildkey.directories(), computed now by default, and the build
-    `ids` are those computed then, unless given. The lock must be prepared: see resolution.prepare().
+    `ids` are those computed then, unless given, both from the `inputs` of the keys, unless given. The lock must be
+    prepared: see resolution.prepare().
     """
     from xcraft.buildid import base, compute  # noqa: PLC0415, which imports this module
 
-    ids = ids if ids is not None else compute(project, base(project), hashes)
+    inputs = inputs or buildkey.Inputs(project, hashes)
+    ids = ids if ids is not None else compute(project, base(project), inputs=inputs)
     # of all the architectures, like the build IDs: the same keys on all of them
-    deps, autorev = buildkey.dependencies(buildkey.platforms(project)), autorev or {}
+    deps, autorev = inputs.deps, autorev or {}
     keys: dict[str, str] = {}
 
     def final(name: str) -> str:

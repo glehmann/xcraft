@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING
 from xcraft.specs import dep_name
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
+    from collections.abc import Set as AbstractSet
 
     from xcraft.specs import Binary, Package
     from xcraft.upstream import UpstreamRequires
@@ -78,7 +79,7 @@ def upstream_deps(packages: dict[str, Package], upstream: UpstreamRequires) -> d
     return deps
 
 
-def reachable(deps: dict[str, set[str]], roots: Iterable[str]) -> set[str]:
+def reachable(deps: Mapping[str, AbstractSet[str]], roots: Iterable[str]) -> set[str]:
     """Return `roots` and what they depend on, directly or not."""
     found = set(roots)
     todo = list(found)
@@ -111,7 +112,7 @@ def build_order(deps: dict[str, set[str]], targets: Iterable[str], *, with_deps:
         raise GraphError(msg) from e
 
 
-def components(deps: dict[str, set[str]]) -> list[set[str]]:
+def components(deps: Mapping[str, AbstractSet[str]]) -> list[set[str]]:
     """Return the sets of packages depending on each other, a package alone otherwise, their dependencies first."""
     index: dict[str, int] = {}
     low: dict[str, int] = {}

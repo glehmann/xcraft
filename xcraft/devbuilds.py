@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from pydantic import TypeAdapter
 
 from xcraft.buildid import base, compute, proposed
+from xcraft.buildkey import Inputs
 from xcraft.cache import build_keys
 from xcraft.project import write_atomically
 
@@ -27,13 +28,13 @@ def _counters(project: Project) -> dict[str, tuple[int, str, str]]:
 
 def _current(
     project: Project, hashes: dict[str, str] | None = None
-) -> tuple[dict[str, BuildId], dict[str, str], set[str]]:
-    """Return the build IDs, the cache keys of the final builds, and the packages with development builds, computed
-    once, with the `hashes` of the package directories, those of now by default.
+) -> tuple[Inputs, dict[str, BuildId], dict[str, str], set[str]]:
+    """Return the inputs of the keys, the build IDs, the cache keys of the final builds, and the packages with
+    development builds, computed once, with the `hashes` of the package directories, those of now by default.
     """
-    fork = base(project)
-    ids = compute(project, fork, hashes)
-    return ids, build_keys(project, hashes=hashes, ids=ids), proposed(fork, ids)
+    fork, inputs = base(project), Inputs(project, hashes)
+    ids = compute(project, fork, inputs=inputs)
+    return inputs, ids, build_keys(project, ids=ids, inputs=inputs), proposed(fork, ids)
 
 
 def dev_keys(
@@ -50,14 +51,14 @@ def dev_keys(
     """
     if ident is None:
         return build_keys(project, {}, hashes), {}
-    counters, (ids, keys, developed) = _counters(project), _current(project, hashes)
+    counters, (inputs, ids, keys, developed) = _counters(project), _current(project, hashes)
     suffixes = {}
     for name in sorted(developed):
         counter, key, last = counters.get(f"{name} {ids[name].number}", (0, "", ""))
         if (key, last) != (keys[name], ident):
             counter += 1
         suffixes[name] = f"~{counter}.{ident}"
-    return build_keys(project, suffixes, hashes, ids), suffixes
+    return build_keys(project, suffixes, ids=ids, inputs=inputs), suffixes
 
 
 def keep_built(
@@ -69,7 +70,7 @@ def keep_built(
     """
     if ident is None or not (built := [name for name in names if name in autorev]):
         return
-    counters, (ids, keys, _) = _counters(project), _current(project, hashes)
+    counters, (_, ids, keys, _) = _counters(project), _current(project, hashes)
     for name in built:
         counters[f"{name} {ids[name].number}"] = (int(autorev[name][1:].split(".")[0]), keys[name], ident)
     project.state.mkdir(exist_ok=True)
@@ -88,7 +89,7 @@ def built_dev_suffixes(project: Project) -> dict[str, str]:
     """Return the release suffixes of the development builds, as last built: those whose inputs did not change since,
     whatever their identifiers.
     """
-    counters, (ids, keys, developed) = _counters(project), _current(project)
+    counters, (_, ids, keys, developed) = _counters(project), _current(project)
     return {
         name: f"~{counter}.{ident}"
         for name in developed

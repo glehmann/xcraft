@@ -116,7 +116,12 @@ The build key of a package covers their build IDs, with theirs, so a change of a
 packages built against it, directly or not.
 
 The dependencies are those of all the architectures: a package built against another one on one architecture only,
-with `%ifarch`, has it as a dependency on all of them, for the same key everywhere. See `buildkey.dependencies()`.
+with `%ifarch`, has it as a dependency on all of them, for the same key everywhere.
+
+All the inputs of the keys are read once, from one read of the lock: the dependencies come from the specs parsed for
+each architecture, with what that lock recorded, rather than from what the project computed before, maybe with
+another lock, and nothing is read after, from the project or the files. A lock of another commit gives its own
+dependencies, like for `xcraft reuse`. See `buildkey.Inputs`, with `buildkey.Platform`.
 
 ## Cycles
 

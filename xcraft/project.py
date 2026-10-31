@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 if TYPE_CHECKING:
     from collections.abc import Generator
 
+    from xcraft.lock import Lock
     from xcraft.specs import Package
 
 
@@ -196,6 +197,20 @@ class Config(BaseModel):
     """The key signing the published packages: they are not signed without one."""
 
 
+def locked_packages(parsed: dict[str, Package], lock: Lock, arch: str) -> dict[str, Package]:
+    """Return the `parsed` packages of `arch`, with what their builds found in the `lock`: the requirements and
+    capabilities rpm generated for their binary packages, and their dynamic BuildRequires.
+    """
+    requires, provides, buildrequires = lock.requires.of(arch), lock.provides.of(arch), lock.buildrequires.of(arch)
+    packages = {name: package.model_copy(deep=True) for name, package in parsed.items()}
+    for name, package in packages.items():
+        package.buildrequires.extend(buildrequires.get(name, []))
+        for binary in package.binaries:
+            binary.requires.extend(requires.get(binary.name, []))
+            binary.provides.extend(provides.get(binary.name, []))
+    return packages
+
+
 _held: set[Path] = set()
 """The roots of the projects whose lock this process holds."""
 
@@ -311,16 +326,7 @@ class Project:
         """
         from xcraft.lock import load_lock  # noqa: PLC0415
 
-        lock = load_lock(self)
-        requires, provides = lock.requires.of(self.arch), lock.provides.of(self.arch)
-        buildrequires = lock.buildrequires.of(self.arch)
-        packages = {name: package.model_copy(deep=True) for name, package in self.parsed.items()}
-        for name, package in packages.items():
-            package.buildrequires.extend(buildrequires.get(name, []))
-            for binary in package.binaries:
-                binary.requires.extend(requires.get(binary.name, []))
-                binary.provides.extend(provides.get(binary.name, []))
-        return packages
+        return locked_packages(self.parsed, load_lock(self), self.arch)
 
     @cached_property
     def deps(self) -> dict[str, set[str]]:

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 import typer
 
-from tests import TOML, config
+from tests import TOML, config, ours
 from xcraft import build, buildkey, cache
 from xcraft.build import queued
 from xcraft.cache import BuildError, build_keys, previous_duration
@@ -385,8 +385,7 @@ def test_packages_edited_while_building(project: Project, monkeypatch: pytest.Mo
         (project.root / "base" / name).mkdir(parents=True)
         (project.root / "base" / name / f"{name}.spec").write_text(name)
     project.config.platforms = [project.platform]  # the one of the dependencies given
-    project.deps = {"a": set(), "b": {"a"}, "c": set()}
-    project.packages = {name: Package(name=name, binaries=[]) for name in ("a", "b", "c")}
+    ours(project, monkeypatch, {"a": set(), "b": {"a"}, "c": set()})
     hashes = buildkey.directories(project)
     keys = build_keys(project, hashes=hashes)
     (cache.cached_build(project, "b", keys["b"])).mkdir(parents=True)
@@ -411,8 +410,7 @@ def test_keys_changed_by_the_last_recording(project: Project, monkeypatch: pytes
         (project.root / "base" / name).mkdir(parents=True)
         (project.root / "base" / name / f"{name}.spec").write_text(name)
     project.config.platforms = [project.platform]  # the one of the dependencies given
-    project.deps = {"a": set(), "b": {"a"}}
-    project.packages = {name: Package(name=name, binaries=[]) for name in ("a", "b")}
+    ours(project, monkeypatch, {"a": set(), "b": {"a"}})
     monkeypatch.setattr(build, "prepare", lambda _: None)
     hashes = buildkey.directories(project)
     keys = build_keys(project, hashes=hashes)
@@ -444,8 +442,7 @@ def test_keys_changed_during_the_builds(project: Project, monkeypatch: pytest.Mo
         (project.root / "base" / name).mkdir(parents=True)
         (project.root / "base" / name / f"{name}.spec").write_text(name)
     project.config.platforms = [project.platform]  # the one of the dependencies given
-    project.deps = {"a": set(), "b": {"a"}, "c": set()}
-    project.packages = {name: Package(name=name, binaries=[]) for name in ("a", "b", "c")}
+    ours(project, monkeypatch, {"a": set(), "b": {"a"}, "c": set()})
     monkeypatch.setattr(build, "prepare", lambda _: None)
     hashes = buildkey.directories(project)
     keys = build_keys(project, hashes=hashes)
