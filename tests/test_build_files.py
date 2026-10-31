@@ -324,7 +324,7 @@ def test_hash_dir_covers_what_builds_get(tmp_path: Path) -> None:
 
 
 def test_recipe(monkeypatch: pytest.MonkeyPatch) -> None:
-    current = "6e4c3d480ddebb5ab8113785a8089d733175e35d369b7c50c1cea01fb65140bc"
+    current = "01628fd02a2650def128b24cbada7d71b0524ba141bfe0842f67b726a066f698"
     assert recipe_key() == current, (
         f"the recipe changed, to {buildkey.RECIPE}: map it to {current} in _SAME_BUILDS if it makes the same packages, "
         "or else set it here, which rebuilds everything"
@@ -335,6 +335,33 @@ def test_recipe(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(buildkey, "RECIPE", "c")
     monkeypatch.setattr(buildkey, "_SAME_BUILDS", {"c": "a", "b": "a"})
     assert recipe_key() == "a"
+
+
+def test_recipe_inputs(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    config, before = project.config, buildkey.recipe(project)
+    # not what the builds do not get: where the source packages are published from, the order of the configuration
+    config.repos["baseos"].source_baseurl = "https://example.com/elsewhere/"
+    assert buildkey.recipe(project) == before
+    config.macros = {**config.macros, "a": "1", "b": "2"}
+    after = buildkey.recipe(project)
+    config.macros, config.repos = dict(reversed(config.macros.items())), dict(reversed(config.repos.items()))
+    assert buildkey.recipe(project) == after
+    # but all the rest
+    for change in (
+        lambda: setattr(config, "macros", {**config.macros, "a": "changed"}),
+        lambda: setattr(config.repos["baseos"], "baseurl", "https://example.com/other/"),
+        lambda: setattr(config.repos["baseos"], "includepkgs", ["bash"]),
+        lambda: setattr(config, "packages", [*config.packages, "vim"]),
+        lambda: setattr(config, "release_suffixes", [".alt"]),
+        lambda: setattr(config, "extra_upstream", {"foo": "https://example.com/foo.rpm"}),
+        lambda: setattr(config, "base_image", config.base_image.replace("@sha256:", "@sha256:0")[:-1]),
+        lambda: monkeypatch.setattr(buildkey, "FORMAT", buildkey.FORMAT + 1),
+        lambda: monkeypatch.setattr(buildkey, "RECIPE", "0" * 64),
+    ):
+        change()
+        assert buildkey.recipe(project) != after
+        after = buildkey.recipe(project)
+    assert after != before
 
 
 def test_keys_of_upstream_packages_without_versions(project: Project) -> None:
