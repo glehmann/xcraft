@@ -195,6 +195,33 @@ def test_import_all(root: Path, upstream: Path) -> None:
     assert git(root, "branch", "--list", "import/bar/*").split() == ["import/bar/XS-9.0"]
 
 
+def test_import_flat(root: Path, tmp_path: Path) -> None:
+    # like Fedora's dist-git, whose archives are in its lookaside cache, then with them in git LFS, then like those of
+    # xcp-ng-rpms
+    upstream = tmp_path / "rpms/bar"
+    upstream.mkdir(parents=True)
+    git(upstream, "init", "-q", "-b", "master")
+    commit_files(upstream, {
+        "bar.spec": "Name: bar\n", "a.patch": "a\n", "sources": "SHA512 (bar-1.0.tar.gz) = 00\n",
+        "Makefile": "include ../common/Makefile.common\n", ".gitignore": "/bar-1.0/\n", "tests/test.sh": "true\n",
+    })  # fmt: skip
+    git(upstream, "lfs", "install", "--local")
+    git(upstream, "lfs", "track", "*.tar.gz")
+    commit_files(upstream, {"README.md": "bar\n", ".github/CODEOWNERS": "* @owner\n", "bar-1.0.tar.gz": "1.0\n"})
+    (upstream / "SPECS").mkdir()
+    git(upstream, "mv", "bar.spec", "SPECS/bar.spec")
+    commit_files(upstream, {"SOURCES/a.patch": "a\n", "SOURCES/b.patch": "b\n"})
+    heads = import_history(root, root / "base/bar", f"file://{upstream}", ["master"])
+    commits = git(root, "rev-list", "--reverse", heads["master"]).split()[1:]  # but the first commit of the project
+    digest = hashlib.sha256(b"1.0\n").hexdigest()
+    assert [git(root, "ls-tree", "-r", "--name-only", c).split() for c in commits] == [
+        ["base/bar/a.patch", "base/bar/bar.spec"],
+        ["base/bar/a.patch", "base/bar/bar.spec", "base/bar/sources"],
+        ["base/bar/a.patch", "base/bar/b.patch", "base/bar/bar.spec"],
+    ]
+    assert git(root, "show", f"{commits[1]}:base/bar/sources") == f"{digest}  bar-1.0.tar.gz"
+
+
 def test_import_options(root: Path, upstream: Path) -> None:
     assert "no package given" in runner.invoke(app, ["import"]).output
     assert "--url applies to a single package" in runner.invoke(app, ["import", "a", "b", "--url", "x"]).output

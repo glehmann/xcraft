@@ -1,13 +1,13 @@
 """Imports of packages into the project, as git branches the project merges: ``import/<pkg>/<branch>``.
 
-The history of the branches of a packaging repository, ``SPECS/<name>.spec`` and ``SOURCES/*``, with the source
-archives stored with git LFS, is rewritten for the project: the files go in the directory of the package, the archives
-in its ``sources`` manifest, by the SHA-256 of their LFS pointer, and nothing else. The commits only changing what is
-left out are skipped, and each one gets an ``Imported-from`` trailer, with the repository and the commit it comes from.
-The rewrite only depends on the imported commits and the first commit of the project, empty, which the first ones get
-as parent: importing again gives the same commits, with the new ones on top, and the branches sharing commits, like
-master merging XS-9.0, share them. Merging a branch into the project, where the package is not yet, joins the
-histories.
+The history of the branches of a packaging repository, ``SPECS/<name>.spec`` and ``SOURCES/*``, or the files at its top,
+like Fedora's, with the source archives stored with git LFS, is rewritten for the project: the files go in the directory
+of the package, the archives in its ``sources`` manifest, by the SHA-256 of their LFS pointer, and nothing else. The
+commits only changing what is left out are skipped, and each one gets an ``Imported-from`` trailer, with the repository
+and the commit it comes from. The rewrite only depends on the imported commits and the first commit of the project,
+empty, which the first ones get as parent: importing again gives the same commits, with the new ones on top, and the
+branches sharing commits, like master merging XS-9.0, share them. Merging a branch into the project, where the package
+is not yet, joins the histories.
 
 Source RPMs, like XenServer's, are imported as new commits of these branches too, laid out the same way: their
 archives go into the source cache.
@@ -43,6 +43,10 @@ _LFS = re.compile(rb"version https://git-lfs\.github\.com/spec/v1\noid sha256:([
 _LFS_SIZE = 1024
 """The pointers of git LFS are smaller."""
 _TRAILER = re.compile(rb"^[\w-]+: ")
+_NOT_PACKAGED = re.compile(rb"\.|README|(sources|Makefile|import\.log)$")
+"""The files at the top of a packaging repository of a flat layout which are not of the package: those of git and of
+GitHub, the README, and those of Fedora's dist-git, like its ``sources``, of archives in its lookaside cache, whose
+SHA-256 are unknown."""
 _DELETED = "File deleted from the original sources for trademark-related or copyright-related legal reasons.\n"
 
 
@@ -157,18 +161,26 @@ def _lfs_pointers(repo: str, blobs: set[bytes]) -> dict[bytes, str]:
 def _layout(
     commit: _Commit, prefix: bytes, pointers: dict[bytes, str]
 ) -> tuple[dict[bytes, tuple[bytes, bytes]], bytes]:
-    """Return the files of `commit` in the package directory `prefix`, and its ``sources`` manifest."""
+    """Return the files of `commit` in the package directory `prefix`, and its ``sources`` manifest: those of
+    ``SPECS/`` and ``SOURCES/``, or else those at its top, but those which are not of the package.
+    """
     files, manifest = {}, {}
+    flat = not any(path.startswith((b"SPECS/", b"SOURCES/")) for path in commit.files)
     for path, (mode, blob) in commit.files.items():
         top, _, rel = path.partition(b"/")
-        if top in (b"SPECS", b"SOURCES") and rel:
-            if mode not in (b"100644", b"100755"):  # like a link to a file of the host
-                msg = f"{path.decode(errors='replace')} of {commit.oid.decode()}: not a regular file, not imported"
-                raise PackageImportError(msg)
-            if blob in pointers:
-                manifest[rel.rsplit(b"/", 1)[-1].decode()] = pointers[blob]
-            else:
-                files[prefix + rel] = (mode, blob)
+        if flat:
+            if rel or _NOT_PACKAGED.match(path):
+                continue
+            rel = path
+        elif top not in (b"SPECS", b"SOURCES") or not rel:
+            continue
+        if mode not in (b"100644", b"100755"):  # like a link to a file of the host
+            msg = f"{path.decode(errors='replace')} of {commit.oid.decode()}: not a regular file, not imported"
+            raise PackageImportError(msg)
+        if blob in pointers:
+            manifest[rel.rsplit(b"/", 1)[-1].decode()] = pointers[blob]
+        else:
+            files[prefix + rel] = (mode, blob)
     return files, "".join(f"{digest}  {name}\n" for name, digest in sorted(manifest.items())).encode()
 
 
