@@ -2,7 +2,8 @@
 
 Their RPMs are in a store of the machine, a podman volume the projects share, by their SHA-256: each one downloaded
 once, and kept only with the SHA-256 of its pin, see buildenv/pin.py. The repository of the pins of an architecture is
-made once, in the store too, of those RPMs, and mounted read-only on /pinned in the containers installing from it:
+made once, in the store too, of those RPMs, checked against the pins before it is used, and mounted read-only on
+/pinned in the containers installing from it:
 the build of the image, see container.build_image(), and the builds, see buildenv/build.sh, which install nothing
 else upstream. The packages of the base image, of the same versions, are not installed again: they are those of its
 digest.
@@ -44,15 +45,44 @@ def pins(project: Project) -> dict[str, Pin]:
     return pinned
 
 
+_checked: set[Path] = set()
+"""The repositories whose RPMs this process checked."""
+
+
 def repository(project: Project) -> Path:
-    """Return the repository of the pinned binary packages of the architecture of `project`, made if needed."""
+    """Return the repository of the pinned binary packages of the architecture of `project`, made if needed, with
+    RPMs of the SHA-256 of their pins: those of other contents in the store are downloaded again.
+    """
     pinned = pins(project)
     ident = hashlib.sha256(json.dumps({n: p.text() for n, p in sorted(pinned.items())}).encode()).hexdigest()
     store = _store()
     repo = store / "repos" / ident
-    if not (repo / "repodata/repomd.xml").exists():
-        _make(project, pinned, store, ident)
-    return repo
+    if repo in _checked:
+        return repo
+    for _ in range(2):
+        if not (repo / "repodata/repomd.xml").exists():
+            _make(project, pinned, store, ident)
+        if not (damaged := {n: p for n, p in pinned.items() if _sha256(repo / file_name(n, p)) != p.sha256}):
+            _checked.add(repo)
+            return repo
+        for name, pin in damaged.items():  # in the store, which the repository has them hard-linked from
+            (store / "rpms" / pin.sha256 / file_name(name, pin)).unlink(missing_ok=True)
+        shutil.rmtree(repo)
+    msg = f"the pinned packages of {project.arch} keep other contents than pinned in the store {store}"
+    raise PinnedError(msg)
+
+
+def file_name(name: str, pin: Pin) -> str:
+    """Return the file name of the RPM of the pinned package `name`, in the store and the repositories, as pin.py."""
+    return f"{name}-{pin.evr.split(':')[-1]}.{pin.arch}.rpm"
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def _store() -> Path:

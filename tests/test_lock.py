@@ -78,7 +78,8 @@ def test_lock_validation(tmp_path: Path) -> None:
     pin = Pin(evr="1-1", arch="aarch64", sha256="ab" * 32, source="glibc")
     # the packages of the images and of the build roots, all pinned, of locked sources
     for invalid, problem in (
-        ({"image": {"aarch64": ["glibc"]}}, "images without pinned binary packages: aarch64"),
+        ({"image": {"aarch64": ["glibc"]}}, "images or build roots without pinned binary packages: aarch64"),
+        ({"roots": Recorded(arches={"aarch64": {"qemu": ["glibc"]}})}, "build roots without pinned binary packages"),
         ({"binaries": {"aarch64": {"glibc": pin}}, "image": {"aarch64": ["bash"]}}, "not pinned in the lock: bash"),
         ({"binaries": {"aarch64": {"glibc": pin}}, "roots": Recorded(shared={"qemu": ["bash"]})}, "not pinned"),
         ({"binaries": {"aarch64": {"glibc": pin}}, "sources": {}}, "of source packages not locked: glibc"),
@@ -190,10 +191,12 @@ def test_record_roots_locked_meanwhile(project: Project, monkeypatch: pytest.Mon
 
 
 def test_record_pins(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    published = {"sha256": "ab" * 32}
+    published = {"sha256": "ab" * 32, "evr": "2.39-1"}
 
     def image(_platform: Project) -> Resolved:
-        glibc = Locked(evr="2.39-1", arch="x86_64_v2", source="glibc", repo="baseos", sha256=published["sha256"])
+        glibc = Locked(
+            evr=published["evr"], arch="x86_64_v2", source="glibc", repo="baseos", sha256=published["sha256"]
+        )
         return Resolved(packages={"glibc": glibc}, image=["glibc"])
 
     monkeypatch.setattr("xcraft.resolution._image", image)
@@ -211,12 +214,18 @@ def test_record_pins(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     assert pinned() == {"ab" * 32}
     resolution._record(project, frozenset({"glibc"}))
     assert pinned() == {"cd" * 32}
+    # another binary package of the same source version, like a rebuild: not pinned without an update either
+    published["evr"] = "2.39-1.1"
+    with pytest.raises(ResolutionError, match=r"glibc is pinned for .* as 2\.39-1 .*, but resolved as 2\.39-1\.1"):
+        resolution._record(project)
+    resolution._record(project, frozenset({"glibc"}))
+    assert {pins["glibc"].evr for pins in load_lock(project).binaries.values()} == {"2.39-1.1"}
     # one name of two packages
     other = Locked(evr="2.39-2", arch="x86_64_v2", source="glibc", repo="baseos", sha256="ef" * 32)
     monkeypatch.setattr(
         "xcraft.resolution._roots", lambda p: image(p).model_copy(update={"packages": {"glibc": other}})
     )
-    with pytest.raises(ResolutionError, match=r"glibc resolved for .* as 2\.39-1 .*, and as 2\.39-2"):
+    with pytest.raises(ResolutionError, match=r"glibc resolved for .* as 2\.39-1\.1 .*, and as 2\.39-2"):
         resolution._record(project)
 
 

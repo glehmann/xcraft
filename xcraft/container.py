@@ -98,7 +98,8 @@ def _image_files(project: Project) -> dict[str, str]:
         "Containerfile": (BUILDENV / "Containerfile").read_text(),
         "upstream.repo": repo_file(project),
         "pinned.repo": pinned.REPO_FILE,
-        # not in the image, but in its tag: another image for other pins
+        # in the image before its packages are installed, and so in its tag: another image for other pins, rather than a
+        # layer of the cache of podman
         "pins.list": "".join(f"{name} {pin.text()}\n" for name, pin in sorted(_image_pins(project).items())),
         "macros.xcraft": "".join(f"%{name} {value}\n" for name, value in sorted(project.config.macros.items())),
         "versionlock.list": versionlock(resolve_image(project).image_packages()),

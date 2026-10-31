@@ -205,9 +205,10 @@ def _forget(project: Project) -> None:
 def _pins(
     arch: str, recorded: Lock, resolutions: list[Resolved], names: set[str], repin: frozenset[str]
 ) -> dict[str, Pin]:
-    """Return the pinned binary packages `names` of `arch`, of the `resolutions`: those of the `recorded` lock, as
-    long as their versions are the locked ones, whatever the repositories have now, but those of the source packages
-    `repin`, which xcraft lock --update pins again.
+    """Return the pinned binary packages `names` of `arch`, of the `resolutions`: those of the `recorded` lock, whatever
+    the repositories have now, but those of the source packages `repin`, which xcraft lock --update pins again, and
+    the new ones. Raise when a pinned package is resolved in another version or architecture: only an update pins it
+    again.
     """
     resolved: dict[str, Pin] = {}
     for resolution in resolutions:
@@ -219,11 +220,13 @@ def _pins(
     pins = {}
     for name in sorted(names):
         old, new = recorded.binaries.get(arch, {}).get(name), resolved.get(name)
-        if (
-            old
-            and old.source not in repin
-            and (not new or (old.evr, old.arch, old.source) == (new.evr, new.arch, new.source))
-        ):
+        if old and old.source not in repin:
+            if new and (old.evr, old.arch, old.source) != (new.evr, new.arch, new.source):
+                msg = (
+                    f"{name} is pinned for {arch} as {old.text()}, but resolved as {new.text()}: xcraft lock --update "
+                    f"{old.source} pins it again"
+                )
+                raise ResolutionError(msg)
             pins[name] = old
         elif new:
             pins[name] = new

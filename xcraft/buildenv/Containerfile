@@ -5,6 +5,9 @@ RUN rm -f /etc/yum.repos.d/*.repo
 COPY upstream.repo pinned.repo /etc/yum.repos.d/
 COPY macros.xcraft /etc/rpm/
 COPY versionlock.list /etc/dnf/plugins/
+# before installing them, for the pinned packages of other contents, but of the same versions, not to be installed by
+# a layer of the cache of podman
+COPY pins.list /etc/xcraft/
 # only the pinned packages, from their repository on /pinned, checked against their SHA-256 in the lock: the base
 # image packages get their pinned versions, and keep those of its digest otherwise
 RUN echo keepcache=1 >> /etc/dnf/dnf.conf \

@@ -78,7 +78,11 @@ def test_build_key_inputs(project: Project, monkeypatch: pytest.MonkeyPatch) -> 
         (lambda: lock.buildrequires.shared.update(b=["foo"]), {"b"}),
         (lambda: lock.requires.shared.update(a=["bar"]), {"b"}),  # of the binary package a, which b gets
         (lambda: lock.provides.shared.update(a=["libbar.so.1"]), {"b"}),
-        (lambda: lock.roots.arches.update({"aarch64": {"b": ["zlib"]}}), set()),  # not an architecture of the project
+        # not an architecture of the project
+        (
+            lambda: lock.binaries.update(aarch64=lock.binaries[arch]) or lock.roots.arches.update(aarch64={"b": []}),
+            set(),
+        ),
         (lambda: lock.runtime.update({arch: ["bash"]}), set()),  # what publishing gets
         (lambda: lock.iso.update({arch: ["xorriso"]}), set()),
         (lambda: hashes.update(a="3" * 64), {"a", "b"}),  # the files of a, which change its build ID
@@ -195,7 +199,7 @@ def test_hash_dir_covers_what_builds_get(tmp_path: Path) -> None:
 
 
 def test_recipe(monkeypatch: pytest.MonkeyPatch) -> None:
-    current = "15c853d98473bf7e9edb1241f31b231f562bc0b8b81bb91563adbb4b6e860fe8"
+    current = "0cbdc798545bf78d6f525d232ef6af43bae61cab8de1b5f5ac7bb2b39709a6bf"
     assert recipe_key() == current, (
         f"the recipe changed, to {buildkey.RECIPE}: map it to {current} in _SAME_BUILDS if it makes the same packages, "
         "or else set it here, which rebuilds everything"
