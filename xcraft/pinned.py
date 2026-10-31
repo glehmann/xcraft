@@ -72,7 +72,10 @@ def repository(project: Project) -> Path:
             for name, pin in damaged.items():  # in the store, which the repository has them hard-linked from
                 (store / "rpms" / pin.sha256 / file_name(name, pin)).unlink(missing_ok=True)
             shutil.rmtree(repo)
-    msg = f"the pinned packages of {project.arch} keep other contents than pinned in the store {store}"
+    msg = (
+        f"{', '.join(sorted(damaged))} of {project.arch} still not of the SHA-256 of their pins once downloaded again, "
+        f"in the store {store}: only xcraft writes there"
+    )
     raise PinnedError(msg)
 
 

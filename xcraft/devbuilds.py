@@ -52,18 +52,20 @@ def dev_keys(
     The counter <n> of a package and build number goes up when the inputs of its build, those of the development builds
     it is built against included, or `ident` change, so that a development build upgrades the previous ones, whatever
     their identifiers, and a build of the same inputs is cached: the suffixes are those the builds have, or would have,
-    until keep_built() keeps the counters of new ones. The `hashes` of the package directories are those of now by
-    default.
+    until keep_built() keeps the counters of new ones. The developed packages of a component, built against each other,
+    have the same counter, the next one when one of them changed. The `hashes` of the package directories are those of
+    now by default.
     """
     if ident is None:
         return build_keys(project, {}, hashes), {}
     current, counters = _current(project, hashes), _counters(project)
 
-    def suffix(_name: str, key: str, fingerprint: str) -> str:
-        counter, last, last_ident = counters.get(key, (0, "", ""))
-        if (last, last_ident) != (fingerprint, ident):
-            counter += 1
-        return f"~{counter}.{ident}"
+    def suffix(members: dict[str, str], fingerprint: str) -> dict[str, str]:
+        kept = [counters.get(key, (0, "", "")) for key in members.values()]
+        counter = kept[0][0]
+        if any(last != (counter, fingerprint, ident) for last in kept):
+            counter = max(last[0] for last in kept) + 1
+        return dict.fromkeys(members, f"~{counter}.{ident}")
 
     suffixes = _suffixes(project, current, suffix)
     return build_keys(project, suffixes, ids=current[1], inputs=current[0]), suffixes
@@ -72,24 +74,24 @@ def dev_keys(
 def _suffixes(
     project: Project,
     current: tuple[Inputs, dict[str, BuildId], dict[str, str], set[str]],
-    suffix: Callable[[str, str, str], str | None],
+    suffix: Callable[[dict[str, str], str], dict[str, str]],
 ) -> dict[str, str]:
     """Return the suffixes of the development builds of `current`, see _current(), by package, those `suffix` returns
-    with their name, the key of their counter and their fingerprint: the hash of their final cache key and of the cache
-    keys of the packages they are built against, out of their component, with their suffixes, each chosen after those
-    of the packages it is built against, rather than with its own counter.
+    for the developed packages of each component, with the keys of their counters, and the fingerprint of the
+    component: the hash of the final cache keys of its packages and of the cache keys of the packages they are built
+    against, out of it, with their suffixes, chosen before, rather than with their own counters.
     """
     inputs, ids, final, developed = current
     suffixes: dict[str, str] = {}
     for component in components(inputs.deps):  # the dependencies first
-        if not component & developed:
+        if not (members := {name: f"{name} {ids[name].number}" for name in sorted(component & developed)}):
             continue
         keys = build_keys(project, suffixes, ids=ids, inputs=inputs)
-        for name in sorted(component & developed):
-            outside = {dep: keys[dep] for dep in sorted(inputs.deps[name] - component)}
-            fingerprint = hashlib.sha256(json.dumps([final[name], outside]).encode()).hexdigest()
-            if (chosen := suffix(name, f"{name} {ids[name].number}", fingerprint)) is not None:
-                suffixes[name] = chosen
+        outside = {dep: keys[dep] for name in component for dep in inputs.deps[name] - component}
+        inside = [final[name] for name in sorted(component)]
+        suffixes |= suffix(
+            members, hashlib.sha256(json.dumps([inside, dict(sorted(outside.items()))]).encode()).hexdigest()
+        )
     return suffixes
 
 
@@ -104,10 +106,11 @@ def keep_built(
         return
     counters = _counters(project)
 
-    def keep(name: str, key: str, fingerprint: str) -> str | None:
-        if name in built:
-            counters[key] = (int(autorev[name][1:].split(".")[0]), fingerprint, ident)
-        return autorev.get(name)  # as built
+    def keep(members: dict[str, str], fingerprint: str) -> dict[str, str]:
+        for name, key in members.items():
+            if name in built:
+                counters[key] = (int(autorev[name][1:].split(".")[0]), fingerprint, ident)
+        return {name: autorev[name] for name in members if name in autorev}  # as built
 
     _suffixes(project, _current(project, hashes), keep)
     project.state.mkdir(exist_ok=True)
@@ -128,8 +131,12 @@ def built_dev_suffixes(project: Project) -> dict[str, str]:
     """
     counters = _counters(project)
 
-    def last(_name: str, key: str, fingerprint: str) -> str | None:
-        counter, last, ident = counters.get(key, (0, "", ""))
-        return f"~{counter}.{ident}" if last == fingerprint else None
+    def last(members: dict[str, str], fingerprint: str) -> dict[str, str]:
+        return {
+            name: f"~{counter}.{ident}"
+            for name, key in members.items()
+            for counter, last, ident in [counters.get(key, (0, "", ""))]
+            if last == fingerprint
+        }
 
     return _suffixes(project, _current(project), last)

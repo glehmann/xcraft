@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from tests import TOML, config, ours
-from xcraft import buildid, buildkey
+from xcraft import buildid, buildkey, devbuilds
 from xcraft.buildid import BuildId
 from xcraft.buildkey import recipe_key
 from xcraft.cache import build_keys
@@ -266,3 +266,28 @@ def test_cache_keys_of_development_builds(project: Project, monkeypatch: pytest.
     # in a cycle of the dependencies of all the architectures: those of each development build of the others
     cycle = {"d": {"e"}, "e": {"d"}}
     assert keys(cycle, {"d": "~1.dev", "e": "~1.dev"})["d"] != keys(cycle, {"d": "~1.dev", "e": "~2.dev"})["d"]
+
+
+@pytest.mark.parametrize("cycle", [{"a": {"b"}, "b": {"a"}}, {"a": {"b", "c"}, "b": {"a"}, "c": set()}])
+def test_development_counters_of_components(
+    project: Project, monkeypatch: pytest.MonkeyPatch, cycle: dict[str, set[str]]
+) -> None:
+    # a cycle of the dependencies of all the architectures, and maybe a package it is built against, all developed
+    ours(project, monkeypatch, cycle)
+    save_lock(project, Lock())
+    monkeypatch.setattr(devbuilds, "base", lambda _: None)
+    monkeypatch.setattr(devbuilds, "proposed", lambda _fork, ids: set(ids))
+    hashes = dict.fromkeys(cycle, "1" * 64)
+
+    def build(ident: str, names: list[str]) -> dict[str, str]:
+        suffixes = devbuilds.dev_keys(project, ident, hashes)[1]
+        devbuilds.keep_built(project, ident, suffixes, names, hashes)
+        return suffixes
+
+    assert build("dev", list(cycle)) == dict.fromkeys(cycle, "~1.dev")
+    # another development build of a, or of c, which a is built against, alone: b, built against a, is not
+    build("other", ["c" if "c" in cycle else "a"])
+    # but its next one, of other inputs, has a newer release, like a
+    again = build("dev", list(cycle))
+    assert again["b"] == again["a"] != "~1.dev"
+    assert build("dev", list(cycle)) == again
