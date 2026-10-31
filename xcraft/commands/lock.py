@@ -20,7 +20,10 @@ def lock(
     ] = None,
     update: Annotated[bool, typer.Option("--update", help="Update locked packages to their latest versions.")] = False,
     outdated: Annotated[
-        bool, typer.Option("--outdated", help="Show what --update would change, without changing it, and fail then.")
+        bool,
+        typer.Option(
+            "--outdated", help="Show the versions --update would change, without changing them, and fail then."
+        ),
     ] = False,
     upgrade: Annotated[
         bool, typer.Option("--upgrade", help="Upgrade a lock of an older xcraft, pinning its packages again.")
@@ -32,7 +35,8 @@ def lock(
     in xcraft.toml, looking for them natively, on any machine, and pins their binary packages again, by their SHA-256,
     even in the same versions, like those published again. Otherwise, the pinned packages are kept, whatever the
     repositories have now: a build fails rather than getting other ones. --outdated, for CI, fails when an update
-    would change the versions in the lock.
+    would change the versions in the lock: not when it would only pin other contents of the same versions, which only
+    --update looks for.
     """
     if packages and not (update or outdated):
         msg = "packages to update need --update or --outdated"

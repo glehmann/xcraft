@@ -159,6 +159,9 @@ class Lock(BaseModel):
     @model_validator(mode="after")
     def _pinned(self) -> Lock:
         """Check that the images and the build roots have pinned binary packages only, of locked sources."""
+        if unpinned := sorted({*self.image, *self.roots.arches} - self.binaries.keys()):
+            msg = f"images or build roots without pinned binary packages: {', '.join(unpinned)}"
+            raise ValueError(msg)
         for arch, pins in self.binaries.items():
             names = {*self.image.get(arch, []), *(n for names in self.roots.of(arch).values() for n in names)}
             if missing := sorted(names - pins.keys()):
@@ -167,9 +170,6 @@ class Lock(BaseModel):
             if unlocked := sorted({p.source for p in pins.values()} - self.sources.keys()):
                 msg = f"pinned binary packages of {arch} of source packages not locked: {', '.join(unlocked)}"
                 raise ValueError(msg)
-        if unpinned := sorted(self.image.keys() - self.binaries.keys()):
-            msg = f"images without pinned binary packages: {', '.join(unpinned)}"
-            raise ValueError(msg)
         return self
 
 

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -642,6 +643,9 @@ def test_pinned_packages(root: Path) -> None:
     lock.binaries[ARCH]["bash"] = pin.model_copy(update={"sha256": "0" * 64})
     save_lock(project, lock)
     assert container.image_tag(Project.find()) != tag
+    # with its pins before installing them, not a layer of the cache of podman of other contents
+    containerfile = (container.BUILDENV / "Containerfile").read_text()
+    assert containerfile.index("COPY pins.list") < containerfile.index("distro-sync")
     code, output = xcraft("build", "trivial")
     assert code == 1
     assert f"bash-{pin.evr}.{pin.arch}: the repositories have other contents, {pin.sha256}, than pinned" in output
@@ -661,6 +665,30 @@ def test_pinned_packages(root: Path) -> None:
         container.ContainerError, match=rf"bash-0:0-0\.{pin.arch}: pinned, but in no repository anymore"
     ):
         pinned.repository(Project.find())
+
+
+def test_pinned_store_checked(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # a store of its own
+    monkeypatch.setattr(pinned, "VOLUME", volume := f"xcraft-pinned-test-{os.getpid()}-{time.monotonic_ns()}")
+    monkeypatch.setattr(pinned, "_checked", set())
+    project = Project.find()
+    try:
+        repo = pinned.repository(project)
+        pin = load_lock(project).binaries[ARCH]["bash"]
+        stored = repo.parent.parent / "rpms" / pin.sha256 / pinned.file_name("bash", pin)
+        # damaged in the store after it was checked, then in the repository used again, or in another one made of it
+        for remade in (False, True):
+            stored.chmod(0o644)
+            with stored.open("ab") as f:
+                f.write(b"damaged")
+            pinned._checked.clear()
+            if remade:
+                shutil.rmtree(repo)
+            assert pinned.repository(project) == repo
+            # downloaded again
+            assert hashlib.sha256(stored.read_bytes()).hexdigest() == pin.sha256
+    finally:
+        subprocess.run(["podman", "volume", "rm", "-f", volume], check=False, capture_output=True)
 
 
 def test_lock_upgrade(root: Path) -> None:

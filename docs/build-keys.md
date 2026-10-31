@@ -111,18 +111,20 @@ package is not reused.
 
 The image and the build roots are resolved from the specs and the lock by dnf, for each architecture, on any
 machine, and pinned in the lock, see `resolution.prepare()`: the key covers what the build environment installs,
-without resolving anything. A pin stays as long as the version of its source package does, even when the repositories
-publish other contents for it, until `xcraft lock --update` pins it again: a build then fails, rather than getting
-another RPM. See `buildkey.lock_inputs()`, and the format of the lock, `lock.FORMAT`, which `xcraft lock --upgrade`
-upgrades.
+without resolving anything. A pin stays until `xcraft lock --update` pins it again, even when the repositories publish
+other contents for it: a build then fails, rather than getting another RPM. A resolution of another version or
+architecture of a pinned package fails too, rather than pinning it. See `buildkey.lock_inputs()`, and the format of
+the lock, `lock.FORMAT`, which `xcraft lock --upgrade` upgrades.
 
 The image and the build roots get the pinned packages only: they install from a repository of the pinned RPMs of
 their architecture, and nothing else upstream, see `xcraft.pinned`. Each RPM is downloaded once, into a store of the
-machine the projects share, and kept there only when it has the SHA-256 of its pin; a dynamic BuildRequires not
+machine the projects share, kept there only when it has the SHA-256 of its pin, and checked again before a repository
+of it is used, by each command: one damaged in the store is downloaded again. A dynamic BuildRequires not
 pinned yet is not installed: the build records it, it is pinned, and the package built again. The packages the base
 image has already, in their pinned versions, are not installed again: they are those of its digest. What the builds
-installed is checked against the pins too, by name, version and architecture, see `checks.check_build()`. The image
-is tagged by its pins, so other pins build another image.
+installed is checked against the pins too, by name, version and architecture, as the database of rpm has them, see
+`checks.check_build()`. The image has its pins before installing them, so other pins build another image, rather than
+taking a layer of the cache of podman.
 
 ## The dependencies
 
