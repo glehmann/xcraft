@@ -397,6 +397,22 @@ def test_record_rpm_deps(project: Project, monkeypatch: pytest.MonkeyPatch) -> N
     assert load_lock(project).requires.shared == {"foo": ["baz"]}
 
 
+def test_record_providers_named_with_their_releases(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    # foo needs baz-lp, a package of ours named with its release, like the livepatch packages of the kernel
+    keys = {"foo": "1" * 64 + "+b1", "baz": "2" * 64 + "+b3"}
+    for name, rpm in (("foo", "foo-1.0-1+b1.x86_64.rpm"), ("baz", "baz-lp_1_1+b3-1.0-1+b3.x86_64.rpm")):
+        (build := project.state / f"cache/builds/x86_64_v2/{name}/{keys[name]}/RPMS/x86_64").mkdir(parents=True)
+        (build / rpm).touch()
+    foo = Binary(name="foo", evr="1.0-1", arch="x86_64", provides=[], requires=[])
+    lp = Binary(name="baz-lp_1_1", autorev_name="baz-lp_1_1%{autorev}", evr="1.0-1", arch="x86_64", provides=[],
+                requires=[])  # fmt: skip
+    project.parsed = {"foo": Package(name="foo", binaries=[foo]), "baz": Package(name="baz", binaries=[lp])}
+    monkeypatch.setattr("xcraft.checks.resolve_rpm_deps", lambda *_: Resolved(requires={"foo": ["baz-lp_1_1+b3"]}))
+    assert record_rpm_deps(project, ["foo"], keys)
+    # by its name in the spec, whatever its build
+    assert load_lock(project).requires.shared == {"foo": ["baz-lp_1_1"]}
+
+
 def test_builds_still_to_build_again_fail(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     project.deps = {"a": set()}
     monkeypatch.setattr(build, "prepare", lambda _: None)

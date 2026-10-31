@@ -116,9 +116,10 @@ def _rpms(build: Path) -> list[Path]:
     return [p for p in (build / "RPMS").rglob("*.rpm") if not is_debug(p.name.rsplit("-", 2)[0])]
 
 
-RECORDING = 2
+RECORDING = 3
 """The version of how xcraft records what rpm generated for a build, in its rpm-deps.json: changed with it, so that
-the builds recorded before are recorded again. 2: the binary packages named with their releases, recorded."""
+the builds recorded before are recorded again. 2: the binary packages named with their releases, recorded. 3: the
+packages of ours they need, by their names in the specs."""
 
 
 def _record_new_rpm_deps(
@@ -127,8 +128,9 @@ def _record_new_rpm_deps(
     """Keep with the `builds` what rpm generated for their binary packages, in `context`, but for those which cannot
     be recorded yet, shown unless `quiet`: they are recorded again next time, once what they need is there.
     """
-    current = [rpm for n, k in keys.items() if (build := cached_build(project, n, k)).exists() for rpm in _rpms(build)]
-    # their binary packages, by their names as built, with the release suffix, to their names in the specs
+    built = [n for n, k in keys.items() if cached_build(project, n, k).exists()]
+    current = [rpm for n in built for rpm in _rpms(cached_build(project, n, keys[n]))]
+    # the binary packages of the builds, by their names as built, with the release suffix, to their names in the specs
     names = {
         name: dict(
             zip(
@@ -137,8 +139,9 @@ def _record_new_rpm_deps(
                 strict=True,
             )
         )
-        for name in builds
+        for name in built
     }
+    in_specs = {as_built: parsed for binaries in names.values() for as_built, parsed in binaries.items()}
     binaries = {
         name: [b for rpm in _rpms(build) if (b := rpm.name.rsplit("-", 2)[0]) in names[name]]
         for name, build in builds.items()
@@ -154,7 +157,12 @@ def _record_new_rpm_deps(
         recorded = {
             "version": RECORDING,
             "context": context,
-            "requires": {names[name][b]: result.requires[b] for b in binaries[name] if b in result.requires},
+            # the packages of ours they need by their names in the specs too, whatever their builds
+            "requires": {
+                names[name][b]: [in_specs.get(r, r) for r in result.requires[b]]
+                for b in binaries[name]
+                if b in result.requires
+            },
             "provides": {names[name][b]: result.provides[b] for b in binaries[name] if b in result.provides},
         }
         write_atomically(build / "rpm-deps.json", json.dumps(recorded))
