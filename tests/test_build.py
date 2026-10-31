@@ -126,6 +126,8 @@ def test_spec_changed_before_its_build_is_not_cached(root: Path, monkeypatch: py
     assert "base/trivial changed since the builds started, build it again" in output
 
 
+HOST_ENTRIES = "" if ARCH == "x86_64_v2" else f"{ARCH}."
+"""The prefix of the entries of the lock the builds on the host record, not shared but on the first architecture."""
 UP_TO_DATE = "versions up to date, not looking for other contents of the same versions: xcraft lock --update does"
 
 
@@ -170,7 +172,7 @@ def test_dynamic_buildrequires_on_ours(root: Path) -> None:
     assert code == 0, output
     assert "↻ with-deps: " in output
     assert [line.split(" built")[0] for line in results(output) if line[0] == "✓"] == ["✓ trivial", "✓ with-deps"]
-    assert load_lock(Project.find()).buildrequires.shared == {"with-deps": ["trivial"]}
+    assert load_lock(Project.find()).buildrequires.of(ARCH) == {"with-deps": ["trivial"]}
 
 
 def test_build_root_of_files_of_ours(root: Path) -> None:
@@ -184,7 +186,7 @@ def test_build_root_of_files_of_ours(root: Path) -> None:
     assert xcraft("build", "tool")[0] == 0
     code, output = xcraft("build", "tool-user")
     assert code == 0, output
-    assert load_lock(Project.find()).provides.shared == {"tool": ["/usr/bin/xcraft-test-tool"]}
+    assert load_lock(Project.find()).provides.of(ARCH) == {"tool": ["/usr/bin/xcraft-test-tool"]}
     # upstream's bc, instead of ours, never built since nothing is known to need it
     write_spec(root, "bc")
     write_spec(root, "bc-user", "/usr/bin/bc")
@@ -519,13 +521,14 @@ def test_recorded(root: Path) -> None:
     buildid.update(Project.find())  # the build IDs of the changed spec, --locked checks before building
     code, output = xcraft("build", "trivial", "--locked")
     assert code == 1
-    assert "+buildrequires.trivial zlib-ng-compat-devel" in output
+    # those of the architecture of the host, which are shared once found on the first one
+    assert f"+buildrequires.{HOST_ENTRIES}trivial zlib-ng-compat-devel" in output
     code, output = xcraft("build", "with-deps")
     assert code == 0, output
     lock = load_lock(Project.find())
-    assert lock.buildrequires.shared == {"trivial": ["zlib-ng-compat-devel"]}
+    assert lock.buildrequires.of(ARCH) == {"trivial": ["zlib-ng-compat-devel"]}
     # which with-deps gets through trivial, its build root checked
-    assert lock.requires.shared == {"trivial": ["tcl"]}
+    assert lock.requires.of(ARCH) == {"trivial": ["tcl"]}
     assert "tcl" in resolve(Project.find()).buildroots["with-deps"]
     assert xcraft("build", "with-deps", "--locked")[0] == 0
 
@@ -558,18 +561,18 @@ def test_recorded_of_binaries_named_with_their_releases(root: Path) -> None:
     )  # fmt: skip
     code, output = xcraft("build", "trivial")
     assert code == 0, output
-    assert load_lock(Project.find()).requires.shared == {"trivial-lp_1.0_1.xcpng8.99": ["tcl"]}
+    assert load_lock(Project.find()).requires.of(ARCH) == {"trivial-lp_1.0_1.xcpng8.99": ["tcl"]}
     # and recorded again, from a recording of before, of a version without them
     for recording in root.glob(".xcraft/cache/builds/*/trivial/*/rpm-deps.json"):
         old = json.loads(recording.read_text())
         recording.write_text(json.dumps({"context": old["context"], "requires": {}, "provides": {}}))
     lock = load_lock(Project.find())
-    lock.requires.shared = {}
+    lock.requires = Recorded()
     save_lock(Project.find(), lock)
     code, output = xcraft("build", "trivial")
     assert code == 0, output
     assert output.endswith("\n1 cached\n")
-    assert load_lock(Project.find()).requires.shared == {"trivial-lp_1.0_1.xcpng8.99": ["tcl"]}
+    assert load_lock(Project.find()).requires.of(ARCH) == {"trivial-lp_1.0_1.xcpng8.99": ["tcl"]}
 
 
 def test_lock_update_changing_implicit_deps(root: Path) -> None:
