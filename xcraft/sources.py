@@ -33,7 +33,12 @@ def sha256_of(path: Path) -> str:
 
 def read_manifest(path: Path) -> dict[str, str]:
     """Return the filename to SHA-256 mapping of a ``sources`` manifest."""
-    return {name: digest for digest, name in (line.split(maxsplit=1) for line in path.read_text().splitlines() if line)}
+    return parse_manifest(path.read_text())
+
+
+def parse_manifest(text: str) -> dict[str, str]:
+    """Return the filename to SHA-256 mapping of the content of a ``sources`` manifest."""
+    return {name: digest for digest, name in (line.split(maxsplit=1) for line in text.splitlines() if line)}
 
 
 def write_manifest(path: Path, entries: dict[str, str]) -> None:
@@ -106,12 +111,16 @@ def _fetch_source(project: Project, name: str, filename: str, digest: str) -> bo
     return False
 
 
-def fetch_sources(project: Project, name: str) -> list[str]:
-    """Put the archives of `name` in the source cache, downloaded when missing, and return those found nowhere."""
-    manifest = project.package_dirs[name] / "sources"
+def fetch_sources(project: Project, name: str, manifest: dict[str, str] | None = None) -> list[str]:
+    """Put the archives of `name` in the source cache, downloaded when missing, and return those found nowhere: those
+    of its `manifest`, the filename to SHA-256 mapping of its ``sources``, read from it unless given.
+    """
+    if manifest is None:
+        path = project.package_dirs[name] / "sources"
+        manifest = read_manifest(path) if path.exists() else {}
     return [
         filename
-        for filename, digest in (read_manifest(manifest).items() if manifest.exists() else [])
+        for filename, digest in manifest.items()
         if not cached_source(project, filename, digest) and not _fetch_source(project, name, filename, digest)
     ]
 
