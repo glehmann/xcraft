@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -21,9 +22,9 @@ from xcraft.checks import _check_made, record_rpm_deps
 from xcraft.clean import clean, repos_disk_usage
 from xcraft.commands import complete_arch, load
 from xcraft.commands.repo import _kept
-from xcraft.localrepo import OUTPUT_MARKER, RepoError, fresh_dir, link
+from xcraft.localrepo import OUTPUT_MARKER, RepoError, extra_rpms, fresh_dir, link
 from xcraft.lock import Lock, load_lock, save_lock
-from xcraft.project import Project, ProjectLockedError
+from xcraft.project import Extra, Project, ProjectLockedError
 from xcraft.publish import build_dependencies
 from xcraft.resolution import Resolved
 from xcraft.rpmbuild import prepare_tree
@@ -127,6 +128,22 @@ def test_stage_archives_of_the_manifest_hashed(
     assert hash_dir(pkg, project.root) == hashed
     # the archive of the manifest hashed, not of the one read after
     assert sorted(p.name for p in (tree / "SOURCES").iterdir()) == ["foo-1.tar.gz"]
+
+
+def test_extra_upstream_pinned(project: Project, tmp_path: Path) -> None:
+    (served := tmp_path / "foo-1.0-1.noarch.rpm").write_bytes(b"pinned")
+    pinned = hashlib.sha256(b"pinned").hexdigest()
+    project.config.extra_upstream = {"foo": Extra(url=served.as_uri(), sha256=pinned)}
+    [rpm] = extra_rpms(project)
+    assert rpm.read_bytes() == b"pinned"
+    # damaged in the cache: downloaded again
+    rpm.write_bytes(b"damaged")
+    assert extra_rpms(project)[0].read_bytes() == b"pinned"
+    # of other contents at its URL: refused
+    served.write_bytes(b"other")
+    rpm.unlink()
+    with pytest.raises(RepoError, match=f"has other contents, {hashlib.sha256(b'other').hexdigest()}, than pinned"):
+        extra_rpms(project)
 
 
 def test_link_replaces(tmp_path: Path) -> None:

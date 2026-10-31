@@ -80,7 +80,7 @@ of the JSON, keys sorted, of an array of:
 5. The packages installed in the image: those of `packages` of `xcraft.toml`, and those xcraft needs, sorted.
 6. `macros` of `xcraft.toml`: the RPM macros of the builds.
 7. `release_suffixes` of `xcraft.toml`.
-8. `extra_upstream` of `xcraft.toml`.
+8. `extra_upstream` of `xcraft.toml`: the URLs of the extra upstream RPMs, and their SHA-256, which the builds check.
 9. The repositories of `xcraft.toml`, all of them, whatever their architectures: their settings, as in `xcraft.toml`,
    but `source_baseurl`, where publishing gets their source packages from.
 
@@ -206,7 +206,6 @@ Assumed, rather than covered:
 
 - **The pinned RPMs stay available**: the repositories may remove them, which fails the builds then, rather than
   getting other ones.
-- **The URLs of `extra_upstream` do not change their RPMs**: they are covered by URL, like the base image by digest.
 
 What rpm generated for a build is recorded again when what it resolves to may change: the locked versions, the
 requirements and the binary packages of our specs and their capabilities, the packages of the image, and the extra

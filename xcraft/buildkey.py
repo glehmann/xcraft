@@ -64,7 +64,7 @@ def recipe(project: Project) -> str:
                 sorted({*config.packages, *PACKAGES}),
                 config.macros,
                 config.release_suffixes,
-                config.extra_upstream,
+                {name: extra.model_dump() for name, extra in config.extra_upstream.items()},
                 # but where the source packages are published from
                 {name: repo.model_dump(exclude={"source_baseurl"}) for name, repo in config.repos.items()},
             ],

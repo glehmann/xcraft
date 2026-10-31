@@ -74,7 +74,8 @@ def snapshot_key(project: Project, keys: dict[str, str], *, signer: Signer | Non
     lock = load_lock(project)
     data = [
         project.platform, project.config.platforms, keys, lock.sources, lock.runtime.get(project.arch, []),
-        project.config.publish.extra, project.config.iso.installer, project.config.extra_upstream,
+        project.config.publish.extra, project.config.iso.installer,
+        {n: e.model_dump() for n, e in project.config.extra_upstream.items()},
         {n: repo.model_dump() for n, repo in project.repos.items()},
         {n: p.model_dump() for n, p in resolve_image(project).packages.items()},
         signer.key if signer else None, build, buildenv_hash(),

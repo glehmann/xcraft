@@ -94,12 +94,17 @@ def _run(project: Project, data: dict, *, show: str, rpms: list[Path] = []) -> R
 _resolved: dict[str, Resolved] = {}
 
 
+def _extra(project: Project) -> dict[str, dict[str, str]]:
+    """Return the extra upstream RPMs of the project, which resolutions get, by name, as dicts."""
+    return {name: extra.model_dump() for name, extra in project.config.extra_upstream.items()}
+
+
 def _cached(project: Project, data: dict, *, show: str) -> Resolved:
     """Return what resolve.py resolves from `data`, from the cache when it was resolved before.
 
     The cache key covers the extra upstream RPMs too, which _run() gives it, like the build keys: by their URLs.
     """
-    inputs = [_SCRIPT.read_text(), repo_file(project), data, project.config.extra_upstream]
+    inputs = [_SCRIPT.read_text(), repo_file(project), data, _extra(project)]
     key = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode())
     cache = project.state / "cache/resolved" / project.arch / f"{key.hexdigest()}.json"
     if cache.name not in _resolved:
@@ -390,7 +395,7 @@ def rpm_deps_context(project: Project, builds: dict[str, str]) -> str:
     config = project.config
     inputs = [
         _SCRIPT.read_text(), repo_file(project), project.arch, config.release_suffixes, load_lock(project).sources,
-        config.base_image, sorted({*config.packages, *PACKAGES}), _wanted(project), config.extra_upstream, builds,
+        config.base_image, sorted({*config.packages, *PACKAGES}), _wanted(project), _extra(project), builds,
     ]  # fmt: skip
     return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
 

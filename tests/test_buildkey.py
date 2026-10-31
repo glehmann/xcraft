@@ -15,7 +15,7 @@ from xcraft.buildid import BuildId
 from xcraft.buildkey import recipe_key
 from xcraft.cache import build_keys
 from xcraft.lock import Lock, Pin, Recorded, save_lock
-from xcraft.project import Project
+from xcraft.project import Extra, Project
 from xcraft.specs import hash_dir
 
 if TYPE_CHECKING:
@@ -228,7 +228,7 @@ def test_recipe_inputs(project: Project, monkeypatch: pytest.MonkeyPatch) -> Non
         lambda: setattr(config.repos["baseos"], "includepkgs", ["bash"]),
         lambda: setattr(config, "packages", [*config.packages, "vim"]),
         lambda: setattr(config, "release_suffixes", [".alt"]),
-        lambda: setattr(config, "extra_upstream", {"foo": "https://example.com/foo.rpm"}),
+        lambda: setattr(config, "extra_upstream", {"foo": Extra(url="https://example.com/foo.rpm", sha256="1" * 64)}),
         lambda: setattr(config, "base_image", config.base_image.replace("@sha256:", "@sha256:0")[:-1]),
         lambda: monkeypatch.setattr(buildkey, "FORMAT", buildkey.FORMAT + 1),
         lambda: monkeypatch.setattr(buildkey, "RECIPE", "0" * 64),
