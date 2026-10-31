@@ -67,7 +67,7 @@ xcraft --install-completion  # optional
 | `xcraft patchset [repo] [--package p] [--base ref] [--first n]` | Update the patches of a package with the commits of the current git branch, from the developer's repository |
 | `xcraft import <pkg or srpm>... [--branch b] [--url u] [--repo r]` | Import the history of packages from their packaging repositories, or source RPMs, as the git branches `import/<pkg>/<branch>` to merge, new packages into `base/`, or `<r>/` |
 | `xcraft doctor [--fix]` | Check host prerequisites, including QEMU, UEFI firmware and KVM, even outside a project. Inside a project, also check architecture emulation and remote storage. With `--fix`, show and confirm commands to install missing tools and configure rootless podman and emulation, using the host distribution's package manager |
-| `xcraft import --all` | Import again the packages which have import branches of histories, not of source RPMs only |
+| `xcraft import --all` | Import again the packages which have import branches of histories, not of source RPMs only, on their branches |
 | `xcraft --trace <command>` | Show stack traces on errors |
 
 ## How it works
@@ -297,10 +297,12 @@ The project's history must start with an empty commit: the first imported commit
 depends on the commits imported and on it: importing again gives the same commits, with the new ones on top, and the
 branches sharing commits, like master merging XS-9.0, share them. A merge brings the package into the project, with
 its history, and the next ones bring the new commits, which `xcraft import --all` imports for all the packages with
-import branches of histories:
+import branches of histories, on the branches they have import branches of, like `ydi/9` for a package imported with
+`--branch ydi/9`. The import branches can be pushed, for others to see the histories: they only move forward.
 
 ```
-git merge import/xen/master import/libempserver/master
+git merge import/xen/master
+git merge import/libempserver/master
 ```
 
 The package must not be in the project before its first merge: `git log` and `git blame` follow a merge only through
