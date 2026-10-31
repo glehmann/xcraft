@@ -12,7 +12,7 @@ from xcraft.cache import BuildError, build_keys, deps_repo
 from xcraft.container import DNF_LOCK, run_container
 from xcraft.localrepo import LocalRepo, link, repo_id
 from xcraft.resolution import Resolved, resolve
-from xcraft.sources import fetch_sources, read_manifest
+from xcraft.sources import fetch_sources, parse_manifest
 from xcraft.specs import STAGED_TIME, hash_dir, main_spec
 
 if TYPE_CHECKING:
@@ -39,8 +39,11 @@ def prepare_tree(project: Project, name: str, expected: str | None = None) -> Pa
     for directory in ("SPECS", "SOURCES"):
         (tree / directory).mkdir(parents=True)
 
+    manifest: dict[str, str] = {}
+
     def stage(path: str, data: bytes, executable: bool) -> None:  # noqa: FBT001, as hash_dir() gives them
-        if path == "sources":  # xcraft's, for the archives
+        if path == "sources":  # xcraft's, for the archives, of the manifest the hash read, not of a later read
+            manifest.update(parse_manifest(data.decode()))
             return
         dest = tree / ("SPECS" if path == spec.name else "SOURCES") / path
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -51,15 +54,14 @@ def prepare_tree(project: Project, name: str, expected: str | None = None) -> Pa
     if expected is not None and staged != expected:
         msg = f"{pkg_dir.relative_to(project.root)} changed since the builds started, build it again"
         raise BuildError(msg)
-    if missing := fetch_sources(project, name):
+    if missing := fetch_sources(project, name, manifest):
         msg = f"{', '.join(missing)} is not in the source cache, the remote storage, nor at a URL of the spec"
         raise BuildError(msg)
-    if (pkg_dir / "sources").exists():
-        for filename, digest in read_manifest(pkg_dir / "sources").items():
-            archive = project.source_cache / digest / filename
-            # read-only: the build tree has it hard-linked, and could change it
-            archive.chmod(0o444)
-            link(archive, tree / "SOURCES" / filename)
+    for filename, digest in manifest.items():
+        archive = project.source_cache / digest / filename
+        # read-only: the build tree has it hard-linked, and could change it
+        archive.chmod(0o444)
+        link(archive, tree / "SOURCES" / filename)
     for path in [tree, *tree.rglob("*")]:
         os.utime(path, (STAGED_TIME, STAGED_TIME))
     return tree

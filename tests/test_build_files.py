@@ -14,7 +14,7 @@ import pytest
 import typer
 
 from tests import TOML, config, ours
-from xcraft import build, buildkey, cache
+from xcraft import build, buildkey, cache, rpmbuild
 from xcraft.build import queued
 from xcraft.cache import BuildError, build_keys, previous_duration
 from xcraft.checks import _check_made, record_rpm_deps
@@ -77,6 +77,32 @@ def test_stage_like_a_packaging_repository(project: Project, tmp_path: Path) -> 
         match=re.escape("foo-2.0.tar.gz is not in the source cache, the remote storage, nor at a URL of the spec"),
     ):
         prepare_tree(project, "foo")
+
+
+def test_stage_archives_of_the_manifest_hashed(
+    project: Project, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pkg = project.root / "base/foo"
+    pkg.mkdir(parents=True)
+    (pkg / "foo.spec").write_text("foo")
+    digests = {}
+    for version in ("1", "2"):
+        (archive := tmp_path / f"foo-{version}.tar.gz").write_text(version)
+        digests[archive.name] = cache_source(project.source_cache, archive)
+    write_manifest(pkg / "sources", {"foo-1.tar.gz": digests["foo-1.tar.gz"]})
+    hashed = hash_dir(pkg, project.root)
+    fetch = rpmbuild.fetch_sources
+
+    def edited(*args: object) -> list[str]:  # the manifest edited once hashed, and restored after
+        write_manifest(pkg / "sources", {"foo-2.tar.gz": digests["foo-2.tar.gz"]})
+        return fetch(*args)  # ty: ignore[invalid-argument-type]
+
+    monkeypatch.setattr(rpmbuild, "fetch_sources", edited)
+    tree = prepare_tree(project, "foo", hashed)
+    write_manifest(pkg / "sources", {"foo-1.tar.gz": digests["foo-1.tar.gz"]})
+    assert hash_dir(pkg, project.root) == hashed
+    # the archive of the manifest hashed, not of the one read after
+    assert sorted(p.name for p in (tree / "SOURCES").iterdir()) == ["foo-1.tar.gz"]
 
 
 def test_link_replaces(tmp_path: Path) -> None:
