@@ -59,7 +59,7 @@ def _sha256(text: str) -> str:
 
 def directories(project: Project) -> dict[str, str]:
     """Return the hash of the directory of each package: see The package directory."""
-    return {name: hash_dir(path) for name, path in project.package_dirs.items()}
+    return {name: hash_dir(path, project.root) for name, path in project.package_dirs.items()}
 
 
 def recipe(project: Project) -> str:

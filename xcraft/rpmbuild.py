@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shlex
 import shutil
 from typing import TYPE_CHECKING
@@ -12,7 +13,7 @@ from xcraft.container import DNF_LOCK, run_container
 from xcraft.localrepo import LocalRepo, link, repo_id
 from xcraft.resolution import Resolved, resolve
 from xcraft.sources import fetch_sources, read_manifest
-from xcraft.specs import main_spec
+from xcraft.specs import STAGED_TIME, hash_dir, main_spec
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -21,22 +22,35 @@ if TYPE_CHECKING:
     from xcraft.project import Project
 
 
-def prepare_tree(project: Project, name: str) -> Path:
-    """Return a fresh build tree of `name`, laid out as a packaging repository.
+def prepare_tree(project: Project, name: str, expected: str | None = None) -> Path:
+    """Return a fresh build tree of `name`, laid out as a packaging repository, of the files whose hash, see
+    specs.hash_dir(), is `expected`, if given.
 
     The main spec is in SPECS/, everything else in SOURCES/, with the archives
-    from the source cache, downloaded when missing (see fetch_sources).
+    from the source cache, downloaded when missing (see fetch_sources). The
+    files have the modes 0644, or 0755 for those their owners may run, and
+    0444 for the archives, and all of them, directories included, have the
+    time STAGED_TIME: the same trees for the same hash.
     """
     pkg_dir = project.package_dirs[name]
     spec = main_spec(pkg_dir)
     tree = project.state / "build" / name
     shutil.rmtree(tree, ignore_errors=True)
-    (tree / "SPECS").mkdir(parents=True)
-    shutil.copy2(spec, tree / "SPECS")
-    # `sources` and `origin` are xcraft's
-    shutil.copytree(
-        pkg_dir, tree / "SOURCES", ignore=lambda d, _: [spec.name, "sources", "origin"] if d == str(pkg_dir) else []
-    )
+    for directory in ("SPECS", "SOURCES"):
+        (tree / directory).mkdir(parents=True)
+
+    def stage(path: str, data: bytes, executable: bool) -> None:  # noqa: FBT001, as hash_dir() gives them
+        if path == "sources":  # xcraft's, for the archives
+            return
+        dest = tree / ("SPECS" if path == spec.name else "SOURCES") / path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
+        dest.chmod(0o755 if executable else 0o644)
+
+    staged = hash_dir(pkg_dir, project.root, stage)
+    if expected is not None and staged != expected:
+        msg = f"{pkg_dir.relative_to(project.root)} changed since the builds started, build it again"
+        raise BuildError(msg)
     if missing := fetch_sources(project, name):
         msg = f"{', '.join(missing)} is not in the source cache, the remote storage, nor at a URL of the spec"
         raise BuildError(msg)
@@ -46,6 +60,8 @@ def prepare_tree(project: Project, name: str) -> Path:
             # read-only: the build tree has it hard-linked, and could change it
             archive.chmod(0o444)
             link(archive, tree / "SOURCES" / filename)
+    for path in [tree, *tree.rglob("*")]:
+        os.utime(path, (STAGED_TIME, STAGED_TIME))
     return tree
 
 

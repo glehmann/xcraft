@@ -18,6 +18,7 @@ from pydantic import BaseModel, TypeAdapter
 from xcraft.container import BUILDENV, build_image, image_tag, run
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from xcraft.project import Project
@@ -102,17 +103,30 @@ def main_spec(pkg_dir: Path) -> Path:
     raise RuntimeError(msg)
 
 
-def hash_dir(path: Path) -> str:
-    """Return a hash of the files in `path`, as the builds get them, except its ``origin``.
+STAGED_TIME = 315532800
+"""The modification time of what the build trees get, the same for all: 1980-01-01, the earliest zip archives have."""
 
-    That is their paths, contents, and whether they are executable by their owners, like git: the rest of their modes
-    depends on the umask, and what the user may run on the mounts, with the ACLs. The files of the symbolic links are
-    those they point to, like in the build trees, and the empty directories are not in it, nor in git.
+
+def hash_dir(path: Path, root: Path | None = None, stage: Callable[[str, bytes, bool], None] | None = None) -> str:
+    """Return a hash of the files in `path`, but its ``origin``, giving each one to `stage`, if any, by path, with its
+    content and whether it is executable: what the build trees get, from the same reads, see rpmbuild.prepare_tree().
+
+    That is their paths, contents, and whether their owners may run them, like git: the rest of their modes depends on
+    the umask, and what the user may run on the mounts, with the ACLs. A symbolic link is the file it points to, in
+    `root`, `path` by default, rather than out of the project, a directory, or nothing. The empty directories are not
+    in it, nor in git.
     """
     h = hashlib.sha256()
-    for file in sorted(p for p in path.rglob("*", recurse_symlinks=True) if p.is_file() and p != path / "origin"):
-        h.update(f"{file.relative_to(path)}\0{bool(file.stat().st_mode & stat.S_IXUSR)}\0".encode())
-        h.update(hashlib.sha256(file.read_bytes()).digest())
+    for file in sorted(p for p in path.rglob("*") if p.is_symlink() or (p.is_file() and p != path / "origin")):
+        target = file.resolve()
+        if file.is_symlink() and not (target.is_file() and target.is_relative_to((root or path).resolve())):
+            msg = f"{file} is a link to {target}: only files of {root or path} are"
+            raise ValueError(msg)
+        data, executable = target.read_bytes(), bool(target.stat().st_mode & stat.S_IXUSR)
+        h.update(f"{file.relative_to(path)}\0{executable}\0".encode())
+        h.update(hashlib.sha256(data).digest())
+        if stage:
+            stage(file.relative_to(path).as_posix(), data, executable)
     return h.hexdigest()
 
 
@@ -124,7 +138,7 @@ def target(arch: str) -> str:
 def load_packages(project: Project) -> dict[str, Package]:
     """Return the metadata of all the packages of `project`, by name, for its architecture."""
     dirs = list(project.package_dirs.values())
-    hashes = [(d.name, hash_dir(d)) for d in dirs]
+    hashes = [(d.name, hash_dir(d, project.root)) for d in dirs]
     native = project.on_host()
     cache = (
         project.state

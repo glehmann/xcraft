@@ -44,19 +44,25 @@ by all the architectures in `.buildid/`, are the same computed on any of them.
 
 ## The package directory
 
-The hash of a package directory is the SHA-256 of, for each file below it, symbolic links followed, but its `origin`,
-in the order of their paths:
+The hash of a package directory is the SHA-256 of, for each file below it, but its `origin`, in the order of their
+paths:
 
 ```text
 <path relative to the directory> \0 <True|False: whether its owner may run it> \0 <the SHA-256 of its content, 32 bytes>
 ```
 
-That is what the builds get, like git: the rest of the file modes depends on the umask, and who may run a file on the
-mounts, with the ACLs. A symbolic link brings the files it points to, wherever they are, like in the build tree: those
-pointing out of the project make the key depend on the machine, which xcraft import refuses. The empty directories are
-not in it, nor in git. The spec, its patches, and its `sources` manifest, which has the SHA-256 of the archives, so
-the archives are covered without being in git. See `buildkey.directories()`, with `xcraft.specs.hash_dir()`, which
-the cache of the parsed specs uses too.
+A symbolic link is the file it points to, which must be a file of the project: one out of it would make the key depend
+on the machine, and a link to a directory, or to nothing, is refused. The empty directories are not in it, nor in git.
+The spec, its patches, and its `sources` manifest, which has the SHA-256 of the archives, so the archives are covered
+without being in git. See `buildkey.directories()`, with `xcraft.specs.hash_dir()`, which the cache of the parsed specs
+uses too.
+
+The build tree has exactly what the hash covers, from the same reads of the files, and nothing more, see
+`rpmbuild.prepare_tree()`: the main spec in `SPECS/`, the other files in `SOURCES/`, but the `sources` manifest, whose
+archives are there instead. The files have the mode 0644, or 0755 when their owner may run them, the archives 0444, and
+all of them, directories included, the same time, `STAGED_TIME`, 1980-01-01. A build whose package directory does not
+have the hash of its key when its tree is made fails, rather than being cached under a key of other files: the same
+key, the same tree, whatever the checkout, its umask, its file times, and its empty directories.
 
 ## The recipe
 

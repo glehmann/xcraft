@@ -141,7 +141,7 @@ def _build_one(  # noqa: C901
     resolved = check_resolved(project, name)
     replace = image_replacements(resolved, name)
     repo = deps_repo(project, name, keys)
-    tree = prepare_tree(project, name)
+    tree = prepare_tree(project, name, hashes[name])
     log = project.log(name)
     suffix = release_suffix(keys[name])
     pid_file = _pid_file(project, name)
@@ -177,7 +177,7 @@ def _build_one(  # noqa: C901
         if release_suffix(keys[name]) != suffix:
             msg = "its dynamic BuildRequires, now in the lock, change its build number: built again with the new one"
             raise BuildRootChangedError(msg)
-    if hash_dir(project.package_dirs[name]) != hashes[name]:  # those of its key, which the build tree copied
+    if hash_dir(project.package_dirs[name], project.root) != hashes[name]:  # those of its key, staged
         msg = f"{project.package_dirs[name].relative_to(project.root)} changed during the build, build it again"
         raise BuildError(msg)
     # development builds are signed with the developer's key, if any
@@ -496,7 +496,11 @@ def _done(project: Project, name: str, keys: dict[str, str], hashes: dict[str, s
     """Return the result of `name` when it is not to build: failed, as it or one of its dependencies changed since
     they had the `hashes` of the `keys`, or cached.
     """
-    if edited := [n for n in sorted(reachable(project.deps, [name])) if hash_dir(project.package_dirs[n]) != hashes[n]]:
+    if edited := [
+        n
+        for n in sorted(reachable(project.deps, [name]))
+        if hash_dir(project.package_dirs[n], project.root) != hashes[n]
+    ]:
         error = BuildError(f"{', '.join(edited)} changed since the builds started: build again")
         _show_failure(project, name, error, verbose=verbose)
         return Result(name, "failed")
