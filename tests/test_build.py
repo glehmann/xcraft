@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -730,6 +731,12 @@ def test_pinned_store_checked(root: Path, monkeypatch: pytest.MonkeyPatch) -> No
             assert pinned.repository(project) == repo
             # downloaded again
             assert hashlib.sha256(stored.read_bytes()).hexdigest() == pin.sha256
+        # missing in the repository, which two commands check at once, one after the other
+        (repo / pinned.file_name("bash", pin)).unlink()
+        pinned._checked.clear()
+        with ThreadPoolExecutor(2) as pool:
+            assert list(pool.map(lambda _: pinned.repository(project), range(2))) == [repo, repo]
+        assert hashlib.sha256((repo / pinned.file_name("bash", pin)).read_bytes()).hexdigest() == pin.sha256
     finally:
         subprocess.run(["podman", "volume", "rm", "-f", volume], check=False, capture_output=True)
 

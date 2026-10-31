@@ -11,6 +11,7 @@ digest.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -51,7 +52,8 @@ _checked: set[Path] = set()
 
 def repository(project: Project) -> Path:
     """Return the repository of the pinned binary packages of the architecture of `project`, made if needed, with
-    RPMs of the SHA-256 of their pins: those of other contents in the store are downloaded again.
+    RPMs of the SHA-256 of their pins: those missing, or of other contents, in the store are downloaded again, and the
+    repository made again, one command at a time; another one using it then fails, as it would with what was damaged.
     """
     pinned = pins(project)
     ident = hashlib.sha256(json.dumps({n: p.text() for n, p in sorted(pinned.items())}).encode()).hexdigest()
@@ -59,17 +61,24 @@ def repository(project: Project) -> Path:
     repo = store / "repos" / ident
     if repo in _checked:
         return repo
-    for _ in range(2):
-        if not (repo / "repodata/repomd.xml").exists():
-            _make(project, pinned, store, ident)
-        if not (damaged := {n: p for n, p in pinned.items() if _sha256(repo / file_name(n, p)) != p.sha256}):
-            _checked.add(repo)
-            return repo
-        for name, pin in damaged.items():  # in the store, which the repository has them hard-linked from
-            (store / "rpms" / pin.sha256 / file_name(name, pin)).unlink(missing_ok=True)
-        shutil.rmtree(repo)
+    with (store / ".lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)  # of the projects of the machine, which share it
+        for _ in range(2):
+            if not (repo / "repodata/repomd.xml").exists():
+                _make(project, pinned, store, ident)
+            if not (damaged := {n: p for n, p in pinned.items() if not _intact(repo / file_name(n, p), p)}):
+                _checked.add(repo)
+                return repo
+            for name, pin in damaged.items():  # in the store, which the repository has them hard-linked from
+                (store / "rpms" / pin.sha256 / file_name(name, pin)).unlink(missing_ok=True)
+            shutil.rmtree(repo)
     msg = f"the pinned packages of {project.arch} keep other contents than pinned in the store {store}"
     raise PinnedError(msg)
+
+
+def _intact(path: Path, pin: Pin) -> bool:
+    """Return whether the RPM `path` is there, with the SHA-256 of its `pin`."""
+    return path.exists() and _sha256(path) == pin.sha256
 
 
 def file_name(name: str, pin: Pin) -> str:
