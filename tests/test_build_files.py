@@ -389,12 +389,17 @@ def test_record_rpm_deps(project: Project, monkeypatch: pytest.MonkeyPatch) -> N
     assert load_lock(project).requires.shared == {"foo": ["bar"]}
     monkeypatch.setattr("xcraft.checks.resolve_rpm_deps", lambda *_: pytest.fail("recorded again"))
     assert not record_rpm_deps(project, ["foo"], {"foo": "key"})
-    # but with a package of ours providing it, which it may resolve to instead
-    baz = Binary(name="baz", evr="1.0-1", arch="x86_64", provides=["bar"], requires=[])
+    # but with a build of ours, which it may resolve to instead: a new one, or another of the same package
+    baz = Binary(name="baz", evr="1.0-1", arch="x86_64", provides=[], requires=[])
     project.parsed = {"foo": Package(name="foo", binaries=[binary]), "baz": Package(name="baz", binaries=[baz])}
-    monkeypatch.setattr("xcraft.checks.resolve_rpm_deps", lambda *_: Resolved(requires={"foo": ["baz"]}))
-    assert record_rpm_deps(project, ["foo"], {"foo": "key"})
-    assert load_lock(project).requires.shared == {"foo": ["baz"]}
+    for key, provider in (("first", "baz"), ("second", "bar")):
+        (rpms := project.state / f"cache/builds/x86_64_v2/baz/{key}/RPMS/x86_64").mkdir(parents=True)
+        (rpms / "baz-1.0-1.x86_64.rpm").touch()
+        monkeypatch.setattr(
+            "xcraft.checks.resolve_rpm_deps", lambda *_, provider=provider: Resolved(requires={"foo": [provider]})
+        )
+        assert record_rpm_deps(project, ["foo"], {"foo": "key", "baz": key})
+        assert load_lock(project).requires.shared == {"foo": [provider]}
 
 
 def test_record_providers_named_with_their_releases(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
