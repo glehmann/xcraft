@@ -356,8 +356,8 @@ does, from a snapshot like `xcraft publish --local` makes, of its architecture o
   `--netinstall`, where the installer gets the packages from the network;
 - it is hybrid: it boots with BIOS and UEFI, from a CD or a USB stick.
 
-The tools making it, like xorriso and syslinux, are installed in the containers making it, in the versions of the
-lock, which records them in `iso`. The ISO is `.xcraft/iso/xcp-ng-<version>-<id>-<arch>[-netinstall].iso` by default:
+The tools making it, like xorriso and syslinux, are installed in the containers making it, from the packages pinned
+for them in the lock, in `iso`, resolved with the build roots. The ISO is `.xcraft/iso/xcp-ng-<version>-<id>-<arch>[-netinstall].iso` by default:
 `<arch>` is the RPM architecture, like `x86_64_v2`, and `<id>`, like `4772c1`, identifies what the ISOs are made of,
 the same for the full and netinstall ones of all the architectures: the beginning of a hash of their keys, which
 cover the packages, the lock and the ISO's configuration.
@@ -600,10 +600,13 @@ xcraft publish --stage kernel-fix  # developer bucket, custom stage
 - Our packages are built or fetched, but only fetched for the architectures the host emulates: those are built by
   native builders, which push them. The publish fails when the remote storage misses one of their builds.
 
-- What our packages need at runtime is resolved by dnf, for each of them alone, on an empty system, without weak
-  dependencies, and goes in the lock, in `runtime`: a snapshot only changes with the lock, and `xcraft lock --update`
-  updates these packages too, for security fixes. `[publish] extra` in `xcraft.toml` adds upstream packages for
-  convenience, like `mc`, with what they need.
+- What our packages need at runtime is in the lock, in `runtime`, pinned like the build roots: dnf resolves it with
+  them, before building, for all the architectures, for each of our binary packages alone, on an empty system,
+  without weak dependencies, from their specs and what their builds found. Publishing only gets those pinned
+  packages, checked against their SHA-256, and fails while some of ours cannot be installed: a snapshot only changes
+  with the lock, and `xcraft lock --update` updates these packages too, for security fixes. `[publish] extra` in
+  `xcraft.toml` adds upstream packages for convenience, like `mc`, with what they need, and `[iso] installer` those
+  of the installer.
 - The source RPMs of the upstream packages come from the AlmaLinux vaults, which keep all versions (the
   `source_baseurl` of the repositories): those of the binaries' metadata, as some binaries do not have the versions
   of their sources.
@@ -742,7 +745,8 @@ architectures, and has, one line per package for readable diffs:
   package of ours, those of its build root but the image's, shared by the architectures but for their own entries, in
   `[roots.<arch>]`: as resolved, for all the architectures, by the commands resolving them, which record them when
   they change.
-- `[runtime]` and `[iso]`, by architecture: the upstream packages published, and those of the tools making the ISO.
+- `[runtime]` and `[iso]`, by architecture: the upstream binary packages published, and those of the tools making the
+  ISO, but the image's, resolved and recorded with the build roots.
 
 **Build roots, resolved.** Before building, dnf resolves the build environment image, from the base image and
 `packages` of `xcraft.toml`, and the build root of each package, from its `BuildRequires`, against the upstream

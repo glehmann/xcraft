@@ -1,4 +1,5 @@
-"""The build environment image and the build roots of an architecture, resolved from the lock and the specs.
+"""The build environment image, the build roots, and what the published repositories and the tools making the ISO
+need, of an architecture, resolved from the lock and the specs.
 
 dnf resolves them without installing anything, in the base image of the host,
 natively, for any architecture (see buildenv/resolve.py): the image from the
@@ -6,7 +7,8 @@ packages of the base image and those of the configuration, and the build root
 of each package of ours from its BuildRequires, against the upstream
 repositories, in the locked versions, and a repository of our binary packages,
 written from their specs and what their builds found. So the build keys are
-known before building, on every architecture.
+known before building, on every architecture, and what is published is locked
+and pinned before publishing.
 
 Resolving does not change the lock: prepare() does, for the commands, and the
 builds once they recorded what they found, locking the upstream source packages
@@ -23,8 +25,10 @@ from functools import cache
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
+from rich.markup import escape
 
 from xcraft.container import BUILDENV, PACKAGES, base_packages, repo_file, run_natively
+from xcraft.display import console
 from xcraft.graph import reachable
 from xcraft.localrepo import extra_rpms
 from xcraft.lock import Locked, Pin, choose_versions, load_lock, save_lock
@@ -39,6 +43,8 @@ if TYPE_CHECKING:
     from xcraft.project import Project
 
 _SCRIPT = BUILDENV / "resolve.py"
+ISO_TOOLS = ["dosfstools", "memtest86+", "mtools", "syslinux-nonlinux", "xorriso"]
+"""The packages of the tools making the ISO, which the image does not have."""
 
 
 class ResolutionError(RuntimeError):
@@ -66,6 +72,15 @@ class Resolved(BaseModel):
     """For the binary packages of ours recorded, the packages their generated requirements resolve to."""
     provides: dict[str, list[str]] = {}
     """For the binary packages of ours recorded, their generated capabilities that our specs require."""
+    runtime: list[str] = []
+    """The upstream packages of the published repositories: what our packages, the extra ones and the installer's
+    need."""
+    tools: list[str] = []
+    """The upstream packages of the tools making the ISO, but the image's."""
+    runtime_errors: dict[str, str] = {}
+    """Why packages of the published repositories cannot be installed, by package, or group, like install.img."""
+    tools_error: str = ""
+    """Why the tools making the ISO cannot be installed."""
 
     def image_packages(self) -> dict[str, Locked]:
         """Return the upstream packages of the image."""
@@ -178,8 +193,9 @@ def prepare(project: Project, *, roots: bool = True, repin: set[str] | None = No
     specs, and the build roots, unless not `roots`: what the commands resolving do first, and the builds once they
     recorded what they found.
 
-    With the build roots, those of all the architectures are recorded in the lock, with their images: the build keys
-    cover them, on any architecture. Their resolutions are cached, so only a change resolves them again. The binary
+    With the build roots, those of all the architectures are recorded in the lock, with their images, and what is
+    published and the tools making the ISO: the build keys cover them, on any architecture, and publishing gets them
+    pinned. Their resolutions are cached, so only a change resolves them again. The binary
     packages of the source packages `repin` are pinned again, from the repositories as they are now, see _pins().
     """
     if repin:
@@ -274,8 +290,9 @@ def _record_images(platforms: list[Project], recorded: Lock, lock: Lock, repin: 
 
 
 def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
-    """Record in the lock the upstream binary packages of the images and of the build roots of all the architectures,
-    pinned, see _pins(), and keep in it what the builds found for the packages and architectures of the project only.
+    """Record in the lock the upstream binary packages of the images, of the build roots, of the published
+    repositories and of the tools making the ISO, of all the architectures, pinned, see _pins(), and keep in it what
+    the builds found for the packages and architectures of the project only.
     """
     platforms = project.all_platforms()
 
@@ -284,7 +301,7 @@ def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
         return {b.name for p in platforms for package in p.parsed.values() for b in package.binaries}
 
     def record(recorded: Lock, lock: Lock) -> None:
-        lock.image, lock.binaries = {}, {}
+        lock.image, lock.binaries, lock.runtime, lock.iso = {}, {}, {}, {}
         for kept in (lock.requires, lock.provides):
             if kept.shared or kept.arches:  # the specs parsed only then
                 kept.keep(binaries())
@@ -305,10 +322,24 @@ def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
                     else sorted(set(roots.buildroots.get(name, [])) - {*image.image})
                 )
                 lock.roots.record(platform.arch, project.first, name, values)
-            names = {*image.image, *(n for values in lock.roots.of(platform.arch).values() for n in values)}
+            _record_published(recorded, lock, platform.arch, roots)
+            names = {
+                *image.image, *(n for values in lock.roots.of(platform.arch).values() for n in values),
+                *lock.runtime.get(platform.arch, []), *lock.iso.get(platform.arch, []),
+            }  # fmt: skip
             lock.binaries[platform.arch] = _pins(platform.arch, recorded, [image, roots], names, repin)
 
     _saved(project, record)
+
+
+def _record_published(recorded: Lock, lock: Lock, arch: str, roots: Resolved) -> None:
+    """Record in the `lock` the upstream binary packages of the published repositories and of the tools making the ISO
+    of `arch`, as resolved with the build `roots`, or as `recorded` until they can all be resolved.
+    """
+    failed = roots.runtime_errors or roots.tools_error
+    for field, values in (("runtime", roots.runtime), ("iso", roots.tools)):
+        if values := getattr(recorded, field).get(arch, []) if failed else values:
+            getattr(lock, field)[arch] = values
 
 
 def _image(project: Project) -> Resolved:
@@ -345,11 +376,17 @@ def _roots_data(project: Project) -> dict:
         }
         for name, package in sorted(packages.items())
     }
-    return {**_image_data(project), "ours": _ours(project), "builds": builds}
+    config = project.config
+    # the ISOs are made for x86_64 only, for their boot loaders
+    tools = ISO_TOOLS if config.iso.installer and project.arch.startswith("x86_64") else []
+    runtime = {"extra": config.publish.extra, "installer": config.iso.installer, "tools": tools}
+    return {**_image_data(project), "ours": _ours(project), "builds": builds, "runtime": runtime}
 
 
 def _roots(project: Project) -> Resolved:
-    return _cached(project, _roots_data(project), show=f"resolving the build roots of {project.arch}")
+    return _cached(
+        project, _roots_data(project), show=f"resolving the build roots of {project.arch}, and what is published"
+    )
 
 
 def resolve(project: Project) -> Resolved:
@@ -359,6 +396,19 @@ def resolve(project: Project) -> Resolved:
     """
     resolve_image(project)
     return _locked(_roots(project))
+
+
+def published(project: Project) -> list[str]:
+    """Return the upstream packages of the published repositories of the platform, which prepare() pinned in the lock.
+
+    Raise when some of the packages published cannot be installed.
+    """
+    if errors := resolve(project).runtime_errors:
+        for name, error in sorted(errors.items()):
+            console.print(f"[red]✗[/] {escape(f'{name}: {error}')}")
+        msg = f"cannot install, on {project.arch}: {', '.join(sorted(errors))}"
+        raise ResolutionError(msg)
+    return load_lock(project).runtime.get(project.arch, [])
 
 
 def resolve_rpm_deps(project: Project, names: dict[str, str], rpms: list[Path]) -> Resolved:

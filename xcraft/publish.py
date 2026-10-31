@@ -24,13 +24,14 @@ from rich.markup import escape
 
 from xcraft import build as builder
 from xcraft import remote, repodata
-from xcraft.cache import BuildError, build_keys, build_path, builds_repo, cached_build
+from xcraft.cache import BuildError, build_keys, build_path, cached_build
 from xcraft.container import BUILDENV, DNF_LOCK, buildenv_hash, image_tag, run
 from xcraft.display import activity, console
 from xcraft.localrepo import OUTPUT_MARKER, LocalRepo, extra_rpms, fresh_dir, link
-from xcraft.lock import Locked, load_lock, save_lock
+from xcraft.lock import load_lock
+from xcraft.pinned import pins
 from xcraft.project import INTERNAL
-from xcraft.resolution import lock_installed, prepare, resolve, resolve_image
+from xcraft.resolution import prepare, published, resolve
 from xcraft.signing import Signer, check_signatures, dev_signer, signing_key
 from xcraft.sources import sha256_of
 
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator
 
     from xcraft.build import Fetch
+    from xcraft.lock import Pin
     from xcraft.project import Project, Remote
     from xcraft.repodata import Entry
 
@@ -77,7 +79,7 @@ def snapshot_key(project: Project, keys: dict[str, str], *, signer: Signer | Non
         project.config.publish.extra, project.config.iso.installer,
         {n: e.model_dump() for n, e in project.config.extra_upstream.items()},
         {n: repo.model_dump() for n, repo in project.repos.items()},
-        {n: p.model_dump() for n, p in resolve_image(project).packages.items()},
+        {n: p.text() for n, p in lock.binaries.get(project.arch, {}).items()},
         signer.key if signer else None, build, buildenv_hash(),
         # how snapshots are made: whole modules, rather than a list of what they use, easy to get incomplete
         [Path(__file__).with_name(module).read_text() for module in ("publish.py", "localrepo.py", "repodata.py")],
@@ -147,53 +149,6 @@ def reuse_published(
     return True
 
 
-def resolve_runtime(project: Project, repo: LocalRepo) -> list[str]:
-    """Add to the lock the upstream packages our builds of `repo` need, the extra ones and the installer's, and
-    return them.
-
-    They are resolved again when they need upstream source packages not locked yet, which get other versions.
-    """
-    for _ in range(3):
-        if lock_installed(project, needed := _runtime(project, repo)):
-            break
-    else:
-        msg = "what our packages need at runtime is not available in the versions locked for all the architectures"
-        raise BuildError(msg)
-    with project.lock():
-        lock = load_lock(project)
-        lock.runtime[project.arch] = sorted(needed)
-        save_lock(project, lock)
-    return lock.runtime[project.arch]
-
-
-def _runtime(project: Project, repo: LocalRepo) -> dict[str, Locked]:
-    """Return the upstream packages needed by our packages of `repo`, the extra ones and the installer's."""
-    with project.work("runtime") as work:
-        (work / "input.json").write_text(
-            json.dumps(
-                {
-                    "locked": {name: [p.evr, p.arch] for name, p in resolve_image(project).packages.items()},
-                    "extra": project.config.publish.extra,
-                    "installer": project.config.iso.installer,
-                }
-            )
-        )
-        run(
-            project,
-            "runtime",
-            f"{DNF_LOCK} python3 /xcraft/runtime.py /work/input.json /work/output.json",
-            volumes=[*repo.volumes(), f"{work}:/work"],
-            show="resolving what our packages need at runtime",
-        )
-        output = json.loads((work / "output.json").read_text())
-    if output["errors"]:
-        for name, error in sorted(output["errors"].items()):
-            console.print(f"[red]✗[/] {escape(f'{name}: {error}')}")
-        msg = f"cannot install: {', '.join(sorted(output['errors']))}"
-        raise BuildError(msg)
-    return {name: Locked.model_validate(p) for name, p in output["packages"].items()}
-
-
 def _download(
     project: Project, files: dict[str, str], on_line: Callable[[str], None], *, source: bool, volumes: list[str]
 ) -> Path:
@@ -238,23 +193,23 @@ def _download(
     return cache
 
 
-def _nevra(packages: dict[str, Locked], name: str) -> str:
+def _nevra(packages: dict[str, Pin], name: str) -> str:
     return f"{name}-{packages[name].evr}.{packages[name].arch}"
 
 
-def _rpm_name(packages: dict[str, Locked], name: str) -> str:
+def _rpm_name(packages: dict[str, Pin], name: str) -> str:
     return f"{name}-{packages[name].evr.split(':')[-1]}.{packages[name].arch}.rpm"
 
 
 def _upstream_rpms(project: Project, names: list[str], on_line: Callable[[str], None]) -> list[Path]:
-    """Return the RPMs of locked upstream packages: from the cache, the latest snapshot, or the repositories."""
-    locked = resolve_image(project).packages
+    """Return the RPMs of pinned upstream packages: from the cache, the latest snapshot, or the repositories."""
+    locked = pins(project)
     rpms = {name: _rpm_name(locked, name) for name in names}
     cache = _download(project, {rpms[name]: _nevra(locked, name) for name in names}, on_line, source=False, volumes=[])
     for name in names:
         if sha256_of(cache / rpms[name]) != locked[name].sha256:
             (cache / rpms[name]).unlink()
-            msg = f"{rpms[name]} does not match the sha256 of the lock"
+            msg = f"{rpms[name]} does not have the SHA-256 of its pin in the lock"
             raise BuildError(msg)
     return [cache / rpm for rpm in rpms.values()]
 
@@ -266,7 +221,7 @@ def _upstream_srpms(project: Project, names: list[str], on_line: Callable[[str],
     """
     if not names:
         return []
-    locked = resolve_image(project).packages
+    locked = pins(project)
     with _sources(project) as (work, volumes):
         files = {srpm: _nevra(locked, name) for name, srpm in _srpm_names(project, names, work, volumes).items()}
         cache = _download(project, files, on_line, source=True, volumes=volumes)
@@ -292,7 +247,7 @@ def _srpm_names(project: Project, names: list[str], work: Path, volumes: list[st
     """Return the source packages of the locked upstream packages `names`, as in the metadata of the repositories."""
     if not names:  # dnf repoquery would list everything
         return {}
-    locked = resolve_image(project).packages
+    locked = pins(project)
     nevras = {name: _nevra(locked, name) for name in names}
     run(
         project,
@@ -686,7 +641,7 @@ def snapshot(
     built = []
     for project in platforms:
         keys = _built(project, fetch="all")
-        resolve_runtime(project, builds_repo(project, keys))
+        published(project)
         built.append((project, keys))
     assemble(built, dest, signer=signer, storage=storage, build=build)
     _summary(dest, built, build=build)
@@ -846,7 +801,7 @@ def _add_stored_upstream(plan: _Plan, project: Project, names: list[str], repo: 
     """Add the upstream packages `names` to `repo`, and their sources to `source`, checking the signatures of those
     the storage misses: those it has were when added.
     """
-    locked = resolve_image(project).packages
+    locked = pins(project)
     rpms = {name: _rpm_name(locked, name) for name in names}
     missing = [name for name in names if not plan.reuse(repo, rpms[name], locked[name].sha256)]
     with activity(f"getting the upstream packages for {repo}", log=True) as on_line:
@@ -889,8 +844,7 @@ def remote_snapshot(
         keys = _built(platform, fetch="needed")
         arch = f"{REPO}/{platform.arch}"
         _add_ours(plan, platform, keys, signer=signer, storage=storage)
-        resolve_runtime(platform, LocalRepo(platform, plan.index(arch, None), up_to_date=True))
-        _add_stored_upstream(plan, platform, load_lock(platform).runtime.get(platform.arch, []), arch, f"{REPO}/Source")
+        _add_stored_upstream(plan, platform, published(platform), arch, f"{REPO}/Source")
         _check_installable(platform, [plan.index(arch, signer)])
         if build:
             _add_stored_upstream(
