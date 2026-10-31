@@ -69,17 +69,23 @@ key, the same tree, whatever the checkout, its umask, its file times, and its em
 The recipe is what makes the builds of all the packages, besides the upstream packages and the packages: the SHA-256
 of the JSON, keys sorted, of an array of:
 
-1. **The scripts of the builds**: `recipe_key()`, the SHA-256 of the concatenation of the template of the repository
+1. **The format**: `FORMAT`, the version of how xcraft gives the builds what their keys cover, besides their scripts,
+   like the build trees: changed with it, to build them all again.
+2. **The scripts of the builds**: `recipe_key()`, the SHA-256 of the concatenation of the template of the repository
    of our builds, `REPO_FILE`, and of `build.sh`, `offline.py`, `record.py`, `made.py` and `rpmdeps.py`, of
    `xcraft/buildenv/`. A change of them which makes the same packages, like a fix of how a build fails, maps its hash
    to the earliest one making the same packages, in `_SAME_BUILDS`, to keep the builds.
-2. **The image**: the `Containerfile` of the build environment, as text.
-3. `base_image` of `xcraft.toml`: the base image, pinned by digest.
-4. The packages installed in the image: those of `packages` of `xcraft.toml`, and those xcraft needs, sorted.
-5. `macros` of `xcraft.toml`: the RPM macros of the builds.
-6. `release_suffixes` of `xcraft.toml`.
-7. `extra_upstream` of `xcraft.toml`.
-8. The repositories of `xcraft.toml`, all of them, whatever their architectures: their settings, as in `xcraft.toml`.
+3. **The image**: the `Containerfile` of the build environment, as text.
+4. `base_image` of `xcraft.toml`: the base image, pinned by digest.
+5. The packages installed in the image: those of `packages` of `xcraft.toml`, and those xcraft needs, sorted.
+6. `macros` of `xcraft.toml`: the RPM macros of the builds.
+7. `release_suffixes` of `xcraft.toml`.
+8. `extra_upstream` of `xcraft.toml`.
+9. The repositories of `xcraft.toml`, all of them, whatever their architectures: their settings, as in `xcraft.toml`,
+   but `source_baseurl`, where publishing gets their source packages from.
+
+The image has the macros, the repositories and the packages in an order of its own, by name, which their order in
+`xcraft.toml` does not change, like the recipe.
 
 The versions of the upstream packages of the image are not in the recipe, but in [the lock](#the-lock). See
 `buildkey.recipe()` and `buildkey.recipe_key()`.
@@ -175,10 +181,6 @@ Assumed, rather than covered:
   the build environment resolving them, like `resolve.py`. A version published again with other contents, or another
   choice of binary packages of the same versions, is not a change of the keys.
 - **The URLs of `extra_upstream` do not change their RPMs**: they are covered by URL, like the base image by digest.
-- **The order of `macros` and of the repositories in `xcraft.toml` does not change the builds**: macros are expanded
-  when used, and the repositories have the same priority.
-- **`source_baseurl` of the repositories** is covered, though only publishing uses it: excluding it changes all the
-  keys, for the next change rebuilding all the packages anyway.
 
 What rpm generated for a build is recorded again when what it resolves to may change: the locked versions, the
 requirements and the binary packages of our specs and their capabilities, the packages of the image, and the extra

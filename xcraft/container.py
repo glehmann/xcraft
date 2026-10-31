@@ -71,8 +71,8 @@ def repo_file(project: Project) -> str:
     return "".join(
         f"[{name}]\nname={name}\nbaseurl={repo.baseurl.format(arch=project.arch)}\n"
         + (f"gpgcheck=1\ngpgkey={repo.gpgkey}\n" if repo.gpgkey else "gpgcheck=0\n")
-        + (f"includepkgs={' '.join(repo.includepkgs)}\n" if repo.includepkgs else "")
-        for name, repo in project.repos.items()
+        + (f"includepkgs={' '.join(sorted(repo.includepkgs))}\n" if repo.includepkgs else "")
+        for name, repo in sorted(project.repos.items())  # in an order of their own, which the build keys cover
     )
 
 
@@ -95,7 +95,7 @@ def _image_files(project: Project) -> dict[str, str]:
     return {
         "Containerfile": (BUILDENV / "Containerfile").read_text(),
         "upstream.repo": repo_file(project),
-        "macros.xcraft": "".join(f"%{name} {value}\n" for name, value in project.config.macros.items()),
+        "macros.xcraft": "".join(f"%{name} {value}\n" for name, value in sorted(project.config.macros.items())),
         "versionlock.list": versionlock(resolve_image(project).image_packages()),
     }
 
@@ -107,7 +107,7 @@ def _image(project: Project) -> tuple[str, dict[str, str], dict[str, str]]:
     so it identifies the image across machines.
     """
     config = project.config
-    args = {"BASE_IMAGE": config.base_image, "PACKAGES": " ".join([*config.packages, *PACKAGES])}
+    args = {"BASE_IMAGE": config.base_image, "PACKAGES": " ".join(sorted({*config.packages, *PACKAGES}))}
     files = _image_files(project)
     digest = hashlib.sha256(json.dumps([project.platform, args, files], sort_keys=True).encode()).hexdigest()
     return f"localhost/xcraft-build:{digest}", args, files
