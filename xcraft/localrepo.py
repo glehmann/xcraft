@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import shutil
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -10,6 +9,7 @@ from typing import TYPE_CHECKING
 from xcraft import process
 from xcraft.container import run
 from xcraft.display import activity, download_progress
+from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -73,16 +73,22 @@ def fresh_dir(project: Project, path: Path) -> None:
 
 
 def extra_rpms(project: Project) -> list[Path]:
-    """Return the extra upstream RPMs, downloaded to their cache, by URL, when missing."""
+    """Return the extra upstream RPMs, in their cache, by SHA-256, of the SHA-256 of their pins: downloaded when
+    missing, or of other contents.
+    """
     rpms = []
-    for url in project.config.extra_upstream.values():
-        rpm = project.state / "cache/extra" / hashlib.sha256(url.encode()).hexdigest()[:16] / url.rsplit("/", 1)[-1]
-        rpm.parent.mkdir(parents=True, exist_ok=True)
-        if not rpm.exists():
+    for extra in project.config.extra_upstream.values():
+        rpm = project.state / "cache/extra" / extra.sha256 / extra.url.rsplit("/", 1)[-1]
+        if not rpm.exists() or sha256_of(rpm) != extra.sha256:
+            rpm.parent.mkdir(parents=True, exist_ok=True)
             tmp = rpm.with_suffix(".part")
             with activity(f"downloading {rpm.name}") as on_line:
-                process.download(url, tmp, download_progress(on_line))
-            tmp.rename(rpm)
+                process.download(extra.url, tmp, download_progress(on_line))
+            if (digest := sha256_of(tmp)) != extra.sha256:
+                tmp.unlink()
+                msg = f"{extra.url} has other contents, {digest}, than pinned in xcraft.toml, {extra.sha256}"
+                raise RepoError(msg)
+            tmp.replace(rpm)
         rpms.append(rpm)
     return rpms
 

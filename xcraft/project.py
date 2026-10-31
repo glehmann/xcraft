@@ -157,6 +157,16 @@ class Iso(BaseModel):
     """Packages of the repository of the ISO, with what they need, unless --netinstall."""
 
 
+class Extra(BaseModel):
+    """An extra upstream RPM, not available from the repositories: ``{ url = "...", sha256 = "..." }``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    """Of the RPM the builds get: one of other contents at its URL fails them."""
+
+
 class Config(BaseModel):
     """Settings of an xcraft project, from its ``xcraft.toml``."""
 
@@ -173,8 +183,8 @@ class Config(BaseModel):
     """RPM macros of the build environment."""
     packages: list[str] = []
     """Packages installed in the build environment, with those xcraft uses."""
-    extra_upstream: dict[str, str] = {}
-    """RPMs not available from the repositories, as name -> URL."""
+    extra_upstream: dict[str, Extra] = {}
+    """RPMs not available from the repositories, by name, pinned by their SHA-256."""
     release_suffixes: list[str] = []
     """Suffixes of the releases of the upstream packages rebuilt for an architecture, like AlmaLinux's .alma_altarch:
     the locks of the architectures have the same versions but for them."""
