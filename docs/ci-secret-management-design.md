@@ -1,7 +1,8 @@
 # Design: CI secret management
 
-Status: proposal. The three parts are independent: the first changes nothing for the users of the storage and the
-packages, and can be done now; the two others each list options, with a recommendation.
+Status: proposal. The four parts are independent: the first changes nothing for the users of the storage and the
+packages, and can be done now; the second and third each list options, with a recommendation; the fourth gives the
+releases a bucket of their own.
 
 ## Today
 
@@ -51,7 +52,8 @@ availability, which backups cover.
    allows changing the settings of the bucket, like its website configuration. No admin token of Garage in CI.
 5. **A backup of the main bucket**, append-only, out of reach of the CI's key, like a daily `rclone copy` to another
    storage: Garage has neither versioning nor object locks, so a deletion cannot be undone otherwise. The source
-   archives whose URL is gone only exist there.
+   archives whose URL is gone only exist there. With part 4, the release bucket needs it first: the main bucket can
+   be made again from the sources and the commits, the published releases cannot.
 6. **A signing subkey in CI, the primary key offline.** The secret becomes the subkey alone (`gpg
    --export-secret-subkeys`): the primary key, which certifies and revokes, stays offline. xcraft already accepts a
    signature by a subkey of a key of `build_keys`, as gpg reports the primary key's fingerprint too, and RPM and dnf
@@ -97,7 +99,7 @@ GitHub's runners cannot use a device: the signing moves to a machine of ours, or
 | | Where the key is | What a compromise gives | Changes |
 |---|---|---|---|
 | **A.** Today, improved by part 1 | A CI secret, a subkey, in the upload job of `master` | Signing forever, until the subkey is revoked | None |
-| **B.** Two keys | The CI key, as in A, used by the workflow for the builds, the compiler caches and `incoming`; the release key on a hardware key, used by a release manager, a person, on their own machine, for the other stages | For the CI key, as in A: the hosts of the published stages do not trust it, but its forged builds get into the next publication, see below | `build_keys` with both; the publications of the other stages run by hand, with an S3 key of the main bucket on the release manager's machine |
+| **B.** Two keys | The CI key, as in A, used by the workflow for the builds, the compiler caches and `incoming`; the release key on a hardware key, used by a release manager, a person, on their own machine, for the other stages | For the CI key, as in A: the hosts of the published stages do not trust it, but its forged builds get into the next publication, see below | `build_keys` with both; the publications of the other stages run by hand, with an S3 key of the release bucket, part 4, on the release manager's machine |
 | **C1.** A signing host publishing | The CI key as in A, for the builds and compiler caches the workflow pushes; the release key on a hardware key, on a host of ours, which publishes the repositories and ISOs | For the CI key, as in B. Of the host: release signatures while compromised only | The host; xcraft unchanged |
 | **C2.** A signing host pulling everything from GitHub | A hardware key on a host of ours, which fetches the artifacts of the builds of `master`, pushes the builds and compiler caches, and publishes the repositories and ISOs | Of the host: signing while compromised only. Of GitHub: nothing | The host; an xcraft push from the artifacts, without building |
 | **D.** A cloud KMS, reached by OIDC | The provider's HSM; the upload job gets temporary cloud credentials for the signing only | Signing while an upload job of `master` runs | A cloud account; a bridge from gpg to the KMS, to prototype |
@@ -106,10 +108,10 @@ GitHub's runners cannot use a device: the signing moves to a machine of ours, or
 GitHub's runners cannot use a hardware key: in B, it is only used by the release manager, plugged into their machine.
 
 **C1, a signing host publishing:** the workflow keeps pushing the builds and the compiler caches, signed with the
-CI key, with the S3 key, as in B. The host runs `xcraft publish --to main`, at each new commit of `master` for the
-`incoming` stage, or when a release manager asks for the others, with the release key in its device, and an S3 key of
-its own, to write the repositories and the ISOs. It is B with the release manager replaced by a service: xcraft needs
-no change, and the CI key and the S3 key of the workflow stay on GitHub.
+CI key, with the S3 key, as in B. The host runs `xcraft publish`, to the main bucket at each new commit of `master`
+for the `incoming` stage, or to the release bucket, part 4, when a release manager asks for the others, with the
+release key in its device, and an S3 key of its own, to write the repositories and the ISOs. It is B with the release
+manager replaced by a service, and the CI key and the S3 key of the workflow stay on GitHub.
 
 **C2, a signing host pulling everything:** the workflow only makes artifacts of the builds, the sources and the
 compiler caches. The host asks GitHub for the completed runs of the build workflow on `master`, checks their
@@ -221,6 +223,120 @@ covers it. Removing it from GitHub entirely is then worth less than the signing,
 environment of part 1. C and D only if uploads need limits by prefix, like letting the CI of other projects write in
 the same bucket. With B, C or D, the OIDC token is only given to the upload job, `permissions: id-token: write` on
 that job alone; the pull requests of forks never get one.
+
+## 4. A bucket for the releases
+
+The published stages, the ones hosts install, get a bucket of their own, the release bucket: written only by the
+release manager, then by the signing host of part 2, C1 or C2, with an S3 key allowed to write it and to read the main
+bucket, and nothing else. `[remote.release] build_keys` has the release key only. The main bucket keeps what CI writes:
+the builds, the sources, the compiler caches, and the `incoming` stage, signed with the CI key; it becomes the ci
+bucket, named after its writer like the others, see [the buckets](pr-ci-design.md#the-buckets).
+
+- **The CI's S3 key cannot touch the releases**: today it can delete or replace anything of the main bucket, the
+  published stages included. Its theft then costs the main bucket's availability, which can be made again, not what
+  the hosts install.
+- **Trust as the use**: the hosts point at the release bucket, which only the release key signs; the signatures of the
+  CI key, valid in the main bucket, mean nothing there.
+- **Policies of their own**: the releases are kept and backed up first, part 1's fifth point; the main bucket is made
+  again after a change of the build keys, its builds and compiler caches come and go.
+- **A stable public URL**, which no rebuild nor cleanup of the main bucket touches.
+
+xcraft copies the packages of a snapshot server-side within a bucket. Publishing to the release bucket copies the
+builds of the main one: a copy between buckets, by a key reading the one and writing the other, keeps them
+server-side; otherwise they go through the machine publishing, which is acceptable for a first release. The release
+key signs what the builds signed by the CI key contain: see [What the release key signs](#options).
+
+The other buckets follow the same rule, one writer and one trusted key each: dev, the developers', and pr, the CI of
+the pull requests', see [the CI of pull requests](pr-ci-design.md#the-buckets).
+
+### Not a stage of the ci bucket
+
+A release stage of the ci bucket, signed with the release key, would keep the CI key from forging a release: the hosts
+check the signatures of the packages and of the repositories' metadata. But not from deleting it, nor replacing it
+by an older release, as validly signed, which the hosts accept: Garage's S3 keys have rights by bucket, not by prefix,
+see part 3. xcraft trusts the keys of `build_keys` for a whole remote, the CI key with the release key. And the
+backups and retention apply by bucket. The stage names a channel, the bucket who writes it: the release bucket has
+stages too.
+
+The URL of the release repositories is in the configuration of the hosts: moving it later means reconfiguring them,
+so the bucket is to decide before the first host is installed from it.
+
+### The stages in the release bucket
+
+The published paths keep their stage, `repos/<release>/<stage>/` and `isos/<release>/<stage>/`, with names reading
+well in the URLs, like `stable`, then `testing` or `updates` next to it. Without the stage, the bucket saying
+"released" already, the URLs are shorter, but a second channel, like release candidates next to the release, or
+updates apart from the base, would need a mixed layout or moving the first one, and reconfiguring the hosts. xcraft
+makes the same paths for all the stages, with the reuse of the previous snapshot, the pages and the cleanup built on
+them: an optional stage would touch all of them, and the tests of both layouts.
+
+### Mirrors and atomic publication
+
+Each publication makes a dated snapshot, `repos/<release>/<stage>/<date>/`, and copies it as `latest/`, the same for
+`isos/`: every snapshot has all the packages, copied server-side. Garage deduplicates their blocks, but over HTTP
+each copy is a file of its own: a mirror following the pages downloads the whole repository for each snapshot, and
+again each time `latest/` changes. rsync would keep hard links, which S3 and HTTP do not have.
+
+And a publication is not atomic: `_upload()` copies the changed files of `latest/` in the order of their names,
+`repomd.xml` among the others, and deletes the files of the previous snapshot in the same publication. A host updating
+meanwhile can read metadata whose packages are not copied yet, or lose a package being downloaded.
+
+**A pool of packages.** The packages go once in `repos/<release>/pool/<arch>/`, by their file names, never changed;
+a snapshot only has its `repodata/`, whose packages are located in the pool by relative paths, `../../pool/...`:
+
+- the mirrors download each package once, then the metadata of each snapshot, a few MB: a new release costs its new
+  packages only;
+- publishing a snapshot copies no package, and `latest/` is metadata only;
+- the storage does not depend on Garage's deduplication anymore.
+
+Checked on AlmaLinux 10, over HTTP, with the RPMs in `repos/9.0/pool/x86_64_v2/` and `repodata/` only in
+`repos/9.0/stable/<date>/base/x86_64_v2/` and `latest/`: createrepo_c writes the locations given by `--pkglist` as they
+are, `../../../../pool/x86_64_v2/...`, and `dnf install` takes them, resolving the `..` itself, so the server only gets
+clean paths, `/repos/9.0/pool/x86_64_v2/...`. The mirrors copying the tree as it is, by rsync, `wget --mirror` or
+`rclone` over HTTP, keep those paths valid. `dnf reposync` does not: it refuses a package out of the directory of the
+repository, "outside of safe write path", with or without `--norepopath` and `--download-metadata`, a check against
+hostile metadata without an option to lift it. `xml:base` does not help, as it can only give an absolute URL, which
+would send the hosts of the mirrors back to ours. So the mirrors sync the tree, as XCP-ng's do by rsync, to confirm;
+those needing reposync could get a view of `latest/` with its packages, one copy of the repository rather than one by
+snapshot.
+
+**Atomic as S3 allows.** S3 and Garage replace an object atomically, a reader getting the old one or the new one, but
+nothing spans several objects. So a publication writes what no reader sees first, and switches with one object:
+
+1. the new packages, in the pool: new names, which nothing refers to yet; an interrupted upload breaks nothing;
+2. the metadata of the new snapshot, named after their checksums by createrepo, `<sha256>-primary.xml.gz` and so on,
+   in its new directory, which nothing refers to yet;
+3. in `latest/`, the new metadata files, then `repomd.xml` last: the switch, a reader getting the previous repository
+   or the new one, both complete;
+4. the metadata files of `latest/` the new `repomd.xml` does not refer to are deleted at the next publication, not
+   this one: a client which read the previous `repomd.xml` just before still finds them. The pool's packages are never
+   deleted, but by a retention of its own, so a host never loses a package during its update.
+
+The signature of `repomd.xml`, `repomd.xml.asc`, is another object: right after the switch, a reader can get one
+without the other, and dnf then refuses the metadata until its next refresh. Writing the signature right after
+`repomd.xml` keeps that window to one request; plain S3 cannot make the two atomic. The ISOs have the identifier of
+their build in their name, `xcp-ng-<version>-<id>-<arch>.iso`, so new ones are new files, and only `SHA256SUMS` and
+its signature are replaced, with the same window.
+
+The mirrors get the same guarantee by syncing the pool before the metadata: the pool's files never change, so a sync
+interrupted, or done twice, never leaves a mirror with metadata whose packages are missing. The ISOs are not in the
+pool, being downloads rather than repositories: the dated directories still copy them, and mirrors can keep only
+`latest/` of `isos/`.
+
+**`.xcraft/` in the release bucket.** Publishing also writes into the `.xcraft/` of the bucket: the builds signed by
+the publishing key, once each as signatures have a date, which the snapshots, or the pool, copy their packages from;
+the trees of the ISOs; the inputs of the latest snapshots, to republish an unchanged one by copies; the public keys.
+The first two are about as large as the releases. The public HTTP endpoint serves the files but does not list the
+directories, listing by the S3 API needing credentials: the mirrors follow the `index.html` pages xcraft writes, like
+`wget --mirror` or `rclone` with its HTTP backend. An option of the remote, like `[remote.release] hidden =
+[".xcraft/"]`, leaves `.xcraft/` out of the root page, and writes no page under it: the mirrors then only find
+`repos/`, `isos/` and their pages. The files under `.xcraft/` stay readable, signed, public data, and xcraft reads
+them by their paths and signed manifests, not through the pages. Moving them out of the release bucket would leave it
+only a few small files there, but changes the publication and the ISOs, and needs the ci bucket to trust the release
+key for those trees: not worth it while hiding them is enough.
+
+The pool and the order of the writes apply to every bucket publishing, the ci bucket's `incoming` stage included,
+which they make cheaper to publish too.
 
 ## What it does not cover
 
