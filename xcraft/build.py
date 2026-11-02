@@ -12,7 +12,7 @@ import os
 import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -53,6 +53,7 @@ from xcraft.signing import dev_signer
 from xcraft.specs import hash_dir, is_debug
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
     from pathlib import Path
 
     from xcraft.project import Project
@@ -84,6 +85,16 @@ def _estimate(project: Project, name: str) -> str:
 
 def _pid_file(project: Project, name: str) -> Path:
     return project.state / "build" / f"{name}.pid"
+
+
+@contextmanager
+def _turn(project: Project, name: str) -> Generator[None]:
+    """Mark `name` as being built during its turn: from the resolutions before its build, to the recording after it."""
+    (path := _pid_file(project, name)).write_text(str(os.getpid()))
+    try:
+        yield
+    finally:
+        path.unlink()
 
 
 def _alive(pid: str) -> bool:
@@ -145,8 +156,6 @@ def _build_one(  # noqa: C901
     tree = prepare_tree(project, name, hashes[name])
     log = project.log(name)
     suffix = release_suffix(keys[name])
-    pid_file = _pid_file(project, name)
-    pid_file.write_text(str(os.getpid()))
     start = time.time()
     try:
         with (
@@ -170,8 +179,6 @@ def _build_one(  # noqa: C901
             msg = f"{e}, asking for other dynamic BuildRequires, now in the lock: built again after what they need"
             raise BuildRootChangedError(msg) from None
         raise
-    finally:
-        pid_file.unlink()
     ccache.note_build(project, name, start)
     if check_build(project, name, tree, suffix=suffix):
         keys = build_keys(project, autorev, hashes)  # covering what the build recorded
@@ -357,34 +364,35 @@ def _build_all(
     recorded = _lock_state(project)
     for i, name in enumerate(plan, 1):
         _queue_file(project).write_text("\n".join([str(os.getpid()), *plan[i:]]) + "\n")
-        keys, autorev, recorded = _current(project, keys, autorev, recorded, dev=dev, hashes=hashes)
-        if done := _done(project, name, keys, hashes, verbose=verbose):
-            results[name] = done
-            continue
-        if use_remote and name not in autorev:
-            try:
-                if _from_storage(project, name, keys, results, stored, fetch=fetch):
-                    continue
-            except remote.RemoteError as e:
-                console.print(f"[yellow]remote storage unavailable, building locally[/]: {escape(str(e))}")
-                use_remote = False
-        if failed := _failed(project, name, results):
-            results[name] = Result(name, "skipped")
-            console.print(f"[yellow]-[/] {name} [yellow]skipped[/], needs {', '.join(failed)}")
-            continue
-        if not build_missing or name in reused:  # the build of the main branch, made by CI
-            results[name] = Result(name, "failed")
-            why = "not in the remote storage" if use_remote else "not built, and the remote storage is not used"
-            _show_failure(project, name, BuildError(f"{why}, for {project.arch}"), verbose=verbose)
-            continue
-        status = None if verbose else f"[{i}/{len(plan)}] building {name}{_estimate(project, name)}"
-        if use_remote:
-            _fetch_for(project, name, keys, results)
-            # for what they recorded
+        with _turn(project, name):
             keys, autorev, recorded = _current(project, keys, autorev, recorded, dev=dev, hashes=hashes)
-        results[name] = _build_shown(project, name, keys, hashes, status=status, autorev=autorev, verbose=verbose)
-        if results[name].status == "built":
-            keep_built(project, dev, autorev, [name], hashes)
+            if done := _done(project, name, keys, hashes, verbose=verbose):
+                results[name] = done
+                continue
+            if use_remote and name not in autorev:
+                try:
+                    if _from_storage(project, name, keys, results, stored, fetch=fetch):
+                        continue
+                except remote.RemoteError as e:
+                    console.print(f"[yellow]remote storage unavailable, building locally[/]: {escape(str(e))}")
+                    use_remote = False
+            if failed := _failed(project, name, results):
+                results[name] = Result(name, "skipped")
+                console.print(f"[yellow]-[/] {name} [yellow]skipped[/], needs {', '.join(failed)}")
+                continue
+            if not build_missing or name in reused:  # the build of the main branch, made by CI
+                results[name] = Result(name, "failed")
+                why = "not in the remote storage" if use_remote else "not built, and the remote storage is not used"
+                _show_failure(project, name, BuildError(f"{why}, for {project.arch}"), verbose=verbose)
+                continue
+            status = None if verbose else f"[{i}/{len(plan)}] building {name}{_estimate(project, name)}"
+            if use_remote:
+                _fetch_for(project, name, keys, results)
+                # for what they recorded
+                keys, autorev, recorded = _current(project, keys, autorev, recorded, dev=dev, hashes=hashes)
+            results[name] = _build_shown(project, name, keys, hashes, status=status, autorev=autorev, verbose=verbose)
+            if results[name].status == "built":
+                keep_built(project, dev, autorev, [name], hashes)
     keys, autorev, recorded = _current(project, keys, autorev, recorded, dev=dev, hashes=hashes)
     return _recorded_again(project, results, keys, autorev, recorded, stored, dev=dev, hashes=hashes)
 
