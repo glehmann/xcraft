@@ -288,20 +288,27 @@ def base_packages(project: Project) -> list[str]:
     return json.loads(cache.read_text())
 
 
-def run_natively(project: Project, step: str, args: list[str], *, volumes: list[str], show: str) -> None:
+def run_natively(
+    project: Project, step: str, args: list[str], *, volumes: list[str], show: str, repos: dict[str, str] | None = None
+) -> None:
     """Run `args` as root in the base image of the host, for the platform of `project`, with its repositories, the
-    upstream copies of the storages, see xcraft.upstream_copy, and its dnf cache, logged in
-    .xcraft/logs/_<step>.log.
+    upstream copies of the storages, see xcraft.upstream_copy, the other `repos`, by file name, and its dnf cache,
+    logged in .xcraft/logs/_<step>.log. dnf gets the architecture of the platform with --forcearch, or the
+    substitutions of its API.
     """
     from xcraft import upstream_copy  # noqa: PLC0415, which runs containers
 
     native, log = project.on_host(), project.state / f"logs/_{step}.log"
     container = f"xcraft-{step}-{os.getpid()}"
-    with project.work(f"{step}-repos") as repos:
-        (repos / "upstream.repo").write_text(repo_file(project))
+    with project.work(f"{step}-repos") as directory:
+        (directory / "upstream.repo").write_text(repo_file(project))
         # for the resolution and the pin downloads, not in the image: the storage is not an input of the builds
-        (repos / "xcraft-upstream.repo").write_text(upstream_copy.repo_file(project))
-        mounts = [f"{_dnf_cache(project)}:/var/cache/dnf", f"{BUILDENV}:/xcraft:ro", f"{repos}:/etc/yum.repos.d:ro"]
+        (directory / "xcraft-upstream.repo").write_text(upstream_copy.repo_file(project))
+        for name, text in (repos or {}).items():
+            (directory / name).write_text(text)
+        mounts = [
+            f"{_dnf_cache(project)}:/var/cache/dnf", f"{BUILDENV}:/xcraft:ro", f"{directory}:/etc/yum.repos.d:ro"
+        ]  # fmt: skip
         mounts += _local_repos(project)
         cmd = [
             "podman", "run", "--rm", "--replace", "--name", container, "--platform", native.platform,
