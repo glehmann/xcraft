@@ -125,7 +125,7 @@ class LocalRepo:
         """Generate the metadata of the repository, when it changed, signed by `signer`, if any."""
         if not self.up_to_date:
             run(
-                self.project,
+                self.project.on_host(),  # natively: the metadata does not depend on the architecture
                 "repo",
                 "createrepo_c -q /repo",
                 volumes=[f"{self.path}:/repo"],

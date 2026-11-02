@@ -29,3 +29,10 @@
 - Avoid mocks when possible: test on the test project, its packages and the upstream ones of `tests/upstream/`, in the
   real build environment. Add toy upstream packages there for the versions or architectures a test needs.
 - Mock only what cannot happen for real in a test, like a race between two commands, or a file edited during a build.
+
+# Emulation
+
+- Use emulation only when it is impossible otherwise, like for the builds of another architecture. Run the rest
+  natively: dnf for another architecture with `--forcearch`, or the `arch` substitutions of its API (see
+  `container.run_natively()` and `container.run_dnf()`), and the tools whose output does not depend on the
+  architecture, like createrepo_c, rpmsign or rpm2cpio, in the image of the host (`project.on_host()`).

@@ -1,6 +1,6 @@
 """Write as JSON the requirements between upstream packages, and the upstream providers of capabilities.
 
-Run in the build environment, with the dnf python API: ``requires.py <input> <output>``.
+Run as root, natively, for any architecture, with the dnf python API: ``requires.py <arch> <input> <output>``.
 The input has the locked packages, as ``{name: [evr, arch]}``, and the capabilities.
 Only those packages are providers: in their locked version, or their latest one
 when the repositories do not have it anymore.
@@ -15,10 +15,12 @@ import dnf  # ty: ignore[unresolved-import]
 
 def main() -> None:
     """Resolve the requirements of the input."""
-    data = json.loads(Path(sys.argv[1]).read_text())
+    arch, data, output = sys.argv[1], json.loads(Path(sys.argv[2]).read_text()), sys.argv[3]
     locked = data["packages"]
     base = dnf.Base()
     base.conf.read()
+    base.conf.substitutions["arch"] = arch
+    base.conf.substitutions["basearch"] = dnf.rpm.basearch(arch)
     base.read_all_repos()
     base.fill_sack(load_system_repo=False)
     chosen = {}
@@ -44,7 +46,7 @@ def main() -> None:
             resolved[key] = sorted({p.name for p in found})
         return resolved[key]
 
-    Path(sys.argv[2]).write_text(
+    Path(output).write_text(
         json.dumps(
             {
                 "requires": {

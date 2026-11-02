@@ -84,13 +84,13 @@ class Signer:
             (work / "rpms").write_text("".join(f"/signed/{rpm}\n" for rpm in rpms))
             try:
                 run(
-                    project,
+                    project.on_host(),  # natively: the signatures do not depend on the architecture
                     "sign",
                     script,
                     volumes=[f"{root}:/signed", f"{work}:/work:ro", f"{socket}:/gpg-agent"],
                     show=f"signing {len(rpms)} packages",
                     network=False,
-                    image=signing_image(project),
+                    image=signing_image(project.on_host()),
                 )
             except ContainerError as e:
                 msg = f"cannot sign the packages, see {project.state / 'logs/_sign.log'}"
@@ -194,7 +194,8 @@ def check_signatures(
     # all: a package without signature fails too
     check = "xargs -a /work/packages rpmkeys --checksig --define '_pkgverify_level all'"
     keys = repo_keys(project)
-    context = hashlib.sha256(json.dumps([image_tag(project), check, public_key, keys]).encode()).hexdigest()
+    native = project.on_host()  # the checks do not depend on the architecture
+    context = hashlib.sha256(json.dumps([image_tag(native), check, public_key, keys]).encode()).hexdigest()
     cache = project.state / "cache/checks/signatures" / context
     digests = {f: sha256_of(root / f) for f in files}
     files = [f for f in files if not (cache / digests[f]).exists()]
@@ -212,7 +213,7 @@ def check_signatures(
         check = f"mkdir /tmp/keys && {importing}{check} {db}"
         try:
             run(
-                project,
+                native,
                 "signatures",
                 f"{check} > /work/checks 2>&1",
                 volumes=[f"{root}:/checked:ro", f"{work}:/work"],

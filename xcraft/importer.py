@@ -66,7 +66,7 @@ def unpack_srpm(project: Project, srpm: Path, dest: Path, *, on_line: Callable[[
         # rpm2cpio is not on every host
         on_line(f"extracting {srpm.name}")
         run(
-            project,
+            project.on_host(),  # natively: the extraction does not depend on the architecture
             "import",
             f"cd /content && rpm2cpio /srpm/{shlex.quote(srpm.name)} | cpio -idm --quiet",
             volumes=[f"{srpm.parent}:/srpm:ro", f"{content}:/content"],

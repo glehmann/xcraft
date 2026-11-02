@@ -32,7 +32,7 @@ from xcraft.cache import (
     release_suffix,
 )
 from xcraft.checks import BuildRootChangedError, check_build, check_resolved, record_dynamic, record_rpm_deps
-from xcraft.container import DNF_LOCK, ContainerError, build_image, run
+from xcraft.container import ContainerError, build_image, run_dnf
 from xcraft.devbuilds import dev_keys, keep_built
 from xcraft.display import (
     activity,
@@ -45,7 +45,7 @@ from xcraft.display import (
     read_tail,
 )
 from xcraft.graph import build_order, reachable
-from xcraft.localrepo import LocalRepo, repo_id
+from xcraft.localrepo import REPO_FILE, LocalRepo, repo_id
 from xcraft.lock import lock_path
 from xcraft.resolution import prepare
 from xcraft.rpmbuild import image_replacements, prepare_tree, run_build
@@ -598,13 +598,15 @@ def make_repo(
         )
     # without best=False, repoclosure only considers the newest version of each package, even when the
     # priority of our repository makes dnf install an older one
+    checked.index()
     try:
-        run(
+        run_dnf(
             project,
             "repoclosure",
-            f"{DNF_LOCK} dnf -q --refresh repoclosure --setopt=best=False {check}",
-            volumes=checked.volumes(),
+            f"--refresh repoclosure --setopt=best=False {check}",
+            volumes=[f"{checked.path}:/xcraft-repo:ro"],
             show="checking dependencies",
+            repos={"xcraft.repo": REPO_FILE.format(repo=repo_id(project))},
         )
     except ContainerError:
         for line in (project.state / "logs/_repoclosure.log").read_text().splitlines():
