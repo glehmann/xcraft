@@ -1,7 +1,7 @@
 # Design: the locks of the dependencies and of the builds
 
-Status: the lock of the dependencies is implemented, format 3, and the build IDs; [the lock of the
-builds](#proposal-the-lock-of-the-builds-xcraftbuilds), with what the builds record, is a proposal.
+Status: implemented, the lock of the dependencies in format 4, and [the lock of the
+builds](#the-lock-of-the-builds-xcraftbuilds), with the build IDs and what the builds record.
 
 ## What the locks are for
 
@@ -19,8 +19,8 @@ It is the only source of the upstream versions: the repositories are pools to ta
 upstream-mirror-design.md for our copy of them.
 
 **The lock of the builds** says which build of each package of ours a commit has, its build ID, and what its builds
-found that its spec does not say, which the resolution needs before building. Today, the build IDs are in `.buildid/`,
-and what the builds found in `xcraft.lock`: the proposal makes them one file, `xcraft.builds`.
+found that its spec does not say, which the resolution needs before building: one file, `xcraft.builds`. Up to lock
+format 3, the build IDs were in `.buildid/`, and what the builds found in `xcraft.lock`, see [Problems](#problems).
 
 # The lock of the dependencies: `xcraft.lock`
 
@@ -36,14 +36,11 @@ One file, for all the architectures, written by xcraft only, one line by entry f
 | `[roots]`, `[roots.<arch>]` | by package of ours, the upstream binary packages of its build root, but the image's | `prepare()` |
 | `[runtime]` | by architecture, the upstream binary packages of the published repositories | `prepare()` |
 | `[iso]` | by architecture, those of the tools making the ISO, but the image's | `prepare()` |
-| `[requires]`, `[requires.<arch>]` | by binary package of ours, the packages the requirements rpm generated for it resolve to | the builds |
-| `[provides]`, `[provides.<arch>]` | by binary package of ours, the capabilities rpm generated for it that a spec of ours requires | the builds |
-| `[buildrequires]`, `[buildrequires.<arch>]` | by package of ours, its dynamic BuildRequires, from `%generate_buildrequires` | the builds |
 
 and `version`, the format, `lock.FORMAT`.
 
-The first tables say what we take from upstream. The last three say what the builds of our packages found, which the
-specs do not say: they belong to the lock of the builds, see the proposal.
+They say what we take from upstream. What the builds of our packages found, which the specs do not say, is in the lock
+of the builds, see [What the builds record](#what-the-builds-record).
 
 ### Versions: `[sources]`
 
@@ -89,9 +86,9 @@ repositories in the locked versions, our copy of them, and a repository of the m
 written from their specs and what their builds recorded, see `xcraft.resolution` and `buildenv/resolve.py`. The
 results are cached by what they are resolved from.
 
-### What the builds record: `[requires]`, `[provides]`, `[buildrequires]`
+### What the builds record
 
-The resolution of the build roots, before building, needs what only builds know:
+In the lock of the builds, see [`xcraft.builds`](#the-lock-of-the-builds-xcraftbuilds). The resolution of the build roots, before building, needs what only builds know:
 
 - the packages the requirements rpm generates resolve to, like `lzo` for `xen-dom0-libs`, which links against it: a
   package built against `xen-dom0-libs` gets `lzo`. By name, not by capability: many have hashes, like `ocaml(Stdlib)
@@ -101,9 +98,10 @@ The resolution of the build roots, before building, needs what only builds know:
 - the dynamic BuildRequires: rpm only knows them by running the script of the spec, in a build.
 
 The builds record them, from the headers of what they made and the source packages `rpmbuild -br` made, without the
-release suffixes of the builds, so they do not depend on build numbers. A build made elsewhere and fetched records them
-too, before it is used. The shared entries are those of the first architecture of the configuration, and of the
-others while it has none; an entry of `<arch>` replaces the shared one there, when it differs, see `lock.Recorded`.
+release suffixes of the builds, so they do not depend on build numbers, nor the provides the specs declare. A build
+made elsewhere and fetched records them too, before it is used. The shared entries are those of the first architecture
+of the configuration, and of the others while it has none; an entry of `<arch>` replaces the shared one there, when it
+differs, see `lock.Recorded`.
 
 What a build records can change its build root: it is then not cached, and built again after what it needs now.
 
@@ -112,11 +110,11 @@ What a build records can change its build root: it is then not cached, and built
 - **`prepare()`**, which the commands run first: it locks the source packages needed and not locked yet, resolves the
   images, the build roots, what is published and the ISO tools of all the architectures, records them, pins the
   packages not pinned yet, and drops the entries of packages and binary packages gone.
-- **The builds** record what they found, then `prepare()` again for what it needs.
+- **The builds** record what they found, in the lock of the builds, then `prepare()` again for what it needs.
 - **`xcraft lock --update [packages]`** locks the latest versions all the architectures have, and pins their binary
   packages again, even of the same versions; **`--outdated`**, for CI, says whether it would change versions;
   **`--upgrade`** upgrades a lock of an older format, dropping what it has without pins, which `prepare()` resolves
-  and pins again.
+  and pins again, and moving what the builds recorded in it, and `.buildid/`, to the lock of the builds.
 - **`--locked`**, for CI, forbids any change: of the lock, and of the build IDs, see buildid.py.
 
 The lock is changed from the lock as read, and saved only if it did not change meanwhile, by another command, under
@@ -124,25 +122,26 @@ the lock of the project: changed again from the new one otherwise, see `resoluti
 
 ## How it is read
 
-- **The resolution**, for the versions and the records.
+- **The resolution**, for the versions, with the records of the lock of the builds.
 - **The image** has its pins, `pins.list`, and a dnf versionlock of them, and installs from the repository of the
   pins: other pins make another image.
 - **The builds** install from the repository of the pins of their image and build root, and check what they installed
   against the pins, by name, version and architecture, see `checks.check_build()`.
-- **The build keys** cover, for each architecture, the pins of the image and of the build root, the dynamic
-  BuildRequires, and the records of the binary packages of ours it is built against, see `buildkey.lock_inputs()`. So
+- **The build keys** cover, for each architecture, the pins of the image and of the build root, and from the lock of
+  the builds, the dynamic BuildRequires and the records of the binary packages of ours it is built against, see
+  `buildkey.lock_inputs()`. So
   an update changes the keys of the packages it reaches, and their build IDs, see buildid.py; `xcraft reuse --dep`
   keeps their builds instead, for an update like an ABI compatible fix.
 - **Publishing and the ISOs** take `[runtime]` and `[iso]`, pinned, and check them installable.
 - **Our copy of the upstream packages** copies the pins, and their source packages.
 
-# The lock of the builds
+# Up to lock format 3
 
-## Build IDs, today: `.buildid/`
+## Build IDs: `.buildid/`
 
 A file by package of ours, `.buildid/<package>`, one line: `<number> <key>`, or `<number> <key> accepts <key>` for a
 build reused despite changes, see `xcraft reuse`. The key covers what makes the package, on all the architectures, see
-build-keys.md; the number goes in its release, `+b<number>`, see buildid.py:
+build-keys.md; the number goes in its release, `+b<number>`, see buildid.py. The rules are the same since:
 
 - a package keeps the build ID of the main branch where the current branch forks from it while its key is the same,
   and gets the next number of the fork's otherwise: the numbers the main branch gave since do not count;
@@ -152,9 +151,9 @@ build-keys.md; the number goes in its release, `+b<number>`, see buildid.py:
   the merge is built again, with a new number;
 - `--locked`, in CI, forbids any change.
 
-# Problems
+## Problems
 
-## What our builds record is in the lock of the dependencies
+### What our builds record is in the lock of the dependencies
 
 `[requires]`, `[provides]` and `[buildrequires]` are about our packages, not upstream: they change when one of ours
 changes. In xcp-ng-dist, `[provides]` has 105 entries, and 103 of them have the version of a package of ours:
@@ -170,20 +169,21 @@ and 2 are files, `/usr/sbin/ssmtp` and `/usr/sbin/oxenstored`. So:
 - two branches changing different packages of ours change the same lines of it, and may conflict;
 - a diff of it mixes the choices of upstream packages, to review closely, with bookkeeping of our builds.
 
-## The self-provides are recorded
+### The self-provides are recorded
 
 The 102 provides of a package's own name, and of its name for its architecture, are what rpm always generates for a
-binary package, from its spec: the specs as parsed have the name, the version and the architecture, so they need no
-recording.
+binary package, from its spec: the specs as parsed have them already, like `xapi-storage = %{version}-%{release}`
+that `python3-xapi-storage` declares. They were recorded as the recording compared the provides of the builds, with
+their release suffixes, to those the specs declare, without.
 
-## The build IDs are many files
+### The build IDs are many files
 
 `.buildid/` has a file by package, 44 in xcp-ng-dist: an upstream update, or a change of a package many others are
 built against, changes dozens of them, which fill `jj status` and the diffs.
 
-# Proposal: the lock of the builds, `xcraft.builds`
+# The lock of the builds: `xcraft.builds`
 
-`xcraft.lock` then has what we take from upstream only, and `xcraft.builds`, next to it, what concerns our builds: the
+`xcraft.lock` has what we take from upstream only, and `xcraft.builds`, next to it, what concerns our builds: the
 build ID of each package of ours, and what its builds found, which change in the same commits.
 
 ## Format
@@ -199,7 +199,6 @@ blktap.requires."blktap" = ["libaio", "openssl-libs"]
 # xen
 xen.build = 2
 xen.key = "2aff59e6ebed1aaeac4c6b79d10a107cac486fdfa2e6f0eedb52e6f3b2707827"
-xen.buildrequires = []
 xen.requires."xen-dom0-libs" = ["e2fsprogs-libs", "lzo", "xen-libs"]
 xen.provides."xen-devel" = ["pkgconfig(xenctrl) = %{version}"]
 xen.aarch64.requires."xen-dom0-libs" = ["e2fsprogs-libs", "xen-libs"]
@@ -216,8 +215,8 @@ jj does not use git's merge drivers:
 - **a blank line after the lines of each package**, the last one included.
 
 `build` and `key` are the build ID, its number and its key, and `accepts`, only for a build reused, the key it is
-accepted for, as `.buildid/` has them today on one line; `buildrequires`, `requires` and `provides` are what the builds
-recorded, as the lock has them today, and `<arch>.` the entries of an architecture that differ. The lock of the
+accepted for, as `.buildid/` had them on one line; `buildrequires`, `requires` and `provides` are what the builds
+recorded, as the lock had them, and `<arch>.` the entries of an architecture that differ. The lock of the
 dependencies keeps `[sources]`, `[binaries.<arch>]`, `[image]`, `[roots]`, `[runtime]` and `[iso]`:
 `[roots]` is by package of ours, but it is what we pin from upstream for it, which an upstream update changes for many
 packages at once, and its review goes with the pins.
@@ -249,9 +248,9 @@ changes with what it builds, so with its key. If it happens anyway, the merge mi
 build, which the keys of the packages built against it cover: `--locked` refuses it, until built again.
 
 The one loss, against a file by package: two branches adding packages that sort into the same gap conflict, which is
-resolved keeping both. A conflict is otherwise resolved like one of the lock or of `.buildid/` today: taking a side,
-then building, which gives the build ID again and records what the build finds; `--locked`, in CI, refuses a merge not
-built again.
+resolved keeping both. Otherwise, xcraft reads a file in conflict without the lines of the packages the conflicts touch:
+building gives their build IDs again and records what their builds find, like it wrote the files of `.buildid/` in
+conflict again; `--locked`, in CI, refuses a merge not built again.
 
 ## History
 
@@ -268,11 +267,11 @@ and since jj's revset aliases cannot build those patterns from a name.
 
 ## The versions of ours, out of the records
 
-- The self-provides are not recorded: the metadata of our binary packages, from their specs, gets `<name> = <evr>`,
-  and `<name>(<isa>) = <evr>` for those of an architecture, like rpm makes them, and the recording leaves them out as
-  declared.
+- The provides the specs declare are not recorded, the self-provides included: the specs as parsed have
+  `<name> = <evr>`, and `<name>(<isa>) = <evr>` for those of an architecture, like rpm makes them, and the recording
+  compares them without the release suffixes of the builds, see `builds.recordable()`.
 - A recorded capability with the EVR of its binary package, or its version, has it as `%{evr}`, or `%{version}`, put
-  back when reading: `python3-xapi-storage`'s `xapi-storage = %{evr}`.
+  back when reading, see `builds.locked_packages()`: like `pkgconfig(xenctrl) = %{version}`.
 
 So a bump of a package of ours changes its spec and its `build` and `key` lines, as its key changes, but nothing else:
 what it recorded only changes when what it generates changes, like a new library linked, or when one of our specs starts
@@ -281,23 +280,27 @@ requiring something it provides.
 ## Writing and checking
 
 - The builds write their package's lines, and `update()` of buildid.py the `build`, `key` and `accepts` lines, from the
-  file as read, under the lock of the project, like the lock of the dependencies today; `prepare()` drops the packages
-  and binary packages gone.
+  file as read, under the lock of the project; `prepare()` drops the packages and binary packages gone.
+- A merge conflict of the file, git's or jj's, drops the lines of the packages it touches when read: `update()` gives
+  their build IDs again, and their builds record again.
 - `--locked` forbids any change of either lock.
 - `xcraft lock` shows both.
 
 ## Keys and build IDs
 
-The keys cover the same inputs, by architecture: the records of the binary packages of ours a package is built
-against, with the self-provides and the versions put back as the lock has them today. So the move changes no key, and
-no build is made again. A bump still changes the keys of the packages built against the one bumped, through its build
-ID, as today.
+The keys cover the same inputs, by architecture, but the records as `xcraft.builds` has them: without the provides
+the specs declare, and with the placeholders, which the build IDs of the packages built against cover. So the keys of
+the packages built against those with such records change once: the move goes with build IDs numbered from 1 again,
+on a main branch rewritten without `.buildid/`, and all the packages built again. A bump still changes the keys of the
+packages built against the one bumped, through its build ID.
 
 ## Migration
 
 Lock format 4: `xcraft lock --upgrade` moves `.buildid/` and the three tables to `xcraft.builds`, without the
-self-provides and with the versions as `%{evr}`, removes `.buildid/`, and keeps the rest of the lock as it is: no
-resolution, no pin, no key changes.
+provides the specs declare and with the versions as `%{evr}` or `%{version}`, removes `.buildid/`, and keeps the rest
+of the lock as it is: no pin changes. The main branch where the current one forks from it is read in `xcraft.builds`
+only: without it, there, the build IDs are numbered from 1; once the main branch has it, a branch forking before it
+fails, to be rebased.
 
 ## Workflows, after
 

@@ -12,8 +12,8 @@ else computes them: `xcraft.buildid` numbers the builds by them, and `xcraft.cac
 
 ## The build ID
 
-The build ID of a package is in `.buildid/<package>`, committed: its build number and its build key, like
-`2 3f1c…e2a0`, and with a reused build, the key it accepts, see [Reuses](#reuses). The build number is in the
+The build ID of a package is in `xcraft.builds`, committed: its build number and its build key, its `build` and `key`
+lines, and with a reused build, the key it accepts, its `accepts` line, see [Reuses](#reuses). The build number is in the
 releases of its builds, see [The cache key](#the-cache-key). How the numbers are given is in `xcraft/buildid.py`; this
 document is about the keys.
 
@@ -31,7 +31,7 @@ inputs, an array of:
 1. **The package directory**, `base/<package>/`: its hash, see [The package directory](#the-package-directory).
 2. **The recipe**: its hash, see [The recipe](#the-recipe), the same for all the packages.
 3. **The lock**: an object with, for each architecture of `platforms` in `xcraft.toml`, its RPM architecture, like
-   `x86_64_v2`, and an array of what the lock has for the package there, see [The lock](#the-lock).
+   `x86_64_v2`, and an array of what the locks have for the package there, see [The lock](#the-lock).
 4. **The dependencies**: the packages of ours its build is built against on any architecture, see
    [The dependencies](#the-dependencies), out of its component, sorted by name, each as an array of its name, its build
    number and its build key.
@@ -40,7 +40,7 @@ The JSON has its object keys sorted, and Python's default separators, `, ` and `
 escaped: `json.dumps(inputs, sort_keys=True)`. See `buildkey.key()` and `buildkey.Inputs`.
 
 The key does not depend on the architecture running xcraft: it covers what all of them have, so the build IDs, shared
-by all the architectures in `.buildid/`, are the same computed on any of them.
+by all the architectures in `xcraft.builds`, are the same computed on any of them.
 
 ## The package directory
 
@@ -92,7 +92,8 @@ The versions of the upstream packages of the image are not in the recipe, but in
 
 ## The lock
 
-For each architecture, what `xcraft.lock` has for the package, an array of:
+For each architecture, what `xcraft.lock`, and `xcraft.builds` for what the builds recorded, have for the package, an
+array of:
 
 1. **The image**: the upstream binary packages of the image of the architecture, by name, each as its pin in the lock.
 2. **The build root**: the upstream binary packages of its build root, but those of the image, by name, each as its
@@ -100,8 +101,9 @@ For each architecture, what `xcraft.lock` has for the package, an array of:
 3. **Its dynamic BuildRequires**, those its `%generate_buildrequires` asks for, as recorded by its builds.
 4. **What rpm generated** for the binary packages of the packages it is built against, directly or not, on that
    architecture: by binary package, an array of the requirements they resolve to, and of their capabilities our specs
-   require. They are what the build root is resolved from, with the BuildRequires of the spec, which the package
-   directory covers.
+   require, as `xcraft.builds` has them: without those the specs declare, and with `%{evr}` and `%{version}`, which
+   the build IDs of these packages cover. They are what the build root is resolved from, with the BuildRequires of
+   the spec, which the package directory covers.
 
 The pin of a binary package is an array of its epoch-version-release, its architecture, the SHA-256 of its RPM, and
 the name of its source package: the RPM the builds get, whatever the repositories have now. For `xcraft reuse --dep`,

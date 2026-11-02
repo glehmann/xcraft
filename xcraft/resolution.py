@@ -21,12 +21,12 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
-from functools import cache
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 from rich.markup import escape
 
+from xcraft.builds import load_builds, save_builds
 from xcraft.container import BUILDENV, PACKAGES, base_packages, repo_file, run_natively
 from xcraft.display import console
 from xcraft.graph import reachable
@@ -291,21 +291,15 @@ def _record_images(platforms: list[Project], recorded: Lock, lock: Lock, repin: 
 
 def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
     """Record in the lock the upstream binary packages of the images, of the build roots, of the published
-    repositories and of the tools making the ISO, of all the architectures, pinned, see _pins(), and keep in it what
-    the builds found for the packages and architectures of the project only.
+    repositories and of the tools making the ISO, of all the architectures, pinned, see _pins(), and keep in the lock
+    of the builds what the builds found for the packages of the project only.
     """
     platforms = project.all_platforms()
-
-    @cache
-    def binaries() -> set[str]:
-        return {b.name for p in platforms for package in p.parsed.values() for b in package.binaries}
+    with project.lock():
+        save_builds(project, load_builds(project))  # which has those only
 
     def record(recorded: Lock, lock: Lock) -> None:
         lock.image, lock.binaries, lock.runtime, lock.iso = {}, {}, {}, {}
-        for kept in (lock.requires, lock.provides):
-            if kept.shared or kept.arches:  # the specs parsed only then
-                kept.keep(binaries())
-        lock.buildrequires.keep({*project.package_dirs})
         lock.roots.keep({*project.package_dirs})
         lock.roots.arches = {}
         for platform in platforms:

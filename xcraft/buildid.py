@@ -1,8 +1,9 @@
 """Build IDs: the numbers of the builds of our packages, with the build keys they are built from.
 
-A package's build ID is in ``.buildid/<package>``, one line: its number and build key. The build key is the same on
-all the architectures: it covers what goes into the package on any of them, from the package directory, the recipe
-and the lock, and the build IDs of the packages of ours it is built against, but not its own number, which it decides.
+A package's build ID is in the lock of the builds, see xcraft.builds: its number and build key. The build key is the
+same on all the architectures: it covers what goes into the package on any of them, from the package directory, the
+recipe and the locks, and the build IDs of the packages of ours it is built against, but not its own number, which it
+decides.
 A package keeps the build ID of the main branch, where the current branch forks from it, as long as its key is the
 same, and gets the next number otherwise.
 """
@@ -11,59 +12,22 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, Field
-
 from xcraft import buildkey, process
+from xcraft.builds import BuildId, builds_path, load_builds, parse_builds, save_builds
 from xcraft.display import console
 from xcraft.graph import components
 from xcraft.lock import load_lock, lock_path, parse_lock
-from xcraft.project import write_atomically
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from xcraft.builds import Builds
     from xcraft.project import Project
-
-DIR = ".buildid"
-"""The directory of the build IDs, in the project."""
 
 
 class BuildIdError(RuntimeError):
     """Raised when the build IDs would change, which --locked forbids, or give a number to two different builds."""
-
-
-class BuildId(BaseModel):
-    """The build ID of a package."""
-
-    number: int = Field(ge=1)
-    key: str = Field(pattern=r"^[0-9a-f]{64}$")
-    """The build key, the same on all the architectures."""
-    accepts: str | None = Field(None, pattern=r"^[0-9a-f]{64}$")
-    """The build key a reused build is accepted for, the current one: an equivalence, chosen with xcraft reuse."""
-
-    @classmethod
-    def parse(cls, text: str) -> BuildId:
-        """Return the build ID of the content of its file."""
-        match text.split():
-            case [number, key]:
-                return cls(number=int(number), key=key)
-            case [number, key, "accepts", accepts]:
-                return cls(number=int(number), key=key, accepts=accepts)
-        msg = f"not a build ID: {text}"
-        raise ValueError(msg)
-
-    def text(self) -> str:
-        """Return the content of its file."""
-        return f"{self.number} {self.key}" + (f" accepts {self.accepts}" if self.accepts else "") + "\n"
-
-    def matches(self, key: str) -> bool:
-        """Return whether a package of build `key` has this build ID: built from it, or reusing it for it."""
-        return key in (self.key, self.accepts)
-
-    def same(self, other: BuildId | None) -> bool:
-        """Return whether `other` is the same build: of the same number and key."""
-        return other is not None and (self.number, self.key) == (other.number, other.key)
 
 
 def compute(
@@ -84,7 +48,7 @@ def compute(
     A package with the key of the fork keeps its build ID, and so does one reusing a build for the key, there or in the
     working tree, while it is the fork's. Otherwise, a package `reuse` takes, with the build IDs of those before it,
     reuses the build of the fork, accepting the key; and the others get the next number of the fork's. The numbers the
-    main branch gave since the fork do not count: giving one again conflicts on merge, in the file of the package.
+    main branch gave since the fork do not count: giving one again conflicts on merge, in the lines of the package.
     Without the main branch, the numbers are those of the working tree, 1 for new packages: there is nothing to number
     them against.
     """
@@ -112,19 +76,7 @@ def compute(
 
 def read(project: Project) -> dict[str, BuildId]:
     """Return the build IDs of the working tree, but those of a merge conflict, which update() gives again."""
-    return {
-        path.name: _parse(text, path.relative_to(project.root).as_posix())
-        for path in sorted((project.root / DIR).glob("*"))
-        if "<<<<<<<" not in (text := path.read_text())
-    }
-
-
-def _parse(text: str, where: str) -> BuildId:
-    try:
-        return BuildId.parse(text)
-    except ValueError as e:
-        msg = f"{where} is not a build ID: {text.strip()}"
-        raise BuildIdError(msg) from e
+    return load_builds(project).ids
 
 
 def _git(project: Project, *args: str) -> str | None:
@@ -138,11 +90,12 @@ _commits: dict[tuple[str, str], dict[str, BuildId]] = {}
 def _at(project: Project, commit: str) -> dict[str, BuildId]:
     """Return the build IDs of `commit`, a commit id, read once."""
     if (str(project.root), commit) not in _commits:
-        _commits[str(project.root), commit] = {
-            path.rsplit("/", 1)[-1]: _parse(_git(project, "show", f"{commit}:./{path}") or "", f"{commit}:{path}")
-            for path in (_git(project, "ls-tree", "--name-only", commit, f"{DIR}/") or "").splitlines()
-        }
+        _commits[str(project.root), commit] = _builds_at(project, commit).ids
     return _commits[str(project.root), commit]
+
+
+def _builds_at(project: Project, commit: str) -> Builds:
+    return parse_builds(_git(project, "show", f"{commit}:./{builds_path(project).name}") or "")
 
 
 def _main(project: Project) -> str | None:
@@ -155,9 +108,18 @@ def _main(project: Project) -> str | None:
 
 def base(project: Project) -> dict[str, BuildId] | None:
     """Return the build IDs of the main branch where the current one forks from it, or None out of a git repository,
-    or without the main branch.
+    or without the main branch. Fail when it forks before the main branch got xcraft.builds.
     """
-    return _at(project, fork) if (fork := _fork(project)) else None
+    if not (fork := _fork(project)):
+        return None
+    # .buildid/ before lock format 4: the migration numbers from 1, the branches forked before it are rebased
+    if (
+        _git(project, "rev-parse", "-q", "--verify", f"{fork}:.buildid")
+        and _builds_at(project, _main(project) or fork).ids
+    ):
+        msg = f"the current branch forks from {project.config.main_branch} before xcraft.builds: rebase it on it"
+        raise BuildIdError(msg)
+    return _at(project, fork)
 
 
 def _fork(project: Project) -> str | None:
@@ -213,13 +175,11 @@ def update(project: Project, reuse: Callable[[str, dict[str, BuildId]], bool] | 
             msg = f"the build IDs would change, which --locked forbids: {', '.join(changed)}"
             raise BuildIdError(msg)
         check_first_parent(project, ids)
-    directory = project.root / DIR
-    directory.mkdir(exist_ok=True)
-    for name in changed:
-        if name in ids:
-            write_atomically(directory / name, ids[name].text())
-        else:
-            (directory / name).unlink()
+    if changed:
+        with project.lock():
+            builds = load_builds(project)
+            builds.ids = ids
+            save_builds(project, builds)
     return changed
 
 
@@ -233,11 +193,11 @@ def reuse(project: Project, names: list[str], sources: list[str]) -> list[str]:
     if not (fork := _fork(project)):
         msg = f"reusing builds needs the main branch, {project.config.main_branch}, in a git repository"
         raise BuildIdError(msg)
-    forked = _at(project, fork)
+    forked, forked_builds = base(project) or {}, _builds_at(project, fork)
     forked_lock = parse_lock(_git(project, "show", f"{fork}:./{lock_path(project).name}") or "")
-    lock, updated = load_lock(project), set(sources)
-    # the inputs of the keys with the lock of the fork, the rest as it is now
-    forked_inputs = buildkey.Inputs(project, lock=forked_lock)
+    lock, builds, updated = load_lock(project), load_builds(project), set(sources)
+    # the inputs of the keys with the locks of the fork, the rest as it is now
+    forked_inputs = buildkey.Inputs(project, lock=forked_lock, builds=forked_builds)
     component_of = {name: component for component in components(forked_inputs.deps) for name in component}
 
     def built_alike(name: str) -> bool:
@@ -269,8 +229,8 @@ def reuse(project: Project, names: list[str], sources: list[str]) -> list[str]:
             and built_alike(name)
             # the packages it is built against reuse their builds too
             and all(ids[d].same(forked[d]) for d in forked_inputs.deps[name] if d in ids and d in forked)
-            and buildkey.lock_inputs(forked_inputs.platforms, lock, name, updated)
-            == buildkey.lock_inputs(forked_inputs.platforms, forked_lock, name, updated)
+            and buildkey.lock_inputs(forked_inputs.platforms, lock, builds, name, updated)
+            == buildkey.lock_inputs(forked_inputs.platforms, forked_lock, forked_builds, name, updated)
         )  # fmt: skip
 
     return update(project, reusable)

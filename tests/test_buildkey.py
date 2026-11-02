@@ -11,8 +11,8 @@ import pytest
 
 from tests import TOML, config, ours
 from xcraft import buildid, buildkey, devbuilds
-from xcraft.buildid import BuildId
 from xcraft.buildkey import recipe_key
+from xcraft.builds import BuildId, Builds, save_builds
 from xcraft.cache import build_keys
 from xcraft.lock import Lock, Pin, Recorded, save_lock
 from xcraft.project import Extra, Project
@@ -46,7 +46,10 @@ def test_build_key_inputs(project: Project, monkeypatch: pytest.MonkeyPatch) -> 
     arch = project.arch
     # b built against a: the binary packages of a, what they need, and what it needs to be built
     ours(project, monkeypatch, {"a": set(), "b": {"a"}})
+    for name in ("a", "b"):
+        (project.root / "base" / name).mkdir(parents=True)
     hashes = {"a": "1" * 64, "b": "2" * 64}
+    builds = Builds()
     pin = Pin(evr="1-1", arch="noarch", sha256="1" * 64, source="glibc")
     pins = {
         "glibc": pin,
@@ -65,6 +68,7 @@ def test_build_key_inputs(project: Project, monkeypatch: pytest.MonkeyPatch) -> 
 
     def keys() -> dict[str, str]:
         save_lock(project, lock)
+        save_builds(project, builds)
         return {name: i.key for name, i in buildid.compute(project, None, hashes).items()}
 
     before = keys()
@@ -75,9 +79,9 @@ def test_build_key_inputs(project: Project, monkeypatch: pytest.MonkeyPatch) -> 
         (lambda: repin("bash", sha256="2" * 64), set()),  # of no image nor build root of the project
         (lambda: lock.image[arch].append("bash"), {"a", "b"}),
         (lambda: lock.sources.update(zlib="1-2"), set()),  # what its binary packages have
-        (lambda: lock.buildrequires.shared.update(b=["foo"]), {"b"}),
-        (lambda: lock.requires.shared.update(a=["bar"]), {"b"}),  # of the binary package a, which b gets
-        (lambda: lock.provides.shared.update(a=["libbar.so.1"]), {"b"}),
+        (lambda: builds.buildrequires.shared.update(b=["foo"]), {"b"}),
+        (lambda: builds.requires.shared.update(a=["bar"]), {"b"}),  # of the binary package a, which b gets
+        (lambda: builds.provides.shared.update(a=["libbar.so.1"]), {"b"}),
         # not an architecture of the project
         (
             lambda: lock.binaries.update(aarch64=lock.binaries[arch]) or lock.roots.arches.update(aarch64={"b": []}),
@@ -102,11 +106,12 @@ def test_inputs_read_once(project: Project, monkeypatch: pytest.MonkeyPatch) -> 
     # not the dependencies the project has from another lock, read before
     project.deps = {"a": set(), "b": set(), "c": {"b"}}
     assert buildid.compute(project, None, hashes) == expected
-    # but those of the lock given, like the one of another commit, with its dynamic BuildRequires
-    other = buildkey.Inputs(project, hashes, Lock(buildrequires=Recorded(shared={"c": ["a"]})))
+    # but those of the locks given, like those of another commit, with its dynamic BuildRequires
+    other = buildkey.Inputs(project, hashes, Lock(), Builds(buildrequires=Recorded(shared={"c": ["a"]})))
     assert (other.deps["c"], buildkey.Inputs(project, hashes).deps["c"]) == ({"a"}, set())
     # and nothing more after
     monkeypatch.setattr(buildkey, "load_lock", lambda _: pytest.fail("read again"))
+    monkeypatch.setattr(buildkey, "load_builds", lambda _: pytest.fail("read again"))
     monkeypatch.setattr("xcraft.resolution.resolve_image", lambda _: pytest.fail("resolved again"))
     project.parsed = {}
     ids = {name: BuildId(number=1, key=hashes[name]) for name in hashes}
@@ -138,7 +143,7 @@ def test_lock_inputs_of_reused_builds() -> None:
             image={"x86_64_v2": []},
             roots=Recorded(shared={"b": [name for name, _ in binaries]}),
         )
-        return buildkey.lock_inputs(platforms, lock, "b", {"zlib"})
+        return buildkey.lock_inputs(platforms, lock, Builds(), "b", {"zlib"})
 
     before = inputs(("zlib", pin))
     # an update of zlib, which xcraft reuse --dep ignores: other versions and contents of the same packages
@@ -242,7 +247,10 @@ def test_recipe_inputs(project: Project, monkeypatch: pytest.MonkeyPatch) -> Non
 def test_keys_of_upstream_packages_without_versions(project: Project) -> None:
     with pytest.raises(RuntimeError, match="the lock has no pinned glibc"):
         buildkey.lock_inputs(
-            [buildkey.Platform(project.arch, {}, {})], Lock.model_construct(image={project.arch: ["glibc"]}), "foo"
+            [buildkey.Platform(project.arch, {}, {})],
+            Lock.model_construct(image={project.arch: ["glibc"]}),
+            Builds(),
+            "foo",
         )
 
 

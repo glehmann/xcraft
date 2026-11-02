@@ -47,12 +47,10 @@ def test_save_and_load(tmp_path) -> None:  # noqa: ANN001
         binaries={
             "aarch64": {"glibc": pin, "pixman": pin.model_copy(update={"evr": "0.43.4-2.el10", "source": "pixman"})}
         },
-        requires=Recorded(shared={"qemu": ["libpng", "pixman"]}, arches={"aarch64": {"qemu": ["pixman"]}}),
-        buildrequires=Recorded(shared={"xcp-python-libs": ["python3-wheel"]}),
         runtime={"aarch64": ["glibc"]},
         iso={"aarch64": ["pixman"]},
         image={"aarch64": ["glibc"]},
-        roots=Recorded(shared={"qemu": ["pixman"]}),
+        roots=Recorded(shared={"qemu": ["pixman"]}, arches={"aarch64": {"qemu": ["glibc", "pixman"]}}),
     )
     save_lock(project, lock)
     assert lock_path(project) == tmp_path / "xcraft.lock"
@@ -60,11 +58,11 @@ def test_save_and_load(tmp_path) -> None:  # noqa: ANN001
     text = lock_path(project).read_text()
     # one line per package, for readable diffs, and the differences of an architecture in its own table
     assert '[sources]\n"glibc" = "2.39-145.el10_2"\n' in text
-    assert '[requires.aarch64]\n"qemu" = [\n    "pixman",\n]\n' in text
+    assert '[roots.aarch64]\n"qemu" = [\n    "glibc",\n    "pixman",\n]\n' in text
     assert '[roots]  # the upstream binary packages of the build roots, but the image\'s\n"qemu" = [\n' in text
     # the binary packages, pinned by architecture, in a format of its own
     assert text.startswith(
-        "# written by xcraft: the versions of the upstream packages, for all the architectures\n\nversion = 3\n"
+        "# written by xcraft: the versions of the upstream packages, for all the architectures\n\nversion = 4\n"
     )
     assert f'"glibc" = "2.39-145.el10_2 aarch64 {"ab" * 32} glibc"\n' in text
 
@@ -93,18 +91,30 @@ def test_lock_validation(tmp_path: Path) -> None:
             Lock.model_validate({"sources": {"glibc": "1-1"}, **invalid})
     # a lock of an older xcraft, upgraded only on purpose
     lock_path(project).write_text('[sources]\n"glibc" = "1-1"\n\n[image]\n"aarch64" = ["glibc"]\n')
-    with pytest.raises(LockFormatError, match="the lock has the format 1, not 3: xcraft lock --upgrade upgrades it"):
+    with pytest.raises(LockFormatError, match="the lock has the format 1, not 4: xcraft lock --upgrade upgrades it"):
         load_lock(project)
-    assert upgrade_lock(project) == Lock(sources={"glibc": "1-1"})
+    assert upgrade_lock(project)[0] == Lock(sources={"glibc": "1-1"})
     # of format 2, with the published packages and the tools making the ISO without pins, but the others kept
     lock_path(project).write_text(
         f'version = 2\n\n[sources]\n"glibc" = "1-1"\n\n[binaries.aarch64]\n"glibc" = "{pin.text()}"\n\n'
         '[image]\n"aarch64" = ["glibc"]\n\n[runtime]\n"aarch64" = ["bash"]\n\n[iso]\n"aarch64" = ["xorriso"]\n'
     )
-    with pytest.raises(LockFormatError, match="the lock has the format 2, not 3"):
+    with pytest.raises(LockFormatError, match="the lock has the format 2, not 4"):
         load_lock(project)
     expected = Lock(sources={"glibc": "1-1"}, binaries={"aarch64": {"glibc": pin}}, image={"aarch64": ["glibc"]})
-    assert upgrade_lock(project) == expected
+    assert upgrade_lock(project)[0] == expected
+    # of format 3, with what the builds recorded, which the lock of the builds has since
+    lock_path(project).write_text(
+        f'version = 3\n\n[sources]\n"glibc" = "1-1"\n\n[binaries.aarch64]\n"glibc" = "{pin.text()}"\n\n'
+        '[requires]\n"qemu" = ["glibc"]\n\n[requires.aarch64]\n"qemu" = []\n\n[buildrequires]\n"qemu" = ["meson"]\n'
+    )
+    lock, records = upgrade_lock(project)
+    assert lock == Lock(sources={"glibc": "1-1"}, binaries={"aarch64": {"glibc": pin}})
+    assert records == {
+        "requires": Recorded(shared={"qemu": ["glibc"]}, arches={"aarch64": {"qemu": []}}),
+        "provides": Recorded(),
+        "buildrequires": Recorded(shared={"qemu": ["meson"]}),
+    }
 
 
 def test_record() -> None:
@@ -146,16 +156,12 @@ def test_versionlock() -> None:
 
 def test_frozen(tmp_path) -> None:  # noqa: ANN001
     project = Project(tmp_path, config())
-    lock = Lock(sources={"bash": "5.2-3"}, requires=Recorded(shared={"xen-dom0-libs": ["lzo"]}))
+    lock = Lock(sources={"bash": "5.2-3"})
     save_lock(project, lock)
     project.frozen = True
     save_lock(project, lock)  # unchanged
     lock.sources["zlib-ng"] = "2.2-1"
-    lock.requires.record("aarch64", "x86_64_v2", "xen-dom0-libs", [])
-    with pytest.raises(
-        RuntimeError,
-        match=r"--locked forbids: \+requires\.aarch64\.xen-dom0-libs \(none\), \+sources zlib-ng-2\.2-1$",
-    ):
+    with pytest.raises(RuntimeError, match=r"--locked forbids: \+sources zlib-ng-2\.2-1$"):
         save_lock(project, lock)
     assert "zlib-ng" not in load_lock(project).sources
 

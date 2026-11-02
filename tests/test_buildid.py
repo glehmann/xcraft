@@ -1,4 +1,4 @@
-"""Build IDs: the numbers of the builds, in .buildid/, and the development builds."""
+"""Build IDs: the numbers of the builds, in xcraft.builds, and the development builds."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from tests import TOML, copy_project
 from tests.test_build import xcraft
 from xcraft import build as builder
 from xcraft import buildid, buildkey
+from xcraft.builds import BuildId, builds_path, load_builds, save_builds
 from xcraft.cache import build_keys
 from xcraft.iso import build_iso
 from xcraft.lock import load_lock, save_lock
@@ -91,25 +92,34 @@ def built(*args: str) -> list[str]:
 
 def test_build_id_files() -> None:
     key = "ab" * 32
-    assert buildid.BuildId.parse(f"1 {key} accepts {key}\n").text() == f"1 {key} accepts {key}\n"
+    assert BuildId.parse(f"1 {key} accepts {key}\n") == BuildId(number=1, key=key, accepts=key)
     # keys of 64 hexadecimal digits only, which the release suffixes follow in the caches
     for text in ("1 abc", f"1 {key}0", f"1 {key} accepts {key[1:]}"):
         with pytest.raises(ValueError, match=r"key|accepts"):
-            buildid.BuildId.parse(text)
+            BuildId.parse(text)
     with pytest.raises(ValueError, match="number"):
-        buildid.BuildId.parse(f"0 {key}")  # the release suffix +b0, before the first build
+        BuildId.parse(f"0 {key}")  # the release suffix +b0, before the first build
 
 
-def test_build_id_files_not_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_ids_of_conflicts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "xcraft.toml").write_text(TOML)
     monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path))
-    (tmp_path / ".buildid").mkdir()
-    # a merge conflict, which the build IDs given again resolve
-    (tmp_path / ".buildid/trivial").write_text(f"<<<<<<< ours\n1 {'ab' * 32}\n=======\n2 {'cd' * 32}\n>>>>>>> theirs\n")
-    assert buildid.read(Project.find()) == {}
+    ids = {"bar": BuildId(number=1, key="ab" * 32), "foo": BuildId(number=2, key="cd" * 32)}
+    path = builds_path(Project.find())
+    save_builds(Project.find(), load_builds(Project.find()).model_copy(update={"ids": ids}))
+    text = path.read_text()
+    # a merge conflict of git, or of jj, which the build IDs given again resolve, keeping the other packages
+    git_conflict = "<<<<<<< ours\nfoo.build = 2\n=======\nfoo.build = 3\n>>>>>>> theirs\n"
+    jj_conflict = (
+        "<<<<<<< conflict 1 of 1\n%%%%%%% diff\n-foo.build = 1\n+foo.build = 2\n+++++++ side\nfoo.build = 3\n"
+        ">>>>>>> end\n"
+    )
+    for conflict in (git_conflict, jj_conflict):
+        path.write_text(text.replace("foo.build = 2\n", conflict))
+        assert buildid.read(Project.find()) == {"bar": ids["bar"]}
     # not anything else, which would be numbered again
-    (tmp_path / ".buildid/trivial").write_text("1 truncated")
-    with pytest.raises(buildid.BuildIdError, match=r"\.buildid/trivial is not a build ID: 1 truncated"):
+    path.write_text(text.replace(f'foo.key = "{"cd" * 32}"', 'foo.key = "truncated"'))
+    with pytest.raises(ValueError, match="key"):
         buildid.read(Project.find())
 
 
@@ -118,7 +128,10 @@ def test_build_ids(root: Path) -> None:
     assert code == 0, output
     assert "build IDs: trivial 1, with-deps 1" in output
     ids = buildid.read(Project.find())
-    assert (root / ".buildid/trivial").read_text() == f"1 {ids['trivial'].key}\n"
+    assert (
+        f'\n# trivial\ntrivial.build = 1\ntrivial.key = "{ids["trivial"].key}"\n'
+        in builds_path(Project.find()).read_text()
+    )
     assert {p.name for p in root.glob(".xcraft/cache/builds/*/trivial/*/RPMS/*/*.rpm")} == {
         "trivial-1.0-1+b1.xcpng8.99.noarch.rpm"
     }
@@ -182,7 +195,7 @@ def test_shown_inputs(root: Path) -> None:
         inputs = json.dumps(shown[name]["inputs"], sort_keys=True)
         key = hashlib.sha256(f"{inputs}\0{name}".encode()).hexdigest()
         assert shown[name]["key"] == key
-        assert (root / ".buildid" / name).read_text() == f"{shown[name]['build ID']}\n"
+        assert shown[name]["build ID"] == buildid.read(Project.find())[name].text()
         assert shown[name]["build ID"].split()[1] == key
         # with the image of the machine the specs are parsed in, which the keys do not cover
         assert shown[name]["specs parsed in"].startswith("localhost/xcraft-build:")
@@ -227,12 +240,12 @@ def test_build_ids_of_main_branch(root: Path) -> None:
     # not until merged: the branch is numbered against its fork only
     assert update() == {"trivial": 2, "with-deps": 2}
     assert git(root, "merge", "-q", "master").returncode != 0
-    assert "<<<<<<<" in (root / ".buildid/trivial").read_text()
+    assert "<<<<<<<" in (root / "xcraft.builds").read_text()
     assert update() == {"trivial": 3, "with-deps": 3}
     # back to the main branch's packages: its build IDs
     git(root, "checkout", "-q", "master", "--", "base")
     update()
-    assert git(root, "diff", "--quiet", "master", "--", ".buildid").returncode == 0
+    assert git(root, "diff", "--quiet", "master", "--", "xcraft.builds").returncode == 0
 
 
 def test_main_branch_setting(root: Path) -> None:
@@ -320,7 +333,7 @@ def test_development_builds_changed_by_others(root: Path) -> None:
     assert re.search(r"^with-deps +1\.0-1\+b2~1\.dev\.xcpng8\.99 +built", xcraft("status")[1], re.MULTILINE)
     assert built() == []
     # without what the builds recorded: the cached builds record it again, before the keys of those built against them
-    git(root, "checkout", "--", "xcraft.lock")
+    git(root, "checkout", "--", "xcraft.builds")
     assert xcraft("build", "--dry-run") == (0, "0 to build, 2 cached\n")
     assert built() == []
 
@@ -401,14 +414,19 @@ def test_reused_builds(root: Path) -> None:
     deps = buildid.read(Project.find())["with-deps"]
     assert (deps.number, deps.key) == (1, base["with-deps"].key)
     assert deps.accepts
-    assert (root / ".buildid/with-deps").read_text() == f"1 {deps.key} accepts {deps.accepts}\n"
+    assert (
+        f'with-deps.build = 1\nwith-deps.key = "{deps.key}"\nwith-deps.accepts = "{deps.accepts}"\n'
+        in (root / "xcraft.builds").read_text()
+    )
     # kept while the key is the accepted one, committed or not: a main branch's build, not a development one
     assert update() == {"trivial": 2, "with-deps": 1}
     git(root, "commit", "-qam", "reused")
     assert update() == {"trivial": 2, "with-deps": 1}
     # not once the main branch has another build, merged
     git(root, "checkout", "-q", "master")
-    (root / ".buildid/with-deps").write_text(f"2 {base['with-deps'].key}\n")
+    builds = load_builds(Project.find())
+    builds.ids["with-deps"] = BuildId(number=2, key="ef" * 32)
+    save_builds(Project.find(), builds)
     git(root, "commit", "-qam", "renumbered")
     git(root, "checkout", "-q", "feature")
     git(root, "merge", "-q", "-X", "ours", "-m", "merged", "master")

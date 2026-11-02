@@ -21,6 +21,7 @@ from tests import ARCH, TOML, TOYS, copy_project
 from xcraft import build as builder
 from xcraft import buildid, container, pinned, process
 from xcraft.__main__ import app
+from xcraft.builds import builds_path, load_builds, save_builds
 from xcraft.cache import BuildError
 from xcraft.iso import _INSTALL_TOOLS, _check_tools
 from xcraft.localrepo import LocalRepo, link
@@ -173,7 +174,7 @@ def test_dynamic_buildrequires_on_ours(root: Path) -> None:
     assert code == 0, output
     assert "↻ with-deps: " in output
     assert [line.split(" built")[0] for line in results(output) if line[0] == "✓"] == ["✓ trivial", "✓ with-deps"]
-    assert load_lock(Project.find()).buildrequires.of(ARCH) == {"with-deps": ["trivial"]}
+    assert load_builds(Project.find()).buildrequires.of(ARCH) == {"with-deps": ["trivial"]}
 
 
 def test_build_root_of_files_of_ours(root: Path) -> None:
@@ -187,7 +188,7 @@ def test_build_root_of_files_of_ours(root: Path) -> None:
     assert xcraft("build", "tool")[0] == 0
     code, output = xcraft("build", "tool-user")
     assert code == 0, output
-    assert load_lock(Project.find()).provides.of(ARCH) == {"tool": ["/usr/bin/xcraft-test-tool"]}
+    assert load_builds(Project.find()).provides.of(ARCH) == {"tool": ["/usr/bin/xcraft-test-tool"]}
     # upstream's bc, instead of ours, never built since nothing is known to need it
     write_spec(root, "bc")
     write_spec(root, "bc-user", "/usr/bin/bc")
@@ -240,9 +241,9 @@ def test_dnf_lock_is_shared_by_containers(root: Path) -> None:
 def test_build_back_to_a_cached_key(root: Path) -> None:
     assert xcraft("build", "trivial")[0] == 0
     # dynamic BuildRequires its build does not find: missing, and built again, back to the key of the first build
-    lock = load_lock(Project.find())
-    lock.buildrequires.shared["trivial"] = ["zlib-ng-compat-devel"]
-    save_lock(Project.find(), lock)
+    builds = load_builds(Project.find())
+    builds.buildrequires.shared["trivial"] = ["zlib-ng-compat-devel"]
+    save_builds(Project.find(), builds)
     code, output = xcraft("build", "trivial")
     assert code == 0, output
     assert results(output) == [results(output)[0], "1 built"]
@@ -390,7 +391,8 @@ def test_lock(root: Path) -> None:
     assert xcraft("build", "trivial")[0] == 0
     lock = load_lock(Project.find())
     assert "rpm" in lock.sources  # of the image
-    assert (lock.requires, lock.buildrequires) == (Recorded(), Recorded())
+    builds = load_builds(Project.find())
+    assert (builds.requires, builds.provides, builds.buildrequires) == (Recorded(), Recorded(), Recorded())
 
     # a BuildRequires of a source package not locked yet
     spec = root / "base/trivial/trivial.spec"
@@ -511,7 +513,7 @@ def test_recorded_once_all_built(root: Path, *, cached: bool) -> None:
         ["✓ xtool built", "1 built, 1 cached"] if cached else ["✓ trivial built", "✓ xtool built", "2 built"]
     )
     assert "cannot record" not in output
-    assert load_lock(Project.find()).requires.of(ARCH)["trivial"] == ["xtool"]
+    assert load_builds(Project.find()).requires.of(ARCH)["trivial"] == ["xtool"]
     assert xcraft("build", "trivial", "xtool", "--locked") == (0, "2 cached\n")
 
 
@@ -530,13 +532,13 @@ def test_recorded(root: Path) -> None:
     code, output = xcraft("build", "trivial", "--locked")
     assert code == 1
     # those of the architecture of the host, which are shared once found on the first one
-    assert f"+buildrequires.{HOST_ENTRIES}trivial zlib-ng-compat-devel" in output
+    assert f'+trivial.{HOST_ENTRIES}buildrequires = ["zlib-ng-compat-devel"]' in output
     code, output = xcraft("build", "with-deps")
     assert code == 0, output
-    lock = load_lock(Project.find())
-    assert lock.buildrequires.of(ARCH) == {"trivial": ["zlib-ng-compat-devel"]}
+    builds = load_builds(Project.find())
+    assert builds.buildrequires.of(ARCH) == {"trivial": ["zlib-ng-compat-devel"]}
     # which with-deps gets through trivial, its build root checked
-    assert lock.requires.of(ARCH) == {"trivial": ["tcl"]}
+    assert builds.requires.of(ARCH) == {"trivial": ["tcl"]}
     assert "tcl" in resolve(Project.find()).buildroots["with-deps"]
     assert xcraft("build", "with-deps", "--locked")[0] == 0
 
@@ -569,18 +571,18 @@ def test_recorded_of_binaries_named_with_their_releases(root: Path) -> None:
     )  # fmt: skip
     code, output = xcraft("build", "trivial")
     assert code == 0, output
-    assert load_lock(Project.find()).requires.of(ARCH) == {"trivial-lp_1.0_1.xcpng8.99": ["tcl"]}
+    assert load_builds(Project.find()).requires.of(ARCH) == {"trivial-lp_1.0_1.xcpng8.99": ["tcl"]}
     # and recorded again, from a recording of before, of a version without them
     for recording in root.glob(".xcraft/cache/builds/*/trivial/*/rpm-deps.json"):
         old = json.loads(recording.read_text())
         recording.write_text(json.dumps({"context": old["context"], "requires": {}, "provides": {}}))
-    lock = load_lock(Project.find())
-    lock.requires = Recorded()
-    save_lock(Project.find(), lock)
+    builds = load_builds(Project.find())
+    builds.requires = Recorded()
+    save_builds(Project.find(), builds)
     code, output = xcraft("build", "trivial")
     assert code == 0, output
     assert output.endswith("\n1 cached\n")
-    assert load_lock(Project.find()).requires.of(ARCH) == {"trivial-lp_1.0_1.xcpng8.99": ["tcl"]}
+    assert load_builds(Project.find()).requires.of(ARCH) == {"trivial-lp_1.0_1.xcpng8.99": ["tcl"]}
 
 
 def test_lock_update_changing_implicit_deps(root: Path) -> None:
@@ -598,7 +600,7 @@ def test_lock_update_changing_implicit_deps(root: Path) -> None:
     save_lock(Project.find(), lock)
     code, output = xcraft("build", "with-deps")
     assert code == 0, output
-    assert load_lock(Project.find()).requires.of(ARCH)["trivial"] == ["toyrun"]
+    assert load_builds(Project.find()).requires.of(ARCH)["trivial"] == ["toyrun"]
     assert xcraft("lock", "--outdated", "toyrun") == (
         1,
         "toyrun 1-1 -> 2-1\n1 to update: xcraft lock --update updates them\n",
@@ -611,7 +613,7 @@ def test_lock_update_changing_implicit_deps(root: Path) -> None:
     assert code == 0, output
     assert [line.split(" in ")[0] for line in results(output)] == ["✓ with-deps built", "1 built, 1 cached"]
     # of the host, which may not be the first architecture, whose entries are shared
-    assert load_lock(Project.find()).requires.of(ARCH)["trivial"] == ["toyrun-bin"]
+    assert load_builds(Project.find()).requires.of(ARCH)["trivial"] == ["toyrun-bin"]
     assert "toyrun-bin" in resolve(Project.find()).buildroots["with-deps"]
     assert xcraft("build", "with-deps", "--locked")[0] == 0
 
@@ -766,10 +768,24 @@ def test_lock_upgrade(root: Path) -> None:
     lock_path(project).write_text("[sources]\n" + "".join(f'"{s}" = "{v}"\n' for s, v in sources.items()))
     code, output = xcraft("build", "--dry-run")
     assert code == 1
-    assert "the lock has the format 1, not 3: xcraft lock --upgrade upgrades it" in output
+    assert "the lock has the format 1, not 4: xcraft lock --upgrade upgrades it" in output
     code, output = xcraft("lock", "--upgrade")
     assert code == 0, output
     assert load_lock(project).binaries[ARCH]["bash"].source == "bash"
+    # of format 3: .buildid/ and what the builds recorded in the lock move to xcraft.builds, without the self-provides
+    text = lock_path(project).read_text().replace("version = 4", "version = 3")
+    recorded = '[requires]\n"trivial" = ["tcl"]\n\n[provides]\n"trivial" = ["trivial = 1.0-1.xcpng8.99"]\n'
+    lock_path(project).write_text(f"{text}\n{recorded}")
+    builds_path(project).unlink()
+    (root / ".buildid").mkdir()
+    (root / ".buildid/trivial").write_text(f"7 {'ab' * 32}\n")
+    code, output = xcraft("lock", "--upgrade")
+    assert code == 0, output
+    assert not (root / ".buildid").exists()
+    assert "[requires]" not in lock_path(project).read_text()
+    builds = load_builds(project)
+    assert (builds.requires.of(ARCH), builds.provides.of(ARCH)) == ({"trivial": ["tcl"]}, {})
+    assert builds.ids["trivial"].number == 7  # out of git, nothing to number against
 
 
 def test_lock_records_image_and_roots(root: Path) -> None:
@@ -792,10 +808,8 @@ def test_lock_records_image_and_roots(root: Path) -> None:
     assert xcraft("build", "--dry-run")[0] == 0
     assert "lzo" not in load_lock(Project.find()).roots.shared.get("trivial", [])
     # nor kept for packages removed from the project
-    lock = load_lock(Project.find())
-    gone = Recorded(shared={"gone": ["bash"]}, arches={"aarch64": {"gone": ["zsh"]}})
-    lock.requires, lock.provides, lock.buildrequires = gone, gone, gone
-    save_lock(Project.find(), lock)
+    gone = 'gone.requires."gone" = ["bash"]\ngone.aarch64.provides."gone" = ["zsh"]\ngone.buildrequires = ["bash"]\n'
+    with builds_path(Project.find()).open("a") as f:
+        f.write(f"\n# gone\n{gone}")
     assert xcraft("build", "--dry-run")[0] == 0
-    lock = load_lock(Project.find())
-    assert lock.requires == lock.provides == lock.buildrequires == Recorded()
+    assert "gone" not in builds_path(Project.find()).read_text()

@@ -11,9 +11,10 @@ from typing import TYPE_CHECKING
 
 from rich.markup import escape
 
+from xcraft.builds import load_builds, recordable, save_builds
 from xcraft.cache import BuildError, cached_build, release_suffix
 from xcraft.display import changes, console
-from xcraft.lock import Locked, load_lock, save_lock
+from xcraft.lock import Locked, load_lock
 from xcraft.project import write_atomically
 from xcraft.resolution import Resolved, prepare, resolve, resolve_rpm_deps, rpm_deps_context
 from xcraft.specs import is_debug
@@ -70,16 +71,19 @@ def _check_build_root(project: Project, name: str, installed: dict[str, Locked])
 
 
 def record_dynamic(project: Project, name: str, tree: Path) -> bool:
-    """Record in the lock the dynamic BuildRequires the build of `name` asked for, and return whether they changed."""
+    """Record in the lock of the builds the dynamic BuildRequires the build of `name` asked for, and return whether they
+    changed.
+    """
     path = tree / "buildrequires.txt"
     static = set(project.parsed[name].buildrequires)
     lines = path.read_text().splitlines() if path.exists() else []
     dynamic = sorted({r for r in lines if r not in static and not r.startswith("rpmlib(")})
-    lock = load_lock(project)
-    if dynamic == lock.buildrequires.of(project.arch).get(name, []):
-        return False
-    lock.buildrequires.record(project.arch, project.first, name, dynamic)
-    save_lock(project, lock)
+    with project.lock():
+        builds = load_builds(project)
+        if dynamic == builds.buildrequires.of(project.arch).get(name, []):
+            return False
+        builds.buildrequires.record(project.arch, project.first, name, dynamic)
+        save_builds(project, builds)
     project.refresh()
     prepare(project)  # for the upstream packages they need
     return True
@@ -182,8 +186,8 @@ def _unsuffixed(project: Project, name: str, value: str, suffix: str) -> str:
 
 
 def record_rpm_deps(project: Project, names: list[str], keys: dict[str, str], *, quiet: bool = False) -> bool:
-    """Record in the lock what rpm generated for the binary packages of the cached builds of `names`, with `keys`,
-    without their release suffixes, and return whether the lock changed.
+    """Record in the lock of the builds what rpm generated for the binary packages of the cached builds of `names`, with
+    `keys`, without their release suffixes, nor the provides their specs declare, and return whether it changed.
 
     What a build generated is kept with it, for the same version of the recording, RECORDING, and what its requirements
     are resolved with, the builds of ours included: see rpm_deps_context(). What cannot be recorded yet is shown,
@@ -203,25 +207,28 @@ def record_rpm_deps(project: Project, names: list[str], keys: dict[str, str], *,
         _record_new_rpm_deps(project, new, supplied, context, quiet=quiet)
     # what dry runs do too, without the lock of the project otherwise
     with project.lock():
-        lock = load_lock(project)
+        lock = load_builds(project)
         before = lock.model_dump()
         for name, build in builds.items():
             recorded = found(build) or {}
+            parsed = {b.name: b for b in project.parsed[name].binaries}
             for field in ("requires", "provides"):
                 for binary, values in recorded.get(field, {}).items():
                     # as the specs are parsed: the lock does not depend on the numbers of the builds
                     unsuffixed = [_unsuffixed(project, name, value, release_suffix(keys[name])) for value in values]
+                    if field == "provides":
+                        unsuffixed = recordable(parsed[binary], unsuffixed)
                     getattr(lock, field).record(project.arch, project.first, binary, unsuffixed)
         if lock.model_dump() == before:
             return False
-        save_lock(project, lock)
+        save_builds(project, lock)
     project.refresh()
     return True
 
 
 def check_build(project: Project, name: str, tree: Path, *, suffix: str) -> bool:
     """Record the dynamic BuildRequires of the build of `name` in `tree`, check what it installed and made, with its
-    release `suffix`, and return whether the lock changed.
+    release `suffix`, and return whether the lock of the builds changed.
     """
     changed = record_dynamic(project, name, tree)
     installed = json.loads((tree / "buildroot.json").read_text())["installed"]
@@ -229,7 +236,7 @@ def check_build(project: Project, name: str, tree: Path, *, suffix: str) -> bool
         _check_build_root(project, name, {n: Locked.model_validate(p) for n, p in installed.items()})
     except BuildError as e:
         if changed:
-            msg = f"{e}, with the dynamic BuildRequires it asked for, now in the lock: built again after what they need"
+            msg = f"{e}, with the dynamic BuildRequires it asked for, now recorded: built again after what they need"
             raise BuildRootChangedError(msg) from None
         raise
     _check_made(project, name, tree, suffix=suffix)

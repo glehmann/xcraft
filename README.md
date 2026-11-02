@@ -51,7 +51,7 @@ xcraft --install-completion  # optional
 | `xcraft fetch sources [<pkg>...]` | Download the source archives missing from the source cache, from the remote storage, or else from the source of the spec with their URL |
 | `xcraft fetch builds [<pkg>...]` | Download the current builds missing from the build cache |
 | `xcraft fetch ccache [<pkg>...]` | Add to the local compiler caches of the packages the entries of the remote storage |
-| `xcraft lock` | Show the lock of upstream packages, the same for all the architectures |
+| `xcraft lock` | Show the lock of upstream packages, the same for all the architectures, and the lock of the builds |
 | `xcraft lock --outdated [<pkg>...]` | Show what `--update` would change, without changing it, and fail then, for CI |
 | `xcraft lock --update [<pkg>...]` | Update locked packages, all or some (binary or source names), to the latest version all the architectures have, looked for natively, on any machine |
 | `xcraft reuse <pkg>... [--dep <upstream>]` | Reuse the builds of the main branch despite changes, but to the packages' own directories, or despite updates of the `--dep` upstream packages only (see [Reusing builds](#reusing-builds)) |
@@ -64,6 +64,7 @@ xcraft --install-completion  # optional
 | `xcraft bump <pkg>... [-m message]` | Bump the release of packages, with a changelog entry, empty to fill in without `-m` |
 | `xcraft bump <pkg> --version v [-m message]` | Update a package to a new version, with the archive of its `Source0`, and the packages of the same version; the changelog entry is `Update to <v>` by default |
 | `xcraft clean [<pkg>...] [--builds] [--ccache]` | Remove the build trees and outdated builds, and optionally all builds and compiler caches, of the given packages or all; the source archives are kept |
+| `xcraft history <pkg>` | Show the commits changing a package, with `git log`: its directory, and its lines in `xcraft.builds` |
 | `xcraft patchset [repo] [--package p] [--base ref] [--first n]` | Update the patches of a package with the commits of the current git branch, from the developer's repository |
 | `xcraft import <pkg or srpm>... [--branch b] [--url u] [--repo r]` | Import the history of packages from their packaging repositories, or source RPMs, as the git branches `import/<pkg>/<branch>` to merge, new packages into `base/`, or `<r>/` |
 | `xcraft doctor [--fix]` | Check host prerequisites, including QEMU, UEFI firmware and KVM, even outside a project. Inside a project, also check architecture emulation and remote storage. With `--fix`, show and confirm commands to install missing tools and configure rootless podman and emulation, using the host distribution's package manager |
@@ -165,7 +166,7 @@ is named by the hash of its key and of the names of the builds of ours it is bui
 | The build environment | The base image, pinned by digest, the Containerfile, `packages` of `xcraft.toml`, the repositories, the RPM macros (`%dist`...), the `release_suffixes`, and the names and URLs of `extra_upstream` | Any change to these settings |
 | The image | The upstream source packages of the build environment image of all the architectures, with their versions, as the lock records them (see [The lock](#the-lock)) | An update of a package of the image |
 | The package | Its name, and all the files of `<repo>/<pkg>/`, but `origin`: their paths, contents, and whether they are executable. The `sources` manifest covers the archives by their SHA-256 | Any change to the spec, a patch, a source file, or an archive |
-| Its build root | The upstream source packages of its build root besides the image's, on all the architectures, with their versions, and what it is resolved from besides its `BuildRequires`: its dynamic `BuildRequires`, and what rpm generated for the binary packages of ours it may have, as the lock records them | `xcraft lock --update` of one of them, a change of its `BuildRequires`, or what the builds found |
+| Its build root | The upstream source packages of its build root besides the image's, on all the architectures, with their versions, and what it is resolved from besides its `BuildRequires`: its dynamic `BuildRequires`, and what rpm generated for the binary packages of ours it may have, as `xcraft.builds` records them | `xcraft lock --update` of one of them, a change of its `BuildRequires`, or what the builds found |
 | Its dependencies | The build IDs, numbers and keys, of the packages of ours its build installs (see [Dependencies](#dependencies)), like `kernel-headers`, in all the build roots | Any change to one of them, recursively |
 
 The first three are common to all the packages: changing one of them rebuilds everything. Packages depending on each
@@ -197,14 +198,14 @@ anything. The builds only show the packages they build or fetch, with how many a
 
 **The build root is resolved.** The key is known before building, on every architecture: it covers the build root
 dnf resolves from the `BuildRequires` and the lock, without building. When a build finds what changes the build roots,
-like a new requirement rpm generated, the lock gets it, and the builds are cached under the keys computed with it,
-which the next commands find. With `--locked`, for CI, such a build fails instead, as its key would not be the one of
-the committed lock.
+like a new requirement rpm generated, `xcraft.builds` gets it, and the builds are cached under the keys computed with
+it, which the next commands find. With `--locked`, for CI, such a build fails instead, as its key would not be the one
+of the committed locks.
 
 ## Build IDs
 
-Each package has a build ID, in `.buildid/<package>`, to commit: a number and the key of its build, one line, like
-`42 3f1c…e2a0`. The number is in the releases of its builds, as `+b<n>` in `%{autorev}`, at the start of `%{dist}`:
+Each package has a build ID, in `xcraft.builds`, to commit: a number and the key of its build, its `build` and `key`
+lines, like `xen.build = 42` and `xen.key = "3f1c…e2a0"`. The number is in the releases of its builds, as `+b<n>` in `%{autorev}`, at the start of `%{dist}`:
 `1+b42.xcpng8.99` for `Release: 1%{?dist}`. Every package must end its release with `%{?dist}`, or with
 `%{?autorev}` for the package defining `%{dist}`. `xcraft build`, `repo` and `publish` update the build IDs, before
 building, and after, with what the builds found.
@@ -212,12 +213,12 @@ building, and after, with what the builds found.
 A package keeps the build ID of the main branch, `main_branch` of `xcraft.toml`, `master` by default, where the
 current branch forks from it, as long as its key is the same. Otherwise it gets the next number: a branch keeps the
 same number however many times it changes the package, whatever the main branch got since, and once another branch got
-that number on the main branch, merging it conflicts, and computing the file again gives the next one, even while the
-merge is in progress. The packages built against it get new numbers too. The reason of a new number is in
+that number on the main branch, merging it conflicts, and computing the build IDs again gives the next one, even while
+the merge is in progress. The packages built against it get new numbers too. The reason of a new number is in
 the same commit: a change of the package, of the lock, or of another build ID; or a reuse, see
 [Reusing builds](#reusing-builds). Out of a git repository, or without the
-main branch, there is nothing to number against: the numbers stay those of the working tree, 1 for new packages. A
-file in a merge conflict is written again.
+main branch, there is nothing to number against: the numbers stay those of the working tree, 1 for new packages. The
+packages in a merge conflict of `xcraft.builds`, git's or jj's, get their lines written again.
 
 With `--locked`, the builds fail instead of changing the build IDs; on the main branch, they also fail when a package
 gets the number of the previous commit, its first parent, for another key, like when a merge conflict is resolved by
@@ -237,7 +238,7 @@ current branch forks from it, despite changes, with the reason in the commit:
   so is what the lock has for them, but the versions of these packages.
 
 The build ID then has the number and the key of the reused build, and the key it accepts, an equivalence chosen by
-the maintainer: `42 <reused key> accepts <current key>`. It holds while the key is the accepted one: another change
+the maintainer, in its `accepts` line. It holds while the key is the accepted one: another change
 gives another key, and the package a new number, as usual. The packages built against a reused one have its reused key
 in theirs, so they keep their builds too, unless they changed otherwise. A reused build is never made again: it is the
 one of the main branch, cached, or in the remote storage, on each architecture. Reusing builds needs the main branch,
@@ -741,17 +742,26 @@ architectures, and has, one line per package for readable diffs:
   with the tools making the ISO, or published, for the whole tree. On each architecture, dnf only sees the binary
   packages of that version, but the `release_suffixes` of `xcraft.toml`, like `[".alma_altarch"]` of the packages
   AlmaLinux rebuilds for x86_64_v2.
-- What the builds found, which the specs do not have: `[requires]`, for each binary package of ours, the packages the
-  requirements rpm generated for it resolve to, like `lzo` for `xen-dom0-libs`, which links against it; `[provides]`,
-  the capabilities and files rpm generated for it that a spec of ours requires; `[buildrequires]`, for each package
-  with `%generate_buildrequires`, its dynamic `BuildRequires`. An architecture which finds
-  others has its own entries, which replace the shared ones, in `[requires.<arch>]` and the like.
 - `[image]`, by architecture, the upstream source packages of the build environment image, and `[roots]`, for each
   package of ours, those of its build root but the image's, shared by the architectures but for their own entries, in
   `[roots.<arch>]`: as resolved, for all the architectures, by the commands resolving them, which record them when
   they change.
 - `[runtime]` and `[iso]`, by architecture: the upstream binary packages published, and those of the tools making the
   ISO, but the image's, resolved and recorded with the build roots.
+
+`xcraft.builds`, next to it, is committed too: by package of ours, its build ID, see [Build IDs](#build-ids), and what
+its builds found, which the specs do not have, each line starting with the name of its package, for line-based merges
+and `jj log -r "diff_lines(regex:'^xen\.', 'xcraft.builds')"`, or `xcraft history xen`:
+
+- `requires`, for each binary package of ours, the packages the requirements rpm generated for it resolve to, like
+  `lzo` for `xen-dom0-libs`, which links against it: `xen.requires."xen-dom0-libs" = ["lzo"]`;
+- `provides`, the capabilities and files rpm generated for it that a spec of ours requires, but those its spec
+  declares, like its own name, with its version as `%{evr}`, or `%{version}`: `pkgconfig(xenctrl) = %{version}`;
+- `buildrequires`, for each package with `%generate_buildrequires`, its dynamic `BuildRequires`.
+
+An architecture which finds others has its own entries, which replace the shared ones, like `xen.aarch64.requires`.
+So a bump of a package changes its spec and its `build` and `key` lines only. `xcraft lock --upgrade` moves
+`.buildid/` and what the lock of format 3 recorded to it.
 
 **Build roots, resolved.** Before building, dnf resolves the build environment image, from the base image and
 `packages` of `xcraft.toml`, and the build root of each package, from its `BuildRequires`, against the upstream

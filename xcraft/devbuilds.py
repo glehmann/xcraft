@@ -17,7 +17,7 @@ from xcraft.project import write_atomically
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from xcraft.buildid import BuildId
+    from xcraft.builds import BuildId
     from xcraft.project import Project
 
 
