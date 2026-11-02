@@ -26,7 +26,7 @@ from xcraft.pinned import REPO_ID
 from xcraft.project import INTERNAL
 from xcraft.publish import REPO, snapshot
 from xcraft.resolution import ISO_TOOLS, prepare, resolve
-from xcraft.signing import signing_key
+from xcraft.signing import key_paths, repo_keys, signing_key
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
@@ -309,6 +309,7 @@ def _make_iso(
             json.dumps({
                 "snapshot": "/snapshot", "templates": "/templates", "tree": "/work/tree", "installer": iso.installer,
                 "packages": iso.packages, "netinstall": netinstall, "signed": bool(signer),
+                "keys": key_paths(repo_keys(project), work) if signer else [],
             })
         )  # fmt: skip
         volumes = [f"{snapshot}:/snapshot:ro", f"{project.root / 'iso'}:/templates:ro", f"{work}:/work"]
