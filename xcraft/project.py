@@ -11,7 +11,7 @@ import shutil
 import sys
 import tomllib
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -220,6 +220,9 @@ class Project:
     """The platform xcraft works on, one of the configuration's: see find()."""
     frozen: bool = False
     """Whether the lock cannot change, with --locked."""
+    specs: dict[str, dict[str, Package]] = field(default_factory=dict, repr=False, compare=False)
+    """The packages parsed for each platform, by platform: shared by the project on all its platforms, see
+    all_platforms() and on_host(), so that a command parses them once by platform."""
 
     @classmethod
     def find(cls, arch: str | None = None) -> Project:
@@ -307,12 +310,18 @@ class Project:
         """Source archives, as ``<sha256>/<filename>``."""
         return self.state / "cache/sources"
 
-    @cached_property
+    @property
     def parsed(self) -> dict[str, Package]:
-        """The packages, by name, from their specs, as parsed for the platform."""
+        """The packages, by name, from their specs, as parsed for the platform, once."""
         from xcraft.specs import load_packages  # noqa: PLC0415, which needs the project
 
-        return load_packages(self)
+        if self.platform not in self.specs:
+            self.specs[self.platform] = load_packages(self)
+        return self.specs[self.platform]
+
+    @parsed.setter
+    def parsed(self, packages: dict[str, Package]) -> None:
+        self.specs[self.platform] = packages
 
     @cached_property
     def packages(self) -> dict[str, Package]:

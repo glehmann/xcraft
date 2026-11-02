@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 
 from xcraft import host, pinned, process
 from xcraft.display import activity, changes, read_tail
-from xcraft.lock import Locked, load_lock, versionlock
+from xcraft.lock import Locked, read_lock, versionlock
 from xcraft.project import ProjectLockedError, write_atomically
 
 if TYPE_CHECKING:
@@ -109,7 +109,7 @@ def _image_files(project: Project) -> dict[str, str]:
 def _image_pins(project: Project) -> dict[str, Pin]:
     """Return the pinned binary packages of the image of the platform."""
     pins = pinned.pins(project)
-    return {name: pins[name] for name in load_lock(project).image.get(project.arch, [])}
+    return {name: pins[name] for name in read_lock(project).image.get(project.arch, [])}
 
 
 def _image(project: Project) -> tuple[str, dict[str, str], dict[str, str]]:

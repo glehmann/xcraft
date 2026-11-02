@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from xcraft import process
-from xcraft.lock import load_lock
+from xcraft.lock import read_lock
 
 if TYPE_CHECKING:
     from xcraft.lock import Pin
@@ -41,10 +41,10 @@ class PinnedError(RuntimeError):
 
 def pins(project: Project) -> dict[str, Pin]:
     """Return the pinned binary packages of the architecture of `project`, of its lock."""
-    if not (pinned := load_lock(project).binaries.get(project.arch)):
+    if not (pinned := read_lock(project).binaries.get(project.arch)):
         msg = f"no binary packages pinned for {project.arch} in the lock: see xcraft lock"
         raise PinnedError(msg)
-    return pinned
+    return dict(pinned)  # of the lock shared by the callers
 
 
 _checked: set[Path] = set()
