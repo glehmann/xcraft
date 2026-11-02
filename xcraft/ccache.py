@@ -93,7 +93,7 @@ def push(project: Project, storage: Remote, name: str, *, signer: Signer | None)
         )
         if any(_level(cache / entry) != LEVEL for entry in used if entry.endswith(("R", "M"))):
             run(
-                project,
+                project.on_host(),  # natively: the compression does not depend on the architecture
                 "ccache",
                 f"CCACHE_DIR=/ccache ccache --recompress {LEVEL}",
                 volumes=[f"{cache}:/ccache"],

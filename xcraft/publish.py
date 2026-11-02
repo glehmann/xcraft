@@ -702,7 +702,7 @@ class _Plan:
         entries = {name: self.known[digest][0] for name, (_, digest) in self.stored.get(repo, {}).items()}
         if rpms := sorted(path.glob("*.rpm")):
             run(
-                self.project,
+                self.project.on_host(),  # natively: the metadata does not depend on the architecture
                 "repo",
                 "createrepo_c -q --general-compress-type=gz /repo",
                 volumes=[f"{path}:/repo"],

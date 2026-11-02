@@ -227,22 +227,43 @@ def _warm_dnf_cache(project: Project) -> None:
     """Solve the metadata of the repositories of an emulated platform in its dnf cache, natively, once.
 
     Under emulation, dnf spends most of its time solving them: 27 minutes for aarch64 on an x86_64 host, rather than
-    20 seconds. Nothing is done without a native platform, to do it on.
+    20 seconds.
     """
-    native = next((p for p in project.all_platforms() if p.native), None)
-    if project.native or not native or (project.root, project.platform) in _warmed:
+    if project.native or (project.root, project.platform) in _warmed:
         return
     _warmed.add((project.root, project.platform))
-    cache = "/var/cache/dnf-emulated"
-    with project.work("warm") as work:
-        (work / "upstream.repo").write_text(repo_file(project))
+    run_dnf(project, "warm", "makecache", show=f"solving the metadata of the repositories of {project.arch}")
+
+
+def run_dnf(
+    project: Project,
+    step: str,
+    args: str,
+    *,
+    volumes: list[str] | None = None,
+    show: str,
+    repos: dict[str, str] | None = None,
+) -> None:
+    """Run dnf with `args` natively, in the build environment image of the host, which has the plugins of dnf, like
+    repoclosure, unlike the base image of run_natively(), for the platform of `project`: with its repositories, the
+    other `repos`, by file name, and its dnf cache, logged in .xcraft/logs/_<step>.log.
+    """
+    cache = "/var/cache/dnf-emulated"  # the cache of the platform of `project`, besides the host's
+    with project.work(f"{step}-dnf") as work:
+        (work / "repos").mkdir()
+        for name, text in {"upstream.repo": repo_file(project), **(repos or {})}.items():
+            (work / "repos" / name).write_text(text)
         run(
-            native,
-            "warm",
-            f"sudo flock {cache}/.xcraft.lock dnf -q makecache --forcearch={project.arch} --setopt=reposdir=/work"
+            project.on_host(),
+            step,
+            f"sudo flock {cache}/.xcraft.lock dnf -q {args} --forcearch={project.arch} --setopt=reposdir=/work/repos"
             f" --setopt=cachedir={cache} --setopt=system_cachedir={cache}",
-            volumes=[f"{_dnf_cache(project)}:{cache}", f"{work}:/work:ro"],
-            show=f"solving the metadata of the repositories of {project.arch}",
+            volumes=[
+                f"{_dnf_cache(project)}:{cache}",
+                f"{work}:/work:ro",
+                *(volumes or []),
+            ],
+            show=show,
         )
 
 

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
-from xcraft.container import BUILDENV, DNF_LOCK, build_image, image_tag, run
+from xcraft.container import BUILDENV, image_tag, run_natively
 from xcraft.resolution import resolve_image
 from xcraft.specs import dep_name
 
@@ -46,13 +46,12 @@ def upstream_requires(project: Project) -> UpstreamRequires:
     key = hashlib.sha256(json.dumps([script, image_tag(project), data]).encode()).hexdigest()
     cache = project.state / "cache/upstream" / f"{key}.json"
     if not cache.exists():
-        build_image(project)
         with project.work("upstream") as work:
             (work / "input.json").write_text(data)
-            run(
+            run_natively(
                 project,
                 "upstream",
-                f"{DNF_LOCK} python3 /xcraft/requires.py /work/input.json /work/output.json",
+                ["python3", "/xcraft/requires.py", project.arch, "/work/input.json", "/work/output.json"],
                 volumes=[f"{work}:/work"],
                 show="resolving the requirements of the upstream packages",
             )
