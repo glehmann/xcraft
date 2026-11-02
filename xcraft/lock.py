@@ -203,10 +203,20 @@ def lock_path(project: Project) -> Path:
     return project.root / "xcraft.lock"
 
 
+_parsed: dict[Path, tuple[str, Lock]] = {}
+"""The last lock parsed of each file, with its content: the commands read it many times, and parsing it is slow."""
+
+
 def load_lock(project: Project) -> Lock:
-    """Return the lock of the project, empty when there is none yet."""
-    path = lock_path(project)
-    return parse_lock(path.read_text()) if path.exists() else Lock()
+    """Return the lock of the project, empty when there is none yet: a copy of their own for the callers, which may
+    change it.
+    """
+    if not (path := lock_path(project)).exists():
+        return Lock()
+    text = path.read_text()
+    if (cached := _parsed.get(path)) is None or cached[0] != text:
+        _parsed[path] = cached = text, parse_lock(text)
+    return cached[1].model_copy(deep=True)
 
 
 def parse_lock(text: str) -> Lock:
