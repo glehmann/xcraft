@@ -5,6 +5,9 @@ input file, the store, mounted on /store, and the directory, in it: each RPM mis
 and its file name, of its name, version and architecture, is downloaded, and kept there only when it has the SHA-256
 of its pin; the directory has them all, hard-linked, for xcraft to make a repository of. Nothing is kept of a package
 of other contents, or missing: the repositories do not have the pinned ones anymore.
+
+Without the directory, for the upstream copy of xcraft.upstream_copy, those the repositories have are downloaded into
+the store, and the others only reported.
 """
 
 import hashlib
@@ -33,8 +36,10 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def download(arch: str, pins: dict[str, dict]) -> None:
-    """Download the pinned RPMs `pins` of `arch` into the store, checked against their SHA-256."""
+def download(arch: str, pins: dict[str, dict], *, partial: bool = False) -> None:
+    """Download the pinned RPMs `pins` of `arch` into the store, checked against their SHA-256: those the repositories
+    have only, if `partial`, reporting the others.
+    """
     base = dnf.Base()
     base.conf.read()
     base.conf.substitutions["arch"] = arch
@@ -55,8 +60,9 @@ def download(arch: str, pins: dict[str, dict]) -> None:
             )
         else:
             problems.append(f"{nevra}: pinned, but in no repository anymore")
-    if problems:
+    if problems and not partial:
         sys.exit("the pinned packages cannot be downloaded:\n" + "\n".join(problems))
+    sys.stdout.write("".join(f"{p}\n" for p in problems))
     base.download_packages(wanted)
     for package in wanted:
         path, pin = Path(package.localPkg()), pins[package.name]
@@ -72,11 +78,14 @@ def download(arch: str, pins: dict[str, dict]) -> None:
 
 def main() -> None:
     """Put the pinned packages of the input file in the directory, downloaded when missing in the store."""
-    data, directory = json.loads(Path(sys.argv[1]).read_text()), STORE / sys.argv[2]
+    data = json.loads(Path(sys.argv[1]).read_text())
     (STORE / "rpms").mkdir(parents=True, exist_ok=True)
     pins = data["pins"]
     if missing := {n: p for n, p in pins.items() if not stored(n, p).exists()}:
-        download(data["arch"], missing)
+        download(data["arch"], missing, partial=len(sys.argv) < 3)  # noqa: PLR2004
+    if len(sys.argv) < 3:  # noqa: PLR2004
+        return
+    directory = STORE / sys.argv[2]
     directory.mkdir(parents=True)
     for name, pin in pins.items():
         os.link(stored(name, pin), directory / stored(name, pin).name)

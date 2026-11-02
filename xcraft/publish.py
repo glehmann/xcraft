@@ -23,7 +23,7 @@ from pydantic import BaseModel
 from rich.markup import escape
 
 from xcraft import build as builder
-from xcraft import remote, repodata
+from xcraft import remote, repodata, upstream_copy
 from xcraft.cache import BuildError, build_keys, build_path, cached_build
 from xcraft.container import BUILDENV, DNF_LOCK, buildenv_hash, image_tag, run
 from xcraft.display import activity, console
@@ -154,22 +154,22 @@ def _download(
 ) -> Path:
     """Download the upstream packages `files`, as file name: NEVRA, to their cache, and return it.
 
-    Those not in the cache come from the latest snapshot, or from the repositories, which may not have them
-    anymore, after an update, while the storage may not be there. The signatures of the source packages are
-    checked before the cache, which would keep a bad one.
+    Those not in the cache come from the latest snapshot, the upstream copy, see xcraft.upstream_copy, or from
+    the repositories, which may not have them anymore, after an update, while the storage may not be there. The
+    signatures of the source packages are checked before the cache, which would keep a bad one.
     """
     cache = project.state / ("cache/srpms" if source else "cache/rpms")
     if not (missing := {f: nevra for f, nevra in files.items() if not (cache / f).exists()}):
         return cache
     with project.work("download") as work:
         if storage := project.config.remote.get("main"):
-            latest = _tree(project, "repos", "latest")
+            latest, directory = _tree(project, "repos", "latest"), "Source" if source else project.arch
+            copy = f"{upstream_copy.PREFIX}/{directory}"
+            paths = [f"{latest}/{REPO}/{directory}", f"{latest}/{BUILD}/{directory}", copy]
 
             def fetch(f: str) -> None:
-                for repo in (REPO, BUILD):  # where it is, if anywhere
-                    if remote.download(
-                        storage, f"{latest}/{repo}/{'Source' if source else project.arch}/{f}", work / f
-                    ):
+                for path in paths:  # where it is, if anywhere
+                    if remote.download(storage, f"{path}/{f}", work / f):
                         on_line(f)
                         return
 
@@ -226,6 +226,14 @@ def _upstream_srpms(project: Project, names: list[str], on_line: Callable[[str],
         files = {srpm: _nevra(locked, name) for name, srpm in _srpm_names(project, names, work, volumes).items()}
         cache = _download(project, files, on_line, source=True, volumes=volumes)
     return [cache / srpm for srpm in sorted(files)]
+
+
+def download_sources(project: Project, files: dict[str, str]) -> Path:
+    """Download the upstream source packages `files`, as file name: NEVRA of one of their binary packages, to their
+    cache, and return it, like _download().
+    """
+    with _sources(project) as (_, volumes):
+        return _download(project, files, lambda _: None, source=True, volumes=volumes)
 
 
 @contextlib.contextmanager
@@ -655,9 +663,10 @@ class _Plan:
     project: Project
     dest: Path
     known: dict[str, tuple[Entry, str]]
-    """The metadata of the packages of the latest snapshot, by SHA-256, with their paths in the storage."""
+    """The metadata of the packages of the latest snapshot and of the upstream copy, by SHA-256, with their paths in
+    the storage."""
     sources: dict[str, str]
-    """The SHA-256 of the source packages of the latest snapshot, by file name."""
+    """The SHA-256 of the source packages of the latest snapshot and of the upstream copy, by file name."""
     stored: dict[str, dict[str, tuple[str, str]]] = field(default_factory=dict)
     """The packages the storage has, by repository and file name, with their paths there and SHA-256."""
 
@@ -700,7 +709,7 @@ class _Plan:
         return {f"{repo}/{name}": stored for repo, files in self.stored.items() for name, stored in files.items()}
 
 
-def _previous(
+def previous(
     project: Project, storage: Remote, signer: Signer | None
 ) -> tuple[dict[str, tuple[Entry, str]], dict[str, str]]:
     """Return the metadata of the packages of the latest snapshot, by SHA-256, with their paths in the storage, and
@@ -737,6 +746,17 @@ def _previous(
         Path(f).name: digest for f, digest in manifest.items() if f.startswith((f"{REPO}/Source/", f"{BUILD}/Source/"))
     }
     return known, sources
+
+
+def _with_copy(
+    platforms: list[Project], storage: Remote, signer: Signer | None
+) -> tuple[dict[str, tuple[Entry, str]], dict[str, str]]:
+    """Return the packages of the latest snapshot, like previous(), and those of the upstream copy of the storage, for
+    the architectures of `platforms`: copied from there, without being uploaded.
+    """
+    known, sources = upstream_copy.stored(platforms[0], storage, [p.arch for p in platforms])
+    latest, latest_sources = previous(platforms[0], storage, signer)
+    return known | latest, sources | latest_sources
 
 
 def _stored_build(project: Project, signer: Signer | None, name: str, key: str, storage: Remote) -> Path | str:
@@ -838,7 +858,7 @@ def remote_snapshot(
     """
     project = platforms[0]
     fresh_dir(project, dest)
-    plan = _Plan(project, dest, *_previous(project, storage, signer))
+    plan = _Plan(project, dest, *_with_copy(platforms, storage, signer))
     built = []
     for platform in platforms:
         keys = _built(platform, fetch="needed")

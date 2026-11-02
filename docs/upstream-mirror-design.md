@@ -1,6 +1,7 @@
 # Design: our own copy of the upstream packages we lock
 
-Status: proposal.
+Status: implemented with the main and dev buckets, see xcraft/upstream_copy.py: the copies of the pull requests,
+the pin download from the copy of a merged pull request, and the check of the releases wait for their buckets.
 
 ## The problem
 
@@ -83,8 +84,9 @@ For each architecture, the upstream binary packages the lock pins there: those o
 build roots of our packages, of `runtime` and of `iso`: about 900 on x86_64_v2. Not all the binary packages of the
 locked source packages: their unused subpackages, like debug ones, would multiply the size for no use.
 
-Their source packages go in too, for the snapshots: AlmaLinux's vault keeps all their versions, but EPEL's sources
-follow its binaries, only the latest.
+The source packages of those the snapshots publish go in too: of `runtime`, and, with `[publish] build`, of the image
+and of the build roots. AlmaLinux's vault keeps all their versions, but EPEL's sources follow its binaries, only the
+latest.
 
 ### Where each package comes from
 
@@ -106,7 +108,8 @@ it.
 ### The buckets
 
 The copy of the ci bucket, `.xcraft/upstream/` there, is the reference, written by CI on the main branch only, with the
-CI key: see ci-secret-management-design.md and pr-ci-design.md for the buckets.
+CI key: see ci-secret-management-design.md and pr-ci-design.md for the buckets. Until they are set up, the ci bucket is
+the main one, and the pull requests have no copy.
 
 - **pr:** the PR key cannot write the ci bucket, so the jobs of a pull request push the packages of its lock the ci copy
   misses to a copy of their own, `.xcraft/upstream/pr<N>/<arch>/` in the pr bucket: those of a lock update, downloaded
@@ -126,9 +129,10 @@ itself.
 ### Publishing
 
 xcraft publish copies the packages of the snapshot server-side, without uploading them: ours from the storage, as
-today, the upstream ones the latest snapshot has from it, and the other upstream ones from the copy. It does not fill
-the copy: `xcraft push` runs before it, in the same job, so a pinned package missing in the copy means the push
-failed, and publish fails too. Publishing to the pr or dev bucket takes them from its own copy, or from the ci copy.
+today, the upstream ones the latest snapshot has from it, and the other upstream ones from the copy of the storage it
+publishes to. It does not fill the copy: on the main branch, `xcraft push` runs before it, in the same job, and fails
+it when a pinned package cannot be copied. Those the copy misses anyway, like in the dev bucket after a lock update on
+a developer's machine, are downloaded and uploaded with the snapshot, as before the copy.
 
 Publishing to the release bucket checks the ci copy instead, reading it only, with the public reads of the ci bucket:
 a release whose lock pins a package the ci copy misses is refused, so a released commit can always be built again,
@@ -159,15 +163,17 @@ adds them again, as it compares the pins of the lock to the metadata, not to the
 dropping such a version before the next update, the time of a push: a concurrency group by architecture for the CI
 jobs pushing would remove it, cheaply, but is not required.
 
-The jobs of different architectures write different metadata, but for `Source/`, which only the job of the first
-architecture of `xcraft.toml` updates. The copies of the pull requests are written by their own jobs only.
+The jobs of different architectures write different metadata, but for `Source/`, which each one adds the source
+packages of its pins to: an update lost there is made again by the next push of its architecture, likewise. The copies
+of the pull requests are written by their own jobs only.
 
 ### Using it
 
-xcraft adds the ci copy to the repositories it resolves and downloads from, itself, and in a pull request its own copy
-too: no change to `xcraft.toml`. The packages keep their upstream signatures, so the repository takes the keys of the
-upstream repositories of `xcraft.toml`. A version locked and not copied yet, like after a lock update on a developer's
-machine, is in the upstream repositories still.
+xcraft adds the copies of the main and dev buckets to the repositories it resolves and downloads the pins from, itself:
+no change to `xcraft.toml`, nor to the build environment image, which installs from the repository of the pins only, so
+the storage is not an input of the build keys. They are skipped when they cannot be reached, like offline, and are not
+checked for signatures: the pins are checked against their SHA-256, and the resolution installs nothing. A version
+locked and not copied yet, like after a lock update on a developer's machine, is in the upstream repositories still.
 
 dnf finds a pinned package in the copy when its repository no longer has it, and in both otherwise: the same NEVRA with
 the same checksum, so either is fine. Nothing else changes:
