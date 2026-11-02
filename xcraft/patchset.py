@@ -23,6 +23,8 @@ if TYPE_CHECKING:
 BEGIN = "# xcraft patchset: "
 END = "# end of xcraft patchset"
 _PATCH_RE = re.compile(r"^Patch(\d+)\s*:\s*(\S+)\s*$", re.MULTILINE)
+_USED_RE = re.compile(r"^(?:Patch|Source)\d*\s*:\s*(\S+)\s*$", re.MULTILINE)
+"""The files a spec uses, as its patches and sources."""
 
 
 class PatchsetError(RuntimeError):
@@ -133,7 +135,9 @@ def update_patchset(pkg_dir: Path, spec: Path, repo: Path, base: str, first: int
             msg = f"patch numbers {first}-{numbers[-1]} are used by other patches ({clashes[0]}...), see --first"
             raise PatchsetError(msg)
         names = [p.name for p in patches]
-        if clobbered := sorted(name for name in set(names) - set(old) if (pkg_dir / name).exists()):
+        # those the spec uses besides the patchset, rather than files it does not use, like a patch dropped from it
+        used = {Path(m.group(1)).name for m in _USED_RE.finditer("".join(lines[:start] + lines[end:]))}
+        if clobbered := sorted(set(names) & used - set(old)):
             msg = f"the patches would overwrite files of the package outside of the patchset: {', '.join(clobbered)}"
             raise PatchsetError(msg)
         head = git("-C", str(repo), "rev-parse", "--short=12", "HEAD")
