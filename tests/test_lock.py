@@ -67,6 +67,19 @@ def test_save_and_load(tmp_path) -> None:  # noqa: ANN001
     assert f'"glibc" = "2.39-145.el10_2 aarch64 {"ab" * 32} glibc"\n' in text
 
 
+def test_lock_parsed_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project = Project(tmp_path, config())
+    save_lock(project, Lock(sources={"glibc": "1-1"}))
+    first = load_lock(project)
+    # parsed again only once changed, but a copy for each caller, which may change it
+    monkeypatch.setattr("xcraft.lock.parse_lock", lambda _: pytest.fail("parsed again"))
+    first.sources["zlib"] = "1-1"
+    assert load_lock(project).sources == {"glibc": "1-1"}
+    monkeypatch.undo()
+    save_lock(project, first)
+    assert load_lock(project).sources == {"glibc": "1-1", "zlib": "1-1"}
+
+
 def test_lock_validation(tmp_path: Path) -> None:
     project = Project(tmp_path, config())
     # pins of one format, in full
