@@ -164,7 +164,12 @@ def create_dev_key(project: Project, name: str) -> Signer:
     return signer
 
 
-def _keys(urls: list[str], work: Path) -> list[str]:
+def repo_keys(project: Project) -> list[str]:
+    """Return the URLs of the keys of the repositories of xcraft.toml."""
+    return sorted({key for repo in project.config.repos.values() for key in (repo.gpgkey or "").split()})
+
+
+def key_paths(urls: list[str], work: Path) -> list[str]:
     """Return the paths of the keys of `urls` in the containers: those of files of the image as they are, the others
     downloaded into `work`, mounted on /work, as the checks have no network.
     """
@@ -188,7 +193,7 @@ def check_signatures(
         return
     # all: a package without signature fails too
     check = "xargs -a /work/packages rpmkeys --checksig --define '_pkgverify_level all'"
-    keys = sorted({key for repo in project.config.repos.values() for key in (repo.gpgkey or "").split()})
+    keys = repo_keys(project)
     context = hashlib.sha256(json.dumps([image_tag(project), check, public_key, keys]).encode()).hexdigest()
     cache = project.state / "cache/checks/signatures" / context
     digests = {f: sha256_of(root / f) for f in files}
@@ -201,7 +206,7 @@ def check_signatures(
             (work / "key.asc").write_text(public_key)
             imported = ["/work/key.asc"]
         else:
-            imported = _keys(keys, work)
+            imported = key_paths(keys, work)
         db = "--define '_dbpath /tmp/keys'"
         importing = f"rpmkeys {db} --import {' '.join(imported)} && " if imported else ""
         check = f"mkdir /tmp/keys && {importing}{check} {db}"

@@ -3,8 +3,8 @@
 Run as root in the build environment, with the tools making the ISO installed: ``iso.py <config>``. The config is a
 JSON object of ``snapshot``, the binaries of the snapshot for the architecture, ``templates``, the files of the ISO
 and of install.img, ``tree``, the directory to make, ``installer`` and ``packages`` (see xcraft.project.Iso),
-``netinstall`` and ``signed``. The tree, with ``info.json`` next to it, the version and volume id of the ISO, gets
-the owner of the config, even when it fails.
+``netinstall``, ``signed`` and ``keys``, the files of the keys of the repositories. The tree, with ``info.json`` next
+to it, the version and volume id of the ISO, gets the owner of the config, even when it fails.
 """
 
 import atexit
@@ -150,9 +150,9 @@ def repository(branding: dict[str, str]) -> None:
         # the installer looks for the keys even without checking the signatures
         text = text.replace("\nkey", "\n#key")
     else:
-        # The installer reads only the first key file, so bundle the upstream keys with ours.
-        with (tree / "RPM-GPG-KEY-xcpng").open("wb") as out:
-            sh("rpm", "-qa", "gpg-pubkey*", "--qf", "%{DESCRIPTION}\n", stdout=out)
+        # The installer reads only the first key file, so bundle the upstream keys with ours. It imports them in the
+        # installed system, which checks its updates with them.
+        (tree / "RPM-GPG-KEY-xcpng").write_text("".join(Path(k).read_text().strip() + "\n" for k in config["keys"]))
     treeinfo.write_text(text)
     packages = tree / "Packages"
     packages.mkdir()
