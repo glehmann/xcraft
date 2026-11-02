@@ -23,6 +23,7 @@ from xcraft.checks import _check_made, record_rpm_deps
 from xcraft.clean import clean, repos_disk_usage
 from xcraft.commands import complete_arch, load
 from xcraft.commands.repo import _kept
+from xcraft.commands.shell import package_of
 from xcraft.localrepo import OUTPUT_MARKER, RepoError, extra_rpms, fresh_dir, link
 from xcraft.lock import Lock, Pin, save_lock
 from xcraft.project import Extra, Project, ProjectLockedError
@@ -579,3 +580,16 @@ def test_packages_kept_by_test_hosts() -> None:
         "package qemu is not installed",
     ]
     assert _kept(installed, rpms) == [("xen-libs-4.17-1+b3~4.qcow2.x86_64", "xen-libs-4.17-1+b3~2.dev.x86_64")]
+
+
+def test_package_of_a_path(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("xen", "xen-tools"):
+        (project.root / "base" / name / "patches").mkdir(parents=True)
+    # by name, or by a path in its directory, like . there, but not a package with its name as prefix
+    assert package_of(project, "xen") == "xen"
+    monkeypatch.chdir(project.root / "base/xen-tools/patches")
+    assert package_of(project, ".") == "xen-tools"
+    assert package_of(project, "../../xen") == "xen"
+    for given in ("../..", "/"):
+        with pytest.raises(typer.BadParameter, match="neither a package nor in the directory of one"):
+            package_of(project, given)
