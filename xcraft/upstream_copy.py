@@ -127,7 +127,8 @@ def push(project: Project, storage: Remote) -> list[str]:
                 except ContainerError as e:
                     problems.append(f"source packages: {e}")
                 else:
-                    copies |= {f: (cache / f, None) for f in left}
+                    copies |= {f: (cache / f, None) for f in left if (cache / f).exists()}
+            problems += [f"{f}: in no repository, nor in the latest snapshot" for f in missing if f not in copies]
             _update(project, storage, SOURCE, work, entries, hrefs, copies)
     return problems
 
