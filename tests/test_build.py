@@ -144,6 +144,15 @@ def write_spec(root: Path, name: str, requires: str = "", files: str = "/usr/sha
     )
 
 
+def test_binary_of_two_packages(root: Path) -> None:
+    write_spec(root, "twin")
+    spec = root / "base/twin/twin.spec"
+    spec.write_text(spec.read_text().replace("Name: twin", "Name: trivial"))
+    code, output = xcraft("build", "--dry-run")
+    assert code == 1
+    assert f"binary packages of several packages for {ARCH}: trivial (trivial, twin)" in output
+
+
 def test_build_without_network(root: Path) -> None:
     write_spec(root, "offline")
     spec = root / "base/offline/offline.spec"
@@ -772,9 +781,14 @@ def test_lock_upgrade(root: Path) -> None:
     code, output = xcraft("lock", "--upgrade")
     assert code == 0, output
     assert load_lock(project).binaries[ARCH]["bash"].source == "bash"
-    # of format 3: .buildid/ and what the builds recorded in the lock move to xcraft.builds, without the self-provides
+    # of format 3: .buildid/ and what the builds recorded in the lock move to xcraft.builds, without the provides the
+    # specs declare, like the self-provides, and those of x86_64 only, which aarch64 had from the shared entries
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(spec.read_text().replace("BuildArch: noarch\n", "%ifarch x86_64\nProvides: x86-only = 1\n%endif\n"))
     text = lock_path(project).read_text().replace("version = 4", "version = 3")
-    recorded = '[requires]\n"trivial" = ["tcl"]\n\n[provides]\n"trivial" = ["trivial = 1.0-1.xcpng8.99"]\n'
+    recorded = (
+        '[requires]\n"trivial" = ["tcl"]\n\n[provides]\n"trivial" = ["trivial = 1.0-1.xcpng8.99", "x86-only = 1"]\n'
+    )
     lock_path(project).write_text(f"{text}\n{recorded}")
     builds_path(project).unlink()
     (root / ".buildid").mkdir()
@@ -784,7 +798,7 @@ def test_lock_upgrade(root: Path) -> None:
     assert not (root / ".buildid").exists()
     assert "[requires]" not in lock_path(project).read_text()
     builds = load_builds(project)
-    assert (builds.requires.of(ARCH), builds.provides.of(ARCH)) == ({"trivial": ["tcl"]}, {})
+    assert (builds.requires.of(ARCH), builds.provides) == ({"trivial": ["tcl"]}, Recorded())
     assert builds.ids["trivial"].number == 7  # out of git, nothing to number against
 
 

@@ -198,13 +198,16 @@ def _version(evr: str) -> str:
 
 def recordable(binary: Binary, provides: list[str]) -> list[str]:
     """Return the `provides` rpm generated for `binary` to record: but those its spec declares, like its own name, and
-    with its EVR, or its version, as %{evr}, or %{version}, so that they only change when what it generates does.
+    with its EVR, or its version, as %{evr}, or %{version}, so that they only change when what it generates does. An
+    epoch 0 is the same as none, which rpm leaves out of what it generates.
     """
-    placeholders = ((binary.evr, "%{evr}"), (_version(binary.evr), "%{version}"))
+    evr = binary.evr.removeprefix("0:")
+    declared = {p.replace(" = 0:", " = ") for p in binary.provides}
+    placeholders = ((evr, "%{evr}"), (_version(evr), "%{version}"))
     return [
         next((p.removesuffix(v) + macro for v, macro in placeholders if p.endswith(f" = {v}")), p)
         for p in provides
-        if p not in binary.provides
+        if p.replace(" = 0:", " = ") not in declared
     ]
 
 
@@ -226,7 +229,8 @@ def locked_packages(parsed: dict[str, Package], builds: Builds, arch: str) -> di
 
 def upgrade_builds(project: Project, records: dict[str, Recorded]) -> Builds:
     """Return the lock of the builds of a project of lock format 3, with the build IDs of its ``.buildid/`` and the
-    `records` of its lock, but the provides the specs declare, and with the versions as %{evr}, or %{version}.
+    `records` of its lock, but the provides the specs declare, and with the versions as %{evr}, or %{version}. The
+    architectures but the first one migrate their own entries only, not the shared ones they had.
     """
     ids = {
         path.name: BuildId.parse(text)
@@ -236,7 +240,8 @@ def upgrade_builds(project: Project, records: dict[str, Recorded]) -> Builds:
     provides = Recorded()
     for arch, parsed in sorted(_parsed(project).items(), key=lambda item: item[0] != project.first):
         binaries = {b.name: b for package in parsed.values() for b in package.binaries}
-        for name, values in records["provides"].of(arch).items():
+        old = records["provides"]
+        for name, values in (old.shared if arch == project.first else old.arches.get(arch, {})).items():
             if name in binaries:
                 provides.record(arch, project.first, name, recordable(binaries[name], values))
     return Builds(ids=ids, buildrequires=records["buildrequires"], requires=records["requires"], provides=provides)

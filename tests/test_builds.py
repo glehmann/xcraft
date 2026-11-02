@@ -109,6 +109,9 @@ def test_recordable() -> None:
         "bundled(libfoo) = 0.9",
         "/usr/sbin/sm",
     ]
+    # an epoch 0 the same as none, which rpm leaves out of what it generates
+    qemu = binary("qemu", evr="0:10.1-1")
+    assert recordable(qemu, ["qemu = 10.1-1", "qemu-img = 10.1-1"]) == ["qemu-img = %{evr}"]
 
 
 def test_upgrade(project: Project) -> None:
