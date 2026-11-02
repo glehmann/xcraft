@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -769,6 +770,14 @@ def test_signatures_of_the_keys_of_the_repositories(root: Path, tmp_path: Path) 
     srpm = tmp_path / "htop-3.3.0-5.el10_0.alma_altarch.src.rpm"
     process.download(f"https://epel.vault.almalinux.org/10/Source/Packages/{srpm.name}", srpm)
     check_signatures(Project.find(), tmp_path, [srpm.name], what="upstream source packages")
+
+
+def test_status_during_a_build(root: Path) -> None:
+    assert xcraft("build", "--dry-run")[0] == 0
+    with (root / ".xcraft/lock").open("w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)  # as a build does
+        code, output = xcraft("status")
+        assert code == 0, output
 
 
 def test_lock_upgrade(root: Path) -> None:

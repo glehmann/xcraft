@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 from rich.markup import escape
 
-from xcraft.builds import load_builds, save_builds
+from xcraft.builds import drop_gone
 from xcraft.container import BUILDENV, PACKAGES, base_packages, repo_file, run_natively
 from xcraft.display import console
 from xcraft.graph import reachable
@@ -295,8 +295,7 @@ def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
     of the builds what the builds found for the packages of the project only.
     """
     platforms = project.all_platforms()
-    with project.lock():
-        save_builds(project, load_builds(project))  # which has those only
+    drop_gone(project)
 
     def record(recorded: Lock, lock: Lock) -> None:
         lock.image, lock.binaries, lock.runtime, lock.iso = {}, {}, {}, {}

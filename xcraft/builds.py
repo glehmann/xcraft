@@ -192,6 +192,17 @@ def save_builds(project: Project, builds: Builds) -> None:
     write_atomically(path, text)
 
 
+def drop_gone(project: Project) -> None:
+    """Drop from the lock of the builds what the builds of packages and binary packages gone recorded, holding the lock
+    of the project only then, for the commands only reading the project, like xcraft status during a build.
+    """
+    path = builds_path(project)
+    current = path.read_text() if path.exists() else ""
+    if render(project, parse_builds(current)) != (current or _HEADER):
+        with project.lock():
+            save_builds(project, load_builds(project))
+
+
 def _version(evr: str) -> str:
     return evr.split(":", 1)[-1].rsplit("-", 1)[0]
 
