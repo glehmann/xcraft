@@ -412,7 +412,8 @@ VM stops on Ctrl-C. The default accelerator is KVM, which needs access to `/dev/
 software emulation. With KVM, QEMU exposes the host CPU, including nested virtualization when enabled on the host.
 
 Networking uses NAT with an emulated e1000 NIC. Once SSH is running in the installed host, connect with
-`ssh -p 2222 root@127.0.0.1`. `--ssh-port` changes the forwarded localhost port, or disables forwarding with `0`.
+`ssh -p 2222 root@127.0.0.1`, or the port `xcraft boot` shows: the first free one from 2222, as another VM may use it.
+`--ssh-port` gives the forwarded localhost port, or disables forwarding with `0`.
 Extra QEMU arguments can be supplied individually, like `--qemu-arg=-display --qemu-arg=gtk`.
 
 #### Controlling a session
