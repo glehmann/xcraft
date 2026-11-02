@@ -102,7 +102,7 @@ def test_spec_changed_during_build_is_not_cached(root: Path) -> None:
 
     def change() -> None:
         for _ in range(1200):  # not after the test, whose build fails to start
-            if (root / ".xcraft/build/trivial.pid").exists():
+            if (root / ".xcraft/logs/trivial.log").exists():  # its build started, staged
                 spec.write_text(f"{spec.read_text()}# changed\n")
                 return
             time.sleep(0.1)
@@ -770,6 +770,23 @@ def test_signatures_of_the_keys_of_the_repositories(root: Path, tmp_path: Path) 
     srpm = tmp_path / "htop-3.3.0-5.el10_0.alma_altarch.src.rpm"
     process.download(f"https://epel.vault.almalinux.org/10/Source/Packages/{srpm.name}", srpm)
     check_signatures(Project.find(), tmp_path, [srpm.name], what="upstream source packages")
+
+
+def test_building_until_recorded(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # what rpm generated, recorded after the build container, still during the turn of the package, as xcraft status
+    # shows it
+    states = []
+    record = builder.record_rpm_deps
+
+    def recording(project: Project, names: list[str], *args: object, **kwargs: object) -> bool:
+        states.extend(builder.building(project, name) for name in names)
+        return record(project, names, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+
+    monkeypatch.setattr(builder, "record_rpm_deps", recording)
+    code, output = xcraft("build", "trivial")
+    assert code == 0, output
+    assert True in states
+    assert not builder.building(Project.find(), "trivial")
 
 
 def test_status_during_a_build(root: Path) -> None:
