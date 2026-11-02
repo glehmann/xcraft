@@ -25,7 +25,7 @@ import pytest
 from tests import ARCH, PLATFORM, TOML, copy_project, needs_gpg
 from tests.test_build import results, write_spec, xcraft
 from tests.test_iso import cache_image
-from xcraft import buildid, ccache, remote, repodata
+from xcraft import buildid, ccache, pinned, remote, repodata, upstream_copy
 from xcraft import publish as publisher
 from xcraft.container import run
 from xcraft.iso import build_iso, fetch_isos, iso_key, iso_name, iso_path, push_isos
@@ -1020,6 +1020,71 @@ def test_publish_from_latest_metadata(root: Path, tmp_path: Path, caplog: pytest
     assert {p.relative_to(tmp_path / "packages").as_posix() for p in (tmp_path / "packages").rglob("*.rpm")} == {
         f for f in rpms if f.startswith(f"base/{ARCH}/")
     }
+
+
+def _copied(storage: Remote, directory: str, work: Path) -> dict[str, str]:
+    """Return the packages of the metadata of the upstream copy `directory` of `storage`, by SHA-256."""
+    prefix = f"{upstream_copy.PREFIX}/{directory}"
+    assert remote.download(storage, f"{prefix}/repodata/repomd.xml", work / "repodata/repomd.xml")
+    for href in repodata.files((work / "repodata/repomd.xml").read_bytes()).values():
+        assert remote.download(storage, f"{prefix}/{href}", work / href)
+    return {digest: repodata.location(e) for digest, e in (repodata.read(work) or {}).items()}
+
+
+def test_upstream_copy(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """The pinned upstream packages are copied to the storage once, with their metadata, and publishing copies them
+    from there rather than uploading them.
+    """
+    (root / "xcraft.toml").write_text(f'{REMOTE}extra = ["bc"]\n')
+    storage = Project.find().config.remote["dev"]
+    prefix = upstream_copy.PREFIX
+
+    def clean() -> None:  # the copy of the bucket, which the other tests share
+        if files := remote.listing(storage, f"{prefix}/"):
+            remote.delete(storage, [f"{prefix}/{f}" for f in files])
+
+    clean()
+    try:
+        assert xcraft("build", "--dry-run")[0] == 0  # the lock, with bc
+        code, output = xcraft("push", "upstream", "--to", "dev")
+        assert code == 0, output
+        pins = pinned.pins(Project.find())
+        assert _copied(storage, ARCH, tmp_path / "1") == {p.sha256: pinned.file_name(n, p) for n, p in pins.items()}
+        assert set(remote.listing(storage, f"{prefix}/{ARCH}/")) >= {pinned.file_name(n, p) for n, p in pins.items()}
+        # the source packages of what is published, not of the build environment, as [publish] build is false
+        bc = pins["bc"]
+        assert f"bc-{bc.evr.split(':')[-1]}.src.rpm" in _copied(storage, "Source", tmp_path / "2").values()
+        # nothing to copy again
+        with caplog.at_level(logging.DEBUG, logger="xcraft"):
+            code, output = xcraft("push", "upstream", "--to", "dev")
+        assert code == 0, output
+        assert not [m for m in caplog.messages if m.startswith(("uploading ", "copying "))]
+        # metadata updated meanwhile without bc, which the next push adds again, alone
+        work = tmp_path / "3"
+        _copied(storage, ARCH, work)
+        entries = {repodata.location(e): e for e in (repodata.read(work) or {}).values()}
+        repodata.write(work, {f: e for f, e in entries.items() if not f.startswith("bc-")})
+        for f in sorted((work / "repodata").iterdir(), key=lambda f: f.name == "repomd.xml"):
+            remote.upload(storage, f"{prefix}/{ARCH}/repodata/{f.name}", f)
+        caplog.clear()
+        with caplog.at_level(logging.DEBUG, logger="xcraft"):
+            code, output = xcraft("push", "upstream", "--to", "dev")
+        assert code == 0, output
+        uploads = [m.split(" to ")[-1] for m in caplog.messages if m.startswith(("uploading ", "copying "))]
+        assert [Path(u).name for u in uploads if u.endswith(".rpm")] == [pinned.file_name("bc", bc)]
+        assert bc.sha256 in _copied(storage, ARCH, tmp_path / "4")
+        # the metadata of before the previous update is gone, but not that of the previous one
+        assert len([f for f in remote.listing(storage, f"{prefix}/{ARCH}/repodata/") if "primary" in f]) == 2
+        # publishing copies them from the copy
+        caplog.clear()
+        with caplog.at_level(logging.DEBUG, logger="xcraft"):
+            code, output = xcraft("publish", "repos", "--to", "dev", "--unsigned", "--stage", f"copy-{STAGE}")
+        assert code == 0, output
+        copied = [m.split()[1] for m in caplog.messages if m.startswith("copying ")]
+        assert f"s3://xcraft-dev/{prefix}/{ARCH}/{pinned.file_name('bc', bc)}" in copied
+        assert not [m for m in caplog.messages if m.startswith("uploading ") and "/bc-" in m]
+    finally:
+        clean()
 
 
 def test_publish_reuses_remote_snapshot(root: Path, caplog: pytest.LogCaptureFixture) -> None:

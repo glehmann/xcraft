@@ -12,6 +12,7 @@ digest.
 from __future__ import annotations
 
 import fcntl
+import functools
 import hashlib
 import json
 import os
@@ -97,12 +98,39 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+@functools.cache
 def _store() -> Path:
-    """Return the store, made if needed."""
+    """Return the store, made if needed, once by process."""
     if process.run(["podman", "volume", "exists", VOLUME], check=False).returncode:
         process.run(["podman", "volume", "create", VOLUME], capture=True)
     inspect = ["podman", "volume", "inspect", "--format", "{{.Mountpoint}}", VOLUME]
     return Path(process.run(inspect, capture=True).stdout.strip())
+
+
+def stored(name: str, pin: Pin) -> Path | None:
+    """Return the RPM of the pinned package `name` in the store, if it has it, of the SHA-256 of its `pin`."""
+    return path if _intact(path := _store() / "rpms" / pin.sha256 / file_name(name, pin), pin) else None
+
+
+def download(project: Project, pinned: dict[str, Pin]) -> None:
+    """Download into the store the `pinned` packages it misses that the repositories still have, see pin.py."""
+    _pin(project, pinned)
+
+
+def _pin(project: Project, pinned: dict[str, Pin], *directory: str) -> None:
+    """Run pin.py on the `pinned` packages, making their `directory` in the store, if given."""
+    from xcraft.container import run_natively  # noqa: PLC0415, which builds the image of the pins
+
+    with project.work("pin") as work:
+        data = {"arch": project.arch, "pins": {name: pin.model_dump() for name, pin in pinned.items()}}
+        (work / "pins.json").write_text(json.dumps(data))
+        run_natively(
+            project,
+            "pin",
+            ["python3", "/xcraft/pin.py", "/work/pins.json", *directory],
+            volumes=[f"{work}:/work:ro", f"{VOLUME}:/store"],
+            show=f"getting the pinned packages of {project.arch}",
+        )
 
 
 def _make(project: Project, pinned: dict[str, Pin], store: Path, ident: str) -> None:
@@ -110,16 +138,7 @@ def _make(project: Project, pinned: dict[str, Pin], store: Path, ident: str) -> 
     from xcraft.container import run_natively  # noqa: PLC0415, which builds the image of the pins
 
     part = f"repos/.{ident}.{os.getpid()}"
-    with project.work("pin") as work:
-        data = {"arch": project.arch, "pins": {name: pin.model_dump() for name, pin in pinned.items()}}
-        (work / "pins.json").write_text(json.dumps(data))
-        run_natively(
-            project,
-            "pin",
-            ["python3", "/xcraft/pin.py", "/work/pins.json", part],
-            volumes=[f"{work}:/work:ro", f"{VOLUME}:/store"],
-            show=f"getting the pinned packages of {project.arch}",
-        )
+    _pin(project, pinned, part)
     # with the tool of the host, in this container only
     run_natively(
         project.on_host(),

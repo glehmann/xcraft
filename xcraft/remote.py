@@ -4,7 +4,8 @@ It has the published repositories and ISOs, in ``repos/`` and ``isos/``, and,
 in ``.xcraft/``, what xcraft keeps for itself: the source archives, as
 ``.xcraft/sources/<sha256>/<filename>`` like the local source cache, and the
 builds, as ``.xcraft/builds/<arch>/<package>/<key>/`` trees, with the signed
-builds, the compiler caches, the public keys and the ISOs of the checkouts.
+builds, the compiler caches, the public keys, the ISOs of the checkouts, and the
+copy of the pinned upstream packages, see xcraft.upstream_copy.
 Garage, like other S3 storages, stores identical files once: copies cost
 nothing, so builds are stored as their files, for the published repositories
 to be copies of them.

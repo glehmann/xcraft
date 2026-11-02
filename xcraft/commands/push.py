@@ -6,8 +6,9 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated
 
 import typer
+from rich.markup import escape
 
-from xcraft import ccache, remote
+from xcraft import ccache, remote, upstream_copy
 from xcraft.cache import BUILD_FILES, build_keys, build_path, cached_build
 from xcraft.commands import Arch, Final, Key, Packages, To, load, remote_storage
 from xcraft.devbuilds import developed
@@ -25,9 +26,10 @@ def everything(ctx: typer.Context, final: Final = False, arch: Arch = None, key:
     """Upload to the remote storage what it does not have yet.
 
     Without a command: the sources and the builds of all the packages, but the development ones, unless --final, which
-    uploads their final builds, with the pages of the directories of what is pushed: xcraft push index makes them all.
-    The sources not in the source cache, like those of the packages which did not build, and the packages not built, do
-    not keep the others from being pushed, then fail it.
+    uploads their final builds, with the pages of the directories of what is pushed: xcraft push index makes them all;
+    then the pinned upstream packages, see xcraft push upstream.
+    The sources not in the source cache, like those of the packages which did not build, the packages not built, and
+    the upstream ones found nowhere, do not keep the others from being pushed, then fail it.
     """
     if ctx.invoked_subcommand:
         # all the options given before the subcommand are its defaults: those given after it win
@@ -37,9 +39,11 @@ def everything(ctx: typer.Context, final: Final = False, arch: Arch = None, key:
     storage = remote_storage(project, to)
     absent = _push_sources(project, storage, None)
     not_built = _push_builds(project, storage, None, signer=signing_key(project, key), final=final)
+    copied = _push_upstream(project, storage)
     if problems := [
         *([f"not in the source cache: {', '.join(absent)}"] if absent else []),
         *([f"not built: {', '.join(not_built)}"] if not_built else []),
+        *copied,
     ]:
         raise RuntimeError("; ".join(problems))
 
@@ -157,6 +161,28 @@ def _push_builds(
             remote.update_pages(project, storage, [f"{paths[name]}/" for name in pushed])
     console.print(f"{len(pushed)} pushed, {len(present)} already in the remote storage")
     return not_built
+
+
+@app.command("upstream")
+def upstream_packages(arch: Arch = None, to: To = "dev") -> None:
+    """Copy to the upstream copy of the remote storage the pinned upstream packages it misses, and their source
+    packages: from the store of the pinned RPMs of this machine, the latest snapshot, or else their repositories.
+
+    The builds, the resolution and publishing take them from there once their repositories drop them. The lock is
+    read as it is, not prepared: its pins may be resolved from that copy only.
+    """
+    project = Project.find(arch)
+    if problems := _push_upstream(project, remote_storage(project, to)):
+        raise RuntimeError("; ".join(problems))
+
+
+def _push_upstream(project: Project, storage: Remote) -> list[str]:
+    """Copy the pinned upstream packages the upstream copy of `storage` misses, and return the problems."""
+    with project.lock():
+        problems = upstream_copy.push(project, storage)
+    for problem in problems:
+        console.print(f"[red]✗[/] {escape(problem)}")
+    return [f"{len(problems)} upstream packages not copied"] if problems else []
 
 
 @app.command("ccache")
