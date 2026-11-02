@@ -150,9 +150,16 @@ def reuse_published(
 
 
 def _download(
-    project: Project, files: dict[str, str], on_line: Callable[[str], None], *, source: bool, volumes: list[str]
+    project: Project,
+    files: dict[str, str],
+    on_line: Callable[[str], None],
+    *,
+    source: bool,
+    volumes: list[str],
+    available: bool = False,
 ) -> Path:
-    """Download the upstream packages `files`, as file name: NEVRA, to their cache, and return it.
+    """Download the upstream packages `files`, as file name: NEVRA, to their cache, and return it: those found only,
+    if `available`, without failing for the others.
 
     Those not in the cache come from the latest snapshot, the upstream copy, see xcraft.upstream_copy, or from
     the repositories, which may not have them anymore, after an update, while the storage may not be there. The
@@ -180,15 +187,16 @@ def _download(
                 project,
                 "download",
                 # as root, for the lock: the files are given back to the user
-                f"{DNF_LOCK} dnf -q download {'--source ' if source else ''}--destdir /work {' '.join(left)}"
-                " && sudo chown builder: /work/*.rpm",
+                f"{DNF_LOCK} dnf -q download {'--source ' if source else ''}{'--setopt=strict=0 ' if available else ''}"
+                f"--destdir /work {' '.join(left)} && sudo chown -R builder: /work",
                 volumes=[f"{work}:/work", *volumes],
                 on_line=on_line,
             )
-        if source:
-            check_signatures(project, work, list(missing), what="upstream source packages")
+        found = [f for f in missing if (work / f).exists()]
+        if source and found:
+            check_signatures(project, work, found, what="upstream source packages")
         cache.mkdir(parents=True, exist_ok=True)
-        for f in missing:
+        for f in found:
             (work / f).rename(cache / f)
     return cache
 
@@ -229,11 +237,11 @@ def _upstream_srpms(project: Project, names: list[str], on_line: Callable[[str],
 
 
 def download_sources(project: Project, files: dict[str, str]) -> Path:
-    """Download the upstream source packages `files`, as file name: NEVRA of one of their binary packages, to their
-    cache, and return it, like _download().
+    """Download those of the upstream source packages `files`, as file name: NEVRA of one of their binary packages,
+    that are found, to their cache, and return it, like _download().
     """
     with _sources(project) as (_, volumes):
-        return _download(project, files, lambda _: None, source=True, volumes=volumes)
+        return _download(project, files, lambda _: None, source=True, volumes=volumes, available=True)
 
 
 @contextlib.contextmanager

@@ -182,7 +182,7 @@ def _push_upstream(project: Project, storage: Remote) -> list[str]:
         problems = upstream_copy.push(project, storage)
     for problem in problems:
         console.print(f"[red]✗[/] {escape(problem)}")
-    return [f"{len(problems)} upstream packages not copied"] if problems else []
+    return [f"the upstream copy is incomplete: {len(problems)} problems, see above"] if problems else []
 
 
 @app.command("ccache")

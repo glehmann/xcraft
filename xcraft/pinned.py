@@ -98,12 +98,17 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-@functools.cache
 def _store() -> Path:
-    """Return the store, made if needed, once by process."""
-    if process.run(["podman", "volume", "exists", VOLUME], check=False).returncode:
-        process.run(["podman", "volume", "create", VOLUME], capture=True)
-    inspect = ["podman", "volume", "inspect", "--format", "{{.Mountpoint}}", VOLUME]
+    """Return the store, made if needed."""
+    return _volume(VOLUME)
+
+
+@functools.cache
+def _volume(name: str) -> Path:
+    """Return the directory of the podman volume `name`, made if needed, once by process."""
+    if process.run(["podman", "volume", "exists", name], check=False).returncode:
+        process.run(["podman", "volume", "create", name], capture=True)
+    inspect = ["podman", "volume", "inspect", "--format", "{{.Mountpoint}}", name]
     return Path(process.run(inspect, capture=True).stdout.strip())
 
 
