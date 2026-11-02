@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import shutil
 from typing import Annotated
 
 import typer
 
 from xcraft.build import update_build_ids
+from xcraft.builds import builds_path, load_builds, save_builds, upgrade_builds
 from xcraft.display import console
 from xcraft.lock import choose_versions, load_lock, lock_path, save_lock, upgrade_lock
 from xcraft.project import Project
@@ -26,17 +28,21 @@ def lock(
         ),
     ] = False,
     upgrade: Annotated[
-        bool, typer.Option("--upgrade", help="Upgrade a lock of an older xcraft, pinning its packages again.")
+        bool,
+        typer.Option(
+            "--upgrade", help="Upgrade a lock of an older xcraft, pinning its packages again, and .buildid/ too."
+        ),
     ] = False,
 ) -> None:
-    """Show the lock of upstream packages, or update it.
+    """Show the lock of upstream packages and the lock of the builds, or update the first.
 
     --update takes the latest version all the architectures have, but the suffixes of the releases of release_suffixes
     in xcraft.toml, looking for them natively, on any machine, and pins their binary packages again, by their SHA-256,
     even in the same versions, like those published again. Otherwise, the pinned packages are kept, whatever the
     repositories have now: a build fails rather than getting other ones. --outdated, for CI, fails when an update
     would change the versions in the lock: not when it would only pin other contents of the same versions, which only
-    --update looks for.
+    --update looks for. --upgrade moves .buildid/ and what the builds recorded in a lock of format 3 or older to
+    xcraft.builds.
     """
     if packages and not (update or outdated):
         msg = "packages to update need --update or --outdated"
@@ -44,7 +50,11 @@ def lock(
     project = Project.find()
     if upgrade:
         with project.lock():
-            save_lock(project, upgrade_lock(project))
+            lock, records = upgrade_lock(project)
+            save_lock(project, lock)
+            prepare(project, roots=False)  # the images, which parse the specs
+            save_builds(project, upgrade_builds(project, records))
+            shutil.rmtree(project.root / ".buildid", ignore_errors=True)
             prepare(project)
             update_build_ids(project)
         console.print(f"{lock_path(project).relative_to(project.root)} upgraded")
@@ -55,12 +65,14 @@ def lock(
         if outdated:
             raise typer.Exit(1 if changed else 0)
         return
-    current = load_lock(project)
-    recorded = {field: getattr(current, field) for field in ("requires", "provides", "buildrequires")}
+    builds = load_builds(project)
     console.print(
-        f"{lock_path(project).relative_to(project.root)}: {len(current.sources)} upstream source packages, what rpm "
-        f"generated for {len(recorded['requires'].shared)} binary packages of ours, the dynamic BuildRequires of "
-        f"{len(recorded['buildrequires'].shared)} packages"
+        f"{lock_path(project).relative_to(project.root)}: {len(load_lock(project).sources)} upstream source packages"
+    )
+    console.print(
+        f"{builds_path(project).relative_to(project.root)}: the build IDs of {len(builds.ids)} packages, what rpm "
+        f"generated for {len(builds.requires.shared)} binary packages of ours, the dynamic BuildRequires of "
+        f"{len(builds.buildrequires.shared)} packages"
     )
 
 

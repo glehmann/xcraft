@@ -10,15 +10,15 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from xcraft.builds import load_builds, locked_packages
 from xcraft.container import BUILDENV, PACKAGES
 from xcraft.graph import build_deps, reachable
 from xcraft.localrepo import REPO_FILE
 from xcraft.lock import load_lock
-from xcraft.project import locked_packages
 from xcraft.specs import hash_dir
 
 if TYPE_CHECKING:
-    from xcraft.buildid import BuildId
+    from xcraft.builds import BuildId, Builds
     from xcraft.lock import Lock
     from xcraft.project import Project
 
@@ -75,7 +75,7 @@ def recipe(project: Project) -> str:
 
 @dataclass(frozen=True)
 class Platform:
-    """What the keys cover of an architecture of the project, from its specs and a lock: see The dependencies."""
+    """What the keys cover of an architecture of the project, from its specs and the locks: see The dependencies."""
 
     arch: str
     deps: dict[str, frozenset[str]]
@@ -84,9 +84,9 @@ class Platform:
     """The binary packages of each package."""
 
     @classmethod
-    def of(cls, project: Project, lock: Lock) -> Platform:
-        """Return what the keys cover of the architecture of `project`, with `lock`, and its image."""
-        packages = locked_packages(project.parsed, lock, project.arch)
+    def of(cls, project: Project, lock: Lock, builds: Builds) -> Platform:
+        """Return what the keys cover of the architecture of `project`, with `lock`, its image, and `builds`."""
+        packages = locked_packages(project.parsed, builds, project.arch)
         deps = build_deps(packages, lock.image.get(project.arch, []))
         return cls(
             project.arch,
@@ -95,9 +95,12 @@ class Platform:
         )
 
 
-def lock_inputs(on: list[Platform], lock: Lock, name: str, ignored: set[str] | None = None) -> dict[str, list]:
-    """Return what `lock` has for `name` on the architectures `on`, but the versions and the SHA-256 of the binary
-    packages of the upstream source packages `ignored`, those xcraft reuse ignores the updates of: see The lock.
+def lock_inputs(
+    on: list[Platform], lock: Lock, builds: Builds, name: str, ignored: set[str] | None = None
+) -> dict[str, list]:
+    """Return what `lock` and `builds` have for `name` on the architectures `on`, but the versions and the SHA-256 of
+    the binary packages of the upstream source packages `ignored`, those xcraft reuse ignores the updates of: see The
+    lock.
     """
 
     def pinned(arch: str, names: list[str]) -> dict[str, list[str]]:
@@ -114,13 +117,13 @@ def lock_inputs(on: list[Platform], lock: Lock, name: str, ignored: set[str] | N
     def generated(platform: Platform) -> dict[str, list[list[str]]]:
         deps, arch = platform.deps, platform.arch
         binaries = {b for dep in reachable(deps, deps.get(name, set())) for b in platform.binaries[dep]}
-        return {b: [lock.requires.of(arch).get(b, []), lock.provides.of(arch).get(b, [])] for b in sorted(binaries)}
+        return {b: [builds.requires.of(arch).get(b, []), builds.provides.of(arch).get(b, [])] for b in sorted(binaries)}
 
     return {
         platform.arch: [
             pinned(platform.arch, lock.image.get(platform.arch, [])),
             pinned(platform.arch, lock.roots.of(platform.arch).get(name, [])),
-            lock.buildrequires.of(platform.arch).get(name, []),
+            builds.buildrequires.of(platform.arch).get(name, []),
             generated(platform),
         ]
         for platform in on
@@ -128,18 +131,26 @@ def lock_inputs(on: list[Platform], lock: Lock, name: str, ignored: set[str] | N
 
 
 class Inputs:
-    """What the build keys of a project are computed from, read once, from one lock: nothing else is read after, from
-    the project or the files, see The build key.
+    """What the build keys of a project are computed from, read once, from one lock and one lock of the builds: nothing
+    else is read after, from the project or the files, see The build key.
     """
 
-    def __init__(self, project: Project, hashes: dict[str, str] | None = None, lock: Lock | None = None) -> None:
+    def __init__(
+        self,
+        project: Project,
+        hashes: dict[str, str] | None = None,
+        lock: Lock | None = None,
+        builds: Builds | None = None,
+    ) -> None:
         """Read them for `project`, with the `hashes` of its package directories, those of directories() unless given,
-        and `lock`, its own unless given, like the one of another commit.
+        and `lock` and `builds`, its own unless given, like those of another commit.
         """
         self.lock = (lock or load_lock(project)).model_copy(deep=True)
-        # with the specs `project` parsed already, which the lock does not change
+        self.builds = (builds or load_builds(project)).model_copy(deep=True)
+        # with the specs `project` parsed already, which the locks do not change
         self.platforms = [
-            Platform.of(project if p.platform == project.platform else p, self.lock) for p in project.all_platforms()
+            Platform.of(project if p.platform == project.platform else p, self.lock, self.builds)
+            for p in project.all_platforms()
         ]
         # the packages of ours each package is built against on any of the architectures: see The dependencies
         self.deps: dict[str, frozenset[str]] = {
@@ -157,7 +168,7 @@ class Inputs:
             name: [
                 self.hashes[name],
                 self.recipe,
-                lock_inputs(self.platforms, self.lock, name),
+                lock_inputs(self.platforms, self.lock, self.builds, name),
                 [[dep, ids[dep].number, ids[dep].key] for dep in sorted(self.deps[name] - component)],
             ]
             for name in sorted(component)

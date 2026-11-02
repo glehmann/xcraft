@@ -18,7 +18,8 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 from rich.markup import escape
 
-from xcraft import buildid, buildkey, remote
+from xcraft import buildkey, remote
+from xcraft.builds import load_builds
 from xcraft.container import DNF_LOCK, buildenv_hash, run
 from xcraft.display import activity, changes, console
 from xcraft.lock import load_lock
@@ -64,7 +65,7 @@ def _templates(project: Project) -> str:
 
 def iso_key(project: Project, *, netinstall: bool, volid: str | None, signer: Signer | None) -> str:
     """Hash checkout inputs without preparing containers or accessing signing secrets."""
-    lock = load_lock(project)
+    lock, builds = load_lock(project), load_builds(project)
     config = project.config.model_dump(
         exclude={"remote", "logo", "import_", "sign", "ccache_size", "same_version", "publish"}
     )
@@ -74,10 +75,10 @@ def iso_key(project: Project, *, netinstall: bool, volid: str | None, signer: Si
         config,
         buildkey.directories(project),
         # the numbers of the builds, in their releases, and the reuses of builds
-        {name: i.model_dump() for name, i in buildid.read(project).items()},
+        {name: i.model_dump() for name, i in builds.ids.items()},
         _templates(project),
         lock.sources,
-        *[getattr(lock, f).of(project.arch) for f in ("requires", "provides", "buildrequires")],
+        *[getattr(builds, f).of(project.arch) for f in ("requires", "provides", "buildrequires")],
         *(
             {n: lock.binaries[project.arch][n].text() for n in getattr(lock, f).get(project.arch, [])}
             for f in ("runtime", "iso")

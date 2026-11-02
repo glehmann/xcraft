@@ -20,6 +20,7 @@ from rich.markup import escape
 from rich.text import Text
 
 from xcraft import buildid, buildkey, ccache, remote
+from xcraft.builds import load_builds
 from xcraft.cache import (
     BuildError,
     build_keys,
@@ -510,8 +511,9 @@ def _done(project: Project, name: str, keys: dict[str, str], hashes: dict[str, s
 
 
 def _lock_state(project: Project) -> bytes:
-    """Return the content of the lock, which the keys depend on."""
-    return path.read_bytes() if (path := lock_path(project)).exists() else b""
+    """Return the content of the lock, and what the builds recorded, which the keys depend on."""
+    records = load_builds(project).model_dump_json(exclude={"ids"}).encode()
+    return (path.read_bytes() if (path := lock_path(project)).exists() else b"") + records
 
 
 def _build_shown(

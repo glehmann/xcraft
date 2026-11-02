@@ -20,6 +20,7 @@ from xcraft.commands import (
     doctor,
     fetch,
     graph,
+    history,
     import_,
     iso,
     key,
@@ -46,7 +47,7 @@ app = typer.Typer(
 )
 for panel, commands in {
     "Building": [build.build, repo.repo, shell.shell, log.log, graph.graph, status.status, clean.clean],
-    "Packages": [bump.bump, patchset.patchset],
+    "Packages": [bump.bump, patchset.patchset, history.history],
     "Upstream packages": [lock.lock, reuse.reuse],
     "Publishing": [iso.iso, boot.boot],
     "Host": [doctor.doctor],

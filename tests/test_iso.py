@@ -10,6 +10,7 @@ import pytest
 
 from tests import PROJECT, TOML
 from tests.test_build import xcraft
+from xcraft.builds import BuildId, load_builds, save_builds
 from xcraft.container import BUILDENV
 from xcraft.iso import Image, build_iso, cached_iso, iso_id, iso_key, iso_name
 from xcraft.lock import load_lock, save_lock
@@ -70,8 +71,9 @@ def test_iso_inputs(project: Project) -> None:
     # the build IDs: the numbers of the builds, and the reuses of builds
     for text in (f"2 {'01' * 32}", f"2 {'01' * 32} accepts {'45' * 32}"):
         before = key()
-        (project.root / ".buildid").mkdir(exist_ok=True)
-        (project.root / ".buildid/trivial").write_text(f"{text}\n")
+        builds = load_builds(project)
+        builds.ids["trivial"] = BuildId.parse(text)
+        save_builds(project, builds)
         assert key() != before
 
 

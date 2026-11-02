@@ -17,13 +17,14 @@ import typer
 from tests import TOML, config, ours
 from xcraft import build, buildkey, cache, rpmbuild
 from xcraft.build import queued
+from xcraft.builds import load_builds, save_builds
 from xcraft.cache import BuildError, build_keys, previous_duration
 from xcraft.checks import _check_made, record_rpm_deps
 from xcraft.clean import clean, repos_disk_usage
 from xcraft.commands import complete_arch, load
 from xcraft.commands.repo import _kept
 from xcraft.localrepo import OUTPUT_MARKER, RepoError, extra_rpms, fresh_dir, link
-from xcraft.lock import Lock, Pin, load_lock, save_lock
+from xcraft.lock import Lock, Pin, save_lock
 from xcraft.project import Extra, Project, ProjectLockedError
 from xcraft.publish import build_dependencies
 from xcraft.resolution import Resolved
@@ -392,7 +393,8 @@ def test_record_rpm_deps(project: Project, monkeypatch: pytest.MonkeyPatch) -> N
     build = project.state / "cache/builds/x86_64_v2/foo/key"
     (build / "RPMS/x86_64").mkdir(parents=True)
     (build / "RPMS/x86_64/foo-1.0-1.x86_64.rpm").touch()
-    binary = Binary(name="foo", evr="1.0-1", arch="x86_64", provides=[], requires=[])
+    binary = Binary(name="foo", evr="1.0-1", arch="x86_64", provides=["foo = 1.0-1"], requires=[])
+    project.config.platforms = [project.platform]  # the one of the specs given
     project.parsed = {"foo": Package(name="foo", binaries=[binary])}
     # what cannot be recorded yet is not kept, to record it again next time
     monkeypatch.setattr(
@@ -400,9 +402,15 @@ def test_record_rpm_deps(project: Project, monkeypatch: pytest.MonkeyPatch) -> N
     )
     assert not record_rpm_deps(project, ["foo"], {"foo": "key"})
     assert not (build / "rpm-deps.json").exists()
-    monkeypatch.setattr("xcraft.checks.resolve_rpm_deps", lambda *_: Resolved(requires={"foo": ["bar"]}))
+    generated = Resolved(requires={"foo": ["bar"]}, provides={"foo": ["foo = 1.0-1", "pkgconfig(foo) = 1.0"]})
+    monkeypatch.setattr("xcraft.checks.resolve_rpm_deps", lambda *_: generated)
     assert record_rpm_deps(project, ["foo"], {"foo": "key"})
-    assert load_lock(project).requires.shared == {"foo": ["bar"]}
+    builds = load_builds(project)
+    # not what the spec declares, and the versions as placeholders
+    assert (builds.requires.shared, builds.provides.shared) == (
+        {"foo": ["bar"]},
+        {"foo": ["pkgconfig(foo) = %{version}"]},
+    )
     monkeypatch.setattr("xcraft.checks.resolve_rpm_deps", lambda *_: pytest.fail("recorded again"))
     assert not record_rpm_deps(project, ["foo"], {"foo": "key"})
     # but with a build of ours, which it may resolve to instead: a new one, or another of the same package
@@ -415,7 +423,7 @@ def test_record_rpm_deps(project: Project, monkeypatch: pytest.MonkeyPatch) -> N
             "xcraft.checks.resolve_rpm_deps", lambda *_, provider=provider: Resolved(requires={"foo": [provider]})
         )
         assert record_rpm_deps(project, ["foo"], {"foo": "key", "baz": key})
-        assert load_lock(project).requires.shared == {"foo": [provider]}
+        assert load_builds(project).requires.shared == {"foo": [provider]}
 
 
 def test_record_providers_named_with_their_releases(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -427,11 +435,12 @@ def test_record_providers_named_with_their_releases(project: Project, monkeypatc
     foo = Binary(name="foo", evr="1.0-1", arch="x86_64", provides=[], requires=[])
     lp = Binary(name="baz-lp_1_1", autorev_name="baz-lp_1_1%{autorev}", evr="1.0-1", arch="x86_64", provides=[],
                 requires=[])  # fmt: skip
+    project.config.platforms = [project.platform]  # the one of the specs given
     project.parsed = {"foo": Package(name="foo", binaries=[foo]), "baz": Package(name="baz", binaries=[lp])}
     monkeypatch.setattr("xcraft.checks.resolve_rpm_deps", lambda *_: Resolved(requires={"foo": ["baz-lp_1_1+b3"]}))
     assert record_rpm_deps(project, ["foo"], keys)
     # by its name in the spec, whatever its build
-    assert load_lock(project).requires.shared == {"foo": ["baz-lp_1_1"]}
+    assert load_builds(project).requires.shared == {"foo": ["baz-lp_1_1"]}
 
 
 def test_builds_still_to_build_again_fail(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -490,9 +499,9 @@ def test_keys_changed_by_the_last_recording(project: Project, monkeypatch: pytes
         # the last one, of the cached builds, finds what changes the build root of b
         if quiet:
             return False
-        lock = load_lock(project)
-        lock.buildrequires.shared["b"] = ["found"]
-        save_lock(project, lock)
+        builds = load_builds(project)
+        builds.buildrequires.shared["b"] = ["found"]
+        save_builds(project, builds)
         return True
 
     monkeypatch.setattr(build, "record_rpm_deps", record)
@@ -522,9 +531,9 @@ def test_keys_changed_during_the_builds(project: Project, monkeypatch: pytest.Mo
 
     def changing(project: Project, name: str, *args: object, **kwargs: object) -> build.Result | None:
         if name == "c":  # what changes the build root of b, found after it, like by another command
-            lock = load_lock(project)
-            lock.buildrequires.shared["b"] = ["found"]
-            save_lock(project, lock)
+            builds = load_builds(project)
+            builds.buildrequires.shared["b"] = ["found"]
+            save_builds(project, builds)
         return done(project, name, *args, **kwargs)  # ty: ignore[invalid-argument-type]
 
     monkeypatch.setattr(build, "_done", changing)

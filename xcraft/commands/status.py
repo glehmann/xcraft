@@ -106,7 +106,7 @@ def _show_inputs(project: Project, names: list[str]) -> None:
             {
                 name: {
                     "key": buildkey.key(shown[name], name),
-                    "build ID": ids[name].text().strip(),
+                    "build ID": ids[name].text(),
                     "inputs": shown[name],
                     "specs parsed in": parsed_in,
                 }
