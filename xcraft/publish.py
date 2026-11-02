@@ -25,7 +25,7 @@ from rich.markup import escape
 from xcraft import build as builder
 from xcraft import remote, repodata, upstream_copy
 from xcraft.cache import BuildError, build_keys, build_path, cached_build
-from xcraft.container import BUILDENV, DNF_LOCK, buildenv_hash, image_tag, run
+from xcraft.container import BUILDENV, buildenv_hash, run, run_natively
 from xcraft.display import activity, console
 from xcraft.localrepo import OUTPUT_MARKER, LocalRepo, extra_rpms, fresh_dir, link
 from xcraft.lock import load_lock
@@ -36,7 +36,7 @@ from xcraft.signing import Signer, check_signatures, dev_signer, signing_key
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator
+    from collections.abc import Callable
 
     from xcraft.build import Fetch
     from xcraft.lock import Pin
@@ -155,15 +155,15 @@ def _download(
     on_line: Callable[[str], None],
     *,
     source: bool,
-    volumes: list[str],
     available: bool = False,
 ) -> Path:
     """Download the upstream packages `files`, as file name: NEVRA, to their cache, and return it: those found only,
     if `available`, without failing for the others.
 
     Those not in the cache come from the latest snapshot, the upstream copy, see xcraft.upstream_copy, or from
-    the repositories, which may not have them anymore, after an update, while the storage may not be there. The
-    signatures of the source packages are checked before the cache, which would keep a bad one.
+    the repositories, which may not have them anymore, after an update, while the storage may not be there: natively,
+    for any architecture. The signatures of the source packages are checked before the cache, which would keep a bad
+    one.
     """
     cache = project.state / ("cache/srpms" if source else "cache/rpms")
     if not (missing := {f: nevra for f, nevra in files.items() if not (cache / f).exists()}):
@@ -183,14 +183,14 @@ def _download(
             with contextlib.suppress(remote.RemoteError), ThreadPoolExecutor(remote.REQUESTS) as pool:
                 list(pool.map(fetch, missing))
         if left := sorted({nevra for f, nevra in missing.items() if not (work / f).exists()}):
-            run(
+            options = [*(["--source"] if source else []), *(["--setopt=strict=0"] if available else [])]
+            run_natively(
                 project,
                 "download",
-                # as root, for the lock: the files are given back to the user
-                f"{DNF_LOCK} dnf -q download {'--source ' if source else ''}{'--setopt=strict=0 ' if available else ''}"
-                f"--destdir /work {' '.join(left)} && sudo chown -R builder: /work",
-                volumes=[f"{work}:/work", *volumes],
-                on_line=on_line,
+                ["dnf", "-q", "download", f"--forcearch={project.arch}", *options, "--destdir", "/work", *left],
+                volumes=[f"{work}:/work"],
+                show=f"downloading {len(left)} upstream {'source ' if source else ''}packages of {project.arch}",
+                repos=_source_repos(project) if source else None,
             )
         found = [f for f in missing if (work / f).exists()]
         if source and found:
@@ -213,7 +213,7 @@ def _upstream_rpms(project: Project, names: list[str], on_line: Callable[[str], 
     """Return the RPMs of pinned upstream packages: from the cache, the latest snapshot, or the repositories."""
     locked = pins(project)
     rpms = {name: _rpm_name(locked, name) for name in names}
-    cache = _download(project, {rpms[name]: _nevra(locked, name) for name in names}, on_line, source=False, volumes=[])
+    cache = _download(project, {rpms[name]: _nevra(locked, name) for name in names}, on_line, source=False)
     for name in names:
         if sha256_of(cache / rpms[name]) != locked[name].sha256:
             (cache / rpms[name]).unlink()
@@ -230,9 +230,8 @@ def _upstream_srpms(project: Project, names: list[str], on_line: Callable[[str],
     if not names:
         return []
     locked = pins(project)
-    with _sources(project) as (work, volumes):
-        files = {srpm: _nevra(locked, name) for name, srpm in _srpm_names(project, names, work, volumes).items()}
-        cache = _download(project, files, on_line, source=True, volumes=volumes)
+    files = {srpm: _nevra(locked, name) for name, srpm in _srpm_names(project, names).items()}
+    cache = _download(project, files, on_line, source=True)
     return [cache / srpm for srpm in sorted(files)]
 
 
@@ -240,42 +239,47 @@ def download_sources(project: Project, files: dict[str, str]) -> Path:
     """Download those of the upstream source packages `files`, as file name: NEVRA of one of their binary packages,
     that are found, to their cache, and return it, like _download().
     """
-    with _sources(project) as (_, volumes):
-        return _download(project, files, lambda _: None, source=True, volumes=volumes, available=True)
+    return _download(project, files, lambda _: None, source=True, available=True)
 
 
-@contextlib.contextmanager
-def _sources(project: Project) -> Generator[tuple[Path, list[str]]]:
-    """Return a work directory, and the volumes of the repositories of the upstream source packages."""
-    with project.work("srpms") as work:
-        # only for these downloads, not to change the build environment
-        (work / "sources.repo").write_text(
-            "".join(
-                f"[{name}-source]\nname={name} sources\nbaseurl={repo.source_baseurl}\nenabled=0\ngpgcheck=0\n"
-                for name, repo in project.repos.items()
-                if repo.source_baseurl
-            )
+def _source_repos(project: Project) -> dict[str, str]:
+    """Return the repositories of the upstream source packages, by file name, only for their downloads, not to change
+    the build environment.
+    """
+    return {
+        "xcraft-sources.repo": "".join(
+            f"[{name}-source]\nname={name} sources\nbaseurl={repo.source_baseurl}\nenabled=0\ngpgcheck=0\n"
+            for name, repo in project.repos.items()
+            if repo.source_baseurl
         )
-        yield work, [f"{work / 'sources.repo'}:/etc/yum.repos.d/xcraft-sources.repo:ro"]
+    }
 
 
-def _srpm_names(project: Project, names: list[str], work: Path, volumes: list[str]) -> dict[str, str]:
-    """Return the source packages of the locked upstream packages `names`, as in the metadata of the repositories."""
+def _srpm_names(project: Project, names: list[str]) -> dict[str, str]:
+    """Return the source packages of the locked upstream packages `names`, as in the metadata of the repositories,
+    natively, for any architecture.
+    """
     if not names:  # dnf repoquery would list everything
         return {}
     locked = pins(project)
     nevras = {name: _nevra(locked, name) for name in names}
-    run(
-        project,
-        "srpms",
-        f"{DNF_LOCK} dnf -q repoquery --qf '%{{name}} %{{sourcerpm}}' {' '.join(nevras.values())} > /work/srpms",
-        volumes=[f"{work}:/work", *volumes],
-    )
-    srpms = {
-        n: srpm
-        for n, srpm in (line.split() for line in (work / "srpms").read_text().splitlines() if line)
-        if n in nevras
-    }
+    with project.work("srpms") as work:
+        run_natively(
+            project,
+            "srpms",
+            [
+                "bash",
+                "-c",
+                (
+                    f"dnf -q repoquery --forcearch={project.arch} --qf '%{{name}} %{{sourcerpm}}' "
+                    f"{' '.join(nevras.values())} > /work/srpms"
+                ),
+            ],
+            volumes=[f"{work}:/work"],
+            show=f"looking for the source packages of {len(names)} upstream packages of {project.arch}",
+        )
+        lines = (work / "srpms").read_text().splitlines()
+    srpms = {n: srpm for n, srpm in (line.split() for line in lines if line) if n in nevras}
     if unknown := sorted(set(names) - srpms.keys()):
         msg = f"no source package for: {', '.join(unknown)}"
         raise BuildError(msg)
@@ -430,17 +434,17 @@ def _check_installable(project: Project, repos: list[Path]) -> None:
         sorted(p.name for p in (repo / "repodata").iterdir() if not p.name.startswith("repomd.xml")) for repo in repos
     ]
     key = hashlib.sha256(
-        json.dumps([image_tag(project), (BUILDENV / "installable.py").read_text(), inputs]).encode()
+        json.dumps([project.config.base_image, (BUILDENV / "installable.py").read_text(), inputs]).encode()
     ).hexdigest()
     checked = project.state / "cache/checks/installable" / key
     if checked.exists():
         return
     with project.work("snapshot") as work:
-        run(
+        run_natively(
             project,
             "snapshot",
-            f"{DNF_LOCK} python3 /xcraft/installable.py /work/errors.json "
-            + " ".join(f"/repos/{i}" for i in range(len(repos))),
+            ["python3", "/xcraft/installable.py", project.arch, "/work/errors.json"]
+            + [f"/repos/{i}" for i in range(len(repos))],
             volumes=[*(f"{repo}:/repos/{i}:ro" for i, repo in enumerate(repos)), f"{work}:/work"],
             show=f"checking that {repos[-1].parent.name}/{repos[-1].name} is self-contained",
         )
@@ -838,14 +842,14 @@ def _add_stored_upstream(plan: _Plan, project: Project, names: list[str], repo: 
             link(rpm, plan.dest / repo / rpm.name)
     added = [f"{repo}/{rpms[name]}" for name in missing]
     srpms = {name: repodata.sourcerpm(plan.known[locked[name].sha256][0]) for name in names if name not in missing}
-    with activity(f"getting their sources, for {source}", log=True) as on_line, _sources(project) as (work, volumes):
-        srpms |= _srpm_names(project, [name for name in names if not srpms.get(name)], work, volumes)
+    with activity(f"getting their sources, for {source}", log=True) as on_line:
+        srpms |= _srpm_names(project, [name for name in names if not srpms.get(name)])
         new = {
             srpm: _nevra(locked, name)
             for name, srpm in srpms.items()
             if not plan.has(source, srpm) and not plan.reuse(source, srpm, plan.sources.get(srpm, ""))
         }
-        cache = _download(project, new, on_line, source=True, volumes=volumes)
+        cache = _download(project, new, on_line, source=True)
         (plan.dest / source).mkdir(parents=True, exist_ok=True)
         for srpm in new:
             link(cache / srpm, plan.dest / source / srpm)

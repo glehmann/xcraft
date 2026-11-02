@@ -1,8 +1,8 @@
 """Check that each package of a repository can be installed from it, and those it builds on, on an empty system.
 
-Run as root in the build environment: ``installable.py <output> <repository>...``, the last repository being the one
-checked. It writes as JSON the packages that cannot, with why. Unlike repoclosure, the resolution evaluates rich
-dependencies, like ``(a if b)``.
+Run as root, natively, for any architecture: ``installable.py <arch> <output> <repository>...``, the last repository
+being the one checked. It writes as JSON the packages that cannot, with why. Unlike repoclosure, the resolution
+evaluates rich dependencies, like ``(a if b)``.
 """
 
 import json
@@ -15,9 +15,11 @@ import dnf  # ty: ignore[unresolved-import]
 
 def main() -> None:
     """Check the repositories of the command line."""
-    output, *repos = sys.argv[1:]
+    arch, output, *repos = sys.argv[1:]
     base = dnf.Base()
     base.conf.read()
+    base.conf.substitutions["arch"] = arch
+    base.conf.substitutions["basearch"] = dnf.rpm.basearch(arch)
     base.conf.installroot = tempfile.mkdtemp()
     # a cache of their own: the one shared by the containers has those of the same names checked before, which dnf
     # keeps, even expired, when their metadata has the same revision, made in the same second
