@@ -56,7 +56,7 @@ xcraft --install-completion  # optional
 | `xcraft lock --update [<pkg>...]` | Update locked packages, all or some (binary or source names), to the latest version all the architectures have, looked for natively, on any machine |
 | `xcraft reuse <pkg>... [--dep <upstream>]` | Reuse the builds of the main branch despite changes, but to the packages' own directories, or despite updates of the `--dep` upstream packages only (see [Reusing builds](#reusing-builds)) |
 | `xcraft repo [<pkg>...] [--output dir]` | Build packages, all by default, and what they need, put them in a repository, and check that everything they require is available |
-| `xcraft shell <pkg>` | Open a shell in the build tree of a package, with its build dependencies installed and its sources prepared, where `rpmbuild -ba SPECS/<spec>` builds it, without the network like the builds, the exact command shown before the prompt |
+| `xcraft shell <pkg>` | Open a shell in the build tree of a package, given by name or by a path in its directory, like `xcraft shell .` in it, with its build dependencies installed and its sources prepared, where `rpmbuild -ba SPECS/<spec>` builds it, without the network like the builds, the exact command shown before the prompt |
 | `xcraft log <pkg> [--step build] [--grep regex] [--last/-n n]` | Show the log of the last build of a package, in `$PAGER` on a terminal |
 | `xcraft log <pkg> -f` | Follow the log of a running build, until it ends |
 | `xcraft graph <pkg> [--dependents] [--upstream] [--flat]` | Show the packages a package is built against as a tree, or the packages built against it; `--upstream` adds the upstream binary packages; `--flat` only lists them, ours in build order |
