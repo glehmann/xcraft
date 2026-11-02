@@ -8,10 +8,10 @@ from typing import Annotated
 import typer
 from rich.markup import escape
 
-from xcraft.commands import load
 from xcraft.display import console
 from xcraft.patchset import guess_base, guess_package, repo_name, update_patchset
-from xcraft.specs import main_spec
+from xcraft.project import Project
+from xcraft.specs import main_spec, parse
 
 
 def patchset(
@@ -28,21 +28,23 @@ def patchset(
 
     Run it in the repository of the patchset, on its branch.
     """
-    project = load()
-    packages = project.packages
+    project = Project.find()
+    dirs = project.package_dirs
     name = repo_name(repo)
-    if not (package := package or guess_package(name, packages)):
+    # the specs parsed only when the name of the repository is not the one of a package directory
+    if not (package := package or (name if name in dirs else guess_package(name, project.parsed))):
         msg = f"no package matches the repository {name}, give it with --package"
         raise typer.BadParameter(msg)
-    if package not in packages or not packages[package].binaries:
-        msg = f"unknown package, or with a spec error: {package}"
+    if package not in dirs:
+        msg = f"unknown package: {package}"
         raise typer.BadParameter(msg)
-    version = packages[package].binaries[0].evr.split(":")[-1].rsplit("-", 1)[0]
-    base = base or guess_base(repo, version)
-    with project.lock():
-        result = update_patchset(
-            project.package_dirs[package], main_spec(project.package_dirs[package]), repo, base, first
-        )
+    if not base:
+        if not (binaries := parse(project, [dirs[package]])[package].binaries):
+            msg = f"the spec of {package} cannot be parsed: give the base of the patchset with --base"
+            raise typer.BadParameter(msg)
+        base = guess_base(repo, binaries[0].evr.split(":")[-1].rsplit("-", 1)[0])
+    # like any edit of the package: the builds hash what they stage
+    result = update_patchset(dirs[package], main_spec(dirs[package]), repo, base, first)
     console.print(
         f"[bold]{package}[/]: patchset from {escape(base)}, {len(result.added)} added, {len(result.removed)} removed"
     )

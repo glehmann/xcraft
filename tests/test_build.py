@@ -798,6 +798,27 @@ def test_status_during_a_build(root: Path) -> None:
         assert code == 0, output
 
 
+def test_patchset_during_a_build(root: Path, tmp_path: Path) -> None:
+    repo = tmp_path / "trivial"
+    repo.mkdir()
+    git = ["git", "-C", str(repo), "-c", "user.name=test", "-c", "user.email=test@example.com"]
+    for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "upstream"], ["tag", "1.0"]):
+        subprocess.run([*git, *args], check=True)
+    (repo / "fix").write_text("fix\n")
+    subprocess.run([*git, "add", "fix"], check=True)
+    subprocess.run([*git, "commit", "-qm", "a fix"], check=True)
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(spec.read_text().replace("%prep\n", "%prep\n%autopatch -p1\n"))
+    with (root / ".xcraft/lock").open("w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)  # as a build does
+        # the package of the repository by its name, and its version from its spec only, without the lock
+        code, output = xcraft("patchset", str(repo))
+        assert code == 0, output
+    assert output.startswith("trivial: patchset from 1.0, 1 added")
+    assert (root / "base/trivial/0001-a-fix.patch").exists()
+    assert xcraft("patchset", str(repo), "--package", "nope")[0] == 2
+
+
 def test_lock_upgrade(root: Path) -> None:
     project = Project.find()
     sources = load_lock(project).sources

@@ -74,7 +74,7 @@ def test_stage_like_a_packaging_repository(project: Project, tmp_path: Path) -> 
         prepare_tree(project, "foo", "0" * 64)
 
     write_manifest(pkg / "sources", {"foo-2.0.tar.gz": "0" * 64})
-    project.packages = {"foo": Package(name="foo", source0="foo-2.0.tar.gz")}  # not a URL to download it from
+    project.parsed = {"foo": Package(name="foo", source0="foo-2.0.tar.gz")}  # not a URL to download it from
     with pytest.raises(
         BuildError,
         match=re.escape("foo-2.0.tar.gz is not in the source cache, the remote storage, nor at a URL of the spec"),

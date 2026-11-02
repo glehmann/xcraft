@@ -55,13 +55,20 @@ def load(names: list[str] | None = None, *, locked: bool = False, arch: str | No
 
     With `locked`, the lock cannot change: it fails instead.
     """
-    project = Project.find(arch)
+    project = find(names, arch=arch)  # before preparing, which may run containers
     project.frozen = locked
-    # before preparing, which may run containers
+    prepare(project)
+    return project
+
+
+def find(names: list[str] | None = None, *, arch: str | None = None) -> Project:
+    """Return the project, checking `names` are packages, without the lock or the specs, for the commands needing
+    their directories only.
+    """
+    project = Project.find(arch)
     if unknown := sorted(set(names or []) - project.package_dirs.keys()):
         msg = f"unknown package(s): {', '.join(unknown)}"
         raise typer.BadParameter(msg)
-    prepare(project)
     return project
 
 

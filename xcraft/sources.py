@@ -83,7 +83,7 @@ def _fetch_source(project: Project, name: str, filename: str, digest: str) -> bo
     fd, path = tempfile.mkstemp(dir=archive.parent, prefix=f".{filename}.", suffix=".part")
     os.close(fd)  # written by path
     part = Path(path)
-    urls = (s for s in project.packages[name].sources if "://" in s and archive_name(s) == filename)
+    urls = (s for s in project.parsed[name].sources if "://" in s and archive_name(s) == filename)
     url, error = next(urls, ""), None
 
     with activity(f"downloading {filename}") as on_line:
