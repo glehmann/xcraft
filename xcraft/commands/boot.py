@@ -44,8 +44,14 @@ def boot(
     memory: Annotated[int, typer.Option(min=512, help="VM memory in MiB.")] = 8192,
     cpus: Annotated[int, typer.Option(min=1, help="Number of virtual CPUs.")] = 4,
     ssh_port: Annotated[
-        int, typer.Option(min=0, max=65535, help="Localhost port forwarded to SSH in the VM. 0 disables forwarding.")
-    ] = 2222,
+        int | None,
+        typer.Option(
+            min=0,
+            max=65535,
+            help="Localhost port forwarded to SSH in the VM, the first free one from 2222 by default. 0 disables it.",
+            show_default=False,
+        ),
+    ] = None,
     headless: Annotated[
         bool, typer.Option("--headless", help="Disable the display window. Use xcraft vm for console access.")
     ] = False,
@@ -90,6 +96,9 @@ def boot(
         raise typer.BadParameter(msg)
     ovmf = None if bios else vm.firmware(firmware_code, firmware_vars)
     vm.check_stopped(vm_dir)
+    if ssh_port and not vm.free(ssh_port):
+        msg = f"port {ssh_port} is in use on localhost: give another one, or none for the first free one from 2222"
+        raise typer.BadParameter(msg, param_hint="--ssh-port")
     if not (iso or installed):
         project.frozen = locked
         signer = choose_signer(project, local=True, unsigned=unsigned, dev_key=False, key=key)
@@ -97,6 +106,7 @@ def boot(
         console.print(f"[bold green]✓[/] {iso}")
     with project.lock():
         vm.check_stopped(vm_dir)
+        ssh_port = vm.free_port() if ssh_port is None else ssh_port
         vm_dir.mkdir(parents=True, exist_ok=True)
         if not disk.exists():
             disk.parent.mkdir(parents=True, exist_ok=True)

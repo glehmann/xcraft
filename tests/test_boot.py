@@ -247,3 +247,25 @@ def test_detached_vm_controls_and_logs(root: Path, tmp_path: Path, echo_disk: Pa
     bundle = tmp_path / "stopped-diagnostics"
     assert control("logs", str(bundle))[0] == 0
     assert (bundle / "serial.log").exists()
+
+
+def test_ssh_port_in_use(root: Path, tmp_path: Path) -> None:
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        port = taken.getsockname()[1]
+        # the first free one by default, after those in use, like by another VM
+        assert not vm.free(port)
+        assert vm.free_port(port) > port
+        # and an error for one given in use, before making anything
+        iso = tmp_path / "installer.iso"
+        iso.write_bytes(bytes(2048))
+        code, output = xcraft("boot", "--iso", str(iso), "--bios", "--accel", "tcg", "--ssh-port", str(port))
+        assert code == 2, output
+        assert f"port {port} is in use on localhost" in " ".join(output.split())
+        assert not (root / ".xcraft").exists()
+
+
+def test_qemu_failure_shown(tmp_path: Path) -> None:
+    (tmp_path / "qemu.log").write_text("qemu-system-x86_64: -nic user: Could not set up host forwarding rule\n")
+    assert vm._failure(tmp_path) == ": qemu-system-x86_64: -nic user: Could not set up host forwarding rule"

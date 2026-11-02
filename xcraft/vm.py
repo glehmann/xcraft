@@ -183,6 +183,30 @@ def command(
     return cmd
 
 
+def free(port: int) -> bool:
+    """Return whether `port` is free on localhost, for QEMU to forward."""
+    with socket.socket() as sock:
+        try:
+            sock.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+    return True
+
+
+def free_port(start: int = 2222) -> int:
+    """Return the first port from `start` free on localhost."""
+    if port := next((p for p in range(start, start + 100) if free(p)), None):
+        return port
+    msg = f"no free port from {start} to {start + 99} on localhost: give one with --ssh-port"
+    raise RuntimeError(msg)
+
+
+def _failure(directory: Path) -> str:
+    """Return why QEMU failed, from the end of its log."""
+    lines = (directory / "qemu.log").read_text(errors="replace").strip().splitlines()
+    return f": {lines[-1]}" if lines else f": see {directory / 'qemu.log'}"
+
+
 def launch(directory: Path, session: Session) -> subprocess.Popen[bytes]:
     """Launch QEMU, preserving previous transcripts and waiting for its monitor."""
     (directory / "qmp.sock").unlink(missing_ok=True)
@@ -214,7 +238,7 @@ def launch(directory: Path, session: Session) -> subprocess.Popen[bytes]:
             if proc.poll() is not None:
                 if proc.returncode == 0:
                     return proc
-                msg = f"QEMU exited with {proc.returncode}: see {directory / 'qemu.log'}"
+                msg = f"QEMU exited with {proc.returncode}{_failure(directory)}"
                 raise RuntimeError(msg)  # noqa: TRY301
             if running(directory):
                 return proc
