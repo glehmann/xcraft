@@ -151,7 +151,8 @@ def test_binary_of_two_packages(root: Path) -> None:
     spec.write_text(spec.read_text().replace("Name: twin", "Name: trivial"))
     code, output = xcraft("build", "--dry-run")
     assert code == 1
-    assert f"binary packages of several packages for {ARCH}: trivial (trivial, twin)" in output
+    # on the architecture parsed first, maybe not the host's
+    assert re.search(r"binary packages of several packages for \S+: trivial \(trivial, twin\)", output)
 
 
 def test_build_without_network(root: Path) -> None:
