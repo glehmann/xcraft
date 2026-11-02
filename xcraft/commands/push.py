@@ -177,9 +177,10 @@ def upstream_packages(arch: Arch = None, to: To = "dev") -> None:
 
 
 def _push_upstream(project: Project, storage: Remote) -> list[str]:
-    """Copy the pinned upstream packages the upstream copy of `storage` misses, and return the problems."""
-    with project.lock():
-        problems = upstream_copy.push(project, storage)
+    """Copy the pinned upstream packages the upstream copy of `storage` misses, and return the problems: without the
+    lock of the project, like during a build, as it only reads the lock, and writes its own files.
+    """
+    problems = upstream_copy.push(project, storage)
     for problem in problems:
         console.print(f"[red]✗[/] {escape(problem)}")
     return [f"the upstream copy is incomplete: {len(problems)} problems, see above"] if problems else []
