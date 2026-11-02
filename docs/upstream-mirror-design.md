@@ -24,11 +24,25 @@ anymore: the lock does not decide the versions alone.
 
 ## What we have already
 
+It happened on 2026-11-01: EPEL replaced `xxhash` 0.8.4-1.el10_3 by 0.8.4-2.el10_3, and the checks of xcp-ng-dist's
+master, and its aarch64 builds, failed on `xxhash-libs` and `xxhash-devel`, "pinned, but in no repository anymore",
+on a commit which only changed build IDs.
+
+## What we have already
+
 - Each published snapshot has, in `base/<arch>/` and `build/<arch>/`, every upstream package the runtime and the builds
-  need, in the locked versions, and snapshots are never deleted. But only the latest one is used, by xcraft publish
-  for its downloads, and a version locked between two publishes is in none.
-- The lock has the SHA-256 of each locked binary package, from the metadata of its repository: a copy can be checked
+  need, in the locked versions. But only the latest one is used, by xcraft publish for its downloads, a version locked
+  between two publishes is in none, and only x86_64_v2 is published yet.
+- The lock has the SHA-256 of each pinned binary package, from the metadata of its repository: a copy can be checked
   against it, and found by it.
+- Each machine keeps the pinned RPMs it downloaded, by SHA-256, in the store of xcraft/pinned.py, the `xcraft-pinned`
+  podman volume: the build environment and the builds install from a repository made there, of the pins only. A
+  developer's machine has many versions EPEL dropped since, like both `xxhash` RPMs of aarch64 above.
+- xcraft.repodata makes the metadata of a repository from the metadata entries of its packages, taken from other
+  repositories, without the packages: createrepo_c writes the entries of a package, in primary, filelists and other,
+  keyed by its SHA-256, the same in any repository but for the location. xcraft publish makes the snapshots so: the
+  entries of the packages of the latest snapshot are read from its metadata, `createrepo_c` only runs on the new RPMs,
+  and xcraft.repodata writes the whole metadata.
 - The storage stores identical files once, and copies files without transferring them.
 
 ## Goals
@@ -44,81 +58,119 @@ Not a goal: a mirror of the upstream repositories, only of what we lock.
 
 ### Layout
 
-In the storage, a repository by architecture, append-only:
+Under `.xcraft/`, with the rest of xcraft's own data, as the copy is for xcraft, not for the users of the published
+repositories: a flat repository by architecture, and one of the source packages, append-only.
 
 ```
-upstream/<arch>/Packages/<file>.rpm    the upstream binary packages ever locked and used on <arch>
-upstream/<arch>/repodata/              their metadata, all versions
-upstream/Source/Packages/<file>.rpm    their source packages, for the snapshots
-upstream/Source/repodata/
+.xcraft/upstream/<arch>/<file>.rpm      every upstream package pinned on <arch> and copied, never removed
+.xcraft/upstream/<arch>/repodata/       the metadata of all of them
+.xcraft/upstream/Source/<file>.src.rpm  their source packages
+.xcraft/upstream/Source/repodata/
 ```
 
-The packages are never removed: the repository has all the versions, and xcraft only sees the locked ones, as with the
-upstream repositories (see resolve.py).
+The lock is the reference: it lists the versions, with the SHA-256 of each binary package, and xcraft checks each RPM
+against it. The copy is only a pool to take them from, like the upstream repositories: it has all the versions ever
+copied, and xcraft only sees the locked ones, see resolve.py. So it needs no version of its own, nor a view by lock.
+
+A file name is a NEVRA: a package of the same name with other contents, like a rebuild of the same release, is not
+copied but reported. AlmaLinux's EPEL for x86_64_v2 rebuilds Fedora's with `.alma_altarch` releases, so they do not
+collide, and the architectures have their own directories anyway. The noarch packages are in each of them, stored once
+by the storage.
 
 ### What goes in
 
-For each architecture, the upstream binary packages the lock uses there: those of the build environment image, of the
-build roots of our packages, of `runtime` and of `iso`, as resolved: about 900 on x86_64_v2. Not all the binary packages
-of the locked source packages: their unused subpackages, like debug ones, would multiply the size for no use.
+For each architecture, the upstream binary packages the lock pins there: those of the build environment image, of the
+build roots of our packages, of `runtime` and of `iso`: about 900 on x86_64_v2. Not all the binary packages of the
+locked source packages: their unused subpackages, like debug ones, would multiply the size for no use.
 
-Their source packages go in `upstream/Source/`. AlmaLinux's vault keeps all their versions, but EPEL's sources follow
-its binaries: only the latest.
+Their source packages go in too, for the snapshots: AlmaLinux's vault keeps all their versions, but EPEL's sources
+follow its binaries, only the latest.
 
 ### Where each package comes from
 
-`xcraft push upstream` copies, for the architecture, the packages the storage misses, checked against the SHA-256 of
-the lock, from, in order:
+`xcraft push upstream` copies, for the architecture, the pinned packages the copy misses, checked against the SHA-256
+of the lock, from, in order:
 
-1. a published snapshot: the manifests of the snapshots have the SHA-256 of their files, so the copy is server-side,
-   without transfer;
-2. the upstream repositories, while they still have it: downloaded in the build environment, like xcraft publish does,
-   checked, uploaded.
+1. the store of the pinned RPMs of the machine, xcraft/pinned.py: the RPMs the builds installed, on CI or on a
+   developer's machine, even long gone upstream;
+2. a published snapshot: its manifest has the SHA-256 of its files, so the copy is server-side, without transfer;
+3. the upstream repositories, while they still have it: downloaded like xcraft/buildenv/pin.py does, into the store.
 
-A package found nowhere is reported: the lock must be updated, as today, but it only happens to packages never copied,
-like on the first run, or when CI did not run between a lock update and the next upstream one.
+A package found nowhere is reported: the lock must be updated, as today, but it only happens to packages never copied
+nor installed on the machine.
 
-`xcraft push`, without a command, does it too, after the builds: CI keeps the copy complete, and the developers do not
-need to think about it.
+`xcraft push`, without a command, does it too, after the builds: the packages are then in the store of the machine
+already, as the builds installed them, so the copy downloads nothing, and the developers do not need to think about
+it.
+
+### The buckets
+
+The copy of the ci bucket, `.xcraft/upstream/` there, is the reference, written by CI on the main branch only, with the
+CI key: see ci-secret-management-design.md and pr-ci-design.md for the buckets.
+
+- **pr:** the PR key cannot write the ci bucket, so the jobs of a pull request push the packages of its lock the ci copy
+  misses to a copy of their own, `.xcraft/upstream/pr<N>/<arch>/` in the pr bucket: those of a lock update, downloaded
+  by its builds. It is removed with the rest of the data of the pull request when it closes.
+- **dev:** the same, for a developer, in the dev bucket.
+- **release:** no copy. A release publishes a snapshot of the ci bucket, whose packages are in the ci copy already.
+
+When a pull request is merged, CI on the main branch builds the packages it changed again, so it installs the pins of
+the new lock: the pin download, xcraft/buildenv/pin.py, takes them from the upstream repositories, the ci copy, or the
+copy of the merged pull request, which CI knows from the merge, for a version upstream dropped since the pull request
+pinned it. `xcraft push` then copies them to the ci copy, from the store of the runner. A version the pull request
+pinned and replaced before its merge is not needed anymore: nothing is lost when its copy is removed.
+
+A version is then lost only if upstream drops it before a build of ours downloads it, the risk of the lock update
+itself.
+
+### Publishing
+
+xcraft publish copies the packages of the snapshot server-side, without uploading them: ours from the storage, as
+today, the upstream ones the latest snapshot has from it, and the other upstream ones from the copy. It does not fill
+the copy: `xcraft push` runs before it, in the same job, so a pinned package missing in the copy means the push
+failed, and publish fails too. Publishing to the pr or dev bucket takes them from its own copy, or from the ci copy.
+
+Publishing to the release bucket checks the ci copy instead, reading it only, with the public reads of the ci bucket:
+a release whose lock pins a package the ci copy misses is refused, so a released commit can always be built again,
+even if the release bucket only has what it publishes.
 
 ### Metadata
 
-The metadata of a repository lists all its packages, but its RPMs are not where it is made: it is updated by merging,
-without downloading the packages already there.
+Updated like the snapshots' are made, with xcraft.repodata: no RPM of the copy is downloaded to add others, and no
+`mergerepo_c`.
 
-1. Download the current metadata of `upstream/<arch>/`: a few MiB.
-2. Make the metadata of the packages copied now, with `createrepo_c` on them: they were downloaded or are in the cache
-   for the copy, but for those copied server-side from a snapshot, which have to be downloaded for this, like
-   xcraft publish does.
-3. Merge both with `mergerepo_c`, which only reads metadata: the packages keep their `location` in `Packages/`.
-4. Upload the new metadata files, named after their checksums, then `repomd.xml` last: a reader sees the old metadata
-   or the new one, complete. The old metadata files are deleted later, by the next update, not to break a dnf which
-   read the old `repomd.xml` just before.
+1. Download the metadata of `.xcraft/upstream/<arch>/`, a few MiB, and read its entries, by SHA-256.
+2. The pinned packages missing in it are those to copy. For those copied server-side from a snapshot, the entries are
+   in the snapshot's metadata, which xcraft publish reads already; for those from the store of the machine or the
+   upstream repositories, `createrepo_c` runs on these RPMs only, local then.
+3. Write the metadata of the old and new entries with xcraft.repodata, the location of each package being its file
+   name.
+4. Upload the new metadata files, named after their checksums, so new paths, then `repomd.xml` last. The metadata files
+   it replaces are deleted by the next update, not at once: a dnf which read the old `repomd.xml` just before still
+   finds the files it names.
+
+Nothing to copy, nothing to write: the usual push only downloads the metadata.
 
 ### Concurrency
 
-Garage has no conditional writes, so two updates of the same metadata at once would lose the packages of one of them:
+Garage has no conditional writes: two updates of the metadata of an architecture at once, like the pushes of two
+branches, can lose the packages of the first. That is harmless: they are in the storage already, and the next update
+adds them again, as it compares the pins of the lock to the metadata, not to the files. The risk left is upstream
+dropping such a version before the next update, the time of a push: a concurrency group by architecture for the CI
+jobs pushing would remove it, cheaply, but is not required.
 
-- each architecture has its repository, updated by its own CI job: they never write the same metadata, but for
-  `upstream/Source/`, which only the job of the first architecture of `xcraft.toml` updates;
-- the jobs of an architecture take a concurrency group of their own, for all the branches, not to run at once;
-- an update lost anyway, like by a developer's push at the same time, is made again by the next one: it compares the
-  packages the lock uses to the metadata, not to the files.
+The jobs of different architectures write different metadata, but for `Source/`, which only the job of the first
+architecture of `xcraft.toml` updates. The copies of the pull requests are written by their own jobs only.
 
 ### Using it
 
-xcp-ng-dist adds the repository to `xcraft.toml`, with the keys of the upstream repositories, as the packages keep
-their upstream signatures:
+xcraft adds the ci copy to the repositories it resolves and downloads from, itself, and in a pull request its own copy
+too: no change to `xcraft.toml`. The packages keep their upstream signatures, so the repository takes the keys of the
+upstream repositories of `xcraft.toml`. A version locked and not copied yet, like after a lock update on a developer's
+machine, is in the upstream repositories still.
 
-```toml
-[repos.upstream]                       # our copy of the upstream packages ever locked: see xcraft push upstream
-baseurl = "https://<storage>/upstream/{arch}/"
-gpgkey = "file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-10 https://.../RPM-GPG-KEY-EPEL-10"
-source_baseurl = "https://<storage>/upstream/Source/"
-```
-
-dnf finds a locked package there when its repository no longer has it, and in both otherwise: the same NEVRA with the
-same checksum, so either is fine. Nothing else changes:
+dnf finds a pinned package in the copy when its repository no longer has it, and in both otherwise: the same NEVRA with
+the same checksum, so either is fine. Nothing else changes:
 
 - the build keys: they have the versions, not where they come from;
 - `xcraft lock --update`: it takes the latest version all the architectures have, which is upstream;
@@ -129,9 +181,9 @@ The copy only needs the public reads of the storage, so the builds of forks use 
 
 ### Bootstrap
 
-The first `xcraft push upstream` copies what the lock uses today, from the latest snapshot or the repositories. The
-versions already gone from both, if any, are reported: updating them in the lock, as today, makes them available again,
-and copied from then on.
+The first `xcraft push upstream` copies what the lock pins today, from the store of the machine, the latest snapshot,
+or the repositories. Run on a developer's machine which built aarch64 before 2026-11-01, it copies the `xxhash` RPMs
+EPEL dropped, which makes the lock of xcp-ng-dist usable again without updating it.
 
 ## Sizes, on xcp-ng-dist
 
@@ -144,14 +196,22 @@ Measured on the latest snapshot of x86_64_v2:
 | source packages | 672 | 4.9 GiB, ours included |
 
 So about 540 MiB by architecture for the binaries, and the sources, shared, up to 4.9 GiB. Each lock update then only
-adds the packages it changes. The storage stores identical files once: the packages already in the snapshots cost
-nothing, and neither do the noarch ones of the other architectures.
+adds the packages it changes. The storage stores identical files once: the packages already
+in the snapshots cost nothing, and the noarch ones are stored once for all the architectures.
 
 The sources could be limited to EPEL's, which are the only ones no one else keeps, but the vault is not ours either:
 copying them all costs a few GiB once.
 
 ## Alternatives considered
 
+- **The metadata merged with `mergerepo_c`.** It has to be checked to keep the locations, and it needs the metadata of
+  the new packages from `createrepo_c` anyway: xcraft.repodata does both, already used by xcraft publish.
+- **Packages by SHA-256, and metadata by lock.** Nothing is overwritten, so no lost update, but the metadata of a lock
+  needs the entries of all its packages: kept by package, or read from the metadata of another lock, which misses the
+  packages of the locks of other branches. The lock already says which packages to use, so the copy does not need to.
+- **No metadata: fetch the pinned RPMs from the copy by SHA-256 in xcraft/buildenv/pin.py.** Enough for the builds,
+  which install from the repository of the pins, but not for the resolution of the image, the build roots and what is
+  published, which the checks of `--locked` run on metadata only.
 - **The latest snapshot as a repository of the builds.** It has the packages, with metadata, but only the latest
   snapshot, of a publish: a version locked and dropped between two publishes is in none, and the builds would depend on
   publishing.
@@ -163,12 +223,10 @@ copying them all costs a few GiB once.
 
 ## Risks and open questions
 
-- `mergerepo_c` keeping the `location` of the packages unchanged, and merging `filelists` and `other` too: to check with
-  a prototype, before relying on it. Otherwise, the metadata of the packages copied before could be kept as is, and only
-  `primary` merged by xcraft, with `createrepo_c`'s Python bindings.
-- The copy is unsigned as a repository: its packages keep their upstream signatures, which dnf checks, but its metadata
-  could be signed too, with the release key, like the snapshots'.
+- The metadata of the copy is read by Python: xcraft.repodata cannot read zstd before Python 3.14. The metadata it
+  writes is gzip, so this only matters if it changes.
+- The packages keep their upstream signatures, which dnf checks, and xcraft checks their SHA-256 against the lock. The
+  metadata is not signed: it could be, with the key of the builds, like the snapshots'.
 - The storage grows with each lock update, without removal: a few hundred MiB a month, by the rate of the lock updates
-  of xcp-ng-dist. A later cleanup could remove the versions no tag nor branch locks anymore.
-- AlmaLinux's EPEL for x86_64_v2 rebuilds Fedora's, with `.alma_altarch` releases: they are different packages, by
-  architecture, which the layout by architecture already separates.
+  of xcp-ng-dist. A later cleanup could remove the packages no tag nor branch locks anymore.
+- The store of a developer's machine is trusted for nothing: its RPMs are copied only when their SHA-256 is the lock's.
