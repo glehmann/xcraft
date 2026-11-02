@@ -207,16 +207,21 @@ _parsed: dict[Path, tuple[str, Lock]] = {}
 """The last lock parsed of each file, with its content: the commands read it many times, and parsing it is slow."""
 
 
-def load_lock(project: Project) -> Lock:
-    """Return the lock of the project, empty when there is none yet: a copy of their own for the callers, which may
-    change it.
+def read_lock(project: Project) -> Lock:
+    """Return the lock of the project, empty when there is none yet, shared by the callers: not to change, see
+    load_lock().
     """
     if not (path := lock_path(project)).exists():
         return Lock()
     text = path.read_text()
     if (cached := _parsed.get(path)) is None or cached[0] != text:
         _parsed[path] = cached = text, parse_lock(text)
-    return cached[1].model_copy(deep=True)
+    return cached[1]
+
+
+def load_lock(project: Project) -> Lock:
+    """Return the lock of the project, empty when there is none yet: a copy of their own, which they may change."""
+    return read_lock(project).model_copy(deep=True)
 
 
 def parse_lock(text: str) -> Lock:

@@ -593,3 +593,14 @@ def test_package_of_a_path(project: Project, monkeypatch: pytest.MonkeyPatch) ->
     for given in ("../..", "/"):
         with pytest.raises(typer.BadParameter, match="neither a package nor in the directory of one"):
             package_of(project, given)
+
+
+def test_specs_parsed_once_by_platform(project: Project) -> None:
+    # the project on its platforms shares what it parsed, for each platform
+    project.parsed = {"a": Package(name="a")}
+    same, other = (p for p in project.all_platforms() if p.platform == project.platform), project.all_platforms()
+    assert all(p.parsed is project.parsed for p in same)
+    other[1].parsed = {"b": Package(name="b")}
+    assert project.all_platforms()[1].parsed is other[1].parsed is not project.parsed
+    # but a project found again parses them again, like another command
+    assert Project(project.root, config()).specs == {}
