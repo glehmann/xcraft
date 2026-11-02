@@ -10,7 +10,7 @@ from rich.markup import escape
 
 from xcraft import ccache, remote, upstream_copy
 from xcraft.cache import BUILD_FILES, build_keys, build_path, cached_build
-from xcraft.commands import Arch, Final, Key, Packages, To, load, remote_storage
+from xcraft.commands import Arch, Final, Key, Packages, To, find, load, remote_storage
 from xcraft.devbuilds import developed
 from xcraft.display import activity, console
 from xcraft.iso import push_isos
@@ -58,7 +58,7 @@ def sources(
     to: To = "dev",
 ) -> None:
     """Upload cached sources to the selected bucket, or only check it with --check."""
-    project = load(packages, arch=arch)
+    project = find(packages, arch=arch)
     if absent := _push_sources(project, remote_storage(project, to), packages, check=check):
         msg = f"not in the source cache: {', '.join(absent)}"
         raise RuntimeError(msg)
@@ -68,7 +68,7 @@ def _push_sources(project: Project, storage: Remote, packages: list[str] | None,
     """Upload cached sources to `storage`, or only check it, and return those missing from it and the source cache."""
     archives = {
         source_path(filename, digest): (filename, digest)
-        for name in packages or sorted(project.packages)
+        for name in packages or sorted(project.package_dirs)
         if (manifest := project.package_dirs[name] / "sources").exists()
         for filename, digest in sorted(read_manifest(manifest).items())
     }

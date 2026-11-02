@@ -139,7 +139,19 @@ def load_packages(project: Project) -> dict[str, Package]:
     """Return the metadata of all the packages of `project`, by name, for its architecture: a binary package of
     several of them is an error, which would make two packages of a name, and their records ambiguous.
     """
-    dirs = list(project.package_dirs.values())
+    packages = parse(project, list(project.package_dirs.values()))
+    owners: dict[str, list[str]] = {}
+    for name, package in packages.items():
+        for b in package.binaries:
+            owners.setdefault(b.name, []).append(name)
+    if shared := sorted(f"{b} ({', '.join(names)})" for b, names in owners.items() if len(names) > 1):
+        msg = f"binary packages of several packages for {project.arch}: {'; '.join(shared)}"
+        raise RuntimeError(msg)
+    return packages
+
+
+def parse(project: Project, dirs: list[Path]) -> dict[str, Package]:
+    """Return the metadata of the packages of the directories `dirs`, by name, for the architecture of `project`."""
     hashes = [(d.name, hash_dir(d, project.root)) for d in dirs]
     native = project.on_host()
     cache = (
@@ -168,12 +180,6 @@ def load_packages(project: Project) -> dict[str, Package]:
             cache.parent.mkdir(parents=True, exist_ok=True)
             (work / "specs.json").rename(cache)
     packages = _Packages.validate_json(cache.read_bytes())
-    owners: dict[str, list[str]] = {}
     for name, package in packages.items():
         package.name = name
-        for b in package.binaries:
-            owners.setdefault(b.name, []).append(name)
-    if shared := sorted(f"{b} ({', '.join(names)})" for b, names in owners.items() if len(names) > 1):
-        msg = f"binary packages of several packages for {project.arch}: {'; '.join(shared)}"
-        raise RuntimeError(msg)
     return packages

@@ -7,7 +7,7 @@ import typer
 from xcraft import build as builder
 from xcraft import ccache
 from xcraft.cache import build_keys, cached_build
-from xcraft.commands import Arch, Final, Packages, load
+from xcraft.commands import Arch, Final, Packages, find, load
 from xcraft.devbuilds import developed
 from xcraft.display import console
 from xcraft.project import Project
@@ -37,9 +37,9 @@ def sources(packages: Packages = None, arch: Arch = None) -> None:
 
     Those missing are downloaded from the remote storage, or else from the source of the spec with their URL.
     """
-    project = load(packages, arch=arch)
+    project = find(packages, arch=arch)
     missing = {}
-    for name in packages or sorted(project.packages):
+    for name in packages or sorted(project.package_dirs):
         try:  # the others too, when a download fails
             if archives := fetch_sources(project, name):
                 missing[name] = (
@@ -61,11 +61,11 @@ def caches(packages: Packages = None, arch: Arch = None) -> None:
     They are not downloaded by xcraft fetch without a command, but a build gets the one of its package when it has
     none.
     """
-    project = load(packages, arch=arch)
+    project = find(packages, arch=arch)
     if not project.config.remote:
         msg = "no remote storage: see [remote.main] and [remote.dev] in xcraft.toml"
         raise typer.BadParameter(msg)
-    fetched = [name for name in packages or sorted(project.packages) if ccache.fetch(project, name)]
+    fetched = [name for name in packages or sorted(project.package_dirs) if ccache.fetch(project, name)]
     for name in fetched:
         console.print(f"[green]↓[/] {name}")
     console.print(f"{len(fetched)} fetched")
