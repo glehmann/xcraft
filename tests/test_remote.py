@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import http.client
 import http.server
 import logging
@@ -1054,8 +1055,9 @@ def test_upstream_copy(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixt
         # the source packages of what is published, not of the build environment, as [publish] build is false
         bc = pins["bc"]
         assert f"bc-{bc.evr.split(':')[-1]}.src.rpm" in _copied(storage, "Source", tmp_path / "2").values()
-        # nothing to copy again
-        with caplog.at_level(logging.DEBUG, logger="xcraft"):
+        # nothing to copy again, even during a build
+        with caplog.at_level(logging.DEBUG, logger="xcraft"), (root / ".xcraft/lock").open("w") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)  # as a build does
             code, output = xcraft("push", "upstream", "--to", "dev")
         assert code == 0, output
         assert not [m for m in caplog.messages if m.startswith(("uploading ", "copying "))]
