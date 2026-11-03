@@ -176,10 +176,10 @@ def _publish(  # noqa: C901, PLR0912
         ):
             return
         console.print("assembling the snapshot")
-        if storage and output is None:
-            built, stored = publisher.remote_snapshot(platforms, dest, signer=signer, storage=storage, build=build)
-        else:
-            built, stored = snapshot(platforms, dest, signer=signer, storage=storage, build=build), {}
+        built, stored = snapshot(platforms, dest, signer=signer, storage=storage, build=build)
+        if storage and output is not None:  # all of it, in the directory asked
+            for repo in sorted({path.rsplit("/", 1)[0] for path in stored}):
+                publisher.materialize(storage, dest, stored, repo)
         for platform in with_isos:
             console.print(f"getting the ISOs for {platform.arch}")
             if storage and stored and not fetch_isos(platform, signer=signer):  # made from its packages
