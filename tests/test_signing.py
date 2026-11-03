@@ -63,7 +63,7 @@ def test_signer_selection(root: Path) -> None:
     assert signing_key(project, "A" * 40) == Signer("A" * 40, root / "release-keyring")
     # fingerprints, in uppercase, like the storage has the public keys
     assert signing_key(project, "a" * 40) == Signer("A" * 40, root / "release-keyring")
-    with pytest.raises(SigningError, match="not the fingerprint of a key"):
+    with pytest.raises(ValueError, match="not the fingerprint of a key"):
         signing_key(project, "Developer")
     assert Sign(key="b" * 40).key == "B" * 40
     with pytest.raises(ValueError, match="not the fingerprint of a key"):

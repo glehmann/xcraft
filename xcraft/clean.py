@@ -6,6 +6,8 @@ import shutil
 from typing import TYPE_CHECKING
 
 from xcraft.localrepo import OUTPUT_MARKER
+from xcraft.resolution import resolutions_read
+from xcraft.specs import specs_read
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -42,7 +44,10 @@ def clean(
 
     That is the build trees, the outdated builds of the platform, those of none
     of the `keys`, all of them with `all_builds`, and the compiler caches with `ccache`, of the packages
-    `names`, or of all of them with what they share. The source cache is kept.
+    `names`, or of all of them with what they share: the metadata of the specs and the resolutions but those this
+    process read, the results of the checks, the requirements of the upstream packages, and the
+    upstream packages downloaded. The source cache is kept, and so are the signed builds, which signing again would
+    make other files, and the ISOs.
 
     The local repository and snapshot, made again when needed, are removed in
     both cases: they have hard links to the files of the builds, which would
@@ -54,8 +59,10 @@ def clean(
     paths = [state / "repo", state / "publish"]
     if names is None:
         paths += [state / "build", state / "tmp", state / "cache/extra"]
-        specs = sorted((state / "cache/specs" / project.arch).glob("*.json"), key=lambda path: path.stat().st_mtime)
-        paths += specs[:-1]  # but the metadata of the current specs, the latest
+        # but those of the specs and resolutions this process read: the current ones, once the project is prepared
+        current = specs_read() | resolutions_read()
+        paths += [p for d in ("specs", "resolved") for p in (state / "cache" / d).rglob("*.json") if p not in current]
+        paths += [state / "cache" / cache for cache in ("checks", "upstream", "rpms", "srpms")]
         packages = list(builds.glob("*"))
     else:
         paths += [state / "build" / name for name in names]

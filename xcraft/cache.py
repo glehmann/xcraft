@@ -85,10 +85,9 @@ def cached_build(project: Project, name: str, key: str) -> Path:
 
 def has_normal_build(project: Project, name: str) -> bool:
     """Return whether `name` has a cached build, of any version, besides the development builds."""
+    # not a build in progress, nor a development one
     return any(
-        not (
-            build.name.startswith(".") or (build / "autorev").exists()
-        )  # not a build in progress, or a development one
+        not build.name.startswith(".") and not (build / "autorev").exists()
         for build in builds_dir(project, name).glob("*")
     )
 

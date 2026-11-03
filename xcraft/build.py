@@ -427,8 +427,6 @@ def _stored(project: Project, names: list[str], keys: dict[str, str]) -> dict[st
     """Return whether the remote storage has the builds of `names` with `keys`, by their paths in it, asked
     concurrently: nothing when it cannot be asked, as each one is asked again then.
     """
-    if not project.config.remote:
-        return {}
     paths = [build_path(project, name, keys[name]) for name in names]
     try:
         with ThreadPoolExecutor(16) as pool:
@@ -450,8 +448,7 @@ def _from_storage(
     and return whether the storage has it: as `stored` says, by path, or asked now.
     """
     if fetch == "needed":  # fetched by _fetch_for(), if a build needs it
-        path = build_path(project, name, keys[name])
-        if path not in stored and project.config.remote:
+        if (path := build_path(project, name, keys[name])) not in stored:
             stored[path] = remote.tree_available(project, path)
         if not stored.get(path):
             return False

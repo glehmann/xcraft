@@ -30,7 +30,7 @@ from xcraft.lock import Locked, read_lock, versionlock
 from xcraft.project import ProjectLockedError, write_atomically
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from xcraft.lock import Pin
     from xcraft.project import Project
@@ -352,7 +352,7 @@ def run(
     step: str,
     script: str,
     *,
-    volumes: list[str] = [],  # noqa: B006
+    volumes: Sequence[str] = (),
     show: str = "",
     on_line: Callable[[str], None] | None = None,
     network: bool = True,
@@ -370,7 +370,7 @@ def run(
                 project,
                 script,
                 container=f"xcraft-{step}-{os.getpid()}",
-                volumes=volumes,
+                volumes=list(volumes),
                 network=network,
                 log=log,
                 on_line=progress,

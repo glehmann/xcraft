@@ -150,21 +150,21 @@ def load_packages(project: Project) -> dict[str, Package]:
     return packages
 
 
+_read: set[Path] = set()
+"""The cached metadata of the specs read by this process, by file."""
+
+
+def specs_read() -> set[Path]:
+    """Return the files of the cached metadata of the specs this process read: those of the specs as they are."""
+    return set(_read)
+
+
 def parse(project: Project, dirs: list[Path]) -> dict[str, Package]:
     """Return the metadata of the packages of the directories `dirs`, by name, for the architecture of `project`."""
     hashes = [(d.name, hash_dir(d, project.root)) for d in dirs]
     native = project.on_host()
-    cache = (
-        project.state
-        / "cache/specs"
-        / project.arch
-        / (
-            hashlib.sha256(
-                json.dumps([*_SCRIPTS, image_tag(native), target(project.arch), *hashes]).encode()
-            ).hexdigest()
-            + ".json"
-        )
-    )
+    key = json.dumps([*_SCRIPTS, image_tag(native), target(project.arch), *hashes])
+    cache = project.state / "cache/specs" / project.arch / f"{hashlib.sha256(key.encode()).hexdigest()}.json"
     if not cache.exists():
         build_image(native)
         specs = " ".join(f"/project/{main_spec(d).relative_to(project.root)}" for d in dirs)
@@ -179,6 +179,7 @@ def parse(project: Project, dirs: list[Path]) -> dict[str, Package]:
             )
             cache.parent.mkdir(parents=True, exist_ok=True)
             (work / "specs.json").rename(cache)
+    _read.add(cache)
     packages = _Packages.validate_json(cache.read_bytes())
     for name, package in packages.items():
         package.name = name

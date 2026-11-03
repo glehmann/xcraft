@@ -275,7 +275,7 @@ class TreeManifest(BaseModel):
     @field_validator("files")
     @classmethod
     def valid_files(cls, files: dict[str, str]) -> dict[str, str]:
-        """Reject paths outside the tree and malformed digests."""
+        """Refuse the paths out of the tree, and what are not SHA-256."""
         for name, digest in files.items():
             path = PurePosixPath(name)
             # and not changed by the signature in clear, which ignores the spaces ending the lines
@@ -399,7 +399,7 @@ def tree_exists(storage: Remote, prefix: str, *, trusted: Signer | None = None) 
 
 
 def storages(project: Project) -> list[Remote]:
-    """Search main before dev, with the same configured trust regardless of the serving bucket."""
+    """Return the storages, main then dev, each trusting the keys of both: a tree is as trusted in either."""
     keys = sorted({key for storage in project.config.remote.values() for key in storage.build_keys})
     return [
         storage.model_copy(update={"build_keys": keys})
@@ -425,12 +425,14 @@ def _first[T](project: Project, attempt: Callable[[Remote], T]) -> T | None:
 
 
 def tree_available(project: Project, prefix: str) -> bool:
-    """Check signed manifests in main, then dev, without downloading tree contents."""
+    """Return whether main, or else dev, has the trusted tree `prefix`, from its manifest only."""
     return bool(_first(project, lambda s: tree_exists(s, prefix, trusted=dev_signer(project))))
 
 
 def fetch_tree(project: Project, prefix: str, dest: Path, on_line: Callable[[str], None] = lambda _: None) -> bool:
-    """Download a trusted tree from main or dev, checking its signature before its contents."""
+    """Download the trusted tree `prefix` from main, or else dev, as `dest`, its manifest checked before its files,
+    and return whether one has it.
+    """
     return bool(_first(project, lambda s: download_tree(s, prefix, dest, on_line, trusted=dev_signer(project))))
 
 
