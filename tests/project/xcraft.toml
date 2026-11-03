@@ -4,11 +4,10 @@ platforms = ["linux/amd64/v2", "linux/arm64"]
 # AlmaLinux rebuilds EPEL for x86_64_v2: the lock has the same versions for all the architectures but for it
 release_suffixes = [".alma_altarch"]
 packages = [
-    # like mock's build roots, and what XCP-ng specs expect without BuildRequires
+    # like mock's build roots: what specs may assume without BuildRequires
     # (coreutils-single, in the base image, provides coreutils)
-    "bash", "bzip2", "cpio", "diffutils", "findutils", "gawk", "grep", "gzip", "patch", "sed",
-    "tar", "unzip", "which", "xz",
-    "rpm-build", "redhat-rpm-config", "epel-rpm-macros", "gcc", "gcc-c++", "make", "git",
+    "bash", "bzip2", "cpio", "diffutils", "findutils", "gawk", "grep", "gzip", "info", "patch", "sed",
+    "shadow-utils", "tar", "unzip", "util-linux", "which", "xz", "rpm-build", "redhat-rpm-config",
 ]
 
 [macros]

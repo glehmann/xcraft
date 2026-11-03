@@ -209,13 +209,13 @@ def test_build_root_of_files_of_ours(root: Path) -> None:
 
 
 def test_image_packages_replaced_by_ours(root: Path) -> None:
-    # R-srpm-macros is in the image, and harmless to replace
-    write_spec(root, "R-srpm-macros", files="/usr/share/xcraft-test/R-srpm-macros")
+    # openblas-srpm-macros is in the image, and harmless to replace
+    write_spec(root, "openblas-srpm-macros", files="/usr/share/xcraft-test/openblas-srpm-macros")
     code, output = xcraft("build", "trivial")
     assert code == 0, output
-    assert [line.split(" built")[0] for line in results(output)[:2]] == ["✓ R-srpm-macros", "✓ trivial"]
+    assert [line.split(" built")[0] for line in results(output)[:2]] == ["✓ openblas-srpm-macros", "✓ trivial"]
     assert re.search(
-        r"^Downgrading:\n R-srpm-macros .* xcraft-[0-9a-f]{8} ",
+        r"^Downgrading:\n openblas-srpm-macros .* xcraft-[0-9a-f]{8} ",
         root.joinpath(".xcraft/logs/trivial.log").read_text(),
         re.MULTILINE,
     )
@@ -379,7 +379,6 @@ def test_bump_version_must_increase(root: Path, monkeypatch: pytest.MonkeyPatch,
         .replace("Version: 1.0", "%global upver 1.10\nVersion: %{upver}")
     )
     (root / "xcraft.toml").write_text(f'same_version = [["trivial", "twin"]]\n{TOML}')
-    assert xcraft("status")[0] == 0  # which locks the build root of twin, with ccache
     paths = [spec, twin / "twin.spec", root / "base/trivial/sources", root / "xcraft.lock"]
     before = {path: path.read_bytes() for path in paths}
     code, output = xcraft("bump", "trivial", "--version", version)
@@ -849,6 +848,14 @@ def test_lock_upgrade(root: Path) -> None:
     builds = load_builds(project)
     assert (builds.requires.of(ARCH), builds.provides) == ({"trivial": ["tcl"]}, Recorded())
     assert builds.ids["trivial"].number == 7  # out of git, nothing to number against
+
+
+def test_ccache_with_a_compiler(root: Path) -> None:
+    write_spec(root, "compiled", "gcc")
+    assert xcraft("build", "--dry-run")[0] == 0
+    roots = load_lock(Project.find()).roots.shared
+    assert {"gcc", "ccache"} <= set(roots["compiled"])
+    assert "ccache" not in roots.get("trivial", [])
 
 
 def test_lock_records_image_and_roots(root: Path) -> None:

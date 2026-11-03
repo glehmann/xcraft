@@ -118,7 +118,7 @@ replaces the old one in `sources`. The packages of the same archive, listed toge
 ```toml
 base_image = "ghcr.io/almalinux/10-base:10.2@sha256:..."   # image the build environment is made from
 platforms = ["linux/amd64/v2", "linux/arm64"]   # the platforms of the builds, one at a time
-packages = ["rpm-build", "gcc", ...]   # installed in the build environment, with what xcraft uses
+packages = ["rpm-build", "redhat-rpm-config", ...]   # in the image, with what xcraft uses: what specs may assume
 same_version = [["kernel", "kernel-headers"]]   # updated together by xcraft bump --version
 main_branch = "master"                 # the branch the build IDs are numbered against, master by default
 [ccache_size]                          # the maximum size of the compiler cache of packages, 5G by default
