@@ -632,6 +632,7 @@ def ccache_hits(cache: Path) -> int:
         "test-ccache",
         f"{ccache.INSTALL} && CCACHE_DIR=/cache ccache --print-stats",
         volumes=[f"{cache}:/cache"],
+        install=True,
     )
     log = (Project.find().state / "logs/_test-ccache.log").read_text()
     stats = {k: int(v) for k, v in (line.split("\t") for line in log.splitlines() if "\t" in line)}

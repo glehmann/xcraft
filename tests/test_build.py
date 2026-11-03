@@ -468,7 +468,7 @@ def test_iso_tools(root: Path) -> None:
     # installed from the pinned packages
     with project.work("tools") as work:
         record = f"{container.DNF_LOCK} python3 /xcraft/record.py /work/tools.json"
-        container.run(project, "tools", f"{_INSTALL_TOOLS} && {record}", volumes=[f"{work}:/work"])
+        container.run(project, "tools", f"{_INSTALL_TOOLS} && {record}", volumes=[f"{work}:/work"], install=True)
         _check_tools(project, work / "tools.json")
         del lock.iso[project.arch][0]
         save_lock(project, lock)
@@ -733,6 +733,26 @@ def test_images_of_other_contents(root: Path, tmp_path: Path) -> None:
         installed = subprocess.run(cat, capture_output=True, text=True, check=True)
         assert installed.stdout == f"{payload}\n"
     subprocess.run(["podman", "rmi", *images], capture_output=True, check=False)
+
+
+def test_parsing_gets_the_pins_of_the_image_only(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # a store of its own, and a build root with a pin the image does not have
+    monkeypatch.setattr(pinned, "VOLUME", volume := f"xcraft-pinned-test-{os.getpid()}-{time.monotonic_ns()}")
+    monkeypatch.setattr(pinned, "_checked", set())
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(spec.read_text().replace("BuildArch: noarch", "BuildArch: noarch\nBuildRequires: lzo-devel"))
+    try:
+        assert xcraft("build", "--dry-run")[0] == 0
+        lock = load_lock(Project.find())
+        pins = lock.binaries[ARCH]
+        assert "lzo-devel" in pins
+        # parsed again, once pinned
+        shutil.rmtree(root / ".xcraft/cache/specs")
+        assert xcraft("build", "--dry-run")[0] == 0
+        stored = {path.name for path in (pinned._store() / "rpms").glob("*/*.rpm")}
+        assert stored <= {pinned.file_name(name, pins[name]) for name in lock.image[ARCH]}
+    finally:
+        subprocess.run(["podman", "volume", "rm", "-f", volume], check=False, capture_output=True)
 
 
 def test_pinned_store_checked(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:

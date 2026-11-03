@@ -110,6 +110,7 @@ def push(project: Project, storage: Remote, name: str, *, signer: Signer | None)
                 volumes=[f"{cache}:/ccache"],
                 show=f"compressing the ccache of {name}",
                 network=False,
+                install=True,
             )
         manifest = {
             entry: stored[entry] if _result(entry) and entry in stored else sha256_of(cache / entry) for entry in used
