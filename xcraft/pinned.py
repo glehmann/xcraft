@@ -25,6 +25,8 @@ from xcraft.lock import read_lock
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from xcraft.lock import Pin
     from xcraft.project import Project
 
@@ -52,12 +54,15 @@ _checked: set[Path] = set()
 """The repositories whose RPMs this process checked."""
 
 
-def repository(project: Project) -> Path:
-    """Return the repository of the pinned binary packages of the architecture of `project`, made if needed, with
-    RPMs of the SHA-256 of their pins: those missing, or of other contents, in the store are downloaded again, and the
-    repository made again, one command at a time; another one using it then fails, as it would with what was damaged.
+def repository(project: Project, names: Iterable[str] | None = None) -> Path:
+    """Return the repository of the pinned binary packages `names` of the architecture of `project`, all of them by
+    default, made if needed, with RPMs of the SHA-256 of their pins: those missing, or of other contents, in the store
+    are downloaded again, and the repository made again, one command at a time; another one using it then fails, as it
+    would with what was damaged. The RPMs are shared by the repositories, downloaded once.
     """
     pinned = pins(project)
+    if names is not None:
+        pinned = {name: pinned[name] for name in names}
     ident = hashlib.sha256(json.dumps({n: p.text() for n, p in sorted(pinned.items())}).encode()).hexdigest()
     store = _store()
     repo = store / "repos" / ident

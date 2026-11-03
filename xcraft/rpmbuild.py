@@ -104,7 +104,15 @@ def run_build(
     cache.mkdir(parents=True, exist_ok=True)
     tree = project.state / "build" / name
     volumes = [f"{tree}:/build", f"{cache}:/ccache", *repo.volumes()]
-    run_container(project, script, container=f"xcraft-{project.id}-{name}", volumes=volumes, log=log, on_line=on_line)
+    run_container(
+        project,
+        script,
+        container=f"xcraft-{project.id}-{name}",
+        volumes=volumes,
+        log=log,
+        on_line=on_line,
+        install=True,
+    )
 
 
 def image_replacements(resolved: Resolved, name: str) -> list[str]:

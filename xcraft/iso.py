@@ -327,6 +327,7 @@ def _make_iso(
             " && sudo python3 /xcraft/iso.py /work/config.json",
             volumes=volumes,
             show="making the tree of the ISO",
+            install=True,
         )
         _check_tools(project, work / "tools.json")
         tree = work / "tree"
@@ -342,7 +343,7 @@ def _make_iso(
             " -isohybrid-mbr /usr/share/syslinux/isohdpfx.bin"
             " -eltorito-alt-boot -e boot/efiboot.img -no-emul-boot -isohybrid-gpt-basdat /work/tree"
         )
-        run(project, "iso", f"{_INSTALL_TOOLS} && {xorriso}", volumes=volumes, show="making the ISO")
+        run(project, "iso", f"{_INSTALL_TOOLS} && {xorriso}", volumes=volumes, show="making the ISO", install=True)
         made = project.state / "tmp" / f"{work.name}.iso"
         shutil.move(work / "image.iso", made)
     return made, info["version"]

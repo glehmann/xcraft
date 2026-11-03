@@ -162,7 +162,13 @@ def build_image(project: Project) -> str:
 def _build_image(project: Project, tag: str, args: dict[str, str], files: dict[str, str]) -> None:
 
     _podman_build(
-        project, "image", tag, files, args, show="the build environment image", pinned=pinned.repository(project)
+        project,
+        "image",
+        tag,
+        files,
+        args,
+        show="the build environment image",
+        pinned=pinned.repository(project, _image_pins(project)),  # its own only
     )
     try:
         resolved = {f"{n}-{p.evr}.{p.arch}" for n, p in _image_pins(project).items()}
@@ -341,6 +347,7 @@ def run(
     on_line: Callable[[str], None] | None = None,
     network: bool = True,
     image: str = "",
+    install: bool = False,
 ) -> None:
     """Run a bash `script` for the `step` of xcraft, in a container, logged in .xcraft/logs/_<step>.log.
 
@@ -359,6 +366,7 @@ def run(
                 log=log,
                 on_line=progress,
                 image=image,
+                install=install,
             )
         except ContainerError as e:
             msg = f"{e}{_tail(log)}"
@@ -398,18 +406,20 @@ def run_container(
     log: Path | None = None,
     on_line: Callable[[str], None] | None = None,
     image: str = "",
+    install: bool = False,
 ) -> None:
     """Run a bash `script` in a container called `container`, of the build environment image, or of `image`.
 
     The volumes are mounted with the scripts of the build environment, in
-    /xcraft, the repository of the pinned packages, and a volume keeping the dnf cache
+    /xcraft, the repository of the pinned packages with `install`, for the
+    scripts installing packages, all of them downloaded first, and a volume keeping the dnf cache
     between containers. The output goes to `log`, or to an interactive terminal
     when there is no log, and `on_line` is called with each line written to the
     log. The container is stopped when interrupted, or when its log gets larger
     than MAX_LOG_SIZE.
     """
     image = image or build_image(project)
-    volumes = [*volumes, f"{BUILDENV}:/xcraft:ro", f"{pinned.repository(project)}:/pinned:ro"]
+    volumes = [*volumes, f"{BUILDENV}:/xcraft:ro", *([f"{pinned.repository(project)}:/pinned:ro"] if install else [])]
     cmd = [
         # replacing a container of a killed xcraft
         "podman", "run", "--rm", "--replace", "--name", container, "--platform", project.platform,
