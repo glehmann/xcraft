@@ -18,7 +18,6 @@ from xcraft.lock import (
     read_lock,
     save_lock,
     upgrade_lock,
-    versionlock,
 )
 from xcraft.project import Project
 
@@ -162,11 +161,6 @@ def test_record() -> None:
         for arch in order:
             record(arch, "xen", [] if arch == "x86_64_v2" else ["lzo"])
         assert (recorded.of("x86_64_v2"), recorded.of("aarch64")) == ({}, {"xen": ["lzo"]})
-
-
-def test_versionlock() -> None:
-    packages = {"gcc": locked("1:14.2-1"), "bash": locked("5.2-3")}
-    assert versionlock(packages) == "bash-0:5.2-3.x86_64_v2\ngcc-1:14.2-1.x86_64_v2\n"
 
 
 def test_frozen(tmp_path) -> None:  # noqa: ANN001

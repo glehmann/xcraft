@@ -469,7 +469,7 @@ def lock_installed(project: Project, installed: dict[str, Locked]) -> bool:
     were installed in the locked versions: those locked here may get other ones, which the other architectures have,
     and the packages have to be installed again.
 
-    Raise when locked ones were installed in another version, which means the versionlock was not applied.
+    Raise when locked ones were installed in another version: not from the repository of the pinned packages.
     """
 
     def changed() -> list[str]:

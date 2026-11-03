@@ -204,7 +204,7 @@ def test_hash_dir_covers_what_builds_get(tmp_path: Path) -> None:
 
 
 def test_recipe(monkeypatch: pytest.MonkeyPatch) -> None:
-    current = "7e2617d3185b2b26b76643587b06dddc3c75bd6a9a09c4ee044388ceef91bc7d"
+    current = "4b928b99728b60533308a1f147188072c2495311781bd54ff6441657aa19b2a5"
     assert recipe_key() == current, (
         f"the recipe changed, to {buildkey.RECIPE}: map it to {current} in _SAME_BUILDS if it makes the same packages, "
         "or else set it here, which rebuilds everything"

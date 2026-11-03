@@ -123,8 +123,8 @@ the lock of the project: changed again from the new one otherwise, see `resoluti
 ## How it is read
 
 - **The resolution**, for the versions, with the records of the lock of the builds.
-- **The image** has its pins, `pins.list`, and a dnf versionlock of them, and installs from the repository of the
-  pins: other pins make another image.
+- **The image** has its pins, `pins.list`, and installs from the repository of the pins only, like the builds and
+  xcraft shell: other pins make another image.
 - **The builds** install from the repository of the pins of their image and build root, and check what they installed
   against the pins, by name, version and architecture, see `checks.check_build()`.
 - **The build keys** cover, for each architecture, the pins of the image and of the build root, and from the lock of

@@ -2,9 +2,8 @@ ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 ARG PACKAGES
 RUN rm -f /etc/yum.repos.d/*.repo
-COPY upstream.repo pinned.repo /etc/yum.repos.d/
+COPY pinned.repo /etc/yum.repos.d/
 COPY macros.xcraft /etc/rpm/
-COPY versionlock.list /etc/dnf/plugins/
 # before installing them, for the pinned packages of other contents, but of the same versions, not to be installed by
 # a layer of the cache of podman
 COPY pins.list /etc/xcraft/
@@ -12,7 +11,7 @@ COPY pins.list /etc/xcraft/
 # image packages get their pinned versions, and keep those of its digest otherwise
 RUN echo keepcache=1 >> /etc/dnf/dnf.conf \
     && pinned="--disablerepo=* --enablerepo=xcraft-pinned" \
-    && dnf -y $pinned install python3-dnf-plugin-versionlock && dnf -y $pinned distro-sync \
+    && dnf -y $pinned distro-sync \
     && dnf -y $pinned --setopt=install_weak_deps=False install ${PACKAGES} && dnf clean all
 # without the account check of PAM, whose helper cannot read /etc/shadow in some rootless containers, like in CI
 RUN useradd -u 1000 builder \
