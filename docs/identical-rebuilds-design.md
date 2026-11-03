@@ -1,7 +1,7 @@
 # Design: reusing the builds that a rebuild reproduces
 
 Status: proposed. With the build environment changes, 29 of the 43 packages of xcp-ng-dist rebuild identically
-after a change of kernel-headers, 33 with the static archives made deterministic too, see [Experiment](#experiment).
+after a change of kernel-headers, 33 with deterministic static archives too, see [Experiment](#experiment).
 
 ## Problem
 
@@ -47,10 +47,13 @@ xcraft builds with:
 - `%clamp_mtime_to_source_epoch 1`, in `[macros]`;
 - `%_find_debuginfo_dwz_opts` with `--dwz-single-file-mode` added to the options of EL, in `[macros]`: not
   `%_find_debuginfo_opts`, which specs set, like the kernel's;
-- the static archives of the build root made deterministic, like `ar D` does: the time, owner and mode of their
-  members zeroed, by a step added to `%__os_install_post`. The `ar` of EL is not deterministic by default, and most
-  build systems do not ask it to be, like OCaml's. The step edits the member headers itself: `objcopy -D` and
-  `strip -D` fail on the archives of objects that are not ELF, like those of dev86.
+- deterministic static archives. A static library, `lib*.a`, is an `ar` archive: each object file in it has a header
+  with its name, size, mtime, owner, group and mode, as `ar` found them when it added the file. So two builds with
+  the same object files make different archives, by the mtimes and the owner of the build user. `ar` has a
+  deterministic mode, its `D` modifier, which writes 0 for the mtime, owner and group, and 644 for the mode, but the
+  `ar` of EL does not default to it, and most build systems do not ask for it, like OCaml's. So a step added to
+  `%__os_install_post` rewrites the headers of the archives of the build root as the `D` modifier would. It edits the
+  headers itself: `objcopy -D` and `strip -D` fail on the archives of objects that are not ELF, like those of dev86.
 
 The build keys cover `[macros]`: all the keys change once, which needs a full rebuild of all the packages.
 
@@ -121,7 +124,7 @@ and what still differed were files that the builds of two packages generate diff
 ### Full rebuild
 
 All the 43 packages of xcp-ng-dist were then built on a scratch clone with the build environment above set in their
-specs, but the deterministic archives, then built again after a change of kernel-headers: all the others got a new
+specs, but the deterministic static archives, then built again after a change of kernel-headers: all the others got a new
 build number, 42 of them being built against it.
 
 29 packages were identical: biosdevname, branding-xcp-ng, dhcp, dmv-utils, edk2, guest-templates-json,
@@ -133,7 +136,7 @@ The others, with kernel-headers itself, differed by:
 
 | What | Packages | Fix |
 |---|---|---|
-| the member headers of static archives, their time and owner: the 371 differing archives had the same members | dev86, libempserver, ocaml, ocaml-findlib, only by them; xen, xapi, xs-opam-repo | deterministic archives, see [above](#build-environment) |
+| the member headers of static archives, their time and owner: the 371 differing archives had the same members | dev86, libempserver, ocaml, ocaml-findlib, only by them; xen, xapi, xs-opam-repo | deterministic static archives, see [Build environment](#build-environment) |
 | the time of the build, in `include/generated/compile.h`, `utsversion.h`, `vmlinuz`; the headers tarball of `kheaders.ko`; perf, objtool, resolve_btfids | kernel | `KBUILD_BUILD_TIMESTAMP` from `SOURCE_DATE_EPOCH`, in the spec; the tools not studied |
 | the release, `GRUB_RPM_VERSION`, in `config.h`, `version.mod` and the EFI binaries | grub | the spec |
 | the release in the SBAT section of the EFI binaries, and their CodeView debug entry | xen | none for SBAT, made for the secure boot revocations, which has the release on purpose |
@@ -143,6 +146,6 @@ The others, with kernel-headers itself, differed by:
 | `PK.auth` | varstored | the spec, see above |
 | the test results, see above; the HTML coverage and test reports | blktap, sm | the spec, or the results out of the packages |
 
-With the deterministic archives, dev86, libempserver, ocaml and ocaml-findlib are identical too: 33 of 43. Each of the
+With deterministic static archives, dev86, libempserver, ocaml and ocaml-findlib are identical too: 33 of 43. Each of the
 others keeps a new build ID on each change of its build root, like today, until its spec is fixed. The packages built
 against them are still compared, and reused when identical: qemu, built against xen, was.
