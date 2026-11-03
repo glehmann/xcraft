@@ -191,13 +191,6 @@ def choose_versions(available: dict[str, dict[str, list[str]]]) -> dict[str, str
     return chosen
 
 
-def versionlock(packages: dict[str, Locked]) -> str:
-    """Return a dnf versionlock list of the `packages`."""
-    return "".join(
-        f"{name}-{p.evr if ':' in p.evr else f'0:{p.evr}'}.{p.arch}\n" for name, p in sorted(packages.items())
-    )
-
-
 def lock_path(project: Project) -> Path:
     """Return the lock file of the project."""
     return project.root / "xcraft.lock"

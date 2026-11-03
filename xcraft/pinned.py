@@ -31,9 +31,9 @@ if TYPE_CHECKING:
 VOLUME = "xcraft-pinned"
 """The podman volume of the store of the pinned RPMs, and of their repositories."""
 REPO_ID = "xcraft-pinned"
-REPO_FILE = f"[{REPO_ID}]\nname={REPO_ID}\nbaseurl=file:///pinned\nenabled=0\ngpgcheck=0\nmetadata_expire=0\n"
-"""The definition of the repository in the image, enabled by the commands installing from it only: its metadata is
-read again each time, as /pinned is the repository of other pins then."""
+REPO_FILE = f"[{REPO_ID}]\nname={REPO_ID}\nbaseurl=file:///pinned\ngpgcheck=0\nmetadata_expire=0\n"
+"""The definition of the repository in the image, its only upstream one: its metadata is read again each time, as
+/pinned is the repository of other pins then."""
 
 
 class PinnedError(RuntimeError):

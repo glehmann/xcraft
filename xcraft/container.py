@@ -1,13 +1,12 @@
 """The build environment: a container image made only of the configured repositories, run with podman.
 
-The image is built from the configured base image, with its repositories
-replaced by the configured ones, and the packages resolved from the lock (see
-xcraft.resolution). It is tagged with a hash of its definition, so that it is
+The image is built from the configured base image, without its repositories, with the packages resolved from the
+lock (see xcraft.resolution). It is tagged with a hash of its definition, so that it is
 built again only when the configuration or the versions of its packages change.
 Its ``builder`` user is mapped to the user running xcraft, and can use sudo.
 
-In the containers, dnf only sees the locked version of a locked package. The image, and the builds, install the pinned
-packages only, from their repository, see xcraft.pinned.
+In the containers, dnf only sees the pinned upstream packages, in their repository, see xcraft.pinned, and ours: the
+image, the builds, and xcraft shell install from them only.
 
 The resolution runs in the base image of the host, natively, for any platform.
 """
@@ -19,14 +18,13 @@ import json
 import os
 import re
 import subprocess
-import tempfile
 from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from xcraft import host, pinned, process
 from xcraft.display import activity, changes, read_tail
-from xcraft.lock import Locked, read_lock, versionlock
+from xcraft.lock import Locked, read_lock
 from xcraft.project import ProjectLockedError, write_atomically
 
 if TYPE_CHECKING:
@@ -55,7 +53,7 @@ DNF_LOCK = "sudo flock /var/cache/dnf/.xcraft.lock"
 """Prefix of the dnf commands: the containers share the dnf cache volume, which dnf does not lock across them."""
 
 
-PACKAGES = ["dnf-plugins-core", "python3-dnf-plugin-versionlock", "createrepo_c", "python3-rpm", "sudo"]
+PACKAGES = ["dnf-plugins-core", "createrepo_c", "python3-rpm", "sudo"]
 """Packages of the build environment used by xcraft, after those of the configuration."""
 
 
@@ -92,17 +90,14 @@ def _local_repos(project: Project) -> list[str]:
 
 
 def _image_files(project: Project) -> dict[str, str]:
-    from xcraft.resolution import resolve_image  # noqa: PLC0415, which runs containers
 
     return {
         "Containerfile": (BUILDENV / "Containerfile").read_text(),
-        "upstream.repo": repo_file(project),
         "pinned.repo": pinned.REPO_FILE,
         # in the image before its packages are installed, and so in its tag: another image for other pins, rather than a
         # layer of the cache of podman
         "pins.list": "".join(f"{name} {pin.text()}\n" for name, pin in sorted(_image_pins(project).items())),
         "macros.xcraft": "".join(f"%{name} {value}\n" for name, value in sorted(project.config.macros.items())),
-        "versionlock.list": versionlock(resolve_image(project).image_packages()),
     }
 
 
@@ -192,7 +187,6 @@ def _podman_build(
     """Build `show`, the image `tag`, from `files` and the build `args`, logged in .xcraft/logs/_<step>.log, with the
     repository of the `pinned` packages, if any, on /pinned.
     """
-    _warm_dnf_cache(project)
     with project.work(step) as context:
         for name, content in files.items():
             (context / name).write_text(content)
@@ -204,6 +198,7 @@ def _podman_build(
         inspect = ["podman", "volume", "inspect", "--format", "{{.Mountpoint}}", volume]
         cache = process.run(inspect, capture=True).stdout.strip()
         cmd = ["podman", "build", "--platform", project.platform, "--security-opt", "label=disable"]
+        # the local repositories, for the signing image, which installs from the upstream ones
         volumes = [f"{cache}:/var/cache/dnf:O", *_local_repos(project), *([f"{pinned}:/pinned:ro"] if pinned else [])]
         cmd += [a for v in volumes for a in ("--volume", v)]
         cmd += build_args
@@ -220,21 +215,6 @@ def _dnf_cache(project: Project) -> str:
     return "xcraft-dnf-" + re.sub(r"[^a-z0-9]+", "-", project.platform)
 
 
-_warmed: set[tuple[Path, str]] = set()
-
-
-def _warm_dnf_cache(project: Project) -> None:
-    """Solve the metadata of the repositories of an emulated platform in its dnf cache, natively, once.
-
-    Under emulation, dnf spends most of its time solving them: 27 minutes for aarch64 on an x86_64 host, rather than
-    20 seconds.
-    """
-    if project.native or (project.root, project.platform) in _warmed:
-        return
-    _warmed.add((project.root, project.platform))
-    run_dnf(project, "warm", "makecache", show=f"solving the metadata of the repositories of {project.arch}")
-
-
 def run_dnf(
     project: Project,
     step: str,
@@ -245,13 +225,15 @@ def run_dnf(
     repos: dict[str, str] | None = None,
 ) -> None:
     """Run dnf with `args` natively, in the build environment image of the host, which has the plugins of dnf, like
-    repoclosure, unlike the base image of run_natively(), for the platform of `project`: with its repositories, the
-    other `repos`, by file name, and its dnf cache, logged in .xcraft/logs/_<step>.log.
+    repoclosure, unlike the base image of run_natively(), for the platform of `project`: with the repository of its
+    pinned packages, the other `repos`, by file name, and its dnf cache, logged in .xcraft/logs/_<step>.log.
     """
     cache = "/var/cache/dnf-emulated"  # the cache of the platform of `project`, besides the host's
     with project.work(f"{step}-dnf") as work:
         (work / "repos").mkdir()
-        for name, text in {"upstream.repo": repo_file(project), **(repos or {})}.items():
+        # the host's is on /pinned
+        repo = f"[{pinned.REPO_ID}]\nname={pinned.REPO_ID}\nbaseurl=file:///platform-pinned\ngpgcheck=0\nmetadata_expire=0\n"
+        for name, text in {"pinned.repo": repo, **(repos or {})}.items():
             (work / "repos" / name).write_text(text)
         run(
             project.on_host(),
@@ -261,6 +243,7 @@ def run_dnf(
             volumes=[
                 f"{_dnf_cache(project)}:{cache}",
                 f"{work}:/work:ro",
+                f"{pinned.repository(project)}:/platform-pinned:ro",
                 *(volumes or []),
             ],
             show=show,
@@ -394,10 +377,13 @@ def signing_image(project: Project) -> str:
     if not _exists(tag):
         # the versions of rpm-sign follow rpm's, which the lock may not have anymore
         containerfile = (
-            f"FROM {base}\nUSER root\nRUN dnf -y --disableplugin=versionlock install {' '.join(_SIGN_PACKAGES)}"
-            " && dnf clean all\nUSER builder\n"
+            f"FROM {base}\nUSER root\nCOPY upstream.repo /etc/yum.repos.d/\n"
+            f"RUN dnf -y --disablerepo={pinned.REPO_ID} install {' '.join(_SIGN_PACKAGES)} && dnf clean all"
+            " && rm /etc/yum.repos.d/upstream.repo\n"
+            "USER builder\n"
         )
-        _podman_build(project, "sign-image", tag, {"Containerfile": containerfile}, {}, show="the signing image")
+        files = {"Containerfile": containerfile, "upstream.repo": repo_file(project)}
+        _podman_build(project, "sign-image", tag, files, {}, show="the signing image")
     return tag
 
 
@@ -415,37 +401,29 @@ def run_container(
     """Run a bash `script` in a container called `container`, of the build environment image, or of `image`.
 
     The volumes are mounted with the scripts of the build environment, in
-    /xcraft, the versionlock of the lock, and a volume keeping the dnf cache
+    /xcraft, the repository of the pinned packages, and a volume keeping the dnf cache
     between containers. The output goes to `log`, or to an interactive terminal
     when there is no log, and `on_line` is called with each line written to the
     log. The container is stopped when interrupted, or when its log gets larger
     than MAX_LOG_SIZE.
     """
-    from xcraft.resolution import resolve_image  # noqa: PLC0415, which runs containers
-
-    _warm_dnf_cache(project)
     image = image or build_image(project)
-    (project.state / "tmp").mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", dir=project.state / "tmp", prefix="versionlock-") as lock_list:
-        lock_list.write(versionlock(resolve_image(project).packages))
-        lock_list.flush()
-        volumes = [*volumes, f"{BUILDENV}:/xcraft:ro", f"{lock_list.name}:/etc/dnf/plugins/versionlock.list:ro"]
-        volumes += [*_local_repos(project), f"{pinned.repository(project)}:/pinned:ro"]
-        cmd = [
-            # replacing a container of a killed xcraft
-            "podman", "run", "--rm", "--replace", "--name", container, "--platform", project.platform,
-            "--userns=keep-id:uid=1000,gid=1000", "--security-opt", "label=disable",
-            *([] if network else ["--network", "none"]), *(["--interactive", "--tty"] if log is None else []),
-            *(arg for volume in [f"{_dnf_cache(project)}:/var/cache/dnf", *volumes] for arg in ("--volume", volume)),
-            image, "bash", "-c", script,
-        ]  # fmt: skip
-        try:
-            returncode = (
-                process.run(cmd, check=False).returncode if log is None else _run_logged(cmd, log, on_line, container)
-            )
-        except BaseException:
-            _kill(container)
-            raise
+    volumes = [*volumes, f"{BUILDENV}:/xcraft:ro", f"{pinned.repository(project)}:/pinned:ro"]
+    cmd = [
+        # replacing a container of a killed xcraft
+        "podman", "run", "--rm", "--replace", "--name", container, "--platform", project.platform,
+        "--userns=keep-id:uid=1000,gid=1000", "--security-opt", "label=disable",
+        *([] if network else ["--network", "none"]), *(["--interactive", "--tty"] if log is None else []),
+        *(arg for volume in [f"{_dnf_cache(project)}:/var/cache/dnf", *volumes] for arg in ("--volume", volume)),
+        image, "bash", "-c", script,
+    ]  # fmt: skip
+    try:
+        returncode = (
+            process.run(cmd, check=False).returncode if log is None else _run_logged(cmd, log, on_line, container)
+        )
+    except BaseException:
+        _kill(container)
+        raise
     if returncode:
         msg = "failed" + (f", see {log}" if log else "")
         raise ContainerError(msg)

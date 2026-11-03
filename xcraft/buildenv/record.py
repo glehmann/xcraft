@@ -3,8 +3,7 @@
 They are read from the database of rpm, without the metadata of the upstream repositories, which may not have them
 anymore: those built by xcraft have the repository ``xcraft``, those of the repository of our builds, whose id in the
 containers is ``xcraft-<project id>``, the others ``upstream``, without their SHA-256, which only their downloads
-checked, see xcraft.pinned. Run as root in the build environment, with the dnf python API, which does not apply the
-versionlock: ``record.py <output>``.
+checked, see xcraft.pinned. Run as root in the build environment, with the dnf python API: ``record.py <output>``.
 """
 
 import json
