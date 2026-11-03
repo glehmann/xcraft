@@ -41,6 +41,9 @@ except ImportError:  # out of the build environment, for the tests of the helper
 
 OPS = {"<": "LT", "<=": "LE", "=": "EQ", ">=": "GE", ">": "GT"}
 OURS = ["xcraft-ours", "@commandline"]
+CCACHE_COMPILERS = ["gcc", "clang"]
+"""The compilers ccache wraps, which the build roots having them get ccache with, see build.sh: g++ needs gcc, and
+clang++ is clang's."""
 """The repositories of our packages: written from the specs, and built."""
 
 
@@ -236,11 +239,18 @@ class Resolver:
         # only ours of its dependencies, which are built before it
         others = self.base.sack.query().filter(reponame="xcraft-ours").filter(name__neq=list(allowed))
         self.base.sack.add_excludes(others)
+        installed = [p for p in image if p.name not in allowed]
         try:
-            return self.resolve(
-                packages, build["buildrequires"], weak=True, installed=[p for p in image if p.name not in allowed],
-                exclude_from_weak=unmet_weak,
-            )  # fmt: skip
+            root = self.resolve(
+                packages, build["buildrequires"], weak=True, installed=installed, exclude_from_weak=unmet_weak
+            )
+            # like build.sh, ccache with the compilers it wraps
+            if {p.name for p in root} & set(CCACHE_COMPILERS):
+                root = self.resolve(
+                    packages, [*build["buildrequires"], "ccache"], weak=True, installed=installed,
+                    exclude_from_weak=unmet_weak,
+                )  # fmt: skip
+            return root
         finally:
             self.base.sack.remove_excludes(others)
 

@@ -1,6 +1,7 @@
 """The compiler caches of the packages, shared through the remote storage.
 
-Each package has its own ccache directory, which the builds of CI fill. It is shared as a signed tree,
+Each package built with a compiler ccache wraps has its own ccache directory, which the builds of CI fill: their build
+roots have ccache, see buildenv/resolve.py. It is shared as a signed tree,
 ``.xcraft/ccache/<arch>/<package>/``, with an object by entry, at its path in the directory, rather than read from the
 storage by ccache itself, as the builds run without the network: a build without a local compiler cache gets it first.
 Only what one side has and the other has not is transferred, see push() and fetch(). The entries are compressed again
@@ -15,9 +16,10 @@ from typing import TYPE_CHECKING
 
 from rich.markup import escape
 
-from xcraft import remote
-from xcraft.container import run
+from xcraft import pinned, remote
+from xcraft.container import DNF_LOCK, run
 from xcraft.display import activity, console
+from xcraft.lock import read_lock
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
@@ -27,6 +29,9 @@ if TYPE_CHECKING:
     from xcraft.signing import Signer
 
 
+INSTALL = f"{DNF_LOCK} dnf -q -y --disablerepo='*' --enablerepo={pinned.REPO_ID} install ccache"
+"""Installs the pinned ccache in a container of the build environment, whose image does not have it: the build roots
+with a compiler it wraps do."""
 LEVEL = 9
 """The zstd level of the entries of the shared compiler caches: higher than the one of the builds, ccache's, which
 favors their speed, for smaller entries to transfer. For the kernel, on 8 CPUs, from 2,046 MiB at level 1: 1,731 MiB
@@ -48,9 +53,15 @@ def remote_path(project: Project, name: str) -> str:
     return f"{remote.CCACHE}/{project.arch}/{name}"
 
 
+def used(project: Project, name: str) -> bool:
+    """Return whether the builds of `name` use ccache: whether its build root has it."""
+    return "ccache" in read_lock(project).roots.of(project.arch).get(name, [])
+
+
 def note_build(project: Project, name: str, start: float) -> None:
-    """Note that the build of `name` started at `start` succeeded: see push()."""
-    (local_path(project, name) / _LAST_BUILD).write_text(f"{start}\n")
+    """Note that the build of `name` started at `start` succeeded, when it used ccache: see push()."""
+    if used(project, name):
+        (local_path(project, name) / _LAST_BUILD).write_text(f"{start}\n")
 
 
 def _result(entry: str) -> bool:
@@ -95,7 +106,7 @@ def push(project: Project, storage: Remote, name: str, *, signer: Signer | None)
             run(
                 project.on_host(),  # natively: the compression does not depend on the architecture
                 "ccache",
-                f"CCACHE_DIR=/ccache ccache --recompress {LEVEL}",
+                f"{INSTALL} && CCACHE_DIR=/ccache ccache --recompress {LEVEL}",
                 volumes=[f"{cache}:/ccache"],
                 show=f"compressing the ccache of {name}",
                 network=False,
@@ -140,8 +151,10 @@ def fetch(project: Project, name: str) -> bool:
 
 
 def fetch_missing(project: Project, name: str) -> None:
-    """Get the compiler cache of `name` from the remote storage, when it has none, and the storage has one."""
-    if not project.config.remote or local_path(project, name).exists():
+    """Get the compiler cache of `name` from the remote storage, when its builds use one, it has none, and the storage
+    has one.
+    """
+    if not project.config.remote or local_path(project, name).exists() or not used(project, name):
         return
     try:
         fetch(project, name)

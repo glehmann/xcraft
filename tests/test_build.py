@@ -379,6 +379,7 @@ def test_bump_version_must_increase(root: Path, monkeypatch: pytest.MonkeyPatch,
         .replace("Version: 1.0", "%global upver 1.10\nVersion: %{upver}")
     )
     (root / "xcraft.toml").write_text(f'same_version = [["trivial", "twin"]]\n{TOML}')
+    assert xcraft("status")[0] == 0  # which locks the build root of twin, with ccache
     paths = [spec, twin / "twin.spec", root / "base/trivial/sources", root / "xcraft.lock"]
     before = {path: path.read_bytes() for path in paths}
     code, output = xcraft("bump", "trivial", "--version", version)
