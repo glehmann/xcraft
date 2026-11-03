@@ -147,7 +147,7 @@ class Lock(BaseModel):
     """The upstream binary packages of the build environment image, by architecture, pinned in binaries."""
     roots: Recorded = Recorded()
     """For each package of ours, the upstream binary packages of its build root, but those of the image, pinned in
-    binaries."""
+    binaries: with those ours replace in its build, like the image, see graph.build_deps()."""
     runtime: dict[str, list[str]] = {}
     """Upstream packages of the published repositories, by architecture: what our packages need at runtime, the extra
     ones, and the installer's, pinned in binaries."""

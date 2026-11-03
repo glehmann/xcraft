@@ -338,16 +338,29 @@ class Project:
         return locked_packages(self.parsed, load_builds(self), self.arch)
 
     @cached_property
-    def deps(self) -> dict[str, set[str]]:
-        """The build dependencies of each package: the packages to build before it."""
+    def spec_deps(self) -> dict[str, set[str]]:
+        """The build dependencies of each package from the specs and the image, which the build roots are resolved
+        with: not those of the packages of ours replacing upstream ones of the build roots, see deps.
+        """
         from xcraft.graph import build_deps  # noqa: PLC0415, which needs the project
         from xcraft.resolution import resolve_image  # noqa: PLC0415
 
         return build_deps(self.packages, resolve_image(self).image)
 
+    @cached_property
+    def deps(self) -> dict[str, set[str]]:
+        """The build dependencies of each package: the packages to build before it, those of spec_deps and the packages
+        of ours its build root gets rather than the upstream ones of the lock, like kernel-headers with gcc.
+        """
+        from xcraft.graph import build_deps  # noqa: PLC0415, which needs the project
+        from xcraft.lock import read_lock  # noqa: PLC0415
+        from xcraft.resolution import resolve_image  # noqa: PLC0415
+
+        return build_deps(self.packages, resolve_image(self).image, read_lock(self).roots.of(self.arch))
+
     def refresh(self) -> None:
         """Forget the packages and their dependencies, after a change of the locks."""
-        for name in ("packages", "deps"):
+        for name in ("packages", "spec_deps", "deps"):
             self.__dict__.pop(name, None)
 
     def log(self, package: str) -> Path:

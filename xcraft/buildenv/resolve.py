@@ -229,28 +229,44 @@ class Resolver:
         finally:
             self.base.sack.remove_excludes(ours)
 
-    def buildroot(self, image: list, build: dict, unmet_weak: list) -> list:
+    def buildroot(self, image: list, build: dict, unmet_weak: list, swappable: set[str]) -> tuple[list, set[str]]:
         """Return the build root of the `build` of a package of ours, on the `image`, like dnf builddep, with the weak
-        dependencies, but the `unmet_weak` ones of the image.
+        dependencies, but the `unmet_weak` ones of the image, and with ours rather than the upstream packages of their
+        names, of the image or of the build root, but those of ours not `swappable`, which need the package; and the
+        upstream packages of the build root ours replaced.
         """
         allowed = set(build["allowed"])
         # those of ours replacing the image's, like kernel-headers, in the builds of the packages needing them
         packages = [self.ours[p.name] for p in image if p.name in allowed]
-        # only ours of its dependencies, which are built before it
+        installed = [p for p in image if p.name not in allowed]
+        deps, swapped, kept = list(build["buildrequires"]), set(), set()
+        root = self._buildroot(packages, deps, installed, allowed, unmet_weak)
+        while True:
+            # like build.sh, ccache with the compilers it wraps
+            if {p.name for p in root} & set(CCACHE_COMPILERS) and "ccache" not in deps:
+                deps.append("ccache")
+                root = self._buildroot(packages, deps, installed, allowed, unmet_weak)
+                continue
+            # those of ours replacing the upstream ones the build root comes with, like kernel-headers with gcc
+            if not (new := {p.name for p in root if p.reponame not in OURS and p.name in swappable} - allowed - kept):
+                return root, swapped
+            more = [*packages, *(self.ours[n] for n in sorted(new))]
+            try:
+                root = self._buildroot(more, deps, installed, allowed | new, unmet_weak)
+            except dnf.exceptions.Error:
+                # those ours cannot replace yet, like for a file they are not known to have: see checks.check_resolved()
+                kept |= new
+                continue
+            allowed, swapped, packages = allowed | new, swapped | new, more
+
+    def _buildroot(self, packages: list, deps: list[str], installed: list, allowed: set[str], unmet_weak: list) -> list:
+        """Return the packages to install for `packages` and `deps` on the `installed` ones, with only the `allowed`
+        packages of ours.
+        """
         others = self.base.sack.query().filter(reponame="xcraft-ours").filter(name__neq=list(allowed))
         self.base.sack.add_excludes(others)
-        installed = [p for p in image if p.name not in allowed]
         try:
-            root = self.resolve(
-                packages, build["buildrequires"], weak=True, installed=installed, exclude_from_weak=unmet_weak
-            )
-            # like build.sh, ccache with the compilers it wraps
-            if {p.name for p in root} & set(CCACHE_COMPILERS):
-                root = self.resolve(
-                    packages, [*build["buildrequires"], "ccache"], weak=True, installed=installed,
-                    exclude_from_weak=unmet_weak,
-                )  # fmt: skip
-            return root
+            return self.resolve(packages, deps, weak=True, installed=installed, exclude_from_weak=unmet_weak)
         finally:
             self.base.sack.remove_excludes(others)
 
@@ -326,13 +342,19 @@ def main() -> None:
     image = resolver.image(result["errors"])
     result["image"] = sorted(p.name for p in image)
     unmet_weak = resolver.unmet_weak(image)
+    owners = {b["name"]: b["package"] for b in data["ours"]}
+    # the packages of ours each build may get: those of its dependencies, built before it
+    needed = {name: {owners[b] for b in build["allowed"] if b in owners} for name, build in data["builds"].items()}
     for name, build in data["builds"].items():
+        # ours of other packages than those needing it
+        swappable = {b for b, owner in owners.items() if owner != name and name not in needed.get(owner, set())}
         try:
-            installed = resolver.buildroot(image, build, unmet_weak)
+            installed, swapped = resolver.buildroot(image, build, unmet_weak, swappable)
         except dnf.exceptions.Error as e:
             result["errors"][name] = str(e)
             continue
-        result["buildroots"][name] = sorted(p.name for p in installed if p.reponame not in OURS)
+        # with the upstream packages ours replace, like the image has those ours replace in the builds
+        result["buildroots"][name] = sorted({*(p.name for p in installed if p.reponame not in OURS), *swapped})
         result["ours"][name] = sorted(p.name for p in installed if p.reponame in OURS)
     for name, declared in data["record"].items():
         try:

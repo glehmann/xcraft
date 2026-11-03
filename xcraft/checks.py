@@ -14,6 +14,7 @@ from rich.markup import escape
 from xcraft.builds import load_builds, recordable, save_builds
 from xcraft.cache import BuildError, cached_build, release_suffix
 from xcraft.display import changes, console
+from xcraft.graph import reachable
 from xcraft.lock import Locked, load_lock
 from xcraft.project import write_atomically
 from xcraft.resolution import Resolved, prepare, resolve, resolve_rpm_deps, rpm_deps_context
@@ -29,20 +30,19 @@ def check_resolved(project: Project, name: str) -> Resolved:
     """Return what is resolved for the build of `name`, but raise when its build root cannot be resolved, or has
     upstream packages with the names of ours.
 
-    Those are packages of ours its build should get, but for those of the image
-    in the builds of the packages ours need. It happens with requirements xcraft
-    cannot see in the specs: files, versions.
+    Those are packages of ours its build should get, but in the builds of the
+    packages ours need, and of ours. It happens with requirements xcraft cannot
+    see in the specs: files, versions.
     """
     resolved = resolve(project)
     if error := resolved.errors.get(name):
         msg = f"its build root cannot be resolved: {error}"
         raise BuildError(msg)
     owners = {binary.name: package.name for package in project.packages.values() for binary in package.binaries}
-    image, deps = set(resolved.image), project.deps[name]
     if shadowed := sorted(
         f"{n} (ours from {owners[n]})"
         for n in resolved.buildroots[name]
-        if n in owners and (n not in image or owners[n] in deps)
+        if n in owners and n not in resolved.ours[name] and name not in reachable(project.spec_deps, [owners[n]])
     ):
         msg = f"its build root has the upstream {', '.join(shadowed)}: add a BuildRequires on their name to its spec"
         raise BuildError(msg)

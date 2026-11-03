@@ -403,7 +403,7 @@ def _ours(project: Project) -> list[dict]:
 
 
 def _roots_data(project: Project) -> dict:
-    packages, deps = project.packages, project.deps
+    packages, deps = project.packages, project.spec_deps
     builds = {
         name: {
             "buildrequires": package.buildrequires,

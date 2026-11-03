@@ -208,6 +208,22 @@ def test_build_root_of_files_of_ours(root: Path) -> None:
     assert "its build root has the upstream bc (ours from bc)" in output
 
 
+def test_build_root_packages_replaced_by_ours(root: Path) -> None:
+    # kernel-headers comes with gcc, through glibc-devel: ours rather than upstream's, built first
+    write_spec(root, "kernel-headers", files="/usr/include/xcraft-test.h")
+    spec = root / "base/kernel-headers/kernel-headers.spec"
+    spec.write_text(spec.read_text().replace("Version: 1.0", "Version: 99"))
+    write_spec(root, "compiled", "gcc")
+    code, output = xcraft("build", "compiled")
+    assert code == 0, output
+    assert [line.split(" built")[0] for line in results(output)[:2]] == ["✓ kernel-headers", "✓ compiled"]
+    project = Project.find()
+    assert "kernel-headers" in project.deps["compiled"]
+    # the upstream one in the lock, like for the image, which the build does not get
+    assert "kernel-headers" in load_lock(project).roots.of(ARCH)["compiled"]
+    assert re.search(r"^ kernel-headers .* xcraft-[0-9a-f]{8} ", project.log("compiled").read_text(), re.MULTILINE)
+
+
 def test_image_packages_replaced_by_ours(root: Path) -> None:
     # openblas-srpm-macros is in the image, and harmless to replace
     write_spec(root, "openblas-srpm-macros", files="/usr/share/xcraft-test/openblas-srpm-macros")
