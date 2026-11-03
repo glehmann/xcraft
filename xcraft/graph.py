@@ -47,12 +47,16 @@ def build_root_binaries(packages: dict[str, Package]) -> dict[str, list[Binary]]
     return result
 
 
-def build_deps(packages: dict[str, Package], image: Iterable[str] = ()) -> dict[str, set[str]]:
+def build_deps(
+    packages: dict[str, Package], image: Iterable[str] = (), roots: Mapping[str, Iterable[str]] | None = None
+) -> dict[str, set[str]]:
     """Return, for each package, the packages that must be built before it: those of the binaries its build installs.
 
     Those include our binaries replacing the upstream ones of the build
     environment `image`, like kernel-headers, in all builds but those of the
-    packages they need. Dependencies on anything else are left to the build
+    packages they need, and those replacing the upstream ones of the build root
+    of a package, of `roots`, by package, like kernel-headers with gcc, but for
+    the packages they need. Dependencies on anything else are left to the build
     environment's repositories.
     """
     owners = {binary.name: package.name for package in packages.values() for binary in package.binaries}
@@ -63,6 +67,14 @@ def build_deps(packages: dict[str, Package], image: Iterable[str] = ()) -> dict[
     for owner in sorted({owners[name] for name in image if name in owners}):
         for name in deps.keys() - reachable(deps, [owner]):
             deps[name].add(owner)
+    # like resolve.py: those of ours needing it, with the dependencies of the specs and the image, keep upstream ones
+    needed = {
+        owner: reachable(deps, [owner])
+        for owner in {owners[n] for r in (roots or {}).values() for n in r if n in owners}
+    }
+    for name, upstream in sorted((roots or {}).items()):
+        if name in deps:
+            deps[name] |= {owners[n] for n in upstream if n in owners and name not in needed[owners[n]]}
     return deps
 
 

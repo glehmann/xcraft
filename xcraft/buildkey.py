@@ -87,7 +87,7 @@ class Platform:
     def of(cls, project: Project, lock: Lock, builds: Builds) -> Platform:
         """Return what the keys cover of the architecture of `project`, with `lock`, its image, and `builds`."""
         packages = locked_packages(project.parsed, builds, project.arch)
-        deps = build_deps(packages, lock.image.get(project.arch, []))
+        deps = build_deps(packages, lock.image.get(project.arch, []), lock.roots.of(project.arch))
         return cls(
             project.arch,
             {name: frozenset(needed) for name, needed in deps.items()},
