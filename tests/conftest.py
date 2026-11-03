@@ -3,22 +3,26 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
+import json
 import os
 import shutil
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
 from tests import ARCH, PROJECT, TOML, TOYS, UPSTREAM, config
-from xcraft import container, process
+from xcraft import container, process, resolution, upstream_copy
 from xcraft.cache import build_keys
-from xcraft.container import build_image, run_natively
-from xcraft.project import Project
-from xcraft.resolution import prepare
+from xcraft.container import BUILDENV, build_image, repo_file, run_natively
+from xcraft.localrepo import extra_rpms
+from xcraft.project import Project, write_atomically
+from xcraft.resolution import Resolved, prepare
+from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-    from pathlib import Path
+    from collections.abc import Callable, Iterator, Sequence
 
 
 def make_toys(root: Path) -> None:
@@ -58,6 +62,32 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             item.add_marker(pytest.mark.podman)
         if item.get_closest_marker("podman") and not shutil.which("podman"):
             item.add_marker(pytest.mark.skip(reason="needs podman"))
+
+
+def _shared_resolutions(directory: Path) -> Callable[..., Resolved]:
+    """Return resolution._run(), resolving once for all the workers what the tests resolve the same, by what it is
+    resolved from: the built RPMs too, by SHA-256, and the metadata of the local repositories, which some tests change.
+    The original is its __wrapped__, for the tests of the resolutions.
+    """
+    run = resolution._run
+
+    def shared(project: Project, data: dict, *, show: str, rpms: Sequence[Path] = ()) -> Resolved:
+        local = [Path(volume.split(":")[0]) / "repodata/repomd.xml" for volume in container._local_repos(project)]
+        inputs = [
+            (BUILDENV / "resolve.py").read_text(), repo_file(project), upstream_copy.repo_file(project), project.arch,
+            project.config.base_image, data, sorted(sha256_of(f) for f in [*rpms, *extra_rpms(project)]),
+            [sha256_of(f) if f.exists() else "" for f in local],
+        ]  # fmt: skip
+        path = directory / f"{hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()}.json"
+        if path.exists():
+            return Resolved.model_validate_json(path.read_text())
+        resolved = run(project, data, show=show, rpms=rpms)
+        path.parent.mkdir(exist_ok=True)
+        write_atomically(path, resolved.model_dump_json())
+        return resolved
+
+    shared.__wrapped__ = run  # ty: ignore[unresolved-attribute]
+    return shared
 
 
 @pytest.fixture(scope="session")
@@ -104,6 +134,7 @@ def build_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path
     try:
         with pytest.MonkeyPatch.context() as patch:
             patch.setattr(container, "_dnf_cache", worker_cache)
+            patch.setattr(resolution, "_run", _shared_resolutions(shared / "resolutions"))
             worker_cache(Project(root, config()).on_host())
             yield root
     finally:
