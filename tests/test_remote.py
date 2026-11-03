@@ -1077,6 +1077,26 @@ def _copied(storage: Remote, directory: str, work: Path) -> dict[str, str]:
     return {digest: repodata.location(e) for digest, e in (repodata.read(work) or {}).items()}
 
 
+def _pins_from_the_copy(caplog: pytest.LogCaptureFixture) -> None:
+    """Check that a new machine gets the pinned packages from the upstream copy, with its metadata, without the
+    upstream repositories, nor a container.
+    """
+    pins = pinned.pins(Project.find())
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(pinned, "VOLUME", volume := f"xcraft-pinned-test-{os.getpid()}-{secrets.token_hex(4)}")
+        patch.setattr(pinned, "_checked", set())
+        try:
+            with caplog.at_level(logging.DEBUG, logger="xcraft"):
+                repo = pinned.repository(Project.find())
+            assert not [m for m in caplog.messages if m.startswith("running ") and ("pin.py" in m or "createrepo" in m)]
+            files = {pinned.file_name(n, p) for n, p in pins.items()}
+            assert {repodata.location(e) for e in (repodata.read(repo) or {}).values()} == files
+            assert {f.name for f in repo.glob("*.rpm")} == files
+        finally:
+            subprocess.run(["podman", "volume", "rm", "-f", volume], check=False, capture_output=True)
+    caplog.clear()
+
+
 def test_upstream_copy(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """The pinned upstream packages are copied to the storage once, with their metadata, and publishing copies them
     from there rather than uploading them.
@@ -1097,6 +1117,7 @@ def test_upstream_copy(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixt
         pins = pinned.pins(Project.find())
         assert _copied(storage, ARCH, tmp_path / "1") == {p.sha256: pinned.file_name(n, p) for n, p in pins.items()}
         assert set(remote.listing(storage, f"{prefix}/{ARCH}/")) >= {pinned.file_name(n, p) for n, p in pins.items()}
+        _pins_from_the_copy(caplog)
         # the source packages of what is published, not of the build environment, as [publish] build is false
         bc = pins["bc"]
         assert f"bc-{bc.evr.split(':')[-1]}.src.rpm" in _copied(storage, "Source", tmp_path / "2").values()
