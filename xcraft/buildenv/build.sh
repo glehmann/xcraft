@@ -44,6 +44,11 @@ time {
         # the last ones: rpmbuild -br wrote the source package
         rpm -qp --requires /build/SRPMS/*.src.rpm >/build/buildrequires.txt
     fi
+    # with the compilers it wraps, like the build roots of resolve.py; its package makes its group after installing
+    # the files of the group, which get root's, unused as the cache is /ccache: not a warning of the build
+    if rpm -q --quiet gcc || rpm -q --quiet clang; then
+        $lock dnf -y "${installed[@]}" install ccache 2>&1 | grep -v '^warning: group ccache does not exist'
+    fi
     $lock python3 /xcraft/record.py /build/buildroot.json
     # like mock's login shell, for the environment of build dependencies, like opam's, which are not written for set -eu
     set +eu +o pipefail

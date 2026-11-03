@@ -627,7 +627,12 @@ def test_fetch_needed(root: Path) -> None:
 
 def ccache_hits(cache: Path) -> int:
     """Return how many compilations were found in the compiler cache `cache`."""
-    run(Project.find(), "test-ccache", "CCACHE_DIR=/cache ccache --print-stats", volumes=[f"{cache}:/cache"])
+    run(
+        Project.find(),
+        "test-ccache",
+        f"{ccache.INSTALL} && CCACHE_DIR=/cache ccache --print-stats",
+        volumes=[f"{cache}:/cache"],
+    )
     log = (Project.find().state / "logs/_test-ccache.log").read_text()
     stats = {k: int(v) for k, v in (line.split("\t") for line in log.splitlines() if "\t" in line)}
     return stats["direct_cache_hit"] + stats["preprocessed_cache_hit"]

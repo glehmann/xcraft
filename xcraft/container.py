@@ -55,7 +55,7 @@ DNF_LOCK = "sudo flock /var/cache/dnf/.xcraft.lock"
 """Prefix of the dnf commands: the containers share the dnf cache volume, which dnf does not lock across them."""
 
 
-PACKAGES = ["dnf-plugins-core", "python3-dnf-plugin-versionlock", "createrepo_c", "python3-rpm", "ccache", "sudo"]
+PACKAGES = ["dnf-plugins-core", "python3-dnf-plugin-versionlock", "createrepo_c", "python3-rpm", "sudo"]
 """Packages of the build environment used by xcraft, after those of the configuration."""
 
 
