@@ -53,8 +53,9 @@ DNF_LOCK = "sudo flock /var/cache/dnf/.xcraft.lock"
 """Prefix of the dnf commands: the containers share the dnf cache volume, which dnf does not lock across them."""
 
 
-PACKAGES = ["dnf-plugins-core", "createrepo_c", "python3-rpm", "sudo"]
-"""Packages of the build environment used by xcraft, after those of the configuration."""
+PACKAGES = ["dnf-plugins-core", "createrepo_c", "sudo"]
+"""Packages of the build environment used by xcraft, after those of the configuration: dnf builddep and repoclosure,
+the indexes of the local repositories, and dnf as root. The base image has dnf and its rpm python module."""
 
 
 class ContainerError(RuntimeError):

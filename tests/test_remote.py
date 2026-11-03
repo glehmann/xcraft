@@ -660,7 +660,7 @@ def test_ccache(  # noqa: PLR0915
     build = "%build\necho 'int f(void) { return 0; }' > t.c\ngcc -c t.c -o t.o\n"
     spec.write_text(
         spec.read_text()
-        .replace("BuildArch: noarch\n", "")
+        .replace("BuildArch: noarch\n", "BuildRequires: gcc\n")
         .replace("%install\n", build + "%install\n")
         .replace("touch %{buildroot}/usr/lib/compiled/t.o", "cp t.o %{buildroot}/usr/lib/compiled/t.o")
     )
@@ -739,7 +739,7 @@ def test_ccache_of_the_last_build(root: Path, tmp_path: Path) -> None:
     spec = root / "base/compiled/compiled.spec"
     template = (
         spec.read_text()
-        .replace("BuildArch: noarch\n", "")
+        .replace("BuildArch: noarch\n", "BuildRequires: gcc\n")
         .replace("touch %{buildroot}/usr/lib/compiled/t.o", "cp t.o %{buildroot}/usr/lib/compiled/t.o")
     )
     cache = root / ".xcraft/ccache/compiled"
