@@ -41,10 +41,11 @@ xcraft --install-completion  # optional
 | `xcraft boot --installed [--disk f]` | Boot the installed virtual disk without making or attaching an ISO |
 | `xcraft vm <command>` | Inspect a VM, read its console, send input, save diagnostics, or stop it |
 | `xcraft key create` / `xcraft key show [--export]` | The developer's key, which signs the development builds |
-| `xcraft push` | Upload everything the remote storage misses: the source archives and the builds of all packages, with the `index.html` pages of their directories |
+| `xcraft push` | Upload everything the remote storage misses: the source archives and the builds of all packages, with the `index.html` pages of their directories, and the resolutions |
 | `xcraft push sources [<pkg>...] [--check] [--to main\|dev]` | Upload cached sources, or check the selected bucket; defaults to dev |
 | `xcraft push builds [<pkg>...]` | Upload the current builds missing from the remote storage, for CI |
 | `xcraft push isos [--unsigned] [--to main\|dev]` | Upload cached full and netinstall ISOs matching the checkout |
+| `xcraft push resolutions` | Upload the resolutions of the project as it is, which new checkouts fetch rather than resolving, for CI |
 | `xcraft push index` | Make the `index.html` pages of all the directories of the remote storage |
 | `xcraft push ccache [<pkg>...]` | Update the compiler caches of the remote storage with those of the packages, for CI |
 | `xcraft fetch` | Download everything the caches miss: the current builds of all packages, then their source archives |
@@ -472,8 +473,8 @@ The writes use the credentials of `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY
 the published repositories, in `repos/`, the published ISOs, in `isos/`, and what xcraft keeps for itself, in
 `.xcraft/`, like the local state of a checkout: `.xcraft/sources/<sha256>/<filename>`,
 `.xcraft/builds/<arch>/<package>/<key>+b<n>/`, with a `manifest.asc` of the build's files, and the signed builds,
-the compiler caches, the public keys and the ISOs of the checkouts, in `.xcraft/signed/`, `.xcraft/ccache/`,
-`.xcraft/keys/` and `.xcraft/isos/`.
+the compiler caches, the resolutions, the public keys and the ISOs of the checkouts, in `.xcraft/signed/`,
+`.xcraft/ccache/`, `.xcraft/resolved/`, `.xcraft/keys/` and `.xcraft/isos/`.
 
 - When an archive of a manifest is not in the source cache, the build, or `xcraft fetch sources`, downloads it, from
   the storage, or else from the source of the spec whose URL has the name of the archive, and checks it against the
@@ -498,6 +499,10 @@ the compiler caches, the public keys and the ISOs of the checkouts, in `.xcraft/
   ccache's, to level 9, `ccache --recompress`: for the kernel, 15% less to transfer, in 20s on 8 CPUs, once, as it
   stays so. Then only the entries the storage does not have are uploaded, 64 at once. See
   [the design](docs/ccache-sync-design.md).
+- A resolution not in the local cache is downloaded from the storage, when it has it, signed by a trusted key, rather
+  than resolved: the image and the build roots of each architecture, by the hash of what they are resolved from, the
+  same everywhere, which CI pushes with `xcraft push`. So a new checkout of what CI built resolves nothing, without
+  the metadata of the upstream repositories. A storage failing is shown once, and the command resolves instead.
 
 Without network, or when the storage is unavailable, everything still works with what is local.
 

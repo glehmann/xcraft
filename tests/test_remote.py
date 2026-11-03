@@ -26,7 +26,7 @@ import pytest
 from tests import ARCH, PLATFORM, TOML, copy_project, needs_gpg
 from tests.test_build import results, write_spec, xcraft
 from tests.test_iso import cache_image
-from xcraft import buildid, ccache, pinned, remote, repodata, upstream_copy
+from xcraft import buildid, ccache, pinned, remote, repodata, resolution, upstream_copy
 from xcraft import publish as publisher
 from xcraft.container import run
 from xcraft.iso import build_iso, fetch_isos, iso_key, iso_name, iso_path, push_isos
@@ -541,10 +541,49 @@ def test_push_everything(root: Path, tmp_path: Path) -> None:
     assert f"↑ {archive.name}\n1 pushed, 0 already in the remote storage\n↑ trivial\n1 pushed, 0 already" in output
     # the pages of what was pushed only: xcraft push index makes them all
     assert output.endswith(
-        f"1 pushed, 0 already in the remote storage\nnot in the source cache: {archive.name}; not built: with-deps"
+        "already in the remote storage\n"  # the resolutions, which the other tests may have pushed
+        f"not in the source cache: {archive.name}; not built: with-deps"
     )
+    assert re.search(r"^resolutions: \d+ pushed, \d+ already in the remote storage$", output, re.MULTILINE)
     assert f'href="{archive.name}"' in page(f".xcraft/sources/{sha256_of(archive)}/")
     assert xcraft("push", "sources", "trivial", "--check", "--to", "main")[0] == 0
+
+
+def test_resolutions_from_the_remote_storage(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # build roots of their own, not those of the other tests, which share the storage
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(
+        spec.read_text().replace("BuildArch: noarch", f"BuildArch: noarch\nProvides: t-{secrets.token_hex(4)}")
+    )
+    code, output = xcraft("push", "resolutions", "--to", "main")
+    assert code == 0, output
+    assert re.search(r"^resolutions: [1-9]\d* pushed", output, re.MULTILINE)
+    assert re.search(r"^resolutions: 0 pushed", xcraft("push", "resolutions", "--to", "main")[1], re.MULTILINE)
+    resolved, log = root / ".xcraft/cache/resolved", root / ".xcraft/logs/_resolve.log"
+    caches = sorted(c for c in resolution.resolutions_read() if c.is_relative_to(resolved))
+
+    def new_checkout() -> str:
+        """Run xcraft status like in a new checkout, without the resolutions, in a new process."""
+        shutil.rmtree(resolved)
+        log.unlink(missing_ok=True)
+        monkeypatch.setattr(resolution, "_resolved", {})
+        monkeypatch.setattr(resolution, "_unreachable", set())
+        code, output = xcraft("status")
+        assert code == 0, output
+        return output
+
+    # fetched, signed, rather than resolved
+    new_checkout()
+    assert not log.exists()
+    assert sorted(resolved.rglob("*.json")) == caches
+    # resolved, when what the storage has is not what was signed: the build roots of this test only
+    project = Project.find()
+    roots = resolution._cache(project, resolution._roots_data(project))
+    (tampered := root / "tampered.json").write_text("{}")
+    remote.upload(remote.storages(project)[0], f"{resolution.remote_tree(roots)}/{roots.name}", tampered)
+    assert "no resolutions from the remote storage" in new_checkout()
+    assert log.exists()
+    assert sorted(resolved.rglob("*.json")) == caches
 
 
 def test_builds(root: Path) -> None:

@@ -20,12 +20,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 from rich.markup import escape
 
+from xcraft import remote
 from xcraft.builds import drop_gone
 from xcraft.container import BUILDENV, PACKAGES, base_packages, repo_file, run_natively
 from xcraft.display import console
@@ -94,6 +96,8 @@ def _run(project: Project, data: dict, *, show: str, rpms: Sequence[Path] = ()) 
     cache = project.state / "cache"
     paths = sorted(f"/cache/{rpm.relative_to(cache)}" for rpm in [*rpms, *extra_rpms(project)])
     data = {"rpms": paths, "record": {}, "wanted": [], "versions": [], **data}
+    if "base" not in data:  # by reference in the cache keys, see _cache()
+        data["base"] = base_packages(project)
     with project.work("resolve") as work:
         (work / "input.json").write_text(json.dumps(data))
         run_natively(
@@ -120,18 +124,51 @@ def _extra(project: Project) -> dict[str, dict[str, str]]:
     return {name: extra.model_dump() for name, extra in project.config.extra_upstream.items()}
 
 
-def _cached(project: Project, data: dict, *, show: str) -> Resolved:
-    """Return what resolve.py resolves from `data`, from the cache when it was resolved before.
-
-    The cache key covers the extra upstream RPMs too, which _run() gives it, like the build keys: by their URLs.
+def _cache(project: Project, data: dict) -> Path:
+    """Return the cache of what resolve.py resolves from `data`, by its key: the script, the repositories, the
+    request, with the base image by reference rather than its packages, which _run() reads, and the extra upstream
+    RPMs, which _run() gives it, like the build keys: by their URLs. The same on all the machines, for the remote
+    storage, see remote_tree().
     """
-    inputs = [_SCRIPT.read_text(), repo_file(project), data, _extra(project)]
+    inputs = [_SCRIPT.read_text(), repo_file(project), data, project.config.base_image, _extra(project)]
     key = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode())
-    cache = project.state / "cache/resolved" / project.arch / f"{key.hexdigest()}.json"
-    if cache not in _resolved:
-        if not cache.exists():
+    return project.state / "cache/resolved" / project.arch / f"{key.hexdigest()}.json"
+
+
+def remote_tree(cache: Path) -> str:
+    """Return the tree of the remote storage of the cached resolution `cache`, which has it as is."""
+    return f"{remote.RESOLVED}/{cache.parent.name}/{cache.stem}"
+
+
+_unreachable: set[Path] = set()
+"""The projects whose remote storage failed, not asked again by this process."""
+
+
+def _fetched(project: Project, cache: Path) -> bool:
+    """Download the resolution `cache` from the remote storage, signed by a trusted key, and return whether it has it:
+    pushed by CI, see xcraft push. A storage failing is warned about once, and resolving goes on without it.
+    """
+    if not project.config.remote or project.root in _unreachable:
+        return False
+    tree = cache.parent / f".{cache.stem}-{os.getpid()}"
+    try:
+        if found := remote.fetch_tree(project, remote_tree(cache), tree):
+            (tree / cache.name).rename(cache)
+    except (remote.RemoteError, OSError) as e:
+        _unreachable.add(project.root)
+        console.print(f"[yellow]no resolutions from the remote storage[/]: {escape(str(e))}")
+        return False
+    finally:
+        shutil.rmtree(tree, ignore_errors=True)
+    return found
+
+
+def _cached(project: Project, data: dict, *, show: str) -> Resolved:
+    """Return what resolve.py resolves from `data`, from the cache when it was resolved before, here or by CI."""
+    if (cache := _cache(project, data)) not in _resolved:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        if not cache.exists() and not _fetched(project, cache):
             resolved = _run(project, data, show=show)
-            cache.parent.mkdir(parents=True, exist_ok=True)
             write_atomically(cache, resolved.model_dump_json())  # for the commands reading it at once
         _resolved[cache] = Resolved.model_validate_json(cache.read_text())
     return _resolved[cache]
@@ -143,7 +180,6 @@ def _image_data(project: Project) -> dict:
         "arch": project.arch,
         "suffixes": config.release_suffixes,
         "sources": read_lock(project).sources,
-        "base": base_packages(project),
         "image": sorted({*config.packages, *PACKAGES}),
         "ours": [],
         "builds": {},

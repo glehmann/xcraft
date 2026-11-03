@@ -15,6 +15,7 @@ from xcraft.devbuilds import developed
 from xcraft.display import activity, console
 from xcraft.iso import push_isos
 from xcraft.project import Project, Remote
+from xcraft.resolution import remote_tree, resolutions_read
 from xcraft.signing import Signer, signing_key
 from xcraft.sources import cached_source, read_manifest, source_path
 
@@ -27,7 +28,8 @@ def everything(ctx: typer.Context, final: Final = False, arch: Arch = None, key:
 
     Without a command: the sources and the builds of all the packages, but the development ones, unless --final, which
     uploads their final builds, with the pages of the directories of what is pushed: xcraft push index makes them all;
-    then the pinned upstream packages, see xcraft push upstream.
+    the resolutions of the project, see xcraft push resolutions; then the pinned upstream packages, see xcraft push
+    upstream.
     The sources not in the source cache, like those of the packages which did not build, the packages not built, and
     the upstream ones found nowhere, do not keep the others from being pushed, then fail it.
     """
@@ -38,7 +40,9 @@ def everything(ctx: typer.Context, final: Final = False, arch: Arch = None, key:
     project = load(arch=arch)
     storage = remote_storage(project, to)
     absent = _push_sources(project, storage, None)
-    not_built = _push_builds(project, storage, None, signer=signing_key(project, key), final=final)
+    signer = signing_key(project, key)
+    not_built = _push_builds(project, storage, None, signer=signer, final=final)
+    _push_resolutions(project, storage, signer=signer)
     copied = _push_upstream(project, storage)
     if problems := [
         *([f"not in the source cache: {', '.join(absent)}"] if absent else []),
@@ -161,6 +165,36 @@ def _push_builds(
             remote.update_pages(project, storage, [f"{paths[name]}/" for name in pushed])
     console.print(f"{len(pushed)} pushed, {len(present)} already in the remote storage")
     return not_built
+
+
+@app.command()
+def resolutions(arch: Arch = None, key: Key = None, to: To = "dev") -> None:
+    """Upload the resolutions of the project as it is: the images and the build roots of all the architectures, which
+    the commands fetch rather than resolving them, like in a new checkout.
+    """
+    project = load(arch=arch)
+    _push_resolutions(project, remote_storage(project, to), signer=signing_key(project, key))
+
+
+def _push_resolutions(project: Project, storage: Remote, *, signer: Signer | None) -> None:
+    """Upload the resolutions this process read, those of the project as it is once loaded, which `storage` misses."""
+    caches = project.state / "cache/resolved"
+    trees = {remote_tree(cache): cache for cache in sorted(resolutions_read()) if cache.is_relative_to(caches)}
+    with activity("checking the remote storage"), ThreadPoolExecutor(remote.REQUESTS) as pool:
+        missing = [
+            t
+            for t, exists in zip(
+                trees, pool.map(lambda t: remote.tree_exists(storage, t, trusted=signer), trees), strict=True
+            )
+            if not exists
+        ]
+    for tree in missing:
+        with activity("uploading the resolutions"):
+            remote.upload_tree(storage, tree, trees[tree].parent, [trees[tree].name], signer=signer)
+    if missing:
+        with activity("making the pages of the directories"):
+            remote.update_pages(project, storage, [f"{tree}/" for tree in missing])
+    console.print(f"resolutions: {len(missing)} pushed, {len(trees) - len(missing)} already in the remote storage")
 
 
 @app.command("upstream")

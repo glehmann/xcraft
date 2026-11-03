@@ -4,7 +4,7 @@ It has the published repositories and ISOs, in ``repos/`` and ``isos/``, and,
 in ``.xcraft/``, what xcraft keeps for itself: the source archives, as
 ``.xcraft/sources/<sha256>/<filename>`` like the local source cache, and the
 builds, as ``.xcraft/builds/<arch>/<package>/<key>/`` trees, with the signed
-builds, the compiler caches, the public keys, the ISOs of the checkouts, and the
+builds, the compiler caches, the resolutions, the public keys, the ISOs of the checkouts, and the
 copy of the pinned upstream packages, see xcraft.upstream_copy.
 Garage, like other S3 storages, stores identical files once: copies cost
 nothing, so builds are stored as their files, for the published repositories
@@ -660,6 +660,8 @@ def _page(prefix: str, dirs: _Dirs, files: dict[str, _Entry], logo: str | None) 
 
 CCACHE = f"{INTERNAL}/ccache"
 """The compiler caches, a tree by architecture and package, see xcraft.ccache."""
+RESOLVED = f"{INTERNAL}/resolved"
+"""The resolutions, a tree by architecture and key, see xcraft.resolution."""
 
 
 def _paged(directory: str) -> bool:
