@@ -550,6 +550,8 @@ def test_push_everything(root: Path, tmp_path: Path) -> None:
 
 
 def test_resolutions_from_the_remote_storage(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # resolving here, not reading what the other tests resolved, see conftest.py
+    monkeypatch.setattr(resolution, "_run", getattr(resolution._run, "__wrapped__", resolution._run))
     # build roots of their own, not those of the other tests, which share the storage
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(
