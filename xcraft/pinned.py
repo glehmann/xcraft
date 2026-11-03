@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from xcraft import process
 from xcraft.lock import read_lock
+from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
     from xcraft.lock import Pin
@@ -82,20 +83,12 @@ def repository(project: Project) -> Path:
 
 def _intact(path: Path, pin: Pin) -> bool:
     """Return whether the RPM `path` is there, with the SHA-256 of its `pin`."""
-    return path.exists() and _sha256(path) == pin.sha256
+    return path.exists() and sha256_of(path) == pin.sha256
 
 
 def file_name(name: str, pin: Pin) -> str:
     """Return the file name of the RPM of the pinned package `name`, in the store and the repositories, as pin.py."""
     return f"{name}-{pin.evr.split(':')[-1]}.{pin.arch}.rpm"
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as f:
-        for block in iter(lambda: f.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def _store() -> Path:

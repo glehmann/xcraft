@@ -36,7 +36,7 @@ from xcraft.project import write_atomically
 from xcraft.specs import dep_name
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from xcraft.lock import Lock
@@ -87,7 +87,7 @@ class Resolved(BaseModel):
         return {name: self.packages[name] for name in self.image}
 
 
-def _run(project: Project, data: dict, *, show: str, rpms: list[Path] = []) -> Resolved:  # noqa: B006
+def _run(project: Project, data: dict, *, show: str, rpms: Sequence[Path] = ()) -> Resolved:
     """Return what resolve.py resolves from `data` for the platform of `project`, with the built `rpms`, in the cache,
     and the extra upstream RPMs.
     """
@@ -106,7 +106,13 @@ def _run(project: Project, data: dict, *, show: str, rpms: list[Path] = []) -> R
         return Resolved.model_validate_json((work / "output.json").read_text())
 
 
-_resolved: dict[str, Resolved] = {}
+_resolved: dict[Path, Resolved] = {}
+"""The cached resolutions read by this process, by file."""
+
+
+def resolutions_read() -> set[Path]:
+    """Return the files of the cached resolutions this process read: those of the lock as it is, once prepared."""
+    return set(_resolved)
 
 
 def _extra(project: Project) -> dict[str, dict[str, str]]:
@@ -122,13 +128,13 @@ def _cached(project: Project, data: dict, *, show: str) -> Resolved:
     inputs = [_SCRIPT.read_text(), repo_file(project), data, _extra(project)]
     key = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode())
     cache = project.state / "cache/resolved" / project.arch / f"{key.hexdigest()}.json"
-    if cache.name not in _resolved:
+    if cache not in _resolved:
         if not cache.exists():
             resolved = _run(project, data, show=show)
             cache.parent.mkdir(parents=True, exist_ok=True)
             write_atomically(cache, resolved.model_dump_json())  # for the commands reading it at once
-        _resolved[cache.name] = Resolved.model_validate_json(cache.read_text())
-    return _resolved[cache.name]
+        _resolved[cache] = Resolved.model_validate_json(cache.read_text())
+    return _resolved[cache]
 
 
 def _image_data(project: Project) -> dict:

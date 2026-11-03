@@ -81,6 +81,9 @@ def boot(
     if installed and iso:
         msg = "--installed and --iso cannot be used together"
         raise typer.BadParameter(msg)
+    if ssh_port and not vm.free(ssh_port):
+        msg = f"port {ssh_port} is in use on localhost: give another one, or none for the first free one from 2222"
+        raise typer.BadParameter(msg, param_hint="--ssh-port")
     project = Project.find(arch)
     vm_dir = (vm_dir or project.state / "vm" / project.arch).absolute()
     disk = (disk or vm_dir / "disk.qcow2").absolute()
@@ -96,9 +99,6 @@ def boot(
         raise typer.BadParameter(msg)
     ovmf = None if bios else vm.firmware(firmware_code, firmware_vars)
     vm.check_stopped(vm_dir)
-    if ssh_port and not vm.free(ssh_port):
-        msg = f"port {ssh_port} is in use on localhost: give another one, or none for the first free one from 2222"
-        raise typer.BadParameter(msg, param_hint="--ssh-port")
     if not (iso or installed):
         project.frozen = locked
         signer = choose_signer(project, local=True, unsigned=unsigned, dev_key=False, key=key)

@@ -126,7 +126,9 @@ def fetch_sources(project: Project, name: str, manifest: dict[str, str] | None =
 
 
 def cached_source(project: Project, filename: str, digest: str) -> bool:
-    """Check cached archives against the committed source manifest too."""
+    """Return whether the source cache has the archive `filename`, and raise when it has other contents than
+    `digest`.
+    """
     archive = project.source_cache / digest / filename
     if not archive.exists():
         return False

@@ -11,7 +11,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +21,7 @@ from rich.markup import escape
 from xcraft import process
 from xcraft.container import ContainerError, image_tag, run, signing_image
 from xcraft.display import console
+from xcraft.project import fingerprint
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
@@ -116,16 +116,8 @@ def release_signer(project: Project) -> Signer | None:
     return Signer(key=sign.key, gnupghome=Path(sign.gnupghome).expanduser() if sign.gnupghome else None)
 
 
-def fingerprint(key: str) -> str:
-    """Return the fingerprint `key`, of 40 hexadecimal digits, in uppercase, like the storage has the public keys."""
-    if not re.fullmatch(r"[0-9A-Fa-f]{40}", key):
-        msg = f"not the fingerprint of a key, of 40 hexadecimal digits: {key}"
-        raise SigningError(msg)
-    return key.upper()
-
-
 def signing_key(project: Project, key: str | None = None) -> Signer | None:
-    """Select an explicit key, the configured release key, or the checkout's developer key."""
+    """Return the signer of `key`, in the keyring of [sign], or else the one of [sign], or else the developer's."""
     signer = release_signer(project)
     if key:
         return Signer(fingerprint(key), signer.gnupghome if signer else None)

@@ -44,14 +44,16 @@ KEY_FILE = "RPM-GPG-KEY-xcpng"
 
 
 class Image(BaseModel):
-    """The cached ISO's version, of the distribution, and content digest."""
+    """A cached ISO: the version of the distribution it installs, and its SHA-256."""
 
     version: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.+-]*$")
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 def _templates(project: Project) -> str:
-    """Hash template files and symlink destinations, including masked units pointing to /dev/null."""
+    """Return the hash of the templates of the ISO: their files, and the targets of their links, like the units
+    masked by links to /dev/null.
+    """
     root = project.root / "iso"
     digest = hashlib.sha256()
     for path in sorted(root.rglob("*")):
@@ -64,7 +66,9 @@ def _templates(project: Project) -> str:
 
 
 def iso_key(project: Project, *, netinstall: bool, volid: str | None, signer: Signer | None) -> str:
-    """Hash checkout inputs without preparing containers or accessing signing secrets."""
+    """Return the key of the ISO of the checkout: what it is made of, read without containers, nor the secret key of
+    `signer`.
+    """
     lock, builds = load_lock(project), load_builds(project)
     config = project.config.model_dump(
         exclude={"remote", "logo", "import_", "sign", "ccache_size", "same_version", "publish"}
@@ -111,7 +115,7 @@ def cached_iso(project: Project, key: str) -> Path:
 
 
 def iso_inputs(project: Project, *, signer: Signer | None) -> dict[str, str]:
-    """Return the checkout keys of the full and netinstall ISOs."""
+    """Return the keys of the full and netinstall ISOs of the checkout, by architecture and variant."""
     return {
         f"{project.arch}/{'netinstall' if netinstall else 'full'}": iso_key(
             project, netinstall=netinstall, volid=None, signer=signer
@@ -148,7 +152,7 @@ def fetch_isos(project: Project, *, signer: Signer | None) -> bool:
 
 
 def iso_path(project: Project, key: str) -> str:
-    """Return the input-keyed ISO tree's path in remote storage."""
+    """Return the path of the tree of the ISO of `key` in the remote storage."""
     return f"{INTERNAL}/isos/{project.arch}/{key}"
 
 
@@ -196,7 +200,9 @@ def _find(project: Project, key: str, output: Path | None, *, netinstall: bool, 
 def push_isos(
     project: Project, storage: Remote, *, signer: Signer | None, upload_signer: Signer | None = None
 ) -> dict[str, tuple[str, str]]:
-    """Upload cached ISOs matching the checkout and return their remote paths and digests by output name."""
+    """Upload the cached ISOs of the checkout the storage misses, and return their paths there, with their SHA-256,
+    by file name.
+    """
     count = present = 0
     stored = {}
     for netinstall in (False, True):
@@ -270,7 +276,7 @@ def make_iso(
     volid: str | None,
     signer: Signer | None,
 ) -> Path:
-    """Reuse, fetch or make an ISO, storing it under its final checkout inputs."""
+    """Return the ISO of `snapshot`: cached, fetched, or made, and cached by the key of the checkout once made."""
     with project.lock():
         key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer)
         if found := _find(project, key, output, netinstall=netinstall, signer=signer):

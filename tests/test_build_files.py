@@ -15,7 +15,7 @@ import pytest
 import typer
 
 from tests import TOML, config, ours
-from xcraft import build, buildkey, cache, rpmbuild
+from xcraft import build, buildkey, cache, resolution, rpmbuild, specs
 from xcraft.build import queued
 from xcraft.builds import load_builds, save_builds
 from xcraft.cache import BuildError, build_keys, previous_duration
@@ -170,13 +170,20 @@ def test_main_spec(tmp_path: Path) -> None:
         main_spec(tmp_path / "grub")
 
 
-def test_clean_keeps_sources_and_current_builds(project: Project) -> None:
+def test_clean_keeps_sources_and_current_builds(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     state = project.state
     for path in ("cache/sources/abc/foo.tar.gz", "cache/builds/x86_64_v2/foo/current/RPMS/foo.rpm",
                  "cache/builds/x86_64_v2/foo/old/RPMS/foo.rpm", "cache/builds/x86_64_v2/gone/old/RPMS/gone.rpm",
-                 "build/foo/SPECS/foo.spec", "repo/foo.rpm", "ccache/foo/data"):  # fmt: skip
+                 "build/foo/SPECS/foo.spec", "repo/foo.rpm", "ccache/foo/data",
+                 # the caches of what this process read, and of the rest
+                 "cache/specs/aarch64/current.json", "cache/specs/x86_64_v2/old.json",
+                 "cache/resolved/aarch64/current.json", "cache/resolved/x86_64_v2/old.json",
+                 "cache/checks/installable/old", "cache/upstream/old.json", "cache/rpms/old.rpm",
+                 "cache/srpms/old.src.rpm", "cache/signed/key/x86_64_v2/foo/old/RPMS/foo.rpm"):  # fmt: skip
         (state / path).parent.mkdir(parents=True, exist_ok=True)
         (state / path).write_bytes(b"x" * 8192)
+    monkeypatch.setattr(specs, "_read", {state / "cache/specs/aarch64/current.json"})
+    monkeypatch.setattr(resolution, "_resolved", {state / "cache/resolved/aarch64/current.json": Resolved()})
 
     keys = {"foo": "current", "bar": "current"}
     # only what is of the given packages
@@ -201,13 +208,16 @@ def test_clean_keeps_sources_and_current_builds(project: Project) -> None:
     assert repos_disk_usage(project) == 8192  # only repo/ has it now
 
     assert clean(project, [keys]) > 0
+    kept = ["cache/resolved/aarch64/current.json", "cache/signed/key/x86_64_v2/foo/old/RPMS/foo.rpm"]
     assert files(state) == [
         "cache/builds/x86_64_v2/foo/current/RPMS/foo.rpm",
+        *kept,
         "cache/sources/abc/foo.tar.gz",
+        "cache/specs/aarch64/current.json",
         "ccache/foo/data",
     ]
     clean(project, [keys], all_builds=True, ccache=True)
-    assert files(state) == ["cache/sources/abc/foo.tar.gz"]
+    assert files(state) == [*kept, "cache/sources/abc/foo.tar.gz", "cache/specs/aarch64/current.json"]
 
 
 def test_previous_duration(project: Project) -> None:

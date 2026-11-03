@@ -90,11 +90,19 @@ class Remote(BaseModel):
     @field_validator("build_keys")
     @classmethod
     def fingerprints(cls, keys: list[str]) -> list[str]:
-        """Require full fingerprints, normalized for GPG's status output."""
+        """Check they are full fingerprints, and put them in uppercase, like gpg gives them in its status."""
         if any(len(key) not in (40, 64) or any(c not in "0123456789abcdefABCDEF" for c in key) for key in keys):
             msg = "build_keys must contain full GPG fingerprints"
             raise ValueError(msg)
         return [key.upper() for key in keys]
+
+
+def fingerprint(key: str) -> str:
+    """Return the fingerprint `key`, of 40 hexadecimal digits, in uppercase, like the storage has the public keys."""
+    if not re.fullmatch(r"[0-9A-Fa-f]{40}", key):
+        msg = f"not the fingerprint of a key, of 40 hexadecimal digits: {key}"
+        raise ValueError(msg)
+    return key.upper()
 
 
 class Sign(BaseModel):
@@ -109,12 +117,8 @@ class Sign(BaseModel):
 
     @field_validator("key")
     @classmethod
-    def fingerprint(cls, key: str) -> str:
-        """Check it is a fingerprint, and put it in uppercase, like the storage has the public keys."""
-        if not re.fullmatch(r"[0-9A-Fa-f]{40}", key):
-            msg = f"not the fingerprint of a key, of 40 hexadecimal digits: {key}"
-            raise ValueError(msg)
-        return key.upper()
+    def _fingerprint(cls, key: str) -> str:
+        return fingerprint(key)
 
 
 class Publish(BaseModel):
@@ -231,8 +235,9 @@ class Project:
         It works on the platform of the RPM architecture `arch`, $XCRAFT_ARCH, or the host's, like x86_64 for
         x86_64_v2, or else on the first one of the configuration.
         """
+        # resolved: the containers mount it, and links are resolved against it
         candidates = (
-            [Path(os.environ["XCRAFT_PROJECT"])]
+            [Path(os.environ["XCRAFT_PROJECT"]).resolve()]
             if "XCRAFT_PROJECT" in os.environ
             else [Path.cwd(), *Path.cwd().parents, *Path(sys.argv[0]).resolve().parents]
         )

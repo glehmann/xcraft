@@ -60,6 +60,7 @@ def lock(
         console.print(f"{lock_path(project).relative_to(project.root)} upgraded")
         return
     if update or outdated:
+        project.frozen = not update  # --outdated only reads the lock, like for CI
         with project.lock():
             changed = _update(project, packages or [], write=update)
         if outdated:

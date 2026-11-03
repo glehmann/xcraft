@@ -23,7 +23,8 @@ def clean(
     ccache: Annotated[bool, typer.Option("--ccache", help="Also remove the compiler caches.")] = False,
     arch: Arch = None,
 ) -> None:
-    """Remove the build trees and outdated builds, of the given packages only, or of all with what they share.
+    """Remove the build trees and outdated builds, of the given packages only, or of all with what they share: the
+    outdated caches of the specs, the resolutions and the checks, and the upstream packages downloaded.
 
     The current builds are kept: the final ones, and the development ones, as last built.
 

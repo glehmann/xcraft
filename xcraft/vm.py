@@ -40,7 +40,7 @@ class Reply(BaseModel):
 
 
 def connect(path: Path) -> socket.socket:
-    """Connect to a VM socket, including paths longer than Unix socket limits on Linux."""
+    """Return a connection to the socket at `path`, even longer than Unix sockets allow, through /proc on Linux."""
     client = socket.socket(socket.AF_UNIX)
     client.settimeout(10)
     try:
@@ -101,7 +101,7 @@ class Monitor:
 
 
 def running(directory: Path) -> bool:
-    """Check the monitor rather than trusting a potentially recycled PID."""
+    """Return whether QEMU runs in `directory`: its monitor answers, rather than a PID maybe of another process now."""
     try:
         with Monitor(directory) as monitor:
             monitor.execute("query-status")
@@ -111,7 +111,7 @@ def running(directory: Path) -> bool:
 
 
 def firmware(code: Path | None, template: Path | None) -> tuple[Path, Path]:
-    """Locate a matching OVMF code/variables pair, or use explicit paths."""
+    """Return the OVMF code and template of its variables: those given, or else those installed."""
     if bool(code) != bool(template):
         msg = "--firmware-code and --firmware-vars must be supplied together"
         raise RuntimeError(msg)
@@ -153,7 +153,7 @@ def command(
     headless: bool,
     ovmf: tuple[Path, Path] | None,
 ) -> list[str]:
-    """Build the QEMU command and preserve the VM's writable firmware variables."""
+    """Return the QEMU command of the VM, copying the template of the firmware variables it writes, once."""
     network = "user,model=e1000" + (f",hostfwd=tcp:127.0.0.1:{ssh_port}-:22" if ssh_port else "")
     # OVMF exposes modes that fit in VRAM; limit it so the installer cannot select a huge framebuffer.
     cmd = [
@@ -326,7 +326,9 @@ def type_text(monitor: Monitor, text: str) -> None:
 
 
 def collect(directory: Path, destination: Path) -> None:
-    """Copy host-side diagnostics, including a screenshot when QEMU is reachable."""
+    """Copy the session and logs of the VM to `destination`, with its serial console as text, and its status when
+    QEMU answers.
+    """
     destination.mkdir(parents=True, exist_ok=False)
     for name in ("session.json", "serial.log", "qemu.log"):
         if (directory / name).is_file():

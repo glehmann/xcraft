@@ -122,7 +122,9 @@ Dep = Annotated[
 def choose_signer(
     project: Project, *, local: bool, unsigned: bool, dev_key: bool, key: str | None = None
 ) -> Signer | None:
-    """Select the explicit, release or developer key for a snapshot."""
+    """Return the key signing a snapshot: `key`, the developer's with `dev_key`, or the default one, see
+    signing_key(), or none when `unsigned`.
+    """
     if key and dev_key:
         msg = "--key and --dev-key cannot be used together"
         raise typer.BadParameter(msg)
