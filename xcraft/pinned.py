@@ -1,8 +1,10 @@
 """The pinned upstream binary packages of an architecture, in the repository the build environment installs from.
 
 Their RPMs are in a store of the machine, a podman volume the projects share, by their SHA-256: each one downloaded
-once, and kept only with the SHA-256 of its pin, see buildenv/pin.py. The repository of the pins of an architecture is
-made once, in the store too, of those RPMs, checked against the pins before it is used, and mounted read-only on
+once, and kept only with the SHA-256 of its pin, from a copy of the remote storages, with its metadata, when one has
+them all, see xcraft.upstream_copy, or else from the upstream repositories, see buildenv/pin.py. The repository of the
+pins of an architecture is made once, in the store too, of those RPMs, checked against the pins before it is used, and
+mounted read-only on
 /pinned in the containers installing from it:
 the build of the image, see container.build_image(), and the builds, see buildenv/build.sh, which install nothing
 else upstream. The packages of the base image, of the same versions, are not installed again: they are those of its
@@ -17,18 +19,22 @@ import hashlib
 import json
 import os
 import shutil
+import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from xcraft import process
+from xcraft.display import activity
 from xcraft.lock import read_lock
+from xcraft.process import log
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from xcraft.lock import Pin
-    from xcraft.project import Project
+    from xcraft.project import Project, Remote
 
 VOLUME = "xcraft-pinned"
 """The podman volume of the store of the pinned RPMs, and of their repositories."""
@@ -86,6 +92,51 @@ def repository(project: Project, names: Iterable[str] | None = None) -> Path:
     raise PinnedError(msg)
 
 
+def _from_copies(project: Project, pinned: dict[str, Pin], directory: Path) -> bool:
+    """Make in `directory` the repository of the `pinned` packages from a copy of the remote storages, see
+    xcraft.upstream_copy, and return whether one has them all: the RPMs the store misses downloaded from it, checked
+    against their pins, and the entries of its metadata, without the metadata of the upstream repositories, nor a
+    container. A copy failing is skipped, like one missing some. Its metadata is only as trusted as the copy: the image
+    and the builds check what they installed against the pins.
+    """
+    from xcraft import remote, repodata, upstream_copy  # noqa: PLC0415, which use this module
+
+    store = _store() / "rpms"
+    for storage in remote.storages(project):
+        try:
+            with tempfile.TemporaryDirectory(prefix="xcraft-copy-") as tmp:
+                entries = upstream_copy.read(storage, project.arch, Path(tmp))[0]
+            if any(pin.sha256 not in entries for pin in pinned.values()):
+                continue
+
+            def fetch(item: tuple[str, Pin], storage: Remote = storage) -> bool:
+                name, pin = item
+                rpm = store / pin.sha256 / file_name(name, pin)
+                rpm.parent.mkdir(parents=True, exist_ok=True)
+                part = rpm.with_name(f".{rpm.name}.{os.getpid()}")
+                path = f"{upstream_copy.PREFIX}/{project.arch}/{file_name(name, pin)}"
+                if not remote.download(storage, path, part) or sha256_of(part) != pin.sha256:
+                    part.unlink(missing_ok=True)
+                    return False
+                part.chmod(0o444)
+                part.rename(rpm)
+                return True
+
+            missing = [(n, p) for n, p in pinned.items() if not (store / p.sha256 / file_name(n, p)).exists()]
+            with activity(f"getting the pinned packages of {project.arch}"), ThreadPoolExecutor(remote.MANY) as pool:
+                if not all(pool.map(fetch, missing)):
+                    continue
+        except (remote.RemoteError, upstream_copy.UpstreamError, OSError) as e:
+            log.warning("not getting the pinned packages from %s: %s", storage.url, e)
+            continue
+        directory.mkdir(parents=True)
+        for name, pin in pinned.items():
+            os.link(store / pin.sha256 / file_name(name, pin), directory / file_name(name, pin))
+        repodata.write(directory, {file_name(n, p): entries[p.sha256] for n, p in pinned.items()})
+        return True
+    return False
+
+
 def _intact(path: Path, pin: Pin) -> bool:
     """Return whether the RPM `path` is there, with the SHA-256 of its `pin`."""
     return path.exists() and sha256_of(path) == pin.sha256
@@ -137,19 +188,22 @@ def _pin(project: Project, pinned: dict[str, Pin], *directory: str) -> None:
 
 
 def _make(project: Project, pinned: dict[str, Pin], store: Path, ident: str) -> None:
-    """Make the repository `ident` of the `pinned` packages, of their RPMs downloaded and checked, see pin.py."""
+    """Make the repository `ident` of the `pinned` packages, of their RPMs downloaded and checked: from a copy of the
+    remote storages, or else see pin.py.
+    """
     from xcraft.container import run_natively  # noqa: PLC0415, which builds the image of the pins
 
     part = f"repos/.{ident}.{os.getpid()}"
-    _pin(project, pinned, part)
-    # with the tool of the host, in this container only
-    run_natively(
-        project.on_host(),
-        "pinned-repo",
-        ["bash", "-c", f"dnf -q -y install createrepo_c && createrepo_c -q /store/{part}"],
-        volumes=[f"{VOLUME}:/store"],
-        show=f"making the repository of the pinned packages of {project.arch}",
-    )
+    if not _from_copies(project, pinned, store / part):
+        _pin(project, pinned, part)
+        # with the tool of the host, in this container only
+        run_natively(
+            project.on_host(),
+            "pinned-repo",
+            ["bash", "-c", f"dnf -q -y install createrepo_c && createrepo_c -q /store/{part}"],
+            volumes=[f"{VOLUME}:/store"],
+            show=f"making the repository of the pinned packages of {project.arch}",
+        )
     try:
         (store / part).rename(store / "repos" / ident)
     except OSError:

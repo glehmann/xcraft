@@ -51,7 +51,7 @@ def repo_file(project: Project) -> str:
     )
 
 
-def _read(storage: Remote, directory: str, work: Path) -> tuple[dict[str, Entry], list[str]]:
+def read(storage: Remote, directory: str, work: Path) -> tuple[dict[str, Entry], list[str]]:
     """Return the metadata entries of the packages of the copy `directory`, by SHA-256, read in `work`, and the paths
     of its metadata files: nothing without metadata.
     """
@@ -76,7 +76,7 @@ def stored(project: Project, storage: Remote, arches: list[str]) -> tuple[dict[s
     known, sources = {}, {}
     with project.work("upstream-copy") as work:
         for directory in [*arches, SOURCE]:
-            for digest, entry in _read(storage, directory, work / directory)[0].items():
+            for digest, entry in read(storage, directory, work / directory)[0].items():
                 known[digest] = (entry, f"{PREFIX}/{directory}/{(name := repodata.location(entry))}")
                 if directory == SOURCE:
                     sources[name] = digest
@@ -99,7 +99,7 @@ def push(project: Project, storage: Remote) -> list[str]:
         return snapshot[0]
 
     with project.work("upstream") as work:
-        entries, hrefs = _read(storage, project.arch, work / "metadata")
+        entries, hrefs = read(storage, project.arch, work / "metadata")
         wanted, problems = _wanted(entries, {pinned.file_name(n, p): (n, p) for n, p in pins.items()})
         copies: Copies = {f: (rpm, None) for f, (n, p) in wanted.items() if (rpm := pinned.stored(n, p))}
         if left := [f for f in wanted if f not in copies]:
@@ -116,7 +116,7 @@ def push(project: Project, storage: Remote) -> list[str]:
         # the source packages of those the snapshots publish, from their metadata
         binaries = {pins[n].sha256: f"{n}-{pins[n].evr}.{pins[n].arch}" for n in _published(project)}
         srpms = {repodata.sourcerpm(e): binaries[s] for s, e in entries.items() if s in binaries}
-        entries, hrefs = _read(storage, SOURCE, work / "source-metadata")
+        entries, hrefs = read(storage, SOURCE, work / "source-metadata")
         have = {repodata.location(e) for e in entries.values()}
         if missing := {f: nevra for f, nevra in srpms.items() if f not in have}:
             known, sources = latest()
