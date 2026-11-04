@@ -468,8 +468,10 @@ def test_reused_builds_of_upstream_updates(root: Path, monkeypatch: pytest.Monke
                  "install -m 755 %{name}-%{version}/hello.sh %{buildroot}/usr/share/%{name}/")
         .replace("/usr/share/%{name}/hello.txt", "/usr/share/%{name}/hello.sh")
     )  # fmt: skip
+    # locked before its update, published to stay so before trivial requires it
+    (root / "xcraft.toml").write_text(f'{TOML}\n[publish]\nextra = ["toyrun"]\n')
     lock = load_lock(Project.find())
-    lock.sources["toyrun"] = "1-1"  # locked before its update
+    lock.sources["toyrun"] = "1-1"
     save_lock(Project.find(), lock)
     assert xcraft("build", "with-deps")[0] == 0
     commit_base(root)

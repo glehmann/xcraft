@@ -202,7 +202,9 @@ def test_lock_sources_locked_meanwhile(project: Project, monkeypatch: pytest.Mon
 
 
 def test_record_roots_locked_meanwhile(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    resolved = Resolved(packages={"glibc": locked("2.39-1", "glibc")}, image=["glibc"])
+    # foo's pin, of a source the lock read first does not have
+    packages = {"glibc": locked("2.39-1", "glibc"), "foo": locked("2-1", "foo")}
+    resolved = Resolved(packages=packages, image=["foo", "glibc"])
     resolutions = []
 
     def image(_platform: Project) -> Resolved:
@@ -216,7 +218,7 @@ def test_record_roots_locked_meanwhile(project: Project, monkeypatch: pytest.Mon
     resolution._record(project)
     lock = load_lock(project)
     assert lock.sources == {"foo": "2-1", "glibc": "2.39-1"}
-    assert lock.image == {platform.arch: ["glibc"] for platform in project.all_platforms()}
+    assert lock.image == {platform.arch: ["foo", "glibc"] for platform in project.all_platforms()}
 
 
 def test_record_pins(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:

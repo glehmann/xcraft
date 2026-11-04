@@ -745,9 +745,9 @@ shows our packages built against `python3`, through the upstream packages requir
 architectures, and has, one line per package for readable diffs:
 
 - `[sources]`: one version of each upstream source package installed in the build environment image, in a build root,
-  with the tools making the ISO, or published, for the whole tree. On each architecture, dnf only sees the binary
-  packages of that version, but the `release_suffixes` of `xcraft.toml`, like `[".alma_altarch"]` of the packages
-  AlmaLinux rebuilds for x86_64_v2.
+  with the tools making the ISO, or published, for the whole tree, and of these only. On each architecture, dnf only
+  sees the binary packages of that version, but the `release_suffixes` of `xcraft.toml`, like `[".alma_altarch"]` of
+  the packages AlmaLinux rebuilds for x86_64_v2.
 - `[image]`, by architecture, the upstream source packages of the build environment image, and `[roots]`, for each
   package of ours, those of its build root but the image's, shared by the architectures but for their own entries, in
   `[roots.<arch>]`: as resolved, for all the architectures, by the commands resolving them, which record them when

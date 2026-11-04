@@ -439,15 +439,16 @@ def test_lock_versions_of_all_the_architectures(root: Path) -> None:
     # toyarch 2 is only for x86_64: toyarch is locked in the version all the architectures have
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace("BuildArch: noarch", "BuildArch: noarch\nBuildRequires: toyarch"))
+    # toyrun, published, locked in an older version, has a newer one all the architectures have
+    (root / "xcraft.toml").write_text(f'{TOML}\n[publish]\nextra = ["toyrun"]\n')
+    lock = load_lock(Project.find())
+    lock.sources["toyrun"] = "1-1"
+    save_lock(Project.find(), lock)
     assert xcraft("build", "trivial")[0] == 0
     assert load_lock(Project.find()).sources["toyarch"] == "1-1"
     assert xcraft("lock", "--outdated", "toyarch") == (0, f"{UP_TO_DATE}\n")
     # by binary name, of the locked versions only
     assert xcraft("lock", "--outdated", "toyarch-new")[1].endswith("not locked: toyarch-new")
-    # toyrun, locked in an older version, has a newer one all the architectures have
-    lock = load_lock(Project.find())
-    lock.sources["toyrun"] = "1-1"
-    save_lock(Project.find(), lock)
     expected = "toyrun 1-1 -> 2-1\n1 to update: xcraft lock --update updates them\n"
     assert xcraft("lock", "--outdated", "toyarch", "toyrun") == (1, expected)
     assert load_lock(Project.find()).sources["toyrun"] == "1-1"
@@ -468,6 +469,13 @@ def test_lock_records_runtime(root: Path) -> None:
     assert load_lock(Project.find()).runtime == lock.runtime
     with pytest.raises(ResolutionError, match=f"cannot install, on {ARCH}: no-such-package"):
         published(Project.find())
+    # the sources of what is published no more leave the lock, the others keep their versions
+    (root / "xcraft.toml").write_text(TOML)
+    assert xcraft("build", "--dry-run")[0] == 0
+    sources = load_lock(Project.find()).sources
+    assert "bc" in lock.sources
+    assert "bc" not in sources
+    assert sources == {s: v for s, v in lock.sources.items() if s in sources}
 
 
 @pytest.mark.skipif(ARCH != "x86_64_v2", reason="the tools of the ISO are for x86_64")
@@ -622,8 +630,10 @@ def test_lock_update_changing_implicit_deps(root: Path) -> None:
                  "install -m 755 %{name}-%{version}/hello.sh %{buildroot}/usr/share/%{name}/")
         .replace("/usr/share/%{name}/hello.txt", "/usr/share/%{name}/hello.sh")
     )  # fmt: skip
+    # locked before its update, published to stay so before trivial requires it
+    (root / "xcraft.toml").write_text(f'{TOML}\n[publish]\nextra = ["toyrun"]\n')
     lock = load_lock(Project.find())
-    lock.sources["toyrun"] = "1-1"  # locked before its update
+    lock.sources["toyrun"] = "1-1"
     save_lock(Project.find(), lock)
     code, output = xcraft("build", "with-deps")
     assert code == 0, output

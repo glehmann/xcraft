@@ -30,7 +30,7 @@ One file, for all the architectures, written by xcraft only, one line by entry f
 
 | Table | What | Written by |
 |---|---|---|
-| `[sources]` | the version-release of each upstream source package used, the same on all the architectures | `prepare()`, for those needed and not locked yet; `xcraft lock --update` |
+| `[sources]` | the version-release of each upstream source package used, the same on all the architectures | `prepare()`, for those needed and not locked yet, dropping those no pin uses any more; `xcraft lock --update` |
 | `[binaries.<arch>]` | the pin of each upstream binary package used on `<arch>`: its EVR, architecture, the SHA-256 of its RPM, and its source package | `prepare()`, for those not pinned yet; `xcraft lock --update`, again |
 | `[image]` | by architecture, the upstream binary packages of the build environment image | `prepare()` |
 | `[roots]`, `[roots.<arch>]` | by package of ours, the upstream binary packages of its build root, but the image's | `prepare()` |
@@ -51,6 +51,8 @@ architectures.
 
 A source package needed and not locked yet, like for a new BuildRequires, is locked in the latest version all the
 architectures have, or else the latest one of the first having it, see `lock.choose_versions()`.
+A source package no pin uses any more, like that of a package published no more, leaves the lock when it is
+recorded: needed again, it is locked again, in the latest version.
 
 ### Pins: `[binaries.<arch>]`
 
