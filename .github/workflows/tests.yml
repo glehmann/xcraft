@@ -11,9 +11,15 @@ jobs:
     # natively on both architectures: the tests build for the host's
     strategy:
       fail-fast: false
+      # the tests shared by jobs, see XCRAFT_TEST_SHARD: more on x86_64, which tests more, like the ISOs
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
-    name: pytest (${{ matrix.runner }})
+        include:
+          - {runner: ubuntu-latest, shard: 1, shards: 3}
+          - {runner: ubuntu-latest, shard: 2, shards: 3}
+          - {runner: ubuntu-latest, shard: 3, shards: 3}
+          - {runner: ubuntu-24.04-arm, shard: 1, shards: 2}
+          - {runner: ubuntu-24.04-arm, shard: 2, shards: 2}
+    name: pytest (${{ matrix.runner }}, ${{ matrix.shard }}/${{ matrix.shards }})
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -23,6 +29,25 @@ jobs:
       # the build tests run podman, rootless: the arm64 runners may not have it
       - run: command -v podman || { sudo apt-get update -q && sudo apt-get install -qy podman; }
       - run: podman info --format '{{.Version.Version}} {{.Host.Security.Rootless}}'
+      # what the tests make the same each time: their upstream packages, by their specs, and the resolutions, by what
+      # they are resolved from, see conftest.py; those of the run only are saved again
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: |
+            tests/upstream/repos
+            ~/.cache/xcraft-tests
+          key: tests-${{ runner.arch }}-${{ matrix.shard }}-${{ matrix.shards }}-${{ hashFiles('tests/upstream/*.*') }}-${{ github.run_id }}
+          restore-keys: tests-${{ runner.arch }}-${{ matrix.shard }}-${{ matrix.shards }}-${{ hashFiles('tests/upstream/*.*') }}-
+      # the pinned packages, by their SHA-256, in the volume of podman xcraft finds them in
+      - run: podman volume create xcraft-pinned
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.local/share/containers/storage/volumes/xcraft-pinned/_data
+          key: pinned-${{ runner.arch }}-${{ matrix.shard }}-${{ matrix.shards }}-${{ github.run_id }}
+          restore-keys: pinned-${{ runner.arch }}-${{ matrix.shard }}-${{ matrix.shards }}-
+      - run: touch "$RUNNER_TEMP/started"
       # pytest's colours only: FORCE_COLOR, or GITHUB_ACTIONS for typer, would make the output of xcraft the one of a
       # terminal, and CI the one of CI, which the tests do not expect; GitHub does not let the workflows set them
-      - run: env -u GITHUB_ACTIONS -u CI pytest tests/ -v --color=yes
+      - run: env -u GITHUB_ACTIONS -u CI XCRAFT_TEST_RESOLUTIONS="$HOME/.cache/xcraft-tests/resolutions" XCRAFT_TEST_SHARD=${{ matrix.shard }}/${{ matrix.shards }} pytest tests/ -v --color=yes
+      # the resolutions of the run only, which the tests touch, saved by actions/cache
+      - run: find "$HOME/.cache/xcraft-tests/resolutions" -type f ! -newer "$RUNNER_TEMP/started" -delete
