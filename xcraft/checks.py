@@ -181,11 +181,17 @@ def _record_new_rpm_deps(
         }
         write_atomically(build / "rpm-deps.json", json.dumps(recorded))
     if pending:
-        waited = sorted(set().union(*pending.values()))
+        waiting, waited = sorted(pending), sorted(set().union(*pending.values()))
         console.print(
-            f"[yellow]what rpm generated for {', '.join(sorted(pending))}: recorded once {' and '.join(waited)}"
-            f" {'is' if len(waited) == 1 else 'are'} built[/]"
+            f"[yellow]warning[/]: the dependencies rpm generated for {_enumerate(waiting)} are recorded once"
+            f" {_enumerate(waited)}, which {'it needs' if len(waiting) == 1 else 'they need'},"
+            f" {'is' if len(waited) == 1 else 'are'} built"
         )
+
+
+def _enumerate(names: list[str]) -> str:
+    """Return `names` in a sentence, like ``a, b and c``."""
+    return " and ".join(filter(None, [", ".join(names[:-1]), names[-1]]))
 
 
 def _unbuilt_providers(project: Project, supplied: dict[str, str]) -> dict[str, str]:
