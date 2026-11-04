@@ -552,6 +552,26 @@ def test_recorded_once_all_built(root: Path, *, cached: bool) -> None:
     assert xcraft("build", "trivial", "xtool", "--locked") == (0, "2 cached\n")
 
 
+def test_recorded_once_what_they_require_is_built(root: Path) -> None:
+    # trivial requires what xtool, of ours, provides: recorded once xtool is built, without the problem of dnf
+    (root / "base/xtool").mkdir()
+    (root / "base/xtool/xtool.spec").write_text(
+        "Name: xtool\nVersion: 1.0\nRelease: 1%{?dist}\nSummary: A tool\nLicense: MIT\nBuildArch: noarch\n"
+        "Provides: xtool-core\n%description\nA tool.\n%install\nmkdir -p %{buildroot}/usr/share/xtool\n"
+        "touch %{buildroot}/usr/share/xtool/core\n%files\n/usr/share/xtool\n"
+    )
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(spec.read_text().replace("BuildArch: noarch", "BuildArch: noarch\nRequires: xtool-core"))
+    code, output = xcraft("build", "trivial")
+    assert code == 0, output
+    assert "what rpm generated for trivial: recorded once xtool is built" in output
+    assert "cannot record" not in output
+    code, output = xcraft("build", "trivial", "xtool")
+    assert code == 0, output
+    assert "recorded once" not in output
+    assert load_builds(Project.find()).requires.of(ARCH).get("trivial") is None  # what it requires, declared
+
+
 def test_recorded(root: Path) -> None:
     # a requirement rpm generates, of a script, and dynamic BuildRequires
     spec = root / "base/trivial/trivial.spec"

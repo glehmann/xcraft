@@ -7,6 +7,7 @@ its spec.
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING
 
 from rich.markup import escape
@@ -154,12 +155,18 @@ def _record_new_rpm_deps(
         for name, build in builds.items()
     }
     result = resolve_rpm_deps(project, {b: names[n][b] for n, bs in binaries.items() for b in bs}, current)
+    unbuilt = _unbuilt_providers(project, supplied)
+    pending: dict[str, set[str]] = {}  # the packages waiting for builds of ours, with those they wait for
     for name, build in builds.items():
         if failed := sorted(set(binaries[name]) & result.errors.keys()):
             for binary in [] if quiet else failed:
-                console.print(
-                    f"[yellow]cannot record what rpm generated for {binary}[/]: {escape(result.errors[binary])}"
-                )
+                missing = re.findall(r"nothing provides (\S+) needed by", result.errors[binary])
+                if missing and all(m in unbuilt for m in missing):
+                    pending.setdefault(name, set()).update(unbuilt[m] for m in missing)
+                else:
+                    console.print(
+                        f"[yellow]cannot record what rpm generated for {binary}[/]: {escape(result.errors[binary])}"
+                    )
             continue
         recorded = {
             "version": RECORDING,
@@ -173,6 +180,25 @@ def _record_new_rpm_deps(
             "provides": {names[name][b]: result.provides[b] for b in binaries[name] if b in result.provides},
         }
         write_atomically(build / "rpm-deps.json", json.dumps(recorded))
+    if pending:
+        waited = sorted(set().union(*pending.values()))
+        console.print(
+            f"[yellow]what rpm generated for {', '.join(sorted(pending))}: recorded once {' and '.join(waited)}"
+            f" {'is' if len(waited) == 1 else 'are'} built[/]"
+        )
+
+
+def _unbuilt_providers(project: Project, supplied: dict[str, str]) -> dict[str, str]:
+    """Return the packages of ours without a build of their current keys, not in `supplied`, by the names and the
+    capabilities of their binary packages: as their specs declare them, and as their builds recorded them.
+    """
+    return {
+        capability: name
+        for name, package in project.packages.items()
+        if name not in supplied
+        for binary in package.binaries
+        for capability in (binary.name, *(p.split(" ", 1)[0] for p in binary.provides))
+    }
 
 
 def _unsuffixed(project: Project, name: str, value: str, suffix: str) -> str:
