@@ -333,8 +333,9 @@ def _record_images(platforms: list[Project], recorded: Lock, lock: Lock, repin: 
 
 def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
     """Record in the lock the upstream binary packages of the images, of the build roots, of the published
-    repositories and of the tools making the ISO, of all the architectures, pinned, see _pins(), and keep in the lock
-    of the builds what the builds found for the packages of the project only.
+    repositories and of the tools making the ISO, of all the architectures, pinned, see _pins(), with the versions of
+    their source packages only, and keep in the lock of the builds what the builds found for the packages of the
+    project only.
     """
     platforms = project.all_platforms()
     drop_gone(project)
@@ -363,6 +364,9 @@ def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
                 *lock.runtime.get(platform.arch, []), *lock.iso.get(platform.arch, []),
             }  # fmt: skip
             lock.binaries[platform.arch] = _pins(platform.arch, recorded, [image, roots], names, repin)
+        # those of no pin left, like those of a package published no more, in their latest version when needed again
+        used = {pin.source for pins in lock.binaries.values() for pin in pins.values()}
+        lock.sources = {source: version for source, version in lock.sources.items() if source in used}
 
     _saved(project, record)
 
