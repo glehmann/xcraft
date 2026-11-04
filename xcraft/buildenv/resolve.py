@@ -136,18 +136,24 @@ class Resolver:
         repo._repo.expire()  # noqa: SLF001, like dnf expire-cache
         base.fill_sack(load_system_repo=False)
         self.built = {p.name: p for p in base.add_remote_rpms(data["rpms"])}
-        upstream = base.sack.query().available().filter(reponame__neq=OURS)
-        self.names = {p.name for p in upstream}
+        self.names: set[str] = set()
         self.versions: dict[str, set[str]] = {}
+        sources: dict[str, tuple[str, str]] = {}  # by source RPM, which many binaries share
         excluded = []
-        for p in upstream:
-            source, vr = self.canonical(p.sourcerpm)
+        for p in base.sack.query().available().filter(reponame__neq=OURS):
+            self.names.add(p.name)
+            if (sourcerpm := p.sourcerpm) not in sources:
+                sources[sourcerpm] = self.canonical(sourcerpm)
+            source, vr = sources[sourcerpm]
             self.versions.setdefault(source, set()).add(vr)
             if source in data["sources"] and vr != data["sources"][source]:
                 excluded.append(p)
         base.sack.add_excludes(excluded)
-        upstream = base.sack.query().available().filter(reponame__neq=OURS)
-        self.binaries = {p.name: p for p in sorted(upstream, key=functools.cmp_to_key(lambda a, b: a.evr_cmp(b)))}
+        # the latest of each name, of all its architectures
+        self.binaries: dict[str, dnf.package.Package] = {}
+        for p in base.sack.query().available().filter(reponame__neq=OURS).latest():
+            if (other := self.binaries.get(p.name)) is None or p.evr_cmp(other) >= 0:
+                self.binaries[p.name] = p
         self.ours = {p.name: p for p in base.sack.query().available().filter(reponame="xcraft-ours")}
         self.needed: set[str] = set()
         """The upstream source packages of what was resolved."""
