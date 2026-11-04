@@ -53,11 +53,14 @@ def build(
         results, keys, autorev = builder.build(
             project, names, with_deps=not no_deps, verbose=verbose, dev=ident, fetch=fetch
         )
-    if autorev:
-        for r in results:
-            if r.name in autorev and r.status == "built":
-                for rpm in sorted((cached_build(project, r.name, keys[r.name]) / "RPMS").rglob("*.rpm")):
+    if dev_built := [r.name for r in results if r.name in autorev and r.status == "built"]:
+        if verbose:
+            for name in dev_built:
+                for rpm in sorted((cached_build(project, name, keys[name]) / "RPMS").rglob("*.rpm")):
                     console.print(str(rpm), markup=False)
+        console.print(
+            f"development builds: xcraft repo {' '.join(dev_built)} makes a repository of them, for the hosts"
+        )
     counts = Counter(r.status for r in results)
     statuses = ("built", "fetched", "cached", "stored", "failed", "skipped")
     console.print(", ".join(f"{counts[status]} {status}" for status in statuses if counts[status]))

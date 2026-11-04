@@ -83,11 +83,17 @@ def edit(root: Path, line: str, *, name: str = "trivial", top: bool = True) -> N
     spec.write_text(f"# {line}\n{spec.read_text()}" if top else f"{spec.read_text()}# {line}\n")
 
 
+def _development_rpms() -> set[Path]:
+    """Return the RPMs of the development builds of the cache, in <key>+b<n>~<c>.<id>/RPMS/<arch>/."""
+    return {p for p in (Project.find().state / "cache/builds").rglob("*.rpm") if "~" in p.parents[2].name}
+
+
 def built(*args: str) -> list[str]:
-    """Build, and return the RPMs of the development builds made."""
+    """Build, and return the RPMs of the development builds made: those new in the cache."""
+    before = _development_rpms()
     code, output = xcraft("build", *args)
     assert code == 0, output
-    return [line.rsplit("/", 1)[-1] for line in output.splitlines() if line.endswith(".rpm")]
+    return sorted(p.name for p in _development_rpms() - before)
 
 
 def test_build_id_files() -> None:
@@ -300,6 +306,16 @@ def test_development_builds(root: Path, monkeypatch: pytest.MonkeyPatch) -> None
     # the development builds, as last built, are kept
     assert xcraft("clean")[0] == 0
     assert built() == []
+    # what to install them with, rather than the paths of their RPMs, but with --verbose
+    edit(root, "changed once more", name="with-deps")
+    code, output = xcraft("build")
+    assert code == 0, output
+    assert "development builds: xcraft repo with-deps makes a repository of them, for the hosts" in output
+    assert ".rpm" not in output
+    edit(root, "changed for the last time", name="with-deps")
+    code, output = xcraft("build", "--verbose")
+    assert code == 0, output
+    assert re.search(r"^/.*/RPMS/noarch/with-deps-1\.0-1\+b2~5\.qcow2\.xcpng8\.99\.noarch\.rpm$", output, re.MULTILINE)
 
 
 def test_development_builds_against_other_ones(root: Path) -> None:

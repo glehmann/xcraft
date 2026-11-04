@@ -77,10 +77,11 @@ def test_signer_selection(root: Path) -> None:
 
 @needs_gpg
 def test_development_builds_are_signed(build_environment: Path, root: Path) -> None:
-    def rpms(*args: str) -> list[Path]:
-        code, output = xcraft(*args)
+    def rpms(dev: str) -> list[Path]:
+        """Build trivial with the identifier `dev`, and return the RPMs of its development build."""
+        code, output = xcraft("build", "trivial", "--dev", dev)
         assert code == 0, output
-        return [root / p for p in output.splitlines() if p.endswith(".rpm")]
+        return sorted(root.glob(f".xcraft/cache/builds/*/trivial/*~*.{dev}/RPMS/*/*.rpm"))
 
     # a change on a branch: development builds
     subprocess.run(["git", "-C", str(root), "symbolic-ref", "HEAD", "refs/heads/master"], check=True)
@@ -91,11 +92,11 @@ def test_development_builds_are_signed(build_environment: Path, root: Path) -> N
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(f"# changed\n{spec.read_text()}")
     # unsigned without a key
-    unsigned = rpms("build", "trivial", "--dev", "nokey")
+    unsigned = rpms("nokey")
     assert xcraft("key", "create")[0] == 0
     signer = dev_signer(Project.find())
     assert signer
-    signed = rpms("build", "trivial", "--dev", "key")
+    signed = rpms("key")
     check_signatures(
         Project.find(), root, [str(p.relative_to(root)) for p in signed], what="test", public_key=signer.public_key()
     )
