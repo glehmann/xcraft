@@ -561,6 +561,26 @@ def test_recorded_once_all_built(root: Path, *, cached: bool) -> None:
     assert xcraft("build", "trivial", "xtool", "--locked") == (0, "2 cached\n")
 
 
+def test_dune_cache(root: Path) -> None:
+    # the cache of dune of trivial, which writes in it like dune: kept on this machine, but for the builds without dune
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(
+        spec.read_text().replace(
+            'echo "hello" > hello.txt',
+            'echo "hello" > hello.txt\necho "$DUNE_CACHE $DUNE_CACHE_STORAGE_MODE" > "$DUNE_CACHE_ROOT/entry"',
+        )
+    )
+    code, output = xcraft("build")
+    assert code == 0, output
+    caches = root / ".xcraft/dune-cache"
+    assert (caches / "trivial/entry").read_text() == "enabled copy\n"
+    assert [p.name for p in caches.iterdir()] == ["trivial"]  # not with-deps, without dune
+    assert xcraft("clean", "trivial")[0] == 0
+    assert (caches / "trivial/entry").exists()
+    assert xcraft("clean", "trivial", "--dune-cache")[0] == 0
+    assert not (caches / "trivial").exists()
+
+
 def test_recorded_once_what_they_require_is_built(root: Path) -> None:
     # trivial requires what xtool, of ours, provides: recorded once xtool is built, without the problem of dnf
     (root / "base/xtool").mkdir()
