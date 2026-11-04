@@ -145,6 +145,13 @@ def on_main(project: Project) -> bool:
     return bool(main := _main(project)) and _git(project, "merge-base", "--is-ancestor", "HEAD", main) is not None
 
 
+def final_only(project: Project) -> bool:
+    """Return whether the builds of the checkout are all final ones, without computing their IDs: out of a git
+    repository, without the main branch, or on it without changes.
+    """
+    return _fork(project) is None or (on_main(project) and not _git(project, "status", "--porcelain"))
+
+
 def check_first_parent(project: Project, ids: dict[str, BuildId]) -> None:
     """On the main branch, check that the packages whose build key changed since the first parent of the current
     commit have greater numbers: one number is never given to two different builds, even by a merge conflict resolved

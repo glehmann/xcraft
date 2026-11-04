@@ -19,8 +19,10 @@ from pydantic import BaseModel, Field
 from rich.markup import escape
 
 from xcraft import buildkey, remote
+from xcraft.buildid import final_only
 from xcraft.builds import load_builds
 from xcraft.container import DNF_LOCK, buildenv_hash, run
+from xcraft.devbuilds import dev_keys
 from xcraft.display import activity, changes, console
 from xcraft.lock import load_lock
 from xcraft.pinned import REPO_ID
@@ -65,9 +67,22 @@ def _templates(project: Project) -> str:
     return digest.hexdigest()
 
 
-def iso_key(project: Project, *, netinstall: bool, volid: str | None, signer: Signer | None) -> str:
+def dev_suffixes(project: Project, dev: str | None) -> dict[str, str]:
+    """Return the release suffixes of the development builds of the ISO of the checkout, with the identifier `dev`: none
+    for final builds, or without packages whose build ID is not the main branch's. Read without preparing the lock when
+    they are all final ones, see final_only(), which the keys need otherwise.
+    """
+    if not dev or final_only(project):
+        return {}
+    prepare(project)
+    return dev_keys(project, dev)[1]
+
+
+def iso_key(
+    project: Project, *, netinstall: bool, volid: str | None, signer: Signer | None, dev: str | None = None
+) -> str:
     """Return the key of the ISO of the checkout: what it is made of, read without containers, nor the secret key of
-    `signer`.
+    `signer`, with the development builds of the identifier `dev`, if any.
     """
     lock, builds = load_lock(project), load_builds(project)
     config = project.config.model_dump(
@@ -106,6 +121,8 @@ def iso_key(project: Project, *, netinstall: bool, volid: str | None, signer: Si
         volid,
         signer.key.upper() if signer else None,
     ]
+    if suffixes := dev_suffixes(project, dev):  # but the keys of the ISOs of final builds
+        data.append(suffixes)
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
 
@@ -132,9 +149,12 @@ def iso_id(project: Project, *, signer: Signer | None) -> str:
     return hashlib.sha256(json.dumps(keys).encode()).hexdigest()[:6]
 
 
-def iso_name(project: Project, version: str, *, netinstall: bool, signer: Signer | None) -> str:
-    """Return the file name of an ISO of the distribution `version`, with its identifier and architecture."""
-    return f"xcp-ng-{version}-{iso_id(project, signer=signer)}-{project.arch}{'-netinstall' if netinstall else ''}.iso"
+def iso_name(project: Project, version: str, *, netinstall: bool, signer: Signer | None, dev: str | None = None) -> str:
+    """Return the file name of an ISO of the distribution `version`, with its identifier, the one of its development
+    builds `dev`, if any, and its architecture.
+    """
+    ident = f"{iso_id(project, signer=signer)}{f'.{dev}' if dev else ''}"
+    return f"xcp-ng-{version}-{ident}-{project.arch}{'-netinstall' if netinstall else ''}.iso"
 
 
 def fetch_isos(project: Project, *, signer: Signer | None) -> bool:
@@ -168,10 +188,12 @@ def _image(tree: Path) -> Image:
     return image
 
 
-def _output(project: Project, tree: Path, output: Path | None, *, netinstall: bool, signer: Signer | None) -> Path:
+def _output(
+    project: Project, tree: Path, output: Path | None, *, netinstall: bool, signer: Signer | None, dev: str | None
+) -> Path:
     """Return the cached ISO in `tree` as `output`, or with its name in .xcraft/iso/ by default."""
     image = _image(tree)
-    name = iso_name(project, image.version, netinstall=netinstall, signer=signer)
+    name = iso_name(project, image.version, netinstall=netinstall, signer=signer, dev=dev)
     output = (output or project.state / "iso" / name).absolute()
     output.parent.mkdir(parents=True, exist_ok=True)
     if not output.exists() or sha256_of(output) != image.sha256:
@@ -182,16 +204,21 @@ def _output(project: Project, tree: Path, output: Path | None, *, netinstall: bo
     return output
 
 
-def _find(project: Project, key: str, output: Path | None, *, netinstall: bool, signer: Signer | None) -> Path | None:
+def _find(
+    project: Project, key: str, output: Path | None, *, netinstall: bool, signer: Signer | None, dev: str | None
+) -> Path | None:
+    """Return the ISO of `key` as `output`: cached, or fetched from the remote storage, but of development builds `dev`,
+    which it has not.
+    """
     tree = cached_iso(project, key)
     if tree.exists():
-        return _output(project, tree, output, netinstall=netinstall, signer=signer)
-    if not project.config.remote:
+        return _output(project, tree, output, netinstall=netinstall, signer=signer, dev=dev)
+    if not project.config.remote or dev:
         return None
     try:
         with activity("looking for the ISO in the remote storage") as on_line:
             if remote.fetch_tree(project, iso_path(project, key), tree, on_line):
-                return _output(project, tree, output, netinstall=netinstall, signer=signer)
+                return _output(project, tree, output, netinstall=netinstall, signer=signer, dev=None)
     except remote.RemoteError as e:
         console.print(f"[yellow]remote storage unavailable, making the ISO locally[/]: {escape(str(e))}")
     return None
@@ -235,20 +262,26 @@ def build_iso(
     netinstall: bool = False,
     volid: str | None = None,
     signer: Signer | None = None,
+    dev: str | None = None,
 ) -> Path:
-    """Build or fetch the current packages, assemble a local snapshot, and make its installation ISO."""
+    """Build or fetch the current packages, assemble a local snapshot, and make its installation ISO: with the
+    development builds of the identifier `dev`, like xcraft build makes them, or final builds only without.
+    """
     with project.lock():
-        key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer)
-        if found := _find(project, key, output, netinstall=netinstall, signer=signer):
+        dev = dev if dev_suffixes(project, dev) else None  # of final builds only otherwise, like the remote storage's
+        key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev)
+        if found := _find(project, key, output, netinstall=netinstall, signer=signer, dev=dev):
             return found
         checkout = _checkout(project)
         prepare(project)
         dest = (project.state / "publish").absolute()
-        snapshot([project], dest, signer=signer, storage=None, build=False)
+        snapshot([project], dest, signer=signer, storage=None, build=False, dev=dev)
         if checkout != _checkout(project):
             msg = "ISO inputs changed while assembling the snapshot: run again"
             raise RuntimeError(msg)
-        return make_iso(project, dest / REPO / project.arch, output, netinstall=netinstall, volid=volid, signer=signer)
+        return make_iso(
+            project, dest / REPO / project.arch, output, netinstall=netinstall, volid=volid, signer=signer, dev=dev
+        )
 
 
 def _check_tools(project: Project, recorded: Path) -> None:
@@ -275,18 +308,21 @@ def make_iso(
     netinstall: bool,
     volid: str | None,
     signer: Signer | None,
+    dev: str | None = None,
 ) -> Path:
-    """Return the ISO of `snapshot`: cached, fetched, or made, and cached by the key of the checkout once made."""
+    """Return the ISO of `snapshot`, with the development builds of the identifier `dev`, if any: cached, fetched, or
+    made, and cached by the key of the checkout once made.
+    """
     with project.lock():
-        key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer)
-        if found := _find(project, key, output, netinstall=netinstall, signer=signer):
+        key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev)
+        if found := _find(project, key, output, netinstall=netinstall, signer=signer, dev=dev):
             return found
         checkout = _checkout(project)
         made, version = _make_iso(project, snapshot, netinstall=netinstall, volid=volid, signer=signer)
         if checkout != _checkout(project):
             msg = "ISO inputs changed while making the image: run again"
             raise RuntimeError(msg)
-        key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer)
+        key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev)
         tree = cached_iso(project, key)
         with project.work("cache-iso") as work:
             staged = work / "tree"
@@ -298,7 +334,7 @@ def make_iso(
             tree.parent.mkdir(parents=True, exist_ok=True)
             if not tree.exists():  # of the same inputs, kept from before the lock went back to them
                 staged.rename(tree)
-        return _output(project, tree, output, netinstall=netinstall, signer=signer)
+        return _output(project, tree, output, netinstall=netinstall, signer=signer, dev=dev)
 
 
 def _make_iso(

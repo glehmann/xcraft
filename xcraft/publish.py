@@ -525,10 +525,14 @@ def upload_isos(
     )
 
 
-def _built(project: Project, *, fetch: Fetch) -> dict[str, str]:
-    """Build or fetch our packages, but only fetch them on the platforms the host emulates, and return their keys."""
+def _built(project: Project, *, fetch: Fetch, dev: str | None) -> dict[str, str]:
+    """Build or fetch our packages, but only fetch them on the platforms the host emulates, and return their keys: with
+    the development builds of the identifier `dev`, if any.
+    """
     prepare(project)
-    results, keys, _ = builder.build(project, sorted(project.packages), build_missing=project.native, fetch=fetch)
+    results, keys, _ = builder.build(
+        project, sorted(project.packages), build_missing=project.native, fetch=fetch, dev=dev
+    )
     if failed := [r.name for r in results if r.failed]:
         msg = f"not built for {project.arch}: {', '.join(failed)}"
         raise RuntimeError(msg)
@@ -739,7 +743,13 @@ def _add_stored_upstream(plan: _Plan, project: Project, names: list[str], repo: 
 
 
 def snapshot(
-    platforms: list[Project], dest: Path, *, signer: Signer | None, storage: Remote | None, build: bool
+    platforms: list[Project],
+    dest: Path,
+    *,
+    signer: Signer | None,
+    storage: Remote | None,
+    build: bool,
+    dev: str | None = None,
 ) -> tuple[list[tuple[Project, dict[str, str]]], dict[str, tuple[str, str]]]:
     """Make the snapshot of the `platforms` in `dest`, and return them with the keys of their packages, and the
     packages of `storage`, by path in the snapshot, with their paths there and SHA-256: they are not in `dest`, see
@@ -751,14 +761,15 @@ def snapshot(
     repository too. Each binary must be installable alone, from the binaries of its architecture, checked with the
     metadata only. Our source packages are those of the first platform: those of the others, built from the same
     sources, differ by their build times. With a `signer`, our packages and the metadata of the repositories are
-    signed, and the public key is in `dest`.
+    signed, and the public key is in `dest`. With `dev`, the identifier of the development builds, those of the packages
+    whose build ID is not the main branch's are, for local snapshots, without `storage`.
     """
     project = platforms[0]
     fresh_dir(project, dest)
     plan = _Plan(project, dest, *(_with_copy(platforms, storage, signer) if storage else ({}, {})))
     built = []
     for platform in platforms:
-        keys = _built(platform, fetch="needed" if storage else "all")
+        keys = _built(platform, fetch="needed" if storage else "all", dev=dev)
         arch = f"{REPO}/{platform.arch}"
         _add_ours(plan, platform, keys, signer=signer, storage=storage)
         _add_stored_upstream(plan, platform, published(platform), arch, f"{REPO}/Source")

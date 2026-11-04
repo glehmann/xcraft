@@ -36,8 +36,8 @@ xcraft --install-completion  # optional
 | `xcraft repo <pkg>... [--dependents]` | When they have development builds, a repository of them alone, for test hosts |
 | `xcraft repo <pkg>... --host h [--upgrade]` | The same, copied to test hosts over ssh, and upgraded there |
 | `xcraft publish [repos\|isos] [--stage s] [--locked] [--local] [--unsigned] [--dev-key] [--arch a]` | Publish a snapshot of the distribution, its repositories and its ISOs, or only those given, for all the architectures or `--arch`, as the stage's latest one; a `--local` one is of the host's architecture by default |
-| `xcraft iso [--netinstall] [--output f] [-V id] [--locked] [--unsigned]` | Make the installation ISO, from a local snapshot (see [Installation ISO](#installation-iso)) |
-| `xcraft boot [--iso f] [--disk f] [--headless] [--unsigned]` | Build the ISO and boot its installer in a local QEMU VM, creating a virtual disk if missing |
+| `xcraft iso [--netinstall] [--output f] [-V id] [--locked] [--unsigned] [--dev ID \| --final]` | Make the installation ISO, from a local snapshot (see [Installation ISO](#installation-iso)) |
+| `xcraft boot [--iso f] [--disk f] [--headless] [--unsigned] [--dev ID \| --final]` | Build the ISO and boot its installer in a local QEMU VM, creating a virtual disk if missing |
 | `xcraft boot --installed [--disk f]` | Boot the installed virtual disk without making or attaching an ISO |
 | `xcraft vm <command>` | Inspect a VM, read its console, send input, save diagnostics, or stop it |
 | `xcraft key create` / `xcraft key show [--export]` | The developer's key, which signs the development builds |
@@ -374,6 +374,12 @@ image, then try the trusted remote storage, and only assemble a snapshot and bui
 hit needs no build containers or signing secrets. The key covers package inputs and locked dependencies, ISO
 templates and configuration, the build recipe, architecture, netinstall and volume-id options, and signing identity.
 Local edits invalidate it; the publish stage, remote credentials and output path do not affect it.
+
+Like `xcraft build`, `xcraft iso` and `xcraft boot` take the development builds of the packages whose build ID is not
+the main branch's, see [Development builds](#development-builds), with `--dev ID`, or final builds with `--final`: the
+ISO is the one of what `xcraft build` just made, without building them again as final ones. Its key covers the
+suffixes of the development builds, and its name has their identifier, like `xcp-ng-<version>-<id>.dev-<arch>.iso`;
+it is never taken from the remote storage, nor pushed to it, like them.
 
 `xcraft push isos` uploads cached images matching the checkout, with signed manifests like RPM builds. Use
 `xcraft push isos --unsigned` for images built with `--unsigned`; the upload manifest still needs a signing key.

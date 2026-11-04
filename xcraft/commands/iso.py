@@ -7,13 +7,14 @@ from typing import Annotated
 
 import typer
 
-from xcraft.commands import Arch, Key, choose_signer
+from xcraft.commands import Arch, Dev, Final, Key, choose_signer, dev_ident
 from xcraft.display import console
 from xcraft.iso import build_iso
 from xcraft.project import Project
 
 
 def iso(
+    ctx: typer.Context,
     netinstall: Annotated[
         bool, typer.Option("--netinstall", help="Without the packages, installed from a repository on the network.")
     ] = False,
@@ -34,14 +35,18 @@ def iso(
     ] = False,
     arch: Arch = None,
     key: Key = None,
+    dev: Dev = None,
+    final: Final = False,
 ) -> None:
     """Make the installation ISO, from a local snapshot of the distribution, as xcraft publish --local makes it.
 
     The installer's root filesystem, install.img, comes from the snapshot, which has its packages, and so does the
-    repository of the ISO, with xcp-ng-deps and what it needs.
+    repository of the ISO, with xcp-ng-deps and what it needs. Like xcraft build, it has the development builds of the
+    packages whose build ID is not the main branch's, unless --final.
     """
+    ident = dev_ident(ctx, dev, final=final)
     project = Project.find(arch)
     project.frozen = locked
     signer = choose_signer(project, local=True, unsigned=unsigned, dev_key=False, key=key)
-    path = build_iso(project, output, netinstall=netinstall, volid=volid, signer=signer)
+    path = build_iso(project, output, netinstall=netinstall, volid=volid, signer=signer, dev=ident)
     console.print(f"[bold green]✓[/] {path}")
