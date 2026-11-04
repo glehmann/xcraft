@@ -39,11 +39,13 @@ def clean(
     *,
     all_builds: bool = False,
     ccache: bool = False,
+    dune_cache: bool = False,
 ) -> int:
     """Remove what xcraft can regenerate, and return how many bytes that freed.
 
     That is the build trees, the outdated builds of the platform, those of none
-    of the `keys`, all of them with `all_builds`, and the compiler caches with `ccache`, of the packages
+    of the `keys`, all of them with `all_builds`, the compiler caches with `ccache`, and those of dune with
+    `dune_cache`, of the packages
     `names`, or of all of them with what they share: the metadata of the specs and the resolutions but those this
     process read, the results of the checks, the requirements of the upstream packages, and the
     upstream packages downloaded. The source cache is kept, and so are the signed builds, which signing again would
@@ -73,8 +75,9 @@ def clean(
         paths += [
             build for pkg in packages for build in pkg.iterdir() if build.name not in {k.get(pkg.name) for k in keys}
         ]
-    if ccache:
-        paths += [state / "ccache"] if names is None else [state / "ccache" / name for name in names]
+    for cache, wanted in (("ccache", ccache), ("dune-cache", dune_cache)):
+        if wanted:
+            paths += [state / cache] if names is None else [state / cache / name for name in names]
     for path in paths:
         if path.is_dir():
             shutil.rmtree(path)

@@ -64,7 +64,7 @@ xcraft --install-completion  # optional
 | `xcraft status [<pkg>...]`, or `st` | Show the version of each package, or of the given ones, with its build number and development build suffix, and whether it is built, or queued by a running build |
 | `xcraft bump <pkg>... [-m message]` | Bump the release of packages, with a changelog entry, empty to fill in without `-m` |
 | `xcraft bump <pkg> --version v [-m message]` | Update a package to a new version, with the archive of its `Source0`, and the packages of the same version; the changelog entry is `Update to <v>` by default |
-| `xcraft clean [<pkg>...] [--builds] [--ccache]` | Remove the build trees and outdated builds, and optionally all builds and compiler caches, of the given packages or all; the source archives are kept |
+| `xcraft clean [<pkg>...] [--builds] [--ccache] [--dune-cache]` | Remove the build trees and outdated builds, and optionally all builds, compiler caches and caches of dune, of the given packages or all; the source archives are kept |
 | `xcraft history <pkg>` | Show the commits changing a package, with `git log`: its directory, and its lines in `xcraft.builds` |
 | `xcraft patchset [repo] [--package p] [--base ref] [--first n]` | Update the patches of a package with the commits of the current git branch, from the developer's repository |
 | `xcraft import <pkg or srpm>... [--branch b] [--url u] [--repo r]` | Import the history of packages from their packaging repositories, or source RPMs, as the git branches `import/<pkg>/<branch>` to merge, new packages into `base/`, or `<r>/` |
@@ -522,6 +522,12 @@ the compiler caches, the resolutions, the public keys and the ISOs of the checko
   ccache's, to level 9, `ccache --recompress`: for the kernel, 15% less to transfer, in 20s on 8 CPUs, once, as it
   stays so. Then only the entries the storage does not have are uploaded, 64 at once. See
   [the design](docs/ccache-sync-design.md).
+- The builds running dune, like those of xapi, have the cache of dune of their package, `.xcraft/dune-cache/<package>/`,
+  on this machine only: rebuilding the package after a change, or with another release, takes again what its rules
+  made before. For xapi, it halves its builds, from 2m40s to 1m24s on 8 CPUs, with 2.7 GB of cache. All the rules are
+  cached, those of the project too, as dune's default, `enabled-except-user-rules`, caches none of xapi's: one missing
+  a dependency may get the output of a previous build, which `xcraft clean --dune-cache` forgets. It is not in the
+  recipe of the builds, which it does not change, nor in the remote storage: the builds of CI never get it.
 - A resolution not in the local cache is downloaded from the storage, when it has it, signed by a trusted key, rather
   than resolved: the image and the build roots of each architecture, by the hash of what they are resolved from, the
   same everywhere, which CI pushes with `xcraft push`. So a new checkout of what CI built resolves nothing, without

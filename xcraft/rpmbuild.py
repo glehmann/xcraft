@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shlex
 import shutil
@@ -100,19 +101,37 @@ def run_build(
     if size := project.config.ccache_size.get(name):
         # not in the recipe of the builds: it does not change them
         script = f"export CCACHE_MAXSIZE={shlex.quote(size)}\n{script}"
-    cache = ccache.local_path(project, name)
+    cache, dune = ccache.local_path(project, name), dune_cache(project, name)
     cache.mkdir(parents=True, exist_ok=True)
+    dune.mkdir(parents=True, exist_ok=True)
     tree = project.state / "build" / name
-    volumes = [f"{tree}:/build", f"{cache}:/ccache", *repo.volumes()]
-    run_container(
-        project,
-        script,
-        container=f"xcraft-{project.id}-{name}",
-        volumes=volumes,
-        log=log,
-        on_line=on_line,
-        install=True,
-    )
+    volumes = [f"{tree}:/build", f"{cache}:/ccache", f"{dune}:/dune-cache", *repo.volumes()]
+    try:
+        run_container(
+            project,
+            DUNE_CACHE + script,
+            container=f"xcraft-{project.id}-{name}",
+            volumes=volumes,
+            log=log,
+            on_line=on_line,
+            install=True,
+        )
+    finally:
+        with contextlib.suppress(OSError):  # but those of the builds with dune
+            dune.rmdir()
+
+
+DUNE_CACHE = "export DUNE_CACHE=enabled DUNE_CACHE_ROOT=/dune-cache DUNE_CACHE_STORAGE_MODE=copy\n"
+"""The cache of dune, for the builds with it, like ccache's for the compilers, but kept on this machine only: in the
+build environment, but not in the recipe of the builds, which it does not change. All the rules are cached, those of
+the projects too: enabled-except-user-rules caches none of xapi's. One missing a dependency may get an output of a
+previous build, which xcraft clean --dune-cache forgets; CI, without the cache, never does. The entries are copied,
+from another filesystem than the build tree's."""
+
+
+def dune_cache(project: Project, name: str) -> Path:
+    """Return the cache of dune of `name`, which its builds use, if they run dune."""
+    return project.state / "dune-cache" / name
 
 
 def image_replacements(resolved: Resolved, name: str) -> list[str]:
