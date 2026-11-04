@@ -45,7 +45,11 @@ def test_iso_inputs(project: Project) -> None:
     project.config.remote["main"] = Remote(url="https://example.com")
     project.config.publish.stage = "other"
     project.config.logo = "https://example.com/logo.png"
+    project.config.iso.unattended = "rt_answerfile=file:///answerfile.xml"  # given at boot, not in the ISO
     assert key() == original
+    project.config.iso.packages = ["other"]
+    assert key() != original
+    project.config.iso.packages = []
     assert iso_key(project, netinstall=True, volid=None, signer=None) != original
     assert iso_key(project, netinstall=False, volid="OTHER", signer=None) != original
     assert iso_key(project, netinstall=False, volid=None, signer=Signer("A" * 40)) != original

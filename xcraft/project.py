@@ -158,6 +158,9 @@ class Iso(BaseModel):
     """Packages of the installer's root filesystem, install.img: they are published too."""
     packages: list[str] = []
     """Packages of the repository of the ISO, with what they need, unless --netinstall."""
+    unattended: str = ""
+    """Kernel arguments of an unattended installation, which xcraft boot --unattended adds to the default boot entry of
+    the ISO, like an answer file of the installer: they do not change the ISO."""
 
 
 class Extra(BaseModel):

@@ -86,7 +86,10 @@ def iso_key(
     """
     lock, builds = load_lock(project), load_builds(project)
     config = project.config.model_dump(
-        exclude={"remote", "logo", "import_", "sign", "ccache_size", "same_version", "publish"}
+        exclude={
+            **dict.fromkeys(("remote", "logo", "import_", "sign", "ccache_size", "same_version", "publish"), True),
+            "iso": {"unattended"},
+        }
     )
     config["extra"] = project.config.publish.extra
     data = [
