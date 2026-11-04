@@ -730,15 +730,15 @@ def test_images_of_other_contents(root: Path, tmp_path: Path) -> None:
         "%files\n/usr/share/toypayload\n"
     )
     (rpms := tmp_path / "rpms").mkdir()
-    build = "dnf -q -y install rpm-build createrepo_c"
-    for payload in ("a", "b"):
-        build += (
-            f" && rpmbuild -bb --define '_topdir /tmp/{payload}' --define '_rpmdir /out/{payload}'"
+    # in the build environment, which has rpmbuild and createrepo_c
+    container.run(
+        Project.find(), "payloads",
+        " && ".join(
+            f"rpmbuild -bb --define '_topdir /tmp/{payload}' --define '_rpmdir /out/{payload}'"
             f" --define 'payload {payload}' /specs/toypayload.spec && createrepo_c -q /out/{payload}"
-        )
-    container.run_natively(
-        Project.find().on_host(), "payloads", ["bash", "-c", build], volumes=[f"{specs}:/specs:ro", f"{rpms}:/out"],
-        show="the payloads",
+            for payload in ("a", "b")
+        ),
+        volumes=[f"{specs}:/specs:ro", f"{rpms}:/out"],
     )  # fmt: skip
     repo = tmp_path / "repo"
     shutil.copytree(rpms / "a", repo)
