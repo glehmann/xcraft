@@ -32,6 +32,25 @@ def _check_host(arch: str, accel: str, *, new_disk: bool) -> None:
         raise RuntimeError(msg)
 
 
+def _check_media(iso: Path | None, *, installed: bool, bios: bool, edit: bool) -> None:
+    if installed and iso:
+        msg = "--installed and --iso cannot be used together"
+        raise typer.BadParameter(msg)
+    if edit and (installed or bios):
+        msg = "--kernel-args and --unattended edit the GRUB menu of the ISO: not with --installed or --bios"
+        raise typer.BadParameter(msg)
+
+
+def _kernel_args(project: Project, kernel_args: str | None, *, unattended: bool) -> str | None:
+    """Return the kernel arguments to add to the default boot entry of the ISO: the unattended ones of xcraft.toml,
+    with --unattended, then `kernel_args`.
+    """
+    if unattended and not project.config.iso.unattended:
+        msg = "no unattended kernel arguments in [iso] of xcraft.toml"
+        raise typer.BadParameter(msg, param_hint="--unattended")
+    return " ".join(filter(None, [project.config.iso.unattended if unattended else "", kernel_args])) or None
+
+
 def boot(
     ctx: typer.Context,
     iso: Annotated[
@@ -69,6 +88,21 @@ def boot(
     qemu_arg: Annotated[
         list[str] | None, typer.Option("--qemu-arg", help="Extra QEMU argument, repeatable. Use --qemu-arg=-option.")
     ] = None,
+    kernel_args: Annotated[
+        str | None,
+        typer.Option(
+            help="Arguments added to the kernel command line of the ISO's default boot entry, in GRUB's editor, like "
+            "rt_answerfile=file:///opt/xensource/installer/answerfile-vm.xml for an unattended installation."
+        ),
+    ] = None,
+    unattended: Annotated[
+        bool,
+        typer.Option(
+            "--unattended",
+            help="Install unattended, with the kernel arguments of unattended in [iso] of xcraft.toml, added like with "
+            "--kernel-args.",
+        ),
+    ] = False,
     locked: Annotated[bool, typer.Option("--locked", help="Fail when making the ISO would change the lock.")] = False,
     unsigned: Annotated[bool, typer.Option("--unsigned", help="Do not sign the ISO's packages or repository.")] = False,
     arch: Arch = None,
@@ -82,14 +116,13 @@ def boot(
     The disk persists between runs. After installation, use --installed to boot it without the ISO.
     The installer VM exits when it requests a reboot. Use xcraft vm to inspect or stop it.
     """
-    if installed and iso:
-        msg = "--installed and --iso cannot be used together"
-        raise typer.BadParameter(msg)
+    _check_media(iso, installed=installed, bios=bios, edit=bool(kernel_args) or unattended)
     if ssh_port and not vm.free(ssh_port):
         msg = f"port {ssh_port} is in use on localhost: give another one, or none for the first free one from 2222"
         raise typer.BadParameter(msg, param_hint="--ssh-port")
     ident = dev_ident(ctx, dev, final=final)
     project = Project.find(arch)
+    kernel_args = _kernel_args(project, kernel_args, unattended=unattended)
     vm_dir = (vm_dir or project.state / "vm" / project.arch).absolute()
     disk = (disk or vm_dir / "disk.qcow2").absolute()
     if disk.exists() and not disk.is_file():
@@ -143,5 +176,8 @@ def boot(
     console.print(f"Control: xcraft vm --vm-dir {vm_dir} status", markup=False)
     if ssh_port:
         console.print(f"SSH when enabled in the guest: ssh -p {ssh_port} root@127.0.0.1", markup=False)
+    if kernel_args:
+        vm.edit_default_entry(vm_dir, kernel_args)
+        console.print(f"booted the default entry with {kernel_args}", markup=False)
     if not background:
         vm.wait(proc, vm_dir)

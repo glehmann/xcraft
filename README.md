@@ -410,6 +410,22 @@ for a fresh installation, with `--disk-size 100G` to change the size of a new di
 requests a reboot; `--installed` then boots the disk. The project lock covers startup, then is released so packages
 can be edited and rebuilt while the VM runs.
 
+`--kernel-args` adds arguments to the kernel command line of the default entry of the ISO's GRUB menu, in GRUB's
+editor, then waits for the kernel booted with them. `--unattended` adds those of `unattended` in the `[iso]` section of
+`xcraft.toml`, like an answer file of the installer, which do not change the ISO:
+
+```toml
+[iso]
+unattended = "rt_answerfile=file:///opt/xensource/installer/answerfile-vm.xml"
+```
+
+```bash
+xcraft boot --unattended   # then xcraft boot --installed
+```
+
+The firmware boots the entries of its variables first, like the one of a previous installation: use a new session,
+with `--vm-dir`, to install again.
+
 OVMF firmware is detected in common distribution locations. Use `--firmware-code` and `--firmware-vars` together
 to supply another CODE image and VARS template. The template is copied only once to the session's `OVMF_VARS.fd`;
 that writable copy persists across installer and installed-disk boots. `--bios` selects legacy BIOS explicitly.

@@ -151,6 +151,43 @@ def test_boot_conflicting_media(root: Path, tmp_path: Path) -> None:
     assert "--installed and --iso cannot be used together" in output
 
 
+@pytest.mark.parametrize("edit", [["--kernel-args", "quiet"], ["--unattended"]])
+@pytest.mark.parametrize("args", [["--installed"], ["--bios"]])
+def test_boot_kernel_args_need_the_grub_of_the_iso(root: Path, edit: list[str], args: list[str]) -> None:
+    code, output = xcraft("boot", *edit, *args)
+    assert code == 2, output
+    assert "--kernel-args and --unattended edit the GRUB menu of the ISO" in " ".join(output.split())
+
+
+def test_boot_unattended_needs_its_kernel_args(root: Path, tmp_path: Path) -> None:
+    iso = tmp_path / "installer.iso"
+    iso.touch()
+    code, output = xcraft("boot", "--unattended", "--iso", str(iso))
+    assert code == 2, output
+    assert "no unattended kernel arguments" in output
+    assert not (root / ".xcraft").exists()
+
+
+# GRUB's editor, as it shows the default entry of host-installer's grub.cfg
+EDITOR = """
+                                                       GRUB version 2.12
+ ┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+ │                                                                                              │
+ │setparams 'install'                                                                           │
+ │                                                                                              │
+ │    multiboot2 /boot/xen.gz dom0_max_vcpus=1-16 dom0_mem=max:8192M com1=115200,8n1 console=com1│
+ │    module2 /boot/vmlinuz console=hvc0 console=tty0                                           │
+ │    module2 /install.img                                                                      │
+ └──────────────────────────────────────────────────────────────────────────────────────────────┘
+""".splitlines()
+
+
+def test_kernel_line() -> None:
+    assert vm.kernel_line(EDITOR) == 3
+    with pytest.raises(RuntimeError, match="no kernel"):
+        vm.kernel_line([line.replace("vmlinuz", "linux") for line in EDITOR])
+
+
 def test_boot_missing_qemu(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     iso = tmp_path / "installer.iso"
     iso.touch()

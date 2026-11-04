@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import select
 import shutil
 import socket
@@ -18,6 +19,7 @@ from pydantic import BaseModel, Field, JsonValue
 from xcraft.project import write_atomically
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
     from types import TracebackType
 
 
@@ -323,6 +325,59 @@ def type_text(monitor: Monitor, text: str) -> None:
         )
     for chord in chords:
         press(monitor, chord)
+
+
+def kernel_line(screen: Sequence[str]) -> int:
+    """Return how many lines below the first one of the entry in GRUB's editor, on its `screen`, the kernel's is."""
+    first = next((i for i, line in enumerate(screen) if "setparams" in line), None)
+    kernel = next((i for i, line in enumerate(screen) if "/vmlinuz" in line), None)
+    if first is None or kernel is None:
+        msg = "no kernel in the default boot entry, in GRUB's editor"
+        raise RuntimeError(msg)
+    return kernel - first
+
+
+def _render(data: bytes) -> list[str]:
+    """Return the screen of serial output, wide enough for GRUB's on the firmware's console."""
+    screen = pyte.Screen(200, 60)
+    pyte.ByteStream(screen).feed(data)
+    return screen.display
+
+
+def _wait_serial(directory: Path, found: Callable[[bytes], bool], what: str, timeout: float, start: int = 0) -> bytes:
+    """Return the serial output from `start` once `found` in it, before `timeout`."""
+    deadline = time.monotonic() + timeout
+    while not found(data := (directory / "serial.log").read_bytes()[start:]):
+        if time.monotonic() > deadline:
+            msg = f"timed out waiting for {what} on the serial console"
+            raise TimeoutError(msg)
+        if not running(directory):
+            msg = "QEMU stopped"
+            raise RuntimeError(msg)
+        time.sleep(0.1)
+    return data
+
+
+def edit_default_entry(directory: Path, args: str, timeout: float = 120) -> None:
+    """Add `args` to the kernel command line of the default entry of the GRUB menu, in GRUB's editor, and wait for the
+    kernel booted with them.
+    """
+    _wait_serial(directory, lambda data: b"Press enter to boot" in data, "GRUB's menu", timeout)
+    start = (directory / "serial.log").stat().st_size
+    # QEMU's monitor takes one connection at a time, like the one of running(), which waiting checks
+    with Monitor(directory) as monitor:
+        press(monitor, ["e"])
+    editor = _wait_serial(
+        directory, lambda data: "/vmlinuz" in "".join(_render(data)), "the kernel in GRUB's editor", timeout, start
+    )
+    with Monitor(directory) as monitor:
+        for _ in range(kernel_line(_render(editor))):
+            press(monitor, ["down"])
+        press(monitor, ["ctrl", "e"])
+        type_text(monitor, f" {args}")
+        press(monitor, ["ctrl", "x"])
+    booted = re.compile(rb"Kernel command line: [^\r\n]*" + re.escape(args.encode()))
+    _wait_serial(directory, lambda data: bool(booted.search(data)), "the kernel booted with them", timeout, start)
 
 
 def collect(directory: Path, destination: Path) -> None:
