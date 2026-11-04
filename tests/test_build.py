@@ -564,7 +564,10 @@ def test_recorded_once_what_they_require_is_built(root: Path) -> None:
     spec.write_text(spec.read_text().replace("BuildArch: noarch", "BuildArch: noarch\nRequires: xtool-core"))
     code, output = xcraft("build", "trivial")
     assert code == 0, output
-    assert "what rpm generated for trivial: recorded once xtool is built" in output
+    assert (
+        "warning: the dependencies rpm generated for trivial are recorded once xtool, which it needs, is built"
+        in output
+    )
     assert "cannot record" not in output
     code, output = xcraft("build", "trivial", "xtool")
     assert code == 0, output
