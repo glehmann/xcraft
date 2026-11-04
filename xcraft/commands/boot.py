@@ -10,7 +10,7 @@ from typing import Annotated
 import typer
 
 from xcraft import process, vm
-from xcraft.commands import Arch, Key, choose_signer
+from xcraft.commands import Arch, Dev, Final, Key, choose_signer, dev_ident
 from xcraft.display import console
 from xcraft.iso import build_iso
 from xcraft.project import Project
@@ -33,6 +33,7 @@ def _check_host(arch: str, accel: str, *, new_disk: bool) -> None:
 
 
 def boot(
+    ctx: typer.Context,
     iso: Annotated[
         Path | None, typer.Option(exists=True, dir_okay=False, help="Boot an existing ISO instead of generating one.")
     ] = None,
@@ -72,8 +73,11 @@ def boot(
     unsigned: Annotated[bool, typer.Option("--unsigned", help="Do not sign the ISO's packages or repository.")] = False,
     arch: Arch = None,
     key: Key = None,
+    dev: Dev = None,
+    final: Final = False,
 ) -> None:
-    """Build the installation ISO, create a virtual disk if missing, and boot it with QEMU.
+    """Build the installation ISO, create a virtual disk if missing, and boot it with QEMU: with the development builds
+    of the packages whose build ID is not the main branch's, like xcraft build, unless --final.
 
     The disk persists between runs. After installation, use --installed to boot it without the ISO.
     The installer VM exits when it requests a reboot. Use xcraft vm to inspect or stop it.
@@ -84,6 +88,7 @@ def boot(
     if ssh_port and not vm.free(ssh_port):
         msg = f"port {ssh_port} is in use on localhost: give another one, or none for the first free one from 2222"
         raise typer.BadParameter(msg, param_hint="--ssh-port")
+    ident = dev_ident(ctx, dev, final=final)
     project = Project.find(arch)
     vm_dir = (vm_dir or project.state / "vm" / project.arch).absolute()
     disk = (disk or vm_dir / "disk.qcow2").absolute()
@@ -102,7 +107,7 @@ def boot(
     if not (iso or installed):
         project.frozen = locked
         signer = choose_signer(project, local=True, unsigned=unsigned, dev_key=False, key=key)
-        iso = build_iso(project, signer=signer)
+        iso = build_iso(project, signer=signer, dev=ident)
         console.print(f"[bold green]✓[/] {iso}")
     with project.lock():
         vm.check_stopped(vm_dir)

@@ -11,13 +11,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests import TOML, copy_project
+from tests import ARCH, TOML, copy_project
 from tests.test_build import xcraft
 from xcraft import build as builder
 from xcraft import buildid, buildkey
 from xcraft.builds import BuildId, builds_path, load_builds, save_builds
 from xcraft.cache import build_keys
-from xcraft.iso import build_iso
+from xcraft.iso import build_iso, dev_suffixes, iso_key, iso_name
 from xcraft.lock import load_lock, save_lock
 from xcraft.project import Project
 
@@ -316,6 +316,26 @@ def test_development_builds(root: Path, monkeypatch: pytest.MonkeyPatch) -> None
     code, output = xcraft("build", "--verbose")
     assert code == 0, output
     assert re.search(r"^/.*/RPMS/noarch/with-deps-1\.0-1\+b2~5\.qcow2\.xcpng8\.99\.noarch\.rpm$", output, re.MULTILINE)
+
+
+def test_iso_of_development_builds(root: Path) -> None:
+    def key(dev: str | None) -> str:
+        return iso_key(Project.find(), netinstall=False, volid=None, signer=None, dev=dev)
+
+    # on the main branch, of final builds only, like the remote storage's
+    commit_base(root)
+    assert dev_suffixes(Project.find(), "dev") == {}
+    assert key("dev") == key(None)
+    # on another branch, of the development builds of the packages changed, like xcraft build makes them
+    git(root, "checkout", "-qb", "feature")
+    edit(root, "changed", name="with-deps")
+    assert dev_suffixes(Project.find(), "dev") == {"with-deps": "~1.dev"}
+    assert len({key("dev"), key("other"), key(None)}) == 3
+    name = iso_name(Project.find(), "8.99.0", netinstall=False, signer=None, dev="dev")
+    assert name.endswith(f".dev-{ARCH}.iso")
+    assert name.removesuffix(f".dev-{ARCH}.iso") + f"-{ARCH}.iso" == iso_name(
+        Project.find(), "8.99.0", netinstall=False, signer=None
+    )
 
 
 def test_development_builds_against_other_ones(root: Path) -> None:
