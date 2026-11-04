@@ -257,9 +257,10 @@ the final build, `+b<n>`. The other packages get their final builds, fetched fro
 each development build upgrades the previous ones, whatever their identifiers, while a build of the same inputs is
 cached: `1+b42~1.dev`, `1+b42~2.dev`, `1+b42~3.qcow2`, then `1+b42`. The counters are in `.xcraft/dev-builds.json`,
 which `xcraft clean` keeps, so they are specific to the checkout. `--final` makes final builds, overriding
-`$XCRAFT_DEV`, but not with `--dev`. On the main branch, all the builds are final ones. The build prints the paths of
-the RPMs of the development builds it makes. They are cached apart from the final builds, never pushed to the remote
-storage, nor taken from it; `xcraft status` shows them, `clean` keeps those last built, and `shell` installs them.
+`$XCRAFT_DEV`, but not with `--dev`. On the main branch, all the builds are final ones. The development builds are
+cached apart from the final builds, never pushed to the remote storage, nor taken from it; `xcraft status` shows them,
+`clean` keeps those last built, `shell` installs them, and `repo` makes a repository of them for the hosts, see below.
+`build --verbose` prints the paths of their RPMs.
 
 `xcraft repo <pkg>...` puts the development builds of the given packages alone in a repository, `repo-ID/` by default,
 with a `xcraft-ID.repo` file for the hosts, which keep their usual repositories for everything else. Their
