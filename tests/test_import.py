@@ -151,8 +151,7 @@ def source_rpm(tmp_path: Path, name: str, version: str) -> Path:
     return next((top / "SRPMS").glob("*.src.rpm"))
 
 
-@pytest.mark.podman
-def test_import_srpm(root: Path, upstream: Path, tmp_path: Path) -> None:
+def test_import_srpm(build_environment: Path, root: Path, upstream: Path, tmp_path: Path) -> None:
     assert runner.invoke(app, ["import", "foo", "--url", f"file://{upstream}"]).exit_code == 0
     before = git(root, "rev-parse", "import/foo/XS-9.0")
     srpm = source_rpm(tmp_path, "foo", "3.0")
