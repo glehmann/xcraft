@@ -51,10 +51,15 @@ def make_toys(root: Path) -> None:
             shutil.rmtree(old)
 
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Mark the tests in the build environment as needing podman, and skip those needing it without it, or all of them
-    on an architecture the test project does not build for.
+    on an architecture the test project does not build for; keep those of the shard $XCRAFT_TEST_SHARD only, like 1/2
+    for every other test, for the jobs of CI to share them.
     """
+    if shard := os.environ.get("XCRAFT_TEST_SHARD"):
+        index, count = (int(n) for n in shard.split("/"))
+        config.hook.pytest_deselected(items=[item for i, item in enumerate(items) if i % count != index - 1])
+        items[:] = [item for i, item in enumerate(items) if i % count == index - 1]
     for item in items:
         if not ARCH:
             item.add_marker(pytest.mark.skip(reason=f"no platform of the tests for {os.uname().machine}"))
@@ -80,9 +85,10 @@ def _shared_resolutions(directory: Path) -> Callable[..., Resolved]:
         ]  # fmt: skip
         path = directory / f"{hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()}.json"
         if path.exists():
+            os.utime(path)  # used, see XCRAFT_TEST_RESOLUTIONS
             return Resolved.model_validate_json(path.read_text())
         resolved = run(project, data, show=show, rpms=rpms)
-        path.parent.mkdir(exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
         write_atomically(path, resolved.model_dump_json())
         return resolved
 
@@ -98,6 +104,8 @@ def build_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path
     """
     basetemp = tmp_path_factory.getbasetemp()
     shared = basetemp.parent if "PYTEST_XDIST_WORKER" in os.environ else basetemp  # of all the workers of the session
+    # of all the sessions, like those of CI, which keeps the ones used
+    resolutions = Path(os.environ.get("XCRAFT_TEST_RESOLUTIONS", shared / "resolutions"))
     with (shared / "build-environment.lock").open("w") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         make_toys(shared)
@@ -107,9 +115,11 @@ def build_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path
             shutil.copytree(PROJECT, root)
             (root / "xcraft.toml").write_text(TOML)
             native = Project(root, config()).on_host()
-            prepare(native)
-            build_image(native)
-            build_keys(native)
+            with pytest.MonkeyPatch.context() as patch:
+                patch.setattr(resolution, "_run", _shared_resolutions(resolutions))
+                prepare(native)
+                build_image(native)
+                build_keys(native)
     if "PYTEST_XDIST_WORKER" not in os.environ:
         yield root
         return
@@ -134,7 +144,7 @@ def build_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path
     try:
         with pytest.MonkeyPatch.context() as patch:
             patch.setattr(container, "_dnf_cache", worker_cache)
-            patch.setattr(resolution, "_run", _shared_resolutions(shared / "resolutions"))
+            patch.setattr(resolution, "_run", _shared_resolutions(resolutions))
             worker_cache(Project(root, config()).on_host())
             yield root
     finally:

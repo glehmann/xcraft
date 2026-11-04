@@ -59,7 +59,7 @@ def garage(*args: str) -> str:
     ).stdout
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def s3(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, str]]:
     """Start a Garage server with a bucket, a key to write it, and public reads; return its settings."""
     garage_config = tmp_path_factory.mktemp("garage") / "garage.toml"
@@ -118,7 +118,7 @@ REMOTE = (
 )
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def build_signer(tmp_path_factory: pytest.TempPathFactory) -> tuple[str, Path]:
     if not shutil.which("gpg"):
         pytest.skip("needs gpg")  # for the manifests of all the trees
