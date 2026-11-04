@@ -14,6 +14,7 @@ import errno
 import fcntl
 import json
 import os
+import signal
 import socket
 import struct
 import sys
@@ -54,4 +55,8 @@ else:
 os.setgroups([])
 os.setgid(int(gid))
 os.setuid(int(uid))
+# Python ignores them, and the command would inherit it, like rpmbuild does: writing to a closed pipe, like sed in a
+# pipeline whose reader exits first, would fail with EPIPE, and an error, rather than being killed quietly
+for sig in (signal.SIGPIPE, signal.SIGXFSZ):
+    signal.signal(sig, signal.SIG_DFL)
 os.execvpe(command[0], command, json.loads(environment))  # noqa: S606, the command of the caller

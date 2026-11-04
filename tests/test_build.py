@@ -175,6 +175,15 @@ def test_build_without_network(root: Path) -> None:
     assert "no network" in (root / ".xcraft/logs/offline.log").read_text()  # but its loopback interface
 
 
+def test_build_killed_by_closed_pipes(root: Path) -> None:
+    write_spec(root, "pipes")
+    spec = root / "base/pipes/pipes.spec"
+    check = "seq 1000000 2>seq.err | head -1\ntest ! -s seq.err || { cat seq.err; exit 1; }\n"
+    spec.write_text(spec.read_text().replace("%install\n", f"%build\n{check}%install\n"))
+    code, output = xcraft("build", "pipes")
+    assert code == 0, output
+
+
 def test_dynamic_buildrequires_on_ours(root: Path) -> None:
     spec = root / "base/with-deps/with-deps.spec"
     spec.write_text(spec.read_text().replace("BuildRequires: trivial\n", "").replace(
