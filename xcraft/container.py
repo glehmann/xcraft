@@ -73,6 +73,8 @@ def repo_file(project: Project) -> str:
         f"[{name}]\nname={name}\nbaseurl={repo.baseurl.format(arch=project.arch)}\n"
         + (f"gpgcheck=1\ngpgkey={repo.gpgkey}\n" if repo.gpgkey else "gpgcheck=0\n")
         + (f"includepkgs={' '.join(sorted(repo.includepkgs))}\n" if repo.includepkgs else "")
+        # read again each time, when local, like those changed between two commands
+        + ("metadata_expire=0\n" if repo.baseurl.startswith("file://") else "")
         for name, repo in sorted(project.repos.items())  # in an order of their own, which the build keys cover
     )
 
@@ -317,6 +319,10 @@ def run_natively(
         (directory / "xcraft-upstream.repo").write_text(upstream_copy.repo_file(project))
         for name, text in (repos or {}).items():
             (directory / name).write_text(text)
+        # older than their cached metadata: dnf expires it otherwise, see check_config_file_age, and downloads the
+        # repomd.xml of all the repositories again; their caches are by URL
+        for path in directory.iterdir():
+            os.utime(path, (0, 0))
         mounts = [
             f"{_dnf_cache(project)}:/var/cache/dnf", f"{BUILDENV}:/xcraft:ro", f"{directory}:/etc/yum.repos.d:ro"
         ]  # fmt: skip
