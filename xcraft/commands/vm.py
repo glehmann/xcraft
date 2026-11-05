@@ -11,7 +11,7 @@ from typing import Annotated
 import pyte
 import typer
 
-from xcraft import vm
+from xcraft import display, vm
 from xcraft.commands import Arch
 from xcraft.project import Project
 
@@ -40,6 +40,70 @@ def directory(ctx: typer.Context) -> Path:
         raise RuntimeError(msg)
     vm.Session.model_validate_json((ctx.obj / "session.json").read_text())
     return ctx.obj
+
+
+def check_port(port: int | None) -> None:
+    """Raise when the SSH `port` given is in use on localhost."""
+    if port and not vm.free(port):
+        msg = f"port {port} is in use on localhost: give another one, or none for the first free one from 2222"
+        raise typer.BadParameter(msg, param_hint="--ssh-port")
+
+
+def show(root: Path, session: vm.Session) -> None:
+    """Show how to control the VM launched in `root`, and to log in."""
+    display.console.print(f"virtual disk: {session.disk}\nVM session: {root}", markup=False)
+    display.console.print(f"Control: xcraft vm --vm-dir {root} status", markup=False)
+    if session.ssh_port:
+        display.console.print(f"SSH when enabled in the guest: ssh -p {session.ssh_port} root@127.0.0.1", markup=False)
+
+
+@app.command()
+def start(
+    ctx: typer.Context,
+    memory: Annotated[int | None, typer.Option(min=512, help="VM memory in MiB, the session's by default.")] = None,
+    cpus: Annotated[int | None, typer.Option(min=1, help="Number of virtual CPUs, the session's by default.")] = None,
+    ssh_port: Annotated[
+        int | None,
+        typer.Option(
+            min=0,
+            max=65535,
+            help="Localhost port forwarded to SSH in the VM: the session's by default, if free, or else the first free "
+            "one from 2222. 0 disables it.",
+            show_default=False,
+        ),
+    ] = None,
+    headless: Annotated[
+        bool, typer.Option("--headless", help="Disable the display window. Use xcraft vm for console access.")
+    ] = False,
+    background: Annotated[
+        bool, typer.Option("--background", help="Launch without a window and return when ready.")
+    ] = False,
+) -> None:
+    """Start the VM again from its disk, without the ISO, like an installed host, with its firmware variables and the
+    options of xcraft boot, but those given.
+    """
+    check_port(ssh_port)
+    root = directory(ctx)
+    session = vm.Session.model_validate_json((root / "session.json").read_text())
+    if not session.launch:
+        msg = f"the VM of {root} was launched by an older xcraft, without its options: run xcraft boot again"
+        raise RuntimeError(msg)
+    if not session.disk.is_file():
+        msg = f"no virtual disk at {session.disk}"
+        raise RuntimeError(msg)
+    vm.check_stopped(root)
+    vm.check_tools(session.launch.accel, new_disk=False)
+    launch = session.launch.model_copy(
+        update={"memory": memory or session.launch.memory, "cpus": cpus or session.launch.cpus}
+    )
+    if ssh_port is None:
+        ssh_port = session.ssh_port if not session.ssh_port or vm.free(session.ssh_port) else vm.free_port()
+    cmd = vm.command(root, launch, disk=session.disk, iso=None, ssh_port=ssh_port, headless=headless or background)
+    session = session.model_copy(update={"iso": None, "ssh_port": ssh_port, "command": cmd, "launch": launch})
+    proc = vm.launch(root, session)
+    show(root, session)
+    if not background:
+        vm.wait(proc, root)
 
 
 @app.command()

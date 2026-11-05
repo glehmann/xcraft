@@ -23,6 +23,17 @@ if TYPE_CHECKING:
     from types import TracebackType
 
 
+class Launch(BaseModel):
+    """The options of the VM xcraft boot launched, for xcraft vm start to start it again from its disk."""
+
+    name: str
+    memory: int
+    cpus: int
+    accel: str
+    ovmf: tuple[Path, Path] | None
+    qemu_args: list[str]
+
+
 class Session(BaseModel):
     """The launch details retained after the launching CLI exits."""
 
@@ -32,6 +43,7 @@ class Session(BaseModel):
     iso: Path | None
     ssh_port: int
     command: list[str]
+    launch: Launch | None = None  # None: launched by an xcraft without xcraft vm start
 
 
 class Reply(BaseModel):
@@ -135,6 +147,17 @@ def firmware(code: Path | None, template: Path | None) -> tuple[Path, Path]:
     raise RuntimeError(msg)
 
 
+def check_tools(accel: str, *, new_disk: bool) -> None:
+    """Raise when QEMU, or qemu-img for a `new_disk`, is not installed, or KVM not accessible for the `accel` kvm."""
+    for tool in ["qemu-system-x86_64", *(["qemu-img"] if new_disk else [])]:
+        if not shutil.which(tool):
+            msg = f"{tool} is not installed: install QEMU to run the VM"
+            raise RuntimeError(msg)
+    if accel == "kvm" and not os.access("/dev/kvm", os.R_OK | os.W_OK):
+        msg = "KVM is not accessible: enable it and grant access to /dev/kvm, or use --accel tcg"
+        raise RuntimeError(msg)
+
+
 def check_stopped(directory: Path) -> None:
     """Refuse to replace a live session's endpoints or launch details."""
     if running(directory):
@@ -143,24 +166,15 @@ def check_stopped(directory: Path) -> None:
 
 
 def command(
-    directory: Path,
-    *,
-    name: str,
-    disk: Path,
-    iso: Path | None,
-    memory: int,
-    cpus: int,
-    ssh_port: int,
-    accel: str,
-    headless: bool,
-    ovmf: tuple[Path, Path] | None,
+    directory: Path, launch: Launch, *, disk: Path, iso: Path | None, ssh_port: int, headless: bool
 ) -> list[str]:
     """Return the QEMU command of the VM, copying the template of the firmware variables it writes, once."""
+    accel, ovmf = launch.accel, launch.ovmf
     network = "user,model=e1000" + (f",hostfwd=tcp:127.0.0.1:{ssh_port}-:22" if ssh_port else "")
     # OVMF exposes modes that fit in VRAM; limit it so the installer cannot select a huge framebuffer.
     cmd = [
-        "qemu-system-x86_64", "-name", f"xcraft-{name}", "-accel", accel, "-machine", "q35",
-        "-cpu", "host" if accel == "kvm" else "max", "-smp", str(cpus), "-m", str(memory),
+        "qemu-system-x86_64", "-name", f"xcraft-{launch.name}", "-accel", accel, "-machine", "q35",
+        "-cpu", "host" if accel == "kvm" else "max", "-smp", str(launch.cpus), "-m", str(launch.memory),
         "-vga", "std", "-global", "VGA.xres=1024", "-global", "VGA.yres=768",
         "-global", "VGA.vgamem_mb=4",
         "-drive", f"file={str(disk).replace(',', ',,')},format=qcow2,if=ide", "-nic", network,
@@ -182,7 +196,7 @@ def command(
         cmd += ["-cdrom", str(iso.absolute()), "-boot", "order=d,menu=on", "-no-reboot"]
     else:
         cmd += ["-boot", "order=c,menu=on"]
-    return cmd
+    return [*cmd, *launch.qemu_args]
 
 
 def free(port: int) -> bool:

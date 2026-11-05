@@ -38,7 +38,7 @@ xcraft --install-completion  # optional
 | `xcraft publish [repos\|isos] [--stage s] [--locked] [--local] [--unsigned] [--dev-key] [--arch a]` | Publish a snapshot of the distribution, its repositories and its ISOs, or only those given, for all the architectures or `--arch`, as the stage's latest one; a `--local` one is of the host's architecture by default |
 | `xcraft iso [--netinstall] [--output f] [-V id] [--locked] [--unsigned] [--dev ID \| --final]` | Make the installation ISO, from a local snapshot (see [Installation ISO](#installation-iso)) |
 | `xcraft boot [--iso f] [--disk f] [--headless] [--unsigned] [--dev ID \| --final]` | Build the ISO and boot its installer in a local QEMU VM, creating a virtual disk if missing |
-| `xcraft boot --installed [--disk f]` | Boot the installed virtual disk without making or attaching an ISO |
+| `xcraft vm start [--background]` | Start the VM again from its installed disk, without the ISO, with the options of `xcraft boot` |
 | `xcraft vm <command>` | Inspect a VM, read its console, send input, save diagnostics, or stop it |
 | `xcraft key create` / `xcraft key show [--export]` | The developer's key, which signs the development builds |
 | `xcraft push` | Upload everything the remote storage misses: the source archives and the builds of all packages, with the `index.html` pages of their directories, and the resolutions |
@@ -401,13 +401,14 @@ and an 80 GiB sparse qcow2 disk in `.xcraft/vm/<arch>/disk.qcow2`.
 ```bash
 xcraft patchset /path/to/host-installer --package host-installer --base <ref>
 xcraft boot --unsigned                 # reuse, fetch or build the matching ISO, then run the installer
-xcraft boot --installed                # boot the resulting installation, without rebuilding
+xcraft vm start                        # boot the resulting installation, without the ISO
 xcraft boot --iso /path/to/image.iso   # boot an existing ISO
 ```
 
 The disk persists between runs and is never resized or recreated automatically. Use `--disk /path/to/new.qcow2`
 for a fresh installation, with `--disk-size 100G` to change the size of a new disk. The installer VM exits when it
-requests a reboot; `--installed` then boots the disk. The project lock covers startup, then is released so packages
+requests a reboot; `xcraft vm start` then boots its disk, with the options of `xcraft boot`, its firmware variables
+and its SSH port, if still free; `--memory`, `--cpus` and `--ssh-port` change them. The project lock covers startup, then is released so packages
 can be edited and rebuilt while the VM runs.
 
 `--kernel-args` adds arguments to the kernel command line of the default entry of the ISO's GRUB menu, in GRUB's
@@ -420,7 +421,7 @@ unattended = "rt_answerfile=file:///opt/xensource/installer/answerfile-vm.xml"
 ```
 
 ```bash
-xcraft boot --unattended   # then xcraft boot --installed
+xcraft boot --unattended   # then xcraft vm start
 ```
 
 The firmware boots the entries of its variables first, like the one of a previous installation: use a new session,
@@ -457,7 +458,7 @@ xcraft vm text --physical --enter 'tail -60 /tmp/install-log'
 xcraft vm screenshot /tmp/installer.png
 xcraft vm logs /tmp/installer-diagnostics
 xcraft vm stop
-xcraft boot --background --installed
+xcraft vm start --background           # the installed disk, without the ISO
 ```
 
 `console` renders the current 80-by-24 serial screen and waits for output stability. A wait timeout prints the screen,
