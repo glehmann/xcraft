@@ -27,8 +27,9 @@ time {
     # dnf may not see that the local repository changed when it is regenerated within a second
     $lock dnf -q makecache --repo "$repo" --refresh
     if [ -n "$replace" ]; then
-        # ours have their own versions, older ones for kernel-headers
-        $lock dnf -y --repo "$repo" distro-sync $replace
+        # ours have their own versions, older ones for kernel-headers: only from our repository, of a higher
+        # priority, with the pinned packages they need that the image does not have
+        $lock dnf -y "${installed[@]}" --setopt="$repo.priority=1" distro-sync $replace
     fi
     $lock dnf -y "${installed[@]}" builddep "${defines[@]}" "$spec"
     if grep -q '^%generate_buildrequires' "$spec"; then

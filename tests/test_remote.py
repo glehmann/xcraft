@@ -564,6 +564,57 @@ def test_push_everything(root: Path, tmp_path: Path) -> None:
     assert xcraft("push", "sources", "trivial", "--check", "--to", "main")[0] == 0
 
 
+def test_resolutions_of_other_contents(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The resolutions of the storage are of the pins they were made with: neither an update pinning other contents
+    of the same versions, nor another machine with the lock it made, get those of the former contents.
+    """
+    # two RPMs of the same name, version and architecture, the second requiring a package whose source is locked
+    (specs := tmp_path / "specs").mkdir()
+    (specs / "toypayload.spec").write_text(
+        "Name: toypayload\nVersion: 1\nRelease: 1\nSummary: test\nLicense: MIT\nBuildArch: noarch\n"
+        "%if %{needs}\nRequires: toyrun\n%endif\n%description\ntest\n"
+        "%install\nmkdir -p %{buildroot}/usr/share\necho %{payload} > %{buildroot}/usr/share/toypayload\n"
+        "%files\n/usr/share/toypayload\n"
+    )
+    (rpms := tmp_path / "rpms").mkdir()
+    run(
+        Project.find(), "payloads",
+        " && ".join(
+            f"rpmbuild -bb --define '_topdir /tmp/{payload}' --define '_rpmdir /out/{payload}'"
+            f" --define 'payload {payload}' --define 'needs {needs}' /specs/toypayload.spec"
+            f" && createrepo_c -q /out/{payload}"
+            for payload, needs in (("a", 0), ("b", 1))
+        ),
+        volumes=[f"{specs}:/specs:ro", f"{rpms}:/out"],
+    )  # fmt: skip
+    shutil.copytree(rpms / "a", repo := tmp_path / "repo")
+    config = REMOTE.replace('"bash", "bzip2"', '"toypayload", "bash", "bzip2"')
+    config = config.replace("[publish]\n", '[publish]\nextra = ["toyrun"]\n')
+    (root / "xcraft.toml").write_text(f'{config}\n[repos.payload]\nbaseurl = "file://{repo}/"\n')
+    assert xcraft("build", "--dry-run")[0] == 0
+    sources = load_lock(Project.find()).sources
+    assert xcraft("push", "resolutions")[0] == 0
+    # published again: the update pins it again, from the repositories rather than the storage
+    shutil.rmtree(repo)
+    shutil.copytree(rpms / "b", repo)
+    code, output = xcraft("lock", "--update", "toypayload")
+    assert code == 0, output
+    assert "pinned again, of the same versions: toypayload" in output
+    project = Project.find()
+    lock = load_lock(project)
+    assert lock.sources == sources
+    assert lock.binaries[ARCH]["toypayload"].sha256 == sha256_of(next((rpms / "b").rglob("*.rpm")))
+    assert "toyrun" in lock.image[ARCH]
+    # another machine, with the lock updated, and the resolutions of the former contents in the storage
+    locked = (root / "xcraft.lock").read_bytes()
+    shutil.rmtree(project.state / "cache/resolved")
+    monkeypatch.setattr(resolution, "_resolved", {})
+    monkeypatch.setattr(resolution, "_unreachable", set())
+    code, output = xcraft("build", "--dry-run", "--locked")
+    assert code == 0, output
+    assert (root / "xcraft.lock").read_bytes() == locked
+
+
 def test_resolutions_from_the_remote_storage(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # resolving here, not reading what the other tests resolved, see conftest.py
     monkeypatch.setattr(resolution, "_run", getattr(resolution._run, "__wrapped__", resolution._run))
