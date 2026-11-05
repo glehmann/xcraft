@@ -14,8 +14,8 @@ from xcraft.cache import release_suffix
 from xcraft.commands import Arch, Dev, Final, Packages, dev_ident, load
 from xcraft.display import activity, console
 from xcraft.graph import dependents
+from xcraft.packages import is_debug
 from xcraft.signing import check_signatures, dev_signer
-from xcraft.specs import is_debug
 
 REMOTE = "/var/local/xcraft"
 """Where the repositories of development builds go on the hosts, one per ID."""

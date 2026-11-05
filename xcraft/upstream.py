@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 
 from xcraft.container import BUILDENV, image_tag, run_natively
+from xcraft.packages import dep_name
 from xcraft.resolution import resolve_image
-from xcraft.specs import dep_name
 
 if TYPE_CHECKING:
     from xcraft.project import Project

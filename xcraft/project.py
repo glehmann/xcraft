@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-    from xcraft.specs import Package
+    from xcraft.packages import Package
 
 
 def write_atomically(path: Path, text: str) -> None:

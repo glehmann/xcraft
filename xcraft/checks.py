@@ -17,9 +17,9 @@ from xcraft.cache import BuildError, cached_build, release_suffix
 from xcraft.display import changes, console
 from xcraft.graph import reachable
 from xcraft.lock import Locked, load_lock
+from xcraft.packages import is_debug
 from xcraft.project import write_atomically
 from xcraft.resolution import Resolved, prepare, resolve, resolve_rpm_deps, rpm_deps_context
-from xcraft.specs import is_debug
 
 if TYPE_CHECKING:
     from pathlib import Path

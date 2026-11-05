@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from xcraft.graph import GraphError, build_deps, build_order, components, dependents, reachable, upstream_deps
-from xcraft.specs import Binary, Package
+from xcraft.packages import Binary, Package
 from xcraft.upstream import UpstreamRequires
 
 

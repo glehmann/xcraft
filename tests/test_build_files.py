@@ -26,12 +26,13 @@ from xcraft.commands.repo import _kept
 from xcraft.commands.shell import package_of
 from xcraft.localrepo import OUTPUT_MARKER, RepoError, extra_rpms, fresh_dir, link
 from xcraft.lock import Lock, Pin, save_lock
+from xcraft.packages import Binary, Package
 from xcraft.project import Extra, Project, ProjectLockedError
 from xcraft.publish import build_dependencies
 from xcraft.resolution import Resolved
 from xcraft.rpmbuild import prepare_tree
 from xcraft.sources import SourceError, cache_source, parse_manifest, write_manifest
-from xcraft.specs import STAGED_TIME, Binary, Package, hash_dir, main_spec
+from xcraft.specs import STAGED_TIME, hash_dir, main_spec
 
 if TYPE_CHECKING:
     from pathlib import Path

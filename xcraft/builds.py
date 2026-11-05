@@ -22,8 +22,8 @@ from xcraft.project import write_atomically
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from xcraft.packages import Binary, Package
     from xcraft.project import Project
-    from xcraft.specs import Binary, Package
 
 FIELDS = ("buildrequires", "requires", "provides")
 """What the builds record: by package, its dynamic BuildRequires; by binary package, the packages the requirements rpm
