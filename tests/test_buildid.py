@@ -17,7 +17,7 @@ from xcraft import build as builder
 from xcraft import buildid, buildkey
 from xcraft.builds import BuildId, builds_path, load_builds, save_builds
 from xcraft.cache import build_keys
-from xcraft.iso import build_iso, dev_suffixes, iso_key, iso_name
+from xcraft.iso import checkout_iso, dev_suffixes, iso_key, iso_name
 from xcraft.lock import load_lock, save_lock
 from xcraft.project import Project
 
@@ -223,7 +223,7 @@ def test_build_ids_checked_by_all_the_builds(root: Path) -> None:
     project = Project.find()
     project.frozen = True
     with pytest.raises(buildid.BuildIdError, match="--locked forbids: trivial, with-deps"):
-        build_iso(project)
+        checkout_iso(project)
 
 
 def test_build_ids_of_main_branch(root: Path) -> None:

@@ -13,7 +13,7 @@ from tests.test_build import xcraft
 from xcraft import buildkey
 from xcraft.builds import BuildId, load_builds, save_builds
 from xcraft.container import BUILDENV
-from xcraft.iso import Image, build_iso, cached_iso, iso_id, iso_key, iso_name
+from xcraft.iso import Image, cached_iso, checkout_iso, iso_id, iso_key, iso_name
 from xcraft.lock import Pin, load_lock, save_lock
 from xcraft.project import Project, Remote
 from xcraft.signing import Signer
@@ -117,13 +117,13 @@ def test_iso_lookup_before_preparation(project: Project, tmp_path: Path) -> None
     output = project.state / "iso" / iso_name(project, "8.99.0", netinstall=False, signer=None)
     assert output.read_bytes() == image.read_bytes()
     output.write_bytes(b"changed output")
-    assert build_iso(project) == output
+    assert checkout_iso(project) == output
     assert output.read_bytes() == image.read_bytes()
-    assert build_iso(project, tmp_path / "other.iso").read_bytes() == image.read_bytes()
+    assert checkout_iso(project, tmp_path / "other.iso").read_bytes() == image.read_bytes()
     assert (tree / "image.iso").read_bytes() == image.read_bytes()
     (tree / "image.iso").write_bytes(b"corrupted cache")
     with pytest.raises(RuntimeError, match="does not match its SHA-256"):
-        build_iso(project)
+        checkout_iso(project)
 
 
 def test_iso_masked_units_invalidate_cache(project: Project) -> None:
@@ -149,7 +149,7 @@ def test_iso_metadata_path(project: Project, tmp_path: Path) -> None:
     tree = cache_image(project, image)
     (tree / "image.json").write_text('{"version":"../../outside","sha256":"' + sha256_of(image) + '"}')
     with pytest.raises(ValueError, match="version"):
-        build_iso(project)
+        checkout_iso(project)
 
 
 def test_iso_names(project: Project) -> None:

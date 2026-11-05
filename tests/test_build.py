@@ -24,7 +24,7 @@ from xcraft import buildid, container, pinned, process
 from xcraft.__main__ import app
 from xcraft.builds import builds_path, load_builds, save_builds
 from xcraft.cache import BuildError
-from xcraft.iso import _INSTALL_TOOLS, _check_tools
+from xcraft.iso import _INSTALL_TOOLS, _check_installed_tools
 from xcraft.localrepo import LocalRepo, link
 from xcraft.lock import Recorded, load_lock, lock_path, save_lock
 from xcraft.project import Project
@@ -503,11 +503,11 @@ def test_iso_tools(root: Path) -> None:
     with project.work("tools") as work:
         record = f"{container.DNF_LOCK} python3 /xcraft/record.py /work/tools.json"
         container.run(project, "tools", f"{_INSTALL_TOOLS} && {record}", volumes=[f"{work}:/work"], install=True)
-        _check_tools(project, work / "tools.json")
+        _check_installed_tools(project, work / "tools.json")
         del lock.iso[project.arch][0]
         save_lock(project, lock)
         with pytest.raises(RuntimeError, match="the tools making the ISO are not those pinned in the lock: "):
-            _check_tools(project, work / "tools.json")
+            _check_installed_tools(project, work / "tools.json")
 
 
 def test_snapshots_checked_in_turn(root: Path, tmp_path: Path) -> None:

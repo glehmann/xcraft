@@ -30,7 +30,7 @@ from tests.test_iso import cache_image
 from xcraft import buildid, ccache, pinned, remote, remote_pages, repodata, resolution, upload, upstream_copy
 from xcraft import publish as publisher
 from xcraft.container import run
-from xcraft.iso import build_iso, fetch_isos, iso_key, iso_name, iso_path, push_isos
+from xcraft.iso import checkout_iso, fetch_isos, iso_key, iso_name, iso_path, push_isos
 from xcraft.lock import load_lock
 from xcraft.project import Project, Remote
 from xcraft.resolution import resolve_image
@@ -194,7 +194,7 @@ def test_iso_cache(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture)
     shutil.rmtree(project.state / "cache")
     # No snapshot, RPMs, prepared container state or signing operations are needed to fetch the image.
     project.frozen = True
-    assert build_iso(project, signer=signer).read_bytes() == image.read_bytes()
+    assert checkout_iso(project, signer=signer).read_bytes() == image.read_bytes()
     assert tree.exists()
     assert not (project.state / "publish").exists()
     assert not (project.state / "cache/builds").exists()
