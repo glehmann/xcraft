@@ -294,7 +294,7 @@ def import_srpm(
     repo, first = _repository(project.root)
     ref = f"refs/heads/import/{pkg_dir.name}/{project.config.import_.srpm_branch}"
     parent = _commit(repo, ref) or first
-    with project.work("import-srpm") as work:
+    with project.tmp_dir("import-srpm") as work:
         dest = work / "tree" / pkg_dir.resolve().relative_to(repo)
         dest.mkdir(parents=True)
         unpack_srpm(project, srpm, dest, on_line=on_line)

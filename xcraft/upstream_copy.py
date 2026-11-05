@@ -79,7 +79,7 @@ def stored(project: Project, storage: Remote, arches: list[str]) -> tuple[dict[s
     their paths in `storage`, and the SHA-256 of the source packages, by file name, like publish.previous().
     """
     known, sources = {}, {}
-    with project.work("upstream-copy") as work:
+    with project.tmp_dir("upstream-copy") as work:
         for directory in [*arches, SOURCE]:
             for digest, entry in read(storage, directory, work / directory)[0].items():
                 known[digest] = (entry, f"{PREFIX}/{directory}/{(name := repodata.location(entry))}")
@@ -103,7 +103,7 @@ def push(project: Project, storage: Remote) -> list[str]:
             snapshot.append(publish.previous(project, storage, None))
         return snapshot[0]
 
-    with project.work("upstream") as work:
+    with project.tmp_dir("upstream") as work:
         entries, hrefs = read(storage, project.arch, work / "metadata")
         wanted, problems = _wanted(entries, {pinned.file_name(n, p): (n, p) for n, p in pins.items()})
         copies: Copies = {f: (rpm, None) for f, (n, p) in wanted.items() if (rpm := pinned.stored(n, p))}

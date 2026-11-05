@@ -55,7 +55,7 @@ def _new_archives(project: Project, before: dict[str, Package], after: dict[str,
             msg = f"the Source0 of {name} is not a URL, but {url or 'nothing'}: give the URL of its archive in its spec"
             raise ValueError(msg)
         if url not in digests:
-            with project.work("archive") as work, activity(f"downloading {url}") as on_line:
+            with project.tmp_dir("archive") as work, activity(f"downloading {url}") as on_line:
                 process.download(url, work / archive_name(url), download_progress(on_line))
                 digests[url] = cache_source(project.source_cache, work / archive_name(url))
         # the file of a link, like the sources of kernel-headers, which are the kernel's

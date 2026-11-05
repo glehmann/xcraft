@@ -280,7 +280,7 @@ def _assemble_iso(
     if error := resolution.resolve(project).tools_error:
         msg = f"the tools making the ISO cannot be installed: {error}"
         raise RuntimeError(msg)
-    with project.work("iso") as work:
+    with project.tmp_dir("iso") as work:
         (work / "config.json").write_text(
             json.dumps({
                 "snapshot": "/snapshot", "templates": "/templates", "tree": "/work/tree", "installer": iso.installer,
@@ -344,7 +344,7 @@ def snapshot_iso(
             raise RuntimeError(msg)
         key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev)
         tree = cached_iso(project, key)
-        with project.work("cache-iso") as work:
+        with project.tmp_dir("cache-iso") as work:
             staged = work / "tree"
             staged.mkdir()
             shutil.move(made, staged / "image.iso")

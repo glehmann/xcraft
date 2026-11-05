@@ -79,7 +79,7 @@ class Signer:
             " && ln -s /gpg-agent $GNUPGHOME/S.gpg-agent && gpg --batch -q --import /work/key.asc"
             f" && xargs -a /work/rpms rpmsign --addsign --define '_gpg_name {self.key}'"
         )
-        with project.work("sign") as work:
+        with project.tmp_dir("sign") as work:
             (work / "key.asc").write_text(self.public_key())
             (work / "rpms").write_text("".join(f"/signed/{rpm}\n" for rpm in rpms))
             try:
@@ -186,7 +186,7 @@ def check_signatures(
     # all: a package without signature fails too
     check = "xargs -a /work/packages rpmkeys --checksig --define '_pkgverify_level all'"
     native = project.on_host()  # the checks do not depend on the architecture
-    with project.work("signatures") as work:
+    with project.tmp_dir("signatures") as work:
         if public_key:
             (work / "key.asc").write_text(public_key)
             imported = ["/work/key.asc"]

@@ -110,7 +110,7 @@ def parse(project: Project, dirs: list[Path]) -> dict[str, Package]:
     if not cache.exists():
         build_image(native)
         specs = " ".join(f"/project/{main_spec(d).relative_to(project.root)}" for d in dirs)
-        with project.work("specs") as work:
+        with project.tmp_dir("specs") as work:
             run(
                 native,
                 "specs",

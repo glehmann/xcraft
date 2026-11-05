@@ -175,7 +175,7 @@ def _pin(project: Project, pinned: dict[str, Pin], *directory: str) -> None:
     """Run pin.py on the `pinned` packages, making their `directory` in the store, if given."""
     from xcraft.container import run_natively  # noqa: PLC0415, which builds the image of the pins
 
-    with project.work("pin") as work:
+    with project.tmp_dir("pin") as work:
         data = {"arch": project.arch, "pins": {name: pin.model_dump() for name, pin in pinned.items()}}
         (work / "pins.json").write_text(json.dumps(data))
         run_natively(

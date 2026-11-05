@@ -199,7 +199,7 @@ def _podman_build(
     """Build `show`, the image `tag`, from `files` and the build `args`, logged in .xcraft/logs/_<step>.log, with the
     repository of the `pinned` packages, if any, on /pinned.
     """
-    with project.work(step) as context:
+    with project.tmp_dir(step) as context:
         for name, content in files.items():
             (context / name).write_text(content)
         build_args = [arg for name, value in args.items() for arg in ("--build-arg", f"{name}={value}")]
@@ -241,7 +241,7 @@ def run_dnf(
     pinned packages, the other `repos`, by file name, and its dnf cache, logged in .xcraft/logs/_<step>.log.
     """
     cache = "/var/cache/dnf-emulated"  # the cache of the platform of `project`, besides the host's
-    with project.work(f"{step}-dnf") as work:
+    with project.tmp_dir(f"{step}-dnf") as work:
         (work / "repos").mkdir()
         # the host's is on /pinned
         repo = f"[{pinned.REPO_ID}]\nname={pinned.REPO_ID}\nbaseurl=file:///platform-pinned\ngpgcheck=0\nmetadata_expire=0\n"
@@ -264,7 +264,7 @@ def run_dnf(
 
 def image_packages(project: Project, image: str) -> dict[str, Locked]:
     """Return the upstream packages installed in `image`."""
-    with project.work("record") as work:
+    with project.tmp_dir("record") as work:
         run(
             project,
             "record",
@@ -316,7 +316,7 @@ def run_natively(
 
     native, log = project.on_host(), project.state / f"logs/_{step}.log"
     container = f"xcraft-{step}-{os.getpid()}"
-    with project.work(f"{step}-repos") as directory:
+    with project.tmp_dir(f"{step}-repos") as directory:
         (directory / "upstream.repo").write_text(repo_file(project))
         # for the resolution and the pin downloads, not in the image: the storage is not an input of the builds
         (directory / "xcraft-upstream.repo").write_text(upstream_copy.repo_file(project))

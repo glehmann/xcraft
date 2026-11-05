@@ -64,7 +64,7 @@ def import_(
             prepare(project, roots=False)  # for the build environment, which unpacks them
         for i, (source, name) in enumerate(zip(sources, names, strict=True), 1):
             pkg_dir = project.package_dirs.get(name, project.root / repo / name)
-            with project.work("import") as work, activity(f"[{i}/{len(sources)}] importing {source}") as on_line:
+            with project.tmp_dir("import") as work, activity(f"[{i}/{len(sources)}] importing {source}") as on_line:
                 if not source.endswith(".src.rpm"):
                     branches = [branch] if branch else imported.get(name, imports.branches)
                     heads = import_history(project.root, pkg_dir, url or DEFAULT_URL.format(name=name), branches)

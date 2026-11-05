@@ -390,13 +390,16 @@ class Project:
         return self.state / "logs" / f"{package}.log"
 
     @contextmanager
-    def work(self, name: str) -> Generator[Path]:
-        """Return a new directory in .xcraft/tmp/, for `name` in this process, removed after, but on errors."""
-        work = self.state / "tmp" / f"{name}-{os.getpid()}"
-        shutil.rmtree(work, ignore_errors=True)
-        work.mkdir(parents=True)
-        yield work
-        shutil.rmtree(work)
+    def tmp_dir(self, name: str) -> Generator[Path]:
+        """Return a new temporary directory in .xcraft/tmp/, for `name` in this process.
+
+        Removed on success, but kept on errors, to debug them.
+        """
+        tmp = self.state / "tmp" / f"{name}-{os.getpid()}"
+        shutil.rmtree(tmp, ignore_errors=True)
+        tmp.mkdir(parents=True)
+        yield tmp
+        shutil.rmtree(tmp)
 
     @contextmanager
     def lock(self) -> Generator[None]:
