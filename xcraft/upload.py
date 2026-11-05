@@ -20,7 +20,7 @@ from xcraft.display import activity, console
 from xcraft.iso import iso_inputs
 from xcraft.localrepo import OUTPUT_MARKER
 from xcraft.project import INTERNAL
-from xcraft.publish import ISO_DIR, REPO, snapshot_key, snapshot_tree, stored_path, trusted_key
+from xcraft.publish import ISO_DIR, REPO, Stored, snapshot_key, snapshot_tree, stored_path, trusted_key
 from xcraft.signing import Signer, signing_key
 from xcraft.sources import sha256_of
 
@@ -66,7 +66,7 @@ def _batches(files: list[str]) -> list[list[str]]:
     ]
 
 
-def _manifest(src: Path, stored: dict[str, tuple[str, str]]) -> dict[str, str]:
+def _manifest(src: Path, stored: dict[str, Stored]) -> dict[str, str]:
     """Return the SHA-256 of the files of `src`, but the ISOs of a snapshot, and of those of `stored` not there, by
     path.
     """
@@ -179,7 +179,7 @@ class Uploader:
         src: Path,
         name: str,
         *,
-        stored: dict[str, tuple[str, str]],
+        stored: dict[str, Stored],
     ) -> None:
         """Upload the repositories of the snapshot in `src` of the `platforms`, with the keys of their packages, as
         `name`, and make them the latest ones.
@@ -198,7 +198,7 @@ class Uploader:
             pages=signed,
         )
 
-    def _built(self, platforms: list[tuple[Project, dict[str, str]]]) -> dict[str, tuple[str, str]]:
+    def _built(self, platforms: list[tuple[Project, dict[str, str]]]) -> dict[str, Stored]:
         """Return the packages of the trees of the builds of the `platforms` in the storage, by path in the snapshot,
         with their paths there and SHA-256: those of the first architecture, for the source packages.
         """
@@ -209,13 +209,13 @@ class Uploader:
                 tree = stored_path(platform, self.signer, package, key)
                 root, found = remote.read_tree(self.storage, tree, trusted=self._trusted)
                 stored = {
-                    f"{repo}/{Path(path).name}": (f"{root}/{path}", digest)
+                    f"{repo}/{Path(path).name}": Stored(f"{root}/{path}", digest)
                     for path, digest in found.items()
                     if (repo := repos.get(path.split("/")[0]))
                 } | stored
         return stored
 
-    def upload_isos(self, src: Path, name: str, *, stored: dict[str, tuple[str, str]] | None = None) -> None:
+    def upload_isos(self, src: Path, name: str, *, stored: dict[str, Stored] | None = None) -> None:
         """Upload the ISOs of the snapshot in `src`, in ISO_DIR, of all the architectures, as `name`, with their
         checksums, in SHA256SUMS, signed by `signer`, if any, and make them the latest ones.
         """
@@ -240,7 +240,7 @@ class Uploader:
         name: str,
         *,
         inputs: dict[str, str],
-        stored: dict[str, tuple[str, str]],
+        stored: dict[str, Stored],
         pages: list[str] | None = None,
     ) -> None:
         """Upload the files of `src` as the snapshot `name` of `kind`, and as the latest one too, made from the input
@@ -252,8 +252,8 @@ class Uploader:
         tree, latest = snapshot_tree(self.project, kind, name), snapshot_tree(self.project, kind, "latest")
         manifest = _manifest(src, stored)
         previous = remote.read_manifest(self.storage, latest, trusted=self._trusted)
-        candidates = {f: (f"{latest}/{f}", digest) for f, digest in previous.items()} | stored
-        copies = {f: path for f, (path, digest) in candidates.items() if manifest.get(f) == digest}
+        candidates = {f: Stored(f"{latest}/{f}", digest) for f, digest in previous.items()} | stored
+        copies = {f: s.path for f, s in candidates.items() if manifest.get(f) == s.digest}
         with activity(f"publishing {tree}", log=True) as on_line:
             self._write(tree, manifest, {f: copies.get(f, src / f) for f in manifest}, on_line)
             # only the files changed: without its manifest, a latest tree left incomplete is copied entirely next time
