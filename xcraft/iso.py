@@ -27,7 +27,7 @@ from xcraft.display import activity, changes, console
 from xcraft.lock import load_lock
 from xcraft.pinned import REPO_ID
 from xcraft.project import INTERNAL
-from xcraft.publish import REPO, snapshot
+from xcraft.publish import REPO, Stored, snapshot
 from xcraft.resolution import ISO_TOOLS, prepare, resolve
 from xcraft.signing import key_paths, repo_keys, signing_key
 from xcraft.sources import sha256_of
@@ -227,7 +227,7 @@ def _find(
 
 def push_isos(
     project: Project, storage: Remote, *, signer: Signer | None, upload_signer: Signer | None = None
-) -> dict[str, tuple[str, str]]:
+) -> dict[str, Stored]:
     """Upload the cached ISOs of the checkout the storage misses, and return their paths there, with their SHA-256,
     by file name.
     """
@@ -248,9 +248,8 @@ def push_isos(
             count += 1
         # as the manifest found or written has it, which may be of another machine's image
         root, files = remote.read_tree(storage, path, trusted=trusted)
-        stored[iso_name(project, image.version, netinstall=netinstall, signer=signer)] = (
-            f"{root}/image.iso",
-            files["image.iso"],
+        stored[iso_name(project, image.version, netinstall=netinstall, signer=signer)] = Stored(
+            f"{root}/image.iso", files["image.iso"]
         )
     console.print(f"{count} ISOs pushed, {present} already in the remote storage")
     return stored

@@ -16,7 +16,7 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from rich.markup import escape
 
@@ -307,8 +307,15 @@ def _summary(dest: Path, built: list[tuple[Project, dict[str, str]]], *, build: 
     )
 
 
+class Stored(NamedTuple):
+    """A file of the remote storage: its path there, and its SHA-256."""
+
+    path: str
+    digest: str
+
+
 @dataclass
-class _Plan:
+class _Assembler:
     """A snapshot, signed by `signer`, if any, copying the packages `storage` has, if any: the packages the storage
     misses, all without one, in its directory, and the metadata of all of them.
     """
@@ -322,7 +329,7 @@ class _Plan:
     the storage."""
     sources: dict[str, str]
     """The SHA-256 of the source packages of the latest snapshot and of the upstream copy, by file name."""
-    stored: dict[str, dict[str, tuple[str, str]]] = field(default_factory=dict)
+    stored: dict[str, dict[str, Stored]] = field(default_factory=dict)
     """The packages the storage has, by repository and file name, with their paths there and SHA-256."""
 
     def has(self, repo: str, name: str) -> bool:
@@ -335,14 +342,14 @@ class _Plan:
         """
         if digest not in self.known:
             return False
-        self.stored.setdefault(repo, {})[name] = (path or self.known[digest][1], digest)
+        self.stored.setdefault(repo, {})[name] = Stored(path or self.known[digest][1], digest)
         return True
 
     def index(self, repo: str) -> Path:
         """Write the metadata of `repo`, signed by `signer`, if any, and return its directory."""
         path = self.dest / repo
         path.mkdir(parents=True, exist_ok=True)
-        entries = {name: self.known[digest][0] for name, (_, digest) in self.stored.get(repo, {}).items()}
+        entries = {name: self.known[stored.digest][0] for name, stored in self.stored.get(repo, {}).items()}
         if rpms := sorted(path.glob("*.rpm")):
             run(
                 self.project.on_host(),  # natively: the metadata does not depend on the architecture
@@ -359,7 +366,7 @@ class _Plan:
             self.signer.sign_file(path / "repodata/repomd.xml")
         return path
 
-    def files(self) -> dict[str, tuple[str, str]]:
+    def files(self) -> dict[str, Stored]:
         """Return the packages the storage has, by path in the snapshot, with their paths there and SHA-256."""
         return {f"{repo}/{name}": stored for repo, files in self.stored.items() for name, stored in files.items()}
 
@@ -526,7 +533,7 @@ def snapshot(
     storage: Remote | None,
     build: bool,
     dev: str | None = None,
-) -> tuple[list[tuple[Project, dict[str, str]]], dict[str, tuple[str, str]]]:
+) -> tuple[list[tuple[Project, dict[str, str]]], dict[str, Stored]]:
     """Make the snapshot of the `platforms` in `dest`, and return them with the keys of their packages, and the
     packages of `storage`, by path in the snapshot, with their paths there and SHA-256: they are not in `dest`, see
     materialize().
@@ -542,33 +549,36 @@ def snapshot(
     """
     project = platforms[0]
     fresh_dir(project, dest)
-    plan = _Plan(project, dest, signer, storage, *(_with_copy(platforms, storage, signer) if storage else ({}, {})))
+    assembler = _Assembler(
+        project, dest, signer, storage, *(_with_copy(platforms, storage, signer) if storage else ({}, {}))
+    )
     built = []
     for platform in platforms:
         keys = _built(platform, fetch="needed" if storage else "all", dev=dev)
         arch = f"{REPO}/{platform.arch}"
-        plan.add_ours(platform, keys)
-        plan.add_upstream(platform, published(platform), arch, f"{REPO}/Source")
-        _check_installable(platform, [plan.index(arch)])
+        assembler.add_ours(platform, keys)
+        assembler.add_upstream(platform, published(platform), arch, f"{REPO}/Source")
+        _check_installable(platform, [assembler.index(arch)])
         if build:
-            plan.add_upstream(platform, build_dependencies(platform), f"{BUILD}/{platform.arch}", f"{BUILD}/Source")
-            _check_installable(platform, [plan.dest / arch, plan.index(f"{BUILD}/{platform.arch}")])
+            assembler.add_upstream(
+                platform, build_dependencies(platform), f"{BUILD}/{platform.arch}", f"{BUILD}/Source"
+            )
+            _check_installable(platform, [assembler.dest / arch, assembler.index(f"{BUILD}/{platform.arch}")])
         built.append((platform, keys))
     for repo in (REPO, BUILD) if build else (REPO,):
-        plan.index(f"{repo}/Source")
+        assembler.index(f"{repo}/Source")
     if signer:
         (dest / KEY_FILE).write_text(signer.public_key())
     _summary(dest, built, build=build)
-    return built, plan.files()
+    return built, assembler.files()
 
 
-def materialize(storage: Remote, dest: Path, files: dict[str, tuple[str, str]], repo: str) -> None:
+def materialize(storage: Remote, dest: Path, files: dict[str, Stored], repo: str) -> None:
     """Download to `dest` the packages of `repo` the storage has, `files`, as snapshot() returns them."""
     wanted = {f: stored for f, stored in files.items() if f.startswith(f"{repo}/") and not (dest / f).exists()}
 
     def fetch(f: str) -> None:
-        path, digest = wanted[f]
-        _put(storage, path, dest / f, digest)
+        _put(storage, wanted[f].path, dest / f, wanted[f].digest)
 
     with activity(f"downloading the packages of {repo}", log=True), ThreadPoolExecutor(remote.REQUESTS) as pool:
         list(pool.map(fetch, wanted))

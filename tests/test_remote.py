@@ -1130,7 +1130,7 @@ def test_publish_from_latest_metadata(root: Path, tmp_path: Path, caplog: pytest
             f: digest for f, digest in manifest.items() if f.startswith(f"{repo}/") and f.endswith(".rpm")
         }
     # the packages of a repository, for its ISO
-    rpms = {f: (f"{latest}/{f}", digest) for f, digest in manifest.items() if f.endswith(".rpm")}
+    rpms = {f: publisher.Stored(f"{latest}/{f}", digest) for f, digest in manifest.items() if f.endswith(".rpm")}
     publisher.materialize(storage, tmp_path / "packages", rpms, f"base/{ARCH}")
     assert {p.relative_to(tmp_path / "packages").as_posix() for p in (tmp_path / "packages").rglob("*.rpm")} == {
         f for f in rpms if f.startswith(f"base/{ARCH}/")
