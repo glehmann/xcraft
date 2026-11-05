@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 from rich.markup import escape
 
-from xcraft import remote
+from xcraft import remote, remote_pages
 from xcraft.cache import BuildError, build_keys
 from xcraft.display import activity, console
 from xcraft.iso import iso_inputs
@@ -169,7 +169,7 @@ class Uploader:
                 return False
             remote.write_manifest(self.storage, target, manifest, signer=self._signing)
             _delete_stale(self.storage, target, {*manifest, remote.MANIFEST})
-            remote.update_pages(self.project, self.storage, [f"{target}/", f"{latest}/"])
+            remote_pages.update_pages(self.project, self.storage, [f"{target}/", f"{latest}/"])
         console.print(f"[bold green]✓[/] published {target}, and as {latest} (reused the matching snapshot)")
         return True
 
@@ -265,7 +265,7 @@ class Uploader:
                 remote.upload_tree(self.storage, inputs_tree(latest), work, [INPUTS], signer=self._signing)
             on_line("the pages of the directories")
             pages = [f"{tree}/", f"{latest}/", f"{inputs_tree(latest)}/", *(pages or [])]
-            remote.update_pages(self.project, self.storage, pages)
+            remote_pages.update_pages(self.project, self.storage, pages)
         console.print(f"[bold green]✓[/] published {tree}, and as {latest}")
 
     def _write(

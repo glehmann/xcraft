@@ -8,7 +8,7 @@ from typing import Annotated
 import typer
 from rich.markup import escape
 
-from xcraft import ccache, remote, upstream_copy
+from xcraft import ccache, remote, remote_pages, upstream_copy
 from xcraft.cache import BUILD_FILES, build_keys, build_path, cached_build
 from xcraft.commands import Arch, Final, Key, Packages, To, find, load, remote_storage
 from xcraft.devbuilds import developed
@@ -94,7 +94,7 @@ def _push_sources(project: Project, storage: Remote, packages: list[str] | None,
         console.print(f"[green]↑[/] {filename}")
     if missing:
         with activity("making the pages of the directories"):
-            remote.update_pages(project, storage, [f"{source_path(f, d).rsplit('/', 1)[0]}/" for f, d in missing])
+            remote_pages.update_pages(project, storage, [f"{source_path(f, d).rsplit('/', 1)[0]}/" for f, d in missing])
     console.print(f"{len(missing)} pushed, {len(archives) - len(missing) - len(absent)} already in the remote storage")
     return [filename for filename, _ in absent]
 
@@ -162,7 +162,7 @@ def _push_builds(
         console.print(f"[green]↑[/] {name}")
     if pushed:
         with activity("making the pages of the directories"):
-            remote.update_pages(project, storage, [f"{paths[name]}/" for name in pushed])
+            remote_pages.update_pages(project, storage, [f"{paths[name]}/" for name in pushed])
     console.print(f"{len(pushed)} pushed, {len(present)} already in the remote storage")
     return not_built
 
@@ -193,7 +193,7 @@ def _push_resolutions(project: Project, storage: Remote, *, signer: Signer | Non
             remote.upload_tree(storage, tree, trees[tree].parent, [trees[tree].name], signer=signer)
     if missing:
         with activity("making the pages of the directories"):
-            remote.update_pages(project, storage, [f"{tree}/" for tree in missing])
+            remote_pages.update_pages(project, storage, [f"{tree}/" for tree in missing])
     console.print(f"resolutions: {len(missing)} pushed, {len(trees) - len(missing)} already in the remote storage")
 
 
@@ -238,7 +238,7 @@ def caches(packages: Packages = None, arch: Arch = None, key: Key = None, to: To
         console.print(f"[green]↑[/] {name}")
     if pushed:
         with activity("making the pages of the directories"):
-            remote.update_pages(project, storage, [f"{ccache.remote_path(project, name)}/" for name in pushed])
+            remote_pages.update_pages(project, storage, [f"{ccache.remote_path(project, name)}/" for name in pushed])
     console.print(f"{len(pushed)} pushed")
 
 
@@ -248,5 +248,5 @@ def index(to: To = "dev") -> None:
     project = Project.find()
     storage = remote_storage(project, to)
     with activity("making the pages of the directories"):
-        count = remote.update_pages(project, storage, [""])
+        count = remote_pages.update_pages(project, storage, [""])
     console.print(f"{count} pages")
