@@ -147,9 +147,9 @@ What a command reads of the packages has two lifetimes:
   one of its dependencies, fails rather than being built from other files than its key covers.
 - **What the locks give**, `Project.packages`, `spec_deps` and `deps`, the specs with the records of the lock of the
   builds and the build roots of the lock, is computed once by `Project` object, and forgotten by `refresh()` after a
-  change of the locks: by `checks.record_dynamic()` and `checks.record_rpm_deps()`, and by `resolution.lock_sources()`.
-  `all_platforms()` and `on_host()` give new objects, which compute it again. `prepare()` does not forget it itself: the
-  commands prepare before reading it, and the builds forget it before preparing again.
+  change of the locks: by `checks.record_rpm_deps()`, `resolution.lock_sources()`, and `prepare()`, for the build roots
+  it records, which `checks.record_dynamic()` runs. `all_platforms()` and `on_host()` give new objects, which compute it
+  again.
 - **The keys** come from one read of both locks, see `buildkey.Inputs`. `build._Run` computes them again, after
   `prepare()`, when the content of the locks changed, still with the hashes of the start, and `build()` plans the
   builds again, once, when the builds found what changes the build roots of others.
