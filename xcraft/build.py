@@ -12,8 +12,8 @@ import os
 import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager, nullcontext
-from dataclasses import dataclass
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 from rich.markup import escape
@@ -53,7 +53,7 @@ from xcraft.signing import dev_signer
 from xcraft.specs import hash_dir, is_debug
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
     from pathlib import Path
 
     from xcraft.project import Project
@@ -126,97 +126,23 @@ def queued(project: Project) -> list[str]:
     return names if _alive(pid) else []
 
 
-def _build_one(  # noqa: C901
-    project: Project,
-    name: str,
-    keys: dict[str, str],
-    hashes: dict[str, str],
-    *,
-    status: str | None,
-    autorev: dict[str, str],
-) -> None:
-    """Build `name` and cache the result, showing `status` while it runs, or the build log without status.
-
-    It only gets the builds of its dependencies. What its build found is
-    recorded in the lock: its dynamic BuildRequires, even when it fails, and
-    what rpm generated for its binary packages. It is not cached when its spec
-    directory changed during the build, when its build root is not the one
-    resolved for it, or when it did not make the packages parsed from its
-    spec (see xcraft.checks). Raise
-    BuildRootChangedError when it found what changes its build root, to build
-    it again, after the packages it needs, or its build number. The `keys` are those of the
-    `hashes` of the package directories at the start of the builds, computed
-    again with them when the build changes the lock.
+@contextmanager
+def _shown(project: Project, name: str, status: str | None) -> Generator[Callable[[str], None]]:
+    """Show the build log of `name`, given line by line to the function yielded: whole without `status`, or only its
+    errors and warnings, with `status` shown while it runs.
     """
-    if error := project.packages[name].error:
-        raise BuildError(error)
-    resolved = check_resolved(project, name)
-    replace = image_replacements(resolved, name)
-    repo = deps_repo(project, name, keys)
-    tree = prepare_tree(project, name, hashes[name])
-    log = project.log(name)
-    suffix = release_suffix(keys[name])
-    start = time.time()
-    try:
-        with (
-            activity(status, expected=previous_duration(project, name), still=f"building {name}")
-            if status
-            else nullcontext(None) as progress
-        ):
-            # the errors and warnings above the progress, like with the whole log, after the status, which CI shows
-            header = Text.from_markup(status).plain if status and not in_ci() else ""
-            diagnose = diagnostics(print_log_line, header=header) if status else print_log_line
+    if not status:
+        yield print_log_line
+        return
+    with activity(status, expected=previous_duration(project, name), still=f"building {name}") as progress:
+        # the errors and warnings above the progress, like with the whole log, after the status, which CI shows
+        diagnose = diagnostics(print_log_line, header="" if in_ci() else Text.from_markup(status).plain)
 
-            def on_line(line: str) -> None:
-                if progress:
-                    progress(line)
-                diagnose(line)
+        def on_line(line: str) -> None:
+            progress(line)
+            diagnose(line)
 
-            run_build(project, name, repo, "a", replace=replace, suffix=suffix, log=log, on_line=on_line)
-    except ContainerError as e:
-        # those it asked for before failing, maybe for one of ours not among its dependencies
-        if (tree / "buildrequires.txt").exists() and record_dynamic(project, name, tree):
-            msg = f"{e}, asking for other dynamic BuildRequires, now in the lock: built again after what they need"
-            raise BuildRootChangedError(msg) from None
-        raise
-    ccache.note_build(project, name, start)
-    if check_build(project, name, tree, suffix=suffix):
-        keys = build_keys(project, autorev, hashes)  # covering what the build recorded
-        if release_suffix(keys[name]) != suffix:
-            msg = "its dynamic BuildRequires, now in the lock, change its build number: built again with the new one"
-            raise BuildRootChangedError(msg)
-    if hash_dir(project.package_dirs[name], project.root) != hashes[name]:  # those of its key, staged
-        msg = f"{project.package_dirs[name].relative_to(project.root)} changed during the build, build it again"
-        raise BuildError(msg)
-    # development builds are signed with the developer's key, if any
-    if name in autorev and (signer := dev_signer(project)):
-        for output in ("RPMS", "SRPMS"):
-            signer.sign_rpms(project, tree / output)
-    _cache(project, name, keys[name], tree, autorev)
-    record_rpm_deps(project, [name], keys, quiet=True)  # see _build_all()
-
-
-def _cache(project: Project, name: str, key: str, tree: Path, autorev: dict[str, str]) -> Path:
-    """Move the build of `name` in `tree` to the cache, with its `key` and the development build suffixes `autorev`, and
-    return it there.
-    """
-    build_dir = cached_build(project, name, key)
-    # assembled next to it, and renamed, not to leave a partial build in the cache
-    new = build_dir.with_name(f".{build_dir.name}")
-    shutil.rmtree(new, ignore_errors=True)
-    new.mkdir(parents=True)
-    for output in ("RPMS", "SRPMS"):
-        (tree / output).rename(new / output)
-    if name in autorev:
-        # the suffixes of all the development builds of the run, its own and those of the dependencies built with it
-        (new / "autorev").write_text(json.dumps(autorev, sort_keys=True))
-    shutil.copy2(project.log(name), new / "build.log")
-    if build_dir.exists():  # an earlier build of the same inputs
-        shutil.rmtree(new)
-    else:
-        new.rename(build_dir)
-    shutil.rmtree(tree)
-    return build_dir
+        yield on_line
 
 
 def fetch_build(project: Project, name: str, key: str) -> bool:
@@ -229,6 +155,29 @@ def _show_plan(project: Project, plan: list[str], keys: dict[str, str], *, fetch
     """Show what is to build or fetch in `plan`, and how long it took last time, with how many are cached, or only
     in the remote storage.
     """
+    to_build, stored, fetched = _sources(project, plan, keys, fetch=fetch)
+    for name in plan:
+        if name in to_build:
+            console.print(f"[bold]build[/]    {name}{_estimate(project, name)}")
+        elif name in fetched:
+            console.print(f"[dim]fetch[/]    {name}")
+    summary = [f"{len(to_build)} to build"]
+    if durations := [d for name in to_build if (d := previous_duration(project, name))]:
+        summary.append(
+            f"~{duration(sum(durations))}" + (" for the ones built before" if len(durations) < len(to_build) else "")
+        )
+    counts = {
+        "to fetch": len(fetched),
+        "in the remote storage": len(stored - fetched),
+        "cached": len(plan) - len(to_build) - len(stored),
+    }
+    console.print(", ".join(summary + [f"{n} {what}" for what, n in counts.items() if n]))
+
+
+def _sources(
+    project: Project, plan: list[str], keys: dict[str, str], *, fetch: Fetch
+) -> tuple[list[str], set[str], set[str]]:
+    """Return the packages of `plan` to build, those only in the remote storage, and those of them to fetch."""
     to_build = [name for name in plan if not cached_build(project, name, keys[name]).exists()]
     stored = set()
     if fetch != "none" and project.config.remote:
@@ -239,27 +188,8 @@ def _show_plan(project: Project, plan: list[str], keys: dict[str, str], *, fetch
         except remote.RemoteError as e:
             console.print(f"[yellow]remote storage unavailable[/]: {escape(str(e))}")
         to_build = [name for name in to_build if name not in stored]
-    fetched = (
-        stored if fetch == "all" else stored & reachable(project.deps, {d for n in to_build for d in project.deps[n]})
-    )
-    for name in plan:
-        if name in to_build:
-            console.print(f"[bold]build[/]    {name}{_estimate(project, name)}")
-        elif name in fetched:
-            console.print(f"[dim]fetch[/]    {name}")
-    durations = [d for name in to_build if (d := previous_duration(project, name))]
-    summary = [f"{len(to_build)} to build"]
-    if durations:
-        summary.append(
-            f"~{duration(sum(durations))}" + (" for the ones built before" if len(durations) < len(to_build) else "")
-        )
-    if fetched:
-        summary.append(f"{len(fetched)} to fetch")
-    if stored - fetched:
-        summary.append(f"{len(stored - fetched)} in the remote storage")
-    if cached := len(plan) - len(to_build) - len(stored):
-        summary.append(f"{cached} cached")
-    console.print(", ".join(summary))
+    needed = reachable(project.deps, {d for n in to_build for d in project.deps[n]})
+    return to_build, stored, stored if fetch == "all" else stored & needed
 
 
 def build(
@@ -298,20 +228,12 @@ def build(
             _show_plan(project, plan, keys, fetch=fetch)
             return [], keys, autorev
         _queue_file(project).parent.mkdir(parents=True, exist_ok=True)
+        run = _Run(project, hashes, keys, autorev, dev=dev, verbose=verbose, fetch=fetch, build_missing=build_missing)
         try:
-            results, keys, autorev = _build_all(
-                project,
-                plan,
-                keys,
-                hashes,
-                verbose=verbose,
-                dev=dev,
-                autorev=autorev,
-                fetch=fetch,
-                build_missing=build_missing,
-            )
+            results = run.build(plan)
         finally:
             _queue_file(project).unlink(missing_ok=True)
+        keys, autorev = run.keys, run.autorev
         if attempt or all(r.status != "again" for r in results):
             break
         console.print("the builds found what changes the build roots: planning them again")
@@ -343,84 +265,252 @@ def _record_cached(project: Project, dev: str | None) -> tuple[dict[str, str], d
     raise BuildError(msg)
 
 
-def _build_all(
-    project: Project,
-    plan: list[str],
-    keys: dict[str, str],
-    hashes: dict[str, str],
-    *,
-    verbose: bool,
-    dev: str | None,
-    autorev: dict[str, str],
-    fetch: Fetch,
-    build_missing: bool,
-) -> tuple[list[Result], dict[str, str], dict[str, str]]:
-    results: dict[str, Result] = {}
-    use_remote = fetch != "none" and bool(project.config.remote)
-    reused = {name for name, i in buildid.read(project).items() if i.accepts}
-    # asked at once, with the keys of the start
-    missing = [name for name in plan if not cached_build(project, name, keys[name]).exists()]
-    stored = _stored(project, missing, keys) if use_remote and fetch == "needed" else {}
-    recorded = _lock_state(project)
-    for i, name in enumerate(plan, 1):
-        _queue_file(project).write_text("\n".join([str(os.getpid()), *plan[i:]]) + "\n")
-        with _turn(project, name):
-            keys, autorev, recorded = _current(project, keys, autorev, recorded, dev=dev, hashes=hashes)
-            if done := _done(project, name, keys, hashes, verbose=verbose):
-                results[name] = done
-                continue
-            if use_remote and name not in autorev:
-                try:
-                    if _from_storage(project, name, keys, results, stored, fetch=fetch):
-                        continue
-                except remote.RemoteError as e:
-                    console.print(f"[yellow]remote storage unavailable, building locally[/]: {escape(str(e))}")
-                    use_remote = False
-            if failed := _failed(project, name, results):
-                results[name] = Result(name, "skipped")
-                console.print(f"[yellow]-[/] {name} [yellow]skipped[/], needs {', '.join(failed)}")
-                continue
-            if not build_missing or name in reused:  # the build of the main branch, made by CI
-                results[name] = Result(name, "failed")
-                why = "not in the remote storage" if use_remote else "not built, and the remote storage is not used"
-                _show_failure(project, name, BuildError(f"{why}, for {project.arch}"), verbose=verbose)
-                continue
-            status = None if verbose else f"[{i}/{len(plan)}] building {name}{_estimate(project, name)}"
-            if use_remote:
-                _fetch_for(project, name, keys, results)
-                # for what they recorded
-                keys, autorev, recorded = _current(project, keys, autorev, recorded, dev=dev, hashes=hashes)
-            results[name] = _build_shown(project, name, keys, hashes, status=status, autorev=autorev, verbose=verbose)
-            if results[name].status == "built":
-                keep_built(project, dev, autorev, [name], hashes)
-    keys, autorev, recorded = _current(project, keys, autorev, recorded, dev=dev, hashes=hashes)
-    return _recorded_again(project, results, keys, autorev, recorded, stored, dev=dev, hashes=hashes)
-
-
-def _recorded_again(
-    project: Project,
-    results: dict[str, Result],
-    keys: dict[str, str],
-    autorev: dict[str, str],
-    recorded: bytes,
-    stored: dict[str, bool],
-    *,
-    dev: str | None,
-    hashes: dict[str, str],
-) -> tuple[list[Result], dict[str, str], dict[str, str]]:
-    """Record what rpm generated for the cached builds again, and return the `results`, the keys and the suffixes
-    `autorev`: packages built or fetched now may provide what they could not resolve before, which changes the keys of
-    those built against them, then built again, like a change of the lock during the builds, or fetched again from
-    the remote storage, which has those of `stored`, by path.
+@dataclass
+class _Run:
+    """A run of builds, of the packages as they were at the start, with the `hashes` of their directories: the `keys`
+    of all the packages, and the suffixes `autorev` of the development builds `dev`, follow the lock, which the builds
+    change.
     """
-    if record_rpm_deps(project, [n for n, k in keys.items() if cached_build(project, n, k).exists()], keys):
-        keys, autorev, _ = _current(project, keys, autorev, recorded, dev=dev, hashes=hashes)
-    for name, result in results.items():
-        if (result.status == "stored" and not stored.get(build_path(project, name, keys[name]))) or (
-            result.status in ("built", "fetched", "cached") and not cached_build(project, name, keys[name]).exists()
+
+    project: Project
+    hashes: dict[str, str]
+    keys: dict[str, str]
+    autorev: dict[str, str]
+    dev: str | None = None
+    verbose: bool = False
+    fetch: Fetch = "all"
+    build_missing: bool = True
+    results: dict[str, Result] = field(default_factory=dict)
+    stored: dict[str, bool] = field(default_factory=dict)
+    """Whether the remote storage has the builds, by path."""
+    use_remote: bool = field(default=False, init=False)
+    recorded: bytes = field(default=b"", init=False)
+    """The state of the lock of the `keys`, see _lock_state()."""
+
+    def build(self, plan: list[str]) -> list[Result]:
+        """Build the packages of `plan`, in order, and return how it went, see xcraft.build.build()."""
+        project = self.project
+        self.use_remote = self.fetch != "none" and bool(project.config.remote)
+        reused = {name for name, i in buildid.read(project).items() if i.accepts}
+        if self.use_remote and self.fetch == "needed":  # asked at once, with the keys of the start
+            missing = [name for name in plan if not cached_build(project, name, self.keys[name]).exists()]
+            self.stored = _stored(project, missing, self.keys)
+        self.recorded = _lock_state(project)
+        for i, name in enumerate(plan, 1):
+            _queue_file(project).write_text("\n".join([str(os.getpid()), *plan[i:]]) + "\n")
+            with _turn(project, name):
+                self._refresh()
+                self.results[name] = self._one(name, f"[{i}/{len(plan)}]", reused=name in reused)
+        self._refresh()
+        return self._recorded_again()
+
+    def _one(self, name: str, step: str, *, reused: bool) -> Result:
+        """Return the result of `name`, at `step` of the plan: built, unless it is done, in the remote storage, or not
+        to build, like when `reused`, the build of the main branch, made by CI.
+        """
+        if result := self._done(name) or self._from_storage(name) or self._not_built(name, reused=reused):
+            return result
+        if self.use_remote:
+            self._fetch_for(name)
+            self._refresh()  # for what they recorded
+        status = None if self.verbose else f"{step} building {name}{_estimate(self.project, name)}"
+        if (result := self._build_shown(name, status)).status == "built":
+            keep_built(self.project, self.dev, self.autorev, [name], self.hashes)
+        return result
+
+    def _refresh(self) -> None:
+        """Compute the `keys` and the suffixes `autorev` again when the builds changed the lock: not with the packages,
+        as they were at the start.
+        """
+        if (state := _lock_state(self.project)) != self.recorded:
+            prepare(self.project)
+            (self.keys, self.autorev), self.recorded = dev_keys(self.project, self.dev, self.hashes), state
+
+    def _done(self, name: str) -> Result | None:
+        """Return the result of `name` when it is not to build: failed, as it or one of its dependencies changed since
+        they had their `hashes`, or cached.
+        """
+        project = self.project
+        if edited := [
+            n
+            for n in sorted(reachable(project.deps, [name]))
+            if hash_dir(project.package_dirs[n], project.root) != self.hashes[n]
+        ]:
+            error = BuildError(f"{', '.join(edited)} changed since the builds started: build again")
+            _show_failure(project, name, error, verbose=self.verbose)
+            return Result(name, "failed")
+        if cached_build(project, name, self.keys[name]).exists():  # nothing to show: only the counts
+            return Result(name, "cached")
+        return None
+
+    def _from_storage(self, name: str) -> Result | None:
+        """Return the result of `name` when the remote storage has its build: fetched, or only noted there with `fetch`
+        needed, as `stored` says, or asked now.
+        """
+        if not self.use_remote or name in self.autorev:
+            return None
+        try:
+            if self.fetch != "needed":
+                return self._fetched(name) if fetch_build(self.project, name, self.keys[name]) else None
+            # fetched by _fetch_for(), if a build needs it
+            if (path := build_path(self.project, name, self.keys[name])) not in self.stored:
+                self.stored[path] = remote.tree_available(self.project, path)
+            return Result(name, "stored") if self.stored[path] else None
+        except remote.RemoteError as e:
+            console.print(f"[yellow]remote storage unavailable, building locally[/]: {escape(str(e))}")
+            self.use_remote = False
+            return None
+
+    def _not_built(self, name: str, *, reused: bool) -> Result | None:
+        """Return the result of `name` when it is not to build: skipped, as dependencies failed, or failed without
+        `build_missing`, or when `reused`.
+        """
+        if failed := sorted(
+            dep
+            for dep in self.project.deps[name]
+            if dep in self.results and self.results[dep].status in ("failed", "skipped")
         ):
-            results[name] = Result(name, "again")
-    return list(results.values()), keys, autorev
+            console.print(f"[yellow]-[/] {name} [yellow]skipped[/], needs {', '.join(failed)}")
+            return Result(name, "skipped")
+        if self.build_missing and not reused:
+            return None
+        why = "not in the remote storage" if self.use_remote else "not built, and the remote storage is not used"
+        _show_failure(self.project, name, BuildError(f"{why}, for {self.project.arch}"), verbose=self.verbose)
+        return Result(name, "failed")
+
+    def _fetch_for(self, name: str) -> None:
+        """Fetch from the remote storage what the build of `name` needs: the compiler cache of the storage, without
+        one, and the builds of its dependencies only there, see Fetch.
+        """
+        project = self.project
+        ccache.fetch_missing(project, name)
+        try:
+            for dep in sorted(reachable(project.deps, project.deps[name])):
+                key = self.keys[dep]
+                if not cached_build(project, dep, key).exists() and fetch_build(project, dep, key):
+                    self.results[dep] = self._fetched(dep)
+        except remote.RemoteError as e:
+            console.print(f"[yellow]remote storage unavailable[/]: {escape(str(e))}")
+
+    def _fetched(self, name: str) -> Result:
+        """Record what rpm generated for the build of `name` just fetched, show it, and return its result."""
+        record_rpm_deps(self.project, [name], self.keys, quiet=True)  # see _recorded_again()
+        console.print(f"[green]↓[/] {name} [green]fetched[/]")
+        return Result(name, "fetched")
+
+    def _build_shown(self, name: str, status: str | None) -> Result:
+        """Build `name` with _build_one(), and show how it went."""
+        build_image(self.project)  # only when a package is to build, rather than cached, fetched or stored: failing all
+        start = time.monotonic()
+        try:
+            self._build_one(name, status)
+        except BuildRootChangedError as e:
+            console.print(f"[yellow]↻[/] {name}: {escape(str(e))}")
+            return Result(name, "again")
+        except (OSError, RuntimeError) as e:
+            _show_failure(self.project, name, e, verbose=self.verbose)
+            return Result(name, "failed")
+        console.print(f"[bold green]✓[/] {name} [green]built[/] in {duration(time.monotonic() - start)}")
+        return Result(name, "built")
+
+    def _build_one(self, name: str, status: str | None) -> None:
+        """Build `name` and cache the result, showing `status` while it runs, or the build log without status.
+
+        It only gets the builds of its dependencies. What its build found is
+        recorded in the lock: its dynamic BuildRequires, even when it fails, and
+        what rpm generated for its binary packages. It is not cached when its spec
+        directory changed during the build, when its build root is not the one
+        resolved for it, or when it did not make the packages parsed from its
+        spec (see xcraft.checks). Raise
+        BuildRootChangedError when it found what changes its build root, to build
+        it again, after the packages it needs, or its build number. The keys are those of the
+        `hashes` of the package directories at the start of the builds, computed
+        again with them when the build changes the lock.
+        """
+        project = self.project
+        if error := project.packages[name].error:
+            raise BuildError(error)
+        replace = image_replacements(check_resolved(project, name), name)
+        repo = deps_repo(project, name, self.keys)
+        tree = prepare_tree(project, name, self.hashes[name])
+        suffix = release_suffix(self.keys[name])
+        start = time.time()
+        try:
+            with _shown(project, name, status) as on_line:
+                run_build(
+                    project, name, repo, "a", replace=replace, suffix=suffix, log=project.log(name), on_line=on_line
+                )
+        except ContainerError as e:
+            # those it asked for before failing, maybe for one of ours not among its dependencies
+            if (tree / "buildrequires.txt").exists() and record_dynamic(project, name, tree):
+                msg = f"{e}, asking for other dynamic BuildRequires, now in the lock: built again after what they need"
+                raise BuildRootChangedError(msg) from None
+            raise
+        ccache.note_build(project, name, start)
+        keys = self._checked(name, tree, suffix)
+        self._cache(name, keys[name], tree)
+        record_rpm_deps(project, [name], keys, quiet=True)  # see _recorded_again()
+
+    def _checked(self, name: str, tree: Path, suffix: str) -> dict[str, str]:
+        """Check the build of `name` in `tree`, with the release `suffix`, see _build_one(), and return the keys, with
+        what it recorded.
+        """
+        project, keys = self.project, self.keys
+        if check_build(project, name, tree, suffix=suffix):
+            keys = build_keys(project, self.autorev, self.hashes)  # covering what the build recorded
+            if release_suffix(keys[name]) != suffix:
+                msg = (
+                    "its dynamic BuildRequires, now in the lock, change its build number: built again with the new one"
+                )
+                raise BuildRootChangedError(msg)
+        if hash_dir(project.package_dirs[name], project.root) != self.hashes[name]:  # those of its key, staged
+            msg = f"{project.package_dirs[name].relative_to(project.root)} changed during the build, build it again"
+            raise BuildError(msg)
+        return keys
+
+    def _cache(self, name: str, key: str, tree: Path) -> None:
+        """Move the build of `name` in `tree` to the cache, with its `key`, and the suffixes `autorev` when it is a
+        development build, signed with the developer's key, if any.
+        """
+        project = self.project
+        if name in self.autorev and (signer := dev_signer(project)):
+            for output in ("RPMS", "SRPMS"):
+                signer.sign_rpms(project, tree / output)
+        build_dir = cached_build(project, name, key)
+        # assembled next to it, and renamed, not to leave a partial build in the cache
+        new = build_dir.with_name(f".{build_dir.name}")
+        shutil.rmtree(new, ignore_errors=True)
+        new.mkdir(parents=True)
+        for output in ("RPMS", "SRPMS"):
+            (tree / output).rename(new / output)
+        if name in self.autorev:
+            # the suffixes of all the development builds of the run, its own and those of the dependencies built with it
+            (new / "autorev").write_text(json.dumps(self.autorev, sort_keys=True))
+        shutil.copy2(project.log(name), new / "build.log")
+        if build_dir.exists():  # an earlier build of the same inputs
+            shutil.rmtree(new)
+        else:
+            new.rename(build_dir)
+        shutil.rmtree(tree)
+
+    def _recorded_again(self) -> list[Result]:
+        """Record what rpm generated for the cached builds again, and return the results: packages built or fetched now
+        may provide what they could not resolve before, which changes the keys of those built against them, then built
+        again, like a change of the lock during the builds, or fetched again from the remote storage.
+        """
+        cached = [n for n, k in self.keys.items() if cached_build(self.project, n, k).exists()]
+        if record_rpm_deps(self.project, cached, self.keys):
+            self._refresh()
+        return [r if self._holds(r) else Result(r.name, "again") for r in self.results.values()]
+
+    def _holds(self, result: Result) -> bool:
+        """Return whether `result` holds with the current keys: its build still cached, or in the remote storage."""
+        key = self.keys[result.name]
+        if result.status == "stored":
+            return bool(self.stored.get(build_path(self.project, result.name, key)))
+        return (
+            result.status not in ("built", "fetched", "cached") or cached_build(self.project, result.name, key).exists()
+        )
 
 
 def _stored(project: Project, names: list[str], keys: dict[str, str]) -> dict[str, bool]:
@@ -435,120 +525,10 @@ def _stored(project: Project, names: list[str], keys: dict[str, str]) -> dict[st
         return {}
 
 
-def _from_storage(
-    project: Project,
-    name: str,
-    keys: dict[str, str],
-    results: dict[str, Result],
-    stored: dict[str, bool],
-    *,
-    fetch: Fetch,
-) -> bool:
-    """Fetch the build of `name` from the remote storage, or only note it is there with `fetch` needed, in `results`,
-    and return whether the storage has it: as `stored` says, by path, or asked now.
-    """
-    if fetch == "needed":  # fetched by _fetch_for(), if a build needs it
-        if (path := build_path(project, name, keys[name])) not in stored:
-            stored[path] = remote.tree_available(project, path)
-        if not stored.get(path):
-            return False
-        results[name] = Result(name, "stored")
-        return True
-    if not fetch_build(project, name, keys[name]):
-        return False
-    _fetched(project, name, keys, results)
-    return True
-
-
-def _fetch_for(project: Project, name: str, keys: dict[str, str], results: dict[str, Result]) -> None:
-    """Fetch from the remote storage what the build of `name` needs: the compiler cache of the storage, without
-    one, and the builds of its dependencies only there, see Fetch.
-    """
-    ccache.fetch_missing(project, name)
-    try:
-        for dep in sorted(reachable(project.deps, project.deps[name])):
-            if not cached_build(project, dep, keys[dep]).exists() and fetch_build(project, dep, keys[dep]):
-                _fetched(project, dep, keys, results)
-    except remote.RemoteError as e:
-        console.print(f"[yellow]remote storage unavailable[/]: {escape(str(e))}")
-
-
-def _fetched(project: Project, name: str, keys: dict[str, str], results: dict[str, Result]) -> None:
-    """Record what rpm generated for the build of `name` just fetched, and show it."""
-    record_rpm_deps(project, [name], keys, quiet=True)  # see _build_all()
-    console.print(f"[green]↓[/] {name} [green]fetched[/]")
-    results[name] = Result(name, "fetched")
-
-
-def _current(
-    project: Project,
-    keys: dict[str, str],
-    autorev: dict[str, str],
-    recorded: bytes,
-    *,
-    dev: str | None,
-    hashes: dict[str, str],
-) -> tuple[dict[str, str], dict[str, str], bytes]:
-    """Return the `keys` and the suffixes `autorev` of the development builds `dev` of the lock `recorded`, and the
-    lock, computed again when the builds changed it: not with the packages, as they were at the start.
-    """
-    if (state := _lock_state(project)) == recorded:
-        return keys, autorev, recorded
-    prepare(project)
-    return *dev_keys(project, dev, hashes), state
-
-
-def _done(project: Project, name: str, keys: dict[str, str], hashes: dict[str, str], *, verbose: bool) -> Result | None:
-    """Return the result of `name` when it is not to build: failed, as it or one of its dependencies changed since
-    they had the `hashes` of the `keys`, or cached.
-    """
-    if edited := [
-        n
-        for n in sorted(reachable(project.deps, [name]))
-        if hash_dir(project.package_dirs[n], project.root) != hashes[n]
-    ]:
-        error = BuildError(f"{', '.join(edited)} changed since the builds started: build again")
-        _show_failure(project, name, error, verbose=verbose)
-        return Result(name, "failed")
-    if cached_build(project, name, keys[name]).exists():  # nothing to show: only the counts
-        return Result(name, "cached")
-    return None
-
-
 def _lock_state(project: Project) -> bytes:
     """Return the content of the lock, and what the builds recorded, which the keys depend on."""
     records = load_builds(project).model_dump_json(exclude={"ids"}).encode()
     return (path.read_bytes() if (path := lock_path(project)).exists() else b"") + records
-
-
-def _build_shown(
-    project: Project,
-    name: str,
-    keys: dict[str, str],
-    hashes: dict[str, str],
-    *,
-    status: str | None,
-    autorev: dict[str, str],
-    verbose: bool,
-) -> Result:
-    """Build `name` with _build_one(), and show how it went."""
-    build_image(project)  # only when a package is to build, rather than cached, fetched or stored: failing them all
-    start = time.monotonic()
-    try:
-        _build_one(project, name, keys, hashes, status=status, autorev=autorev)
-    except BuildRootChangedError as e:
-        console.print(f"[yellow]↻[/] {name}: {escape(str(e))}")
-        return Result(name, "again")
-    except (OSError, RuntimeError) as e:
-        _show_failure(project, name, e, verbose=verbose)
-        return Result(name, "failed")
-    console.print(f"[bold green]✓[/] {name} [green]built[/] in {duration(time.monotonic() - start)}")
-    return Result(name, "built")
-
-
-def _failed(project: Project, name: str, results: dict[str, Result]) -> list[str]:
-    """Return the dependencies of `name` that failed or were skipped."""
-    return sorted(dep for dep in project.deps[name] if dep in results and results[dep].status in ("failed", "skipped"))
 
 
 def _show_failure(project: Project, name: str, error: Exception, *, verbose: bool) -> None:

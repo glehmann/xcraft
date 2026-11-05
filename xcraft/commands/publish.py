@@ -15,6 +15,7 @@ from xcraft.display import console
 from xcraft.iso import fetch_isos, make_isos, push_isos
 from xcraft.project import Destination, Project, Publish
 from xcraft.publish import ISO_DIR, REPO, snapshot
+from xcraft.upload import Uploader
 
 app = typer.Typer()
 
@@ -169,11 +170,8 @@ def _publish(  # noqa: C901, PLR0912
         update_build_ids(project)  # the final builds are numbered by them
         dest = (output or project.state / "publish").absolute()
         build = only != "isos" and project.config.publish.build
-        if (
-            storage
-            and output is None
-            and publisher.reuse_published(platforms, storage, signer=signer, build=build, only=only, isos=with_isos)
-        ):
+        uploader = Uploader(project, storage, signer, build) if storage else None
+        if uploader and output is None and uploader.reuse(platforms, only=only, isos=with_isos):
             return
         console.print("assembling the snapshot")
         built, stored = snapshot(platforms, dest, signer=signer, storage=storage, build=build)
@@ -186,14 +184,14 @@ def _publish(  # noqa: C901, PLR0912
                 publisher.materialize(storage, dest, stored, f"{REPO}/{platform.arch}")
             for iso in make_isos(platform, dest / REPO / platform.arch, dest / ISO_DIR, signer=signer):
                 console.print(f"[bold green]✓[/] {iso}")
-        if storage:
+        if uploader:
             isos = {
                 file: source
                 for platform in with_isos
-                for file, source in push_isos(platform, storage, signer=signer).items()
+                for file, source in push_isos(platform, uploader.storage, signer=signer).items()
             }
-            name = publisher.snapshot_name(project, storage)
+            name = uploader.snapshot_name()
             if only != "isos":
-                publisher.upload_snapshot(built, dest, storage, name, signer=signer, build=build, stored=stored)
+                uploader.upload_snapshot(built, dest, name, stored=stored)
             if with_isos:
-                publisher.upload_isos(project, dest, storage, name, signer=signer, stored=isos)
+                uploader.upload_isos(dest, name, stored=isos)

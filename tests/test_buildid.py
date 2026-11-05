@@ -380,19 +380,19 @@ def test_development_builds_with_dependencies_edited_meanwhile(root: Path, monke
     edit(root, "changed")
     spec = root / "base/trivial/trivial.spec"
     before = spec.read_text()
-    build_shown = builder._build_shown
+    build_shown = builder._Run._build_shown
 
-    def edited(project: Project, name: str, *args: object, **kwargs: object) -> builder.Result:
+    def edited(run: builder._Run, name: str, status: str | None) -> builder.Result:
         if name == "with-deps":  # a dependency of the build edited during the build
             spec.write_text(f"{before}# edited meanwhile\n")
-        return build_shown(project, name, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+        return build_shown(run, name, status)
 
-    monkeypatch.setattr(builder, "_build_shown", edited)
+    monkeypatch.setattr(builder._Run, "_build_shown", edited)
     assert built() == [
         "trivial-1.0-1+b2~1.dev.xcpng8.99.noarch.rpm",
         "with-deps-1.0-1+b2~1.dev.xcpng8.99.noarch.rpm",
     ]
-    monkeypatch.setattr(builder, "_build_shown", build_shown)
+    monkeypatch.setattr(builder._Run, "_build_shown", build_shown)
     # the counters of the inputs the builds had
     spec.write_text(before)
     assert built() == []
