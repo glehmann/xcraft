@@ -22,6 +22,7 @@ from rich.markup import escape
 
 from xcraft import build as builder
 from xcraft import container, localrepo, pinned, remote, repodata, resolution, upstream_copy
+from xcraft.builds import load_builds
 from xcraft.cache import BuildError, build_path, cached_build
 from xcraft.container import BUILDENV, buildenv_hash, run_natively
 from xcraft.display import activity, console
@@ -294,6 +295,19 @@ def _built(project: Project, *, fetch: Fetch, dev: str | None) -> dict[str, str]
     return keys
 
 
+def _built_all(platforms: list[Project], *, fetch: Fetch, dev: str | None) -> list[dict[str, str]]:
+    """Return the keys of our packages of all the `platforms`, built or fetched like _built(), again until the lock of
+    the builds stops changing: what the builds of a platform record changes the keys of the others.
+    """
+    for _ in range(3):
+        recorded = load_builds(platforms[0])
+        keys = [_built(platform, fetch=fetch, dev=dev) for platform in platforms]
+        if load_builds(platforms[0]) == recorded:
+            return keys
+    msg = "the lock of the builds keeps changing, with the builds of each architecture"
+    raise RuntimeError(msg)
+
+
 def _summary(dest: Path, built: list[tuple[Project, dict[str, str]]], *, build: bool) -> None:
     console.print(
         f"[bold green]✓[/] snapshot in {dest}: "
@@ -536,23 +550,23 @@ def snapshot(
     packages of `storage`, by path in the snapshot, with their paths there and SHA-256: they are not in `dest`, see
     materialize().
 
-    Our packages are built or fetched first, but only fetched for the platforms the host emulates: with `storage`, only
-    the builds it misses and those they need, as the snapshot copies those it has, like the packages of its latest
-    snapshot and of its upstream copy, whose metadata are their own. With `build`, the snapshot has the build
-    repository too. Each binary must be installable alone, from the binaries of its architecture, checked with the
-    metadata only. Our source packages are those of the first platform: those of the others, built from the same
-    sources, differ by their build times. With a `signer`, our packages and the metadata of the repositories are
-    signed, and the public key is in `dest`. With `dev`, the identifier of the development builds, those of the packages
-    whose build ID is not the main branch's are, for local snapshots, without `storage`.
+    Our packages of all the platforms are built or fetched first, until their keys stop changing, but only fetched for
+    the platforms the host emulates: with `storage`, only the builds it misses and those they need, as the snapshot
+    copies those it has, like the packages of its latest snapshot and of its upstream copy, whose metadata are their
+    own. With `build`, the snapshot has the build repository too. Each binary must be installable alone, from the
+    binaries of its architecture, checked with the metadata only. Our source packages are those of the first platform:
+    those of the others, built from the same sources, differ by their build times. With a `signer`, our packages and
+    the metadata of the repositories are signed, and the public key is in `dest`. With `dev`, the identifier of the
+    development builds, those of the packages whose build ID is not the main branch's are, for local snapshots, without
+    `storage`.
     """
     project = platforms[0]
     fresh_dir(project, dest)
     assembler = _Assembler(
         project, dest, signer, storage, *(_with_copy(platforms, storage, signer) if storage else ({}, {}))
     )
-    built = []
-    for platform in platforms:
-        keys = _built(platform, fetch="needed" if storage else "all", dev=dev)
+    built = list(zip(platforms, _built_all(platforms, fetch="needed" if storage else "all", dev=dev), strict=True))
+    for platform, keys in built:
         arch = f"{REPO}/{platform.arch}"
         assembler.add_ours(platform, keys)
         assembler.add_upstream(platform, resolution.published(platform), arch, f"{REPO}/Source")
@@ -562,7 +576,6 @@ def snapshot(
                 platform, build_dependencies(platform), f"{BUILD}/{platform.arch}", f"{BUILD}/Source"
             )
             _check_installable(platform, [assembler.dest / arch, assembler.index(f"{BUILD}/{platform.arch}")])
-        built.append((platform, keys))
     for repo in (REPO, BUILD) if build else (REPO,):
         assembler.index(f"{repo}/Source")
     if signer:
