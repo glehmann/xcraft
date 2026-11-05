@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import shutil
 from pathlib import Path
 from typing import Annotated
 
@@ -11,6 +9,7 @@ import typer
 
 from xcraft import process, vm
 from xcraft.commands import Arch, Dev, Final, Key, choose_signer, dev_ident
+from xcraft.commands.vm import check_port, show
 from xcraft.display import console
 from xcraft.iso import build_iso
 from xcraft.project import Project
@@ -23,22 +22,7 @@ def _check_host(arch: str, accel: str, *, new_disk: bool) -> None:
     if arch not in {"x86_64", "x86_64_v2"}:
         msg = "boot currently supports x86_64 and x86_64_v2 only"
         raise typer.BadParameter(msg)
-    for tool in ["qemu-system-x86_64", *(["qemu-img"] if new_disk else [])]:
-        if not shutil.which(tool):
-            msg = f"{tool} is not installed: install QEMU to run the VM"
-            raise RuntimeError(msg)
-    if accel == "kvm" and not os.access("/dev/kvm", os.R_OK | os.W_OK):
-        msg = "KVM is not accessible: enable it and grant access to /dev/kvm, or use --accel tcg"
-        raise RuntimeError(msg)
-
-
-def _check_media(iso: Path | None, *, installed: bool, bios: bool, edit: bool) -> None:
-    if installed and iso:
-        msg = "--installed and --iso cannot be used together"
-        raise typer.BadParameter(msg)
-    if edit and (installed or bios):
-        msg = "--kernel-args and --unattended edit the GRUB menu of the ISO: not with --installed or --bios"
-        raise typer.BadParameter(msg)
+    vm.check_tools(accel, new_disk=new_disk)
 
 
 def _kernel_args(project: Project, kernel_args: str | None, *, unattended: bool) -> str | None:
@@ -56,9 +40,6 @@ def boot(
     iso: Annotated[
         Path | None, typer.Option(exists=True, dir_okay=False, help="Boot an existing ISO instead of generating one.")
     ] = None,
-    installed: Annotated[
-        bool, typer.Option("--installed", help="Boot the installed disk, without making an ISO.")
-    ] = False,
     disk: Annotated[Path | None, typer.Option(help="Virtual disk. .xcraft/vm/<arch>/disk.qcow2 by default.")] = None,
     disk_size: Annotated[str, typer.Option(help="Size of a new disk. Existing disks are not resized.")] = "80G",
     memory: Annotated[int, typer.Option(min=512, help="VM memory in MiB.")] = 8192,
@@ -113,13 +94,13 @@ def boot(
     """Build the installation ISO, create a virtual disk if missing, and boot it with QEMU: with the development builds
     of the packages whose build ID is not the main branch's, like xcraft build, unless --final.
 
-    The disk persists between runs. After installation, use --installed to boot it without the ISO.
-    The installer VM exits when it requests a reboot. Use xcraft vm to inspect or stop it.
+    The disk persists between runs. The installer VM exits when it requests a reboot: xcraft vm start then boots the
+    installed disk, without the ISO. Use xcraft vm to inspect or stop it.
     """
-    _check_media(iso, installed=installed, bios=bios, edit=bool(kernel_args) or unattended)
-    if ssh_port and not vm.free(ssh_port):
-        msg = f"port {ssh_port} is in use on localhost: give another one, or none for the first free one from 2222"
-        raise typer.BadParameter(msg, param_hint="--ssh-port")
+    if bios and (kernel_args or unattended):
+        msg = "--kernel-args and --unattended edit the GRUB menu of the ISO: not with --bios"
+        raise typer.BadParameter(msg)
+    check_port(ssh_port)
     ident = dev_ident(ctx, dev, final=final)
     project = Project.find(arch)
     kernel_args = _kernel_args(project, kernel_args, unattended=unattended)
@@ -128,16 +109,13 @@ def boot(
     if disk.exists() and not disk.is_file():
         msg = f"virtual disk is not a file: {disk}"
         raise typer.BadParameter(msg)
-    if installed and not disk.is_file():
-        msg = f"no installed disk at {disk}: run xcraft boot first"
-        raise typer.BadParameter(msg)
     _check_host(project.arch, accel, new_disk=not disk.exists())
     if bios and (firmware_code or firmware_vars):
         msg = "--bios cannot be used with --firmware-code or --firmware-vars"
         raise typer.BadParameter(msg)
     ovmf = None if bios else vm.firmware(firmware_code, firmware_vars)
     vm.check_stopped(vm_dir)
-    if not (iso or installed):
+    if not iso:
         project.frozen = locked
         signer = choose_signer(project, local=True, unsigned=unsigned, dev_key=False, key=key)
         iso = build_iso(project, signer=signer, dev=ident)
@@ -149,33 +127,13 @@ def boot(
         if not disk.exists():
             disk.parent.mkdir(parents=True, exist_ok=True)
             process.run(["qemu-img", "create", "-f", "qcow2", str(disk), disk_size])
-        cmd = vm.command(
-            vm_dir,
-            name=project.id,
-            disk=disk,
-            iso=iso,
-            memory=memory,
-            cpus=cpus,
-            ssh_port=ssh_port,
-            accel=accel,
-            headless=headless or background,
-            ovmf=ovmf,
+        launch = vm.Launch(name=project.id, memory=memory, cpus=cpus, accel=accel, ovmf=ovmf, qemu_args=qemu_arg or [])
+        cmd = vm.command(vm_dir, launch, disk=disk, iso=iso, ssh_port=ssh_port, headless=headless or background)
+        session = vm.Session(
+            pid=0, arch=project.arch, disk=disk, iso=iso.absolute(), ssh_port=ssh_port, command=cmd, launch=launch
         )
-        proc = vm.launch(
-            vm_dir,
-            vm.Session(
-                pid=0,
-                arch=project.arch,
-                disk=disk,
-                iso=iso.absolute() if iso else None,
-                ssh_port=ssh_port,
-                command=[*cmd, *(qemu_arg or [])],
-            ),
-        )
-    console.print(f"virtual disk: {disk}\nVM session: {vm_dir}", markup=False)
-    console.print(f"Control: xcraft vm --vm-dir {vm_dir} status", markup=False)
-    if ssh_port:
-        console.print(f"SSH when enabled in the guest: ssh -p {ssh_port} root@127.0.0.1", markup=False)
+        proc = vm.launch(vm_dir, session)
+    show(vm_dir, session)
     if kernel_args:
         vm.edit_default_entry(vm_dir, kernel_args)
         console.print(f"booted the default entry with {kernel_args}", markup=False)
