@@ -20,16 +20,16 @@ from typer.testing import CliRunner
 
 from tests import ARCH, TOML, TOYS, copy_project
 from xcraft import build as builder
-from xcraft import buildid, container, pinned, process
+from xcraft import buildid, container, localrepo, pinned, process, resolution
 from xcraft.__main__ import app
 from xcraft.builds import builds_path, load_builds, save_builds
 from xcraft.cache import BuildError
 from xcraft.iso import _INSTALL_TOOLS, _check_installed_tools
-from xcraft.localrepo import LocalRepo, link
+from xcraft.localrepo import LocalRepo
 from xcraft.lock import Recorded, load_lock, lock_path, save_lock
 from xcraft.project import Project
 from xcraft.publish import _check_installable
-from xcraft.resolution import ISO_TOOLS, ResolutionError, published, resolve
+from xcraft.resolution import ISO_TOOLS, ResolutionError
 from xcraft.signing import check_signatures
 from xcraft.sources import write_manifest
 
@@ -478,7 +478,7 @@ def test_lock_records_runtime(root: Path) -> None:
     assert xcraft("build", "--dry-run")[0] == 0
     assert load_lock(Project.find()).runtime == lock.runtime
     with pytest.raises(ResolutionError, match=f"cannot install, on {ARCH}: no-such-package"):
-        published(Project.find())
+        resolution.published(Project.find())
     # the sources of what is published no more leave the lock, the others keep their versions
     (root / "xcraft.toml").write_text(TOML)
     assert xcraft("build", "--dry-run")[0] == 0
@@ -520,7 +520,7 @@ def test_snapshots_checked_in_turn(root: Path, tmp_path: Path) -> None:
         for repo, names in zip(snapshots[snapshot], ([base], build), strict=True):
             repo.reset(extra_upstream=False)
             for name in names:
-                link(TOYS / ARCH / f"{name}-1.noarch.rpm", repo.path / f"{name}-1.noarch.rpm")
+                localrepo.link(TOYS / ARCH / f"{name}-1.noarch.rpm", repo.path / f"{name}-1.noarch.rpm")
             repo.index()
     _check_installable(project, [repo.path for repo in snapshots["other"]])
     checked = project.log("_snapshot").stat().st_mtime_ns
@@ -627,7 +627,7 @@ def test_recorded(root: Path) -> None:
     assert builds.buildrequires.of(ARCH) == {"trivial": ["zlib-ng-compat-devel"]}
     # which with-deps gets through trivial, its build root checked
     assert builds.requires.of(ARCH) == {"trivial": ["tcl"]}
-    assert "tcl" in resolve(Project.find()).buildroots["with-deps"]
+    assert "tcl" in resolution.resolve(Project.find()).buildroots["with-deps"]
     assert xcraft("build", "with-deps", "--locked")[0] == 0
 
 
@@ -704,7 +704,7 @@ def test_lock_update_changing_implicit_deps(root: Path) -> None:
     assert [line.split(" in ")[0] for line in results(output)] == ["✓ with-deps built", "1 built, 1 cached"]
     # of the host, which may not be the first architecture, whose entries are shared
     assert load_builds(Project.find()).requires.of(ARCH)["trivial"] == ["toyrun-bin"]
-    assert "toyrun-bin" in resolve(Project.find()).buildroots["with-deps"]
+    assert "toyrun-bin" in resolution.resolve(Project.find()).buildroots["with-deps"]
     assert xcraft("build", "with-deps", "--locked")[0] == 0
 
 

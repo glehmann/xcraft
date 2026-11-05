@@ -18,7 +18,7 @@ from xcraft.cache import build_keys
 from xcraft.container import BUILDENV, built_image, repo_file, run_natively
 from xcraft.localrepo import extra_rpms
 from xcraft.project import Project, write_atomically
-from xcraft.resolution import Resolved, prepare
+from xcraft.resolution import Resolved
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
@@ -117,7 +117,7 @@ def build_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path
             native = Project(root, config()).on_host()
             with pytest.MonkeyPatch.context() as patch:
                 patch.setattr(resolution, "_run", _shared_resolutions(resolutions))
-                prepare(native)
+                resolution.prepare(native)
                 built_image(native)
                 build_keys(native)
     if "PYTEST_XDIST_WORKER" not in os.environ:

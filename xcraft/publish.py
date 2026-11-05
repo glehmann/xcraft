@@ -21,15 +21,13 @@ from typing import TYPE_CHECKING, NamedTuple
 from rich.markup import escape
 
 from xcraft import build as builder
-from xcraft import remote, repodata, upstream_copy
+from xcraft import container, localrepo, pinned, remote, repodata, resolution, upstream_copy
 from xcraft.cache import BuildError, build_path, cached_build
-from xcraft.container import BUILDENV, buildenv_hash, run, run_natively
+from xcraft.container import BUILDENV, buildenv_hash, run_natively
 from xcraft.display import activity, console
-from xcraft.localrepo import extra_rpms, fresh_dir, link
+from xcraft.localrepo import extra_rpms, fresh_dir
 from xcraft.lock import load_lock
-from xcraft.pinned import pins
 from xcraft.project import INTERNAL
-from xcraft.resolution import prepare, published, resolve
 from xcraft.signing import Signer, check_signatures, dev_signer
 from xcraft.sources import sha256_of
 
@@ -138,7 +136,7 @@ def _rpm_name(packages: dict[str, Pin], name: str) -> str:
 
 def _upstream_rpms(project: Project, names: list[str], on_line: Callable[[str], None]) -> list[Path]:
     """Return the RPMs of pinned upstream packages: from the cache, the latest snapshot, or the repositories."""
-    locked = pins(project)
+    locked = pinned.pins(project)
     rpms = {name: _rpm_name(locked, name) for name in names}
     cache = _download(project, {rpms[name]: _nevra(locked, name) for name in names}, on_line, source=False)
     for name in names:
@@ -175,7 +173,7 @@ def _srpm_names(project: Project, names: list[str]) -> dict[str, str]:
     """
     if not names:  # dnf repoquery would list everything
         return {}
-    locked = pins(project)
+    locked = pinned.pins(project)
     nevras = {name: _nevra(locked, name) for name in names}
     with project.tmp_dir("srpms") as work:
         run_natively(
@@ -238,7 +236,7 @@ def build_dependencies(project: Project) -> list[str]:
     Those are the packages of the image of the build environment and of the build roots, but the upstream ones ours
     replace, like kernel-headers.
     """
-    resolved, runtime = resolve(project), load_lock(project).runtime.get(project.arch, [])
+    resolved, runtime = resolution.resolve(project), load_lock(project).runtime.get(project.arch, [])
     ours = {binary.name for package in project.packages.values() for binary in package.binaries}
     return sorted({*resolved.image, *(n for names in resolved.buildroots.values() for n in names)} - ours - {*runtime})
 
@@ -286,7 +284,7 @@ def _built(project: Project, *, fetch: Fetch, dev: str | None) -> dict[str, str]
     """Build or fetch our packages, but only fetch them on the platforms the host emulates, and return their keys: with
     the development builds of the identifier `dev`, if any.
     """
-    prepare(project)
+    resolution.prepare(project)
     results, keys, _ = builder.build(
         project, sorted(project.packages), build_missing=project.native, fetch=fetch, dev=dev
     )
@@ -351,7 +349,7 @@ class _Assembler:
         path.mkdir(parents=True, exist_ok=True)
         entries = {name: self.known[stored.digest][0] for name, stored in self.stored.get(repo, {}).items()}
         if rpms := sorted(path.glob("*.rpm")):
-            run(
+            container.run(
                 self.project.on_host(),  # natively: the metadata does not depend on the architecture
                 "repo",
                 "createrepo_c -q --general-compress-type=gz /repo",
@@ -394,7 +392,7 @@ class _Assembler:
             check_signatures(project, self.dest, local, what="packages of ours", public_key=self.signer.public_key())
         for rpm in extra_rpms(project):  # neither ours nor from the repositories: as they are
             if not self.reuse(arch, rpm.name, sha256_of(rpm)):
-                link(rpm, self.dest / arch / rpm.name)
+                localrepo.link(rpm, self.dest / arch / rpm.name)
 
     def _add_build(self, project: Project, name: str, key: str) -> list[str]:
         """Add the build of `name` with `key`, of the platform of `project`, and return the files put in the directory
@@ -437,13 +435,13 @@ class _Assembler:
         """Add the upstream packages `names` to `repo`, and their sources to `source`, checking the signatures of
         those the storage misses: those it has were when added.
         """
-        locked = pins(project)
+        locked = pinned.pins(project)
         rpms = {name: _rpm_name(locked, name) for name in names}
         missing = [name for name in names if not self.reuse(repo, rpms[name], locked[name].sha256)]
         with activity(f"getting the upstream packages for {repo}", log=True) as on_line:
             (self.dest / repo).mkdir(parents=True, exist_ok=True)
             for rpm in _upstream_rpms(project, missing, on_line):
-                link(rpm, self.dest / repo / rpm.name)
+                localrepo.link(rpm, self.dest / repo / rpm.name)
         added = [f"{repo}/{rpms[name]}" for name in missing]
         srpms = {name: repodata.sourcerpm(self.known[locked[name].sha256][0]) for name in names if name not in missing}
         with activity(f"getting their sources, for {source}", log=True) as on_line:
@@ -456,7 +454,7 @@ class _Assembler:
             cache = _download(project, new, on_line, source=True)
             (self.dest / source).mkdir(parents=True, exist_ok=True)
             for srpm in new:
-                link(cache / srpm, self.dest / source / srpm)
+                localrepo.link(cache / srpm, self.dest / source / srpm)
                 added.append(f"{source}/{srpm}")
         check_signatures(project, self.dest, added, what="upstream packages")
 
@@ -519,7 +517,7 @@ def _with_copy(
 def _put(storage: Remote | None, source: Path | str, dest: Path, digest: str) -> None:
     """Put the local file `source`, or the one of `storage`, as `dest`, checking its SHA-256."""
     if isinstance(source, Path):
-        link(source, dest)
+        localrepo.link(source, dest)
     elif not (storage and remote.download(storage, source, dest)) or sha256_of(dest) != digest:
         msg = f"{source} is missing or corrupted in the storage"
         raise BuildError(msg)
@@ -557,7 +555,7 @@ def snapshot(
         keys = _built(platform, fetch="needed" if storage else "all", dev=dev)
         arch = f"{REPO}/{platform.arch}"
         assembler.add_ours(platform, keys)
-        assembler.add_upstream(platform, published(platform), arch, f"{REPO}/Source")
+        assembler.add_upstream(platform, resolution.published(platform), arch, f"{REPO}/Source")
         _check_installable(platform, [assembler.index(arch)])
         if build:
             assembler.add_upstream(

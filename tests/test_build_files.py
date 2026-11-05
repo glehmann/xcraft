@@ -15,7 +15,7 @@ import pytest
 import typer
 
 from tests import TOML, config, ours
-from xcraft import build, buildkey, cache, resolution, rpmbuild, specs
+from xcraft import build, buildkey, cache, localrepo, resolution, rpmbuild, specs
 from xcraft.build import queued
 from xcraft.builds import load_builds, save_builds
 from xcraft.cache import BuildError, build_keys, previous_duration
@@ -24,7 +24,7 @@ from xcraft.clean import clean, repos_disk_usage
 from xcraft.commands import complete_arch, prepared_project
 from xcraft.commands.repo import _kept
 from xcraft.commands.shell import package_of
-from xcraft.localrepo import OUTPUT_MARKER, RepoError, extra_rpms, fresh_dir, link
+from xcraft.localrepo import OUTPUT_MARKER, RepoError, extra_rpms, fresh_dir
 from xcraft.lock import Lock, Pin, save_lock
 from xcraft.packages import Binary, Package
 from xcraft.project import Extra, Project, ProjectLockedError
@@ -111,7 +111,7 @@ def test_manifest_lines() -> None:
 def test_link_to_itself(tmp_path: Path) -> None:
     (file := tmp_path / "file").write_text("kept")
     with pytest.raises(RepoError, match="to itself"):
-        link(file, tmp_path / "." / "file")
+        localrepo.link(file, tmp_path / "." / "file")
     assert file.read_text() == "kept"
 
 
@@ -186,11 +186,11 @@ def test_link_replaces(tmp_path: Path) -> None:
     first, second, repo = tmp_path / "first.rpm", tmp_path / "second.rpm", tmp_path / "repo.rpm"
     first.write_text("first")
     second.write_text("second")
-    link(first, repo)
-    link(second, repo)
+    localrepo.link(first, repo)
+    localrepo.link(second, repo)
     assert repo.read_text() == "second"
     assert first.read_text() == "first"  # in the cache, as built
-    link(second, repo)  # again
+    localrepo.link(second, repo)  # again
     assert repo.samefile(second)
 
 
@@ -377,7 +377,7 @@ def test_build_dependencies(project: Project, monkeypatch: pytest.MonkeyPatch) -
     binary = Binary(name="kernel-headers", evr="6.12-1", arch="x86_64_v2", provides=[], requires=[])
     project.packages = {"kernel": Package(name="kernel", binaries=[binary])}
     resolved = Resolved(image=["bash", "gcc", "kernel-headers"], buildroots={"xen": ["zlib-devel", "gcc"]})
-    monkeypatch.setattr("xcraft.publish.resolve", lambda _: resolved)
+    monkeypatch.setattr("xcraft.resolution.resolve", lambda _: resolved)
     pin = Pin(evr="1-1", arch="x86_64_v2", sha256="ab" * 32, source="bash")
     lock = Lock(sources={"bash": "1-1"}, binaries={project.arch: {"bash": pin}}, runtime={project.arch: ["bash"]})
     save_lock(project, lock)
@@ -489,7 +489,7 @@ def test_record_providers_named_with_their_releases(project: Project, monkeypatc
 
 def test_builds_still_to_build_again_fail(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     project.deps = {"a": set()}
-    monkeypatch.setattr(build, "prepare", lambda _: None)
+    monkeypatch.setattr(resolution, "prepare", lambda _: None)
     monkeypatch.setattr(build, "built_image", lambda _: "image")
     monkeypatch.setattr(build, "_record_cached", lambda *_: ({"a": "key"}, {}, {}))
     monkeypatch.setattr(build, "update_build_ids", lambda _: None)
@@ -529,7 +529,7 @@ def test_keys_changed_by_the_last_recording(project: Project, monkeypatch: pytes
         (project.root / "base" / name / f"{name}.spec").write_text(name)
     project.config.platforms = [project.platform]  # the one of the dependencies given
     ours(project, monkeypatch, {"a": set(), "b": {"a"}})
-    monkeypatch.setattr(build, "prepare", lambda _: None)
+    monkeypatch.setattr(resolution, "prepare", lambda _: None)
     hashes = buildkey.directories(project)
     keys = build_keys(project, hashes=hashes)
     for name in ("a", "b"):
@@ -560,7 +560,7 @@ def test_keys_changed_during_the_builds(project: Project, monkeypatch: pytest.Mo
         (project.root / "base" / name / f"{name}.spec").write_text(name)
     project.config.platforms = [project.platform]  # the one of the dependencies given
     ours(project, monkeypatch, {"a": set(), "b": {"a"}, "c": set()})
-    monkeypatch.setattr(build, "prepare", lambda _: None)
+    monkeypatch.setattr(resolution, "prepare", lambda _: None)
     hashes = buildkey.directories(project)
     keys = build_keys(project, hashes=hashes)
     for name in ("a", "b", "c"):
@@ -597,14 +597,14 @@ def test_stored_builds_of_keys_changed(project: Project, monkeypatch: pytest.Mon
 def test_recordings_not_converging(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(build, "dev_keys", lambda *_: ({}, {}))
     monkeypatch.setattr(build, "record_rpm_deps", lambda *_, **__: True)
-    monkeypatch.setattr(build, "prepare", lambda _: None)
+    monkeypatch.setattr(resolution, "prepare", lambda _: None)
     with pytest.raises(BuildError, match="keeps changing the keys"):
         build._record_cached(project, None)
 
 
 def test_unknown_packages_before_preparing(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("XCRAFT_PROJECT", str(project.root))
-    monkeypatch.setattr("xcraft.commands.prepare", lambda _: pytest.fail("prepared"))
+    monkeypatch.setattr("xcraft.resolution.prepare", lambda _: pytest.fail("prepared"))
     with pytest.raises(typer.BadParameter, match="unknown package"):
         prepared_project(["nope"])
 

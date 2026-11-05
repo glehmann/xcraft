@@ -27,9 +27,8 @@ import pytest
 from tests import ARCH, PLATFORM, TOML, copy_project, needs_gpg
 from tests.test_build import results, write_spec, xcraft
 from tests.test_iso import cache_image
-from xcraft import buildid, ccache, pinned, remote, remote_pages, repodata, resolution, upload, upstream_copy
+from xcraft import buildid, ccache, container, pinned, remote, remote_pages, repodata, resolution, upload, upstream_copy
 from xcraft import publish as publisher
-from xcraft.container import run
 from xcraft.iso import checkout_iso, fetch_isos, iso_key, iso_name, iso_path, push_isos
 from xcraft.lock import load_lock
 from xcraft.project import Project, Remote
@@ -577,7 +576,7 @@ def test_resolutions_of_other_contents(root: Path, tmp_path: Path, monkeypatch: 
         "%files\n/usr/share/toypayload\n"
     )
     (rpms := tmp_path / "rpms").mkdir()
-    run(
+    container.run(
         Project.find(), "payloads",
         " && ".join(
             f"rpmbuild -bb --define '_topdir /tmp/{payload}' --define '_rpmdir /out/{payload}'"
@@ -735,7 +734,7 @@ def test_fetch_needed(root: Path) -> None:
 
 def ccache_hits(cache: Path) -> int:
     """Return how many compilations were found in the compiler cache `cache`."""
-    run(
+    container.run(
         Project.find(),
         "test-ccache",
         f"{ccache.INSTALL} && CCACHE_DIR=/cache ccache --print-stats",

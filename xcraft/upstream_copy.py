@@ -14,10 +14,9 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 from xml.etree import ElementTree as ET
 
-from xcraft import pinned, remote, repodata
+from xcraft import localrepo, pinned, remote, repodata
 from xcraft.container import ContainerError, run_natively
 from xcraft.display import activity
-from xcraft.localrepo import link
 from xcraft.lock import load_lock
 from xcraft.project import INTERNAL
 
@@ -183,7 +182,7 @@ def _update(
     local.mkdir()
     for f, (src, _) in copies.items():
         if not isinstance(src, str):
-            link(src, local / f)
+            localrepo.link(src, local / f)
     new = {f: entry for f, (_, entry) in copies.items() if entry}
     if len(new) < len(copies):
         run_natively(

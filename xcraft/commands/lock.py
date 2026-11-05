@@ -7,12 +7,13 @@ from typing import Annotated
 
 import typer
 
+from xcraft import resolution
 from xcraft.build import update_build_ids
 from xcraft.builds import builds_path, load_builds, save_builds, upgrade_builds
 from xcraft.display import console
 from xcraft.lock import choose_versions, load_lock, lock_path, save_lock, upgrade_lock
 from xcraft.project import Project, remove_durably, write_atomically
-from xcraft.resolution import available_versions, prepare, upstream_sources
+from xcraft.resolution import available_versions, upstream_sources
 
 
 def lock(
@@ -61,7 +62,7 @@ def lock(
                 write_atomically(original, lock_path(project).read_text())
             save_lock(project, lock)
             try:
-                prepare(project, roots=False)  # the images, which parse the specs
+                resolution.prepare(project, roots=False)  # the images, which parse the specs
                 save_builds(project, upgrade_builds(project, records))
             except BaseException:
                 write_atomically(lock_path(project), original.read_text())
@@ -69,7 +70,7 @@ def lock(
                 raise
             remove_durably(original)  # before .buildid/, which a new start would need
             shutil.rmtree(project.root / ".buildid", ignore_errors=True)
-            prepare(project)
+            resolution.prepare(project)
             update_build_ids(project)
         console.print(f"{lock_path(project).relative_to(project.root)} upgraded")
         return
@@ -112,7 +113,7 @@ def _update(project: Project, packages: list[str], *, write: bool) -> int:
     current = load_lock(project)  # which may have locked new ones
     current.sources |= changed
     save_lock(project, current)
-    prepare(project, repin=set(sources))  # the images and build roots of the updated packages, pinned again
+    resolution.prepare(project, repin=set(sources))  # the images and build roots of the updated packages, pinned again
     update_build_ids(project)  # the packages built with them get new numbers
     pins = {arch: dict(pins) for arch, pins in current.binaries.items()}
     repinned = sorted(

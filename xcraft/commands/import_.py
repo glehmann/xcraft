@@ -8,13 +8,12 @@ from typing import TYPE_CHECKING, Annotated
 
 import typer
 
-from xcraft import process
+from xcraft import process, resolution
 from xcraft.commands import All, complete_package
 from xcraft.display import activity, console, download_progress
 from xcraft.importer import DEFAULT_URL, import_history, import_srpm
 from xcraft.process import git
 from xcraft.project import Project
-from xcraft.resolution import prepare
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -61,7 +60,7 @@ def import_(
     names = _names(project, sources, repo, url)
     with project.lock():
         if any(source.endswith(".src.rpm") for source in sources):
-            prepare(project, roots=False)  # for the build environment, which unpacks them
+            resolution.prepare(project, roots=False)  # for the build environment, which unpacks them
         for i, (source, name) in enumerate(zip(sources, names, strict=True), 1):
             pkg_dir = project.package_dirs.get(name, project.root / repo / name)
             with project.tmp_dir("import") as work, activity(f"[{i}/{len(sources)}] importing {source}") as on_line:

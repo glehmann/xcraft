@@ -16,8 +16,8 @@ from typing import TYPE_CHECKING
 
 from rich.markup import escape
 
-from xcraft import pinned, remote
-from xcraft.container import DNF_LOCK, run
+from xcraft import container, pinned, remote
+from xcraft.container import DNF_LOCK
 from xcraft.display import activity, console
 from xcraft.lock import cached_lock
 from xcraft.sources import sha256_of
@@ -103,7 +103,7 @@ def push(project: Project, storage: Remote, name: str, *, signer: Signer | None)
             and path.stat().st_mtime >= since
         )
         if any(_level(cache / entry) != LEVEL for entry in used if entry.endswith(("R", "M"))):
-            run(
+            container.run(
                 project.on_host(),  # natively: the compression does not depend on the architecture
                 "ccache",
                 f"{INSTALL} && CCACHE_DIR=/ccache ccache --recompress {LEVEL}",

@@ -8,10 +8,11 @@ from typing import Annotated
 import typer
 from rich.markup import escape
 
+from xcraft import specs
 from xcraft.display import console
 from xcraft.patchset import guess_base, guess_package, repo_name, update_patchset
 from xcraft.project import Project
-from xcraft.specs import main_spec, parse
+from xcraft.specs import main_spec
 
 
 def patchset(
@@ -39,7 +40,7 @@ def patchset(
         msg = f"unknown package: {package}"
         raise typer.BadParameter(msg)
     if not base:
-        if not (binaries := parse(project, [dirs[package]])[package].binaries):
+        if not (binaries := specs.parse(project, [dirs[package]])[package].binaries):
             msg = f"the spec of {package} cannot be parsed: give the base of the patchset with --base"
             raise typer.BadParameter(msg)
         base = guess_base(repo, binaries[0].evr.split(":")[-1].rsplit("-", 1)[0])

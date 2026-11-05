@@ -6,8 +6,7 @@ import shutil
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from xcraft import process
-from xcraft.container import run
+from xcraft import container, process
 from xcraft.display import activity, download_progress
 from xcraft.sources import sha256_of
 
@@ -127,7 +126,7 @@ class LocalRepo:
     def index(self, signer: Signer | None = None) -> None:
         """Generate the metadata of the repository, when it changed, signed by `signer`, if any."""
         if not self.up_to_date:
-            run(
+            container.run(
                 self.project.on_host(),  # natively: the metadata does not depend on the architecture
                 "repo",
                 "createrepo_c -q /repo",

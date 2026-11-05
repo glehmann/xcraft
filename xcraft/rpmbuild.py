@@ -8,11 +8,10 @@ import shlex
 import shutil
 from typing import TYPE_CHECKING
 
-from xcraft import ccache
+from xcraft import ccache, localrepo, resolution
 from xcraft.cache import BuildError, build_keys, deps_repo
 from xcraft.container import DNF_LOCK, run_container
-from xcraft.localrepo import LocalRepo, link, repo_id
-from xcraft.resolution import Resolved, resolve
+from xcraft.localrepo import LocalRepo, repo_id
 from xcraft.sources import fetch_sources, parse_manifest
 from xcraft.specs import STAGED_TIME, hash_dir, main_spec
 
@@ -21,6 +20,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from xcraft.project import Project
+    from xcraft.resolution import Resolved
 
 
 def prepare_tree(project: Project, name: str, expected: str | None = None) -> Path:
@@ -62,7 +62,7 @@ def prepare_tree(project: Project, name: str, expected: str | None = None) -> Pa
         archive = project.source_cache / digest / filename
         # read-only: the build tree has it hard-linked, and could change it
         archive.chmod(0o444)
-        link(archive, tree / "SOURCES" / filename)
+        localrepo.link(archive, tree / "SOURCES" / filename)
     for path in [tree, *tree.rglob("*")]:
         if path.is_dir():
             path.chmod(0o755)
@@ -150,7 +150,7 @@ def shell(project: Project, name: str) -> None:
 
     repo = deps_repo(project, name, build_keys(project, built_dev_suffixes(project)))
     tree = prepare_tree(project, name)
-    replace = image_replacements(resolve(project), name)
+    replace = image_replacements(resolution.resolve(project), name)
     spec = main_spec(project.package_dirs[name]).name
     # the labels dim, the path bold, the command bold cyan: on a terminal, without NO_COLOR, like xcraft's console
     rows = [("build tree", f"{tree}, on the host", "bold"), ("to build", f"rpmbuild -ba SPECS/{spec}", "cyan")]
