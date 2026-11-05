@@ -269,6 +269,7 @@ def prepare(project: Project, *, roots: bool = True, repin: set[str] | None = No
             _locking(platform, _image)
             _locking(platform, _roots)
         _record(project, repinned)
+    project.refresh()  # for the build roots recorded
 
 
 def _forget(project: Project) -> None:

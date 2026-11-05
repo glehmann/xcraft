@@ -85,7 +85,6 @@ def record_dynamic(project: Project, name: str, tree: Path) -> bool:
             return False
         builds.buildrequires.record(project.arch, project.first, name, dynamic)
         save_builds(project, builds)
-    project.refresh()
     prepare(project)  # for the upstream packages they need
     return True
 
