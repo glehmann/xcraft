@@ -11,7 +11,7 @@ from xcraft import process, vm
 from xcraft.commands import Arch, Dev, Final, Key, choose_signer, dev_ident
 from xcraft.commands.vm import check_port, show
 from xcraft.display import console
-from xcraft.iso import build_iso
+from xcraft.iso import checkout_iso
 from xcraft.project import Project
 
 
@@ -118,7 +118,7 @@ def boot(
     if not iso:
         project.frozen = locked
         signer = choose_signer(project, local=True, unsigned=unsigned, dev_key=False, key=key)
-        iso = build_iso(project, signer=signer, dev=ident)
+        iso = checkout_iso(project, signer=signer, dev=ident)
         console.print(f"[bold green]✓[/] {iso}")
     with project.lock():
         vm.check_stopped(vm_dir)

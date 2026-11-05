@@ -9,7 +9,7 @@ import typer
 
 from xcraft.commands import Arch, Dev, Final, Key, choose_signer, dev_ident
 from xcraft.display import console
-from xcraft.iso import build_iso
+from xcraft.iso import checkout_iso
 from xcraft.project import Project
 
 
@@ -48,5 +48,5 @@ def iso(
     project = Project.find(arch)
     project.frozen = locked
     signer = choose_signer(project, local=True, unsigned=unsigned, dev_key=False, key=key)
-    path = build_iso(project, output, netinstall=netinstall, volid=volid, signer=signer, dev=ident)
+    path = checkout_iso(project, output, netinstall=netinstall, volid=volid, signer=signer, dev=ident)
     console.print(f"[bold green]✓[/] {path}")
