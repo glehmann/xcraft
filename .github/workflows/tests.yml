@@ -31,6 +31,12 @@ jobs:
       # the build tests run podman, rootless: the arm64 runners may not have it
       - run: command -v podman || { sudo apt-get update -q && sudo apt-get install -qy podman; }
       - run: podman info --format '{{.Version.Version}} {{.Host.Security.Rootless}}'
+      # the ISOs, of x86_64, read with bsdtar and booted with QEMU, in KVM, which the runners have for the root only
+      - if: runner.arch == 'X64'
+        run: |
+          sudo apt-get update -q && sudo apt-get install -qy libarchive-tools qemu-system-x86 qemu-utils ovmf
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
       # what the tests make the same each time: their upstream packages, by their specs, and the resolutions, by what
       # they are resolved from, see conftest.py; those of the run only are saved again
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0

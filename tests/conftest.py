@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import functools
 import hashlib
 import json
 import os
@@ -76,6 +77,7 @@ def _shared_resolutions(directory: Path) -> Callable[..., Resolved]:
     """
     run = resolution._run
 
+    @functools.wraps(run)
     def shared(project: Project, data: dict, *, show: str, rpms: Sequence[Path] = ()) -> Resolved:
         local = [Path(volume.split(":")[0]) / "repodata/repomd.xml" for volume in container._local_repos(project)]
         inputs = [
@@ -92,7 +94,6 @@ def _shared_resolutions(directory: Path) -> Callable[..., Resolved]:
         write_atomically(path, resolved.model_dump_json())
         return resolved
 
-    shared.__wrapped__ = run  # ty: ignore[unresolved-attribute]
     return shared
 
 

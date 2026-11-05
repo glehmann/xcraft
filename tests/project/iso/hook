@@ -1,0 +1,14 @@
+#!/usr/bin/python3
+"""The hook of the ISO of the tests, see xcraft/buildenv/iso.py: what it gets, written where the tests check it."""
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+stage, directory, config = sys.argv[1], Path(sys.argv[2]), json.loads(Path(sys.argv[3]).read_text())
+if stage == "installimg":
+    (directory / "etc/toy-installer").write_text(f"{config['name']} {config['version']}\n")
+    subprocess.run(["systemctl", f"--root={directory}", "enable", "toy-installer"], check=True)
+else:
+    (directory / "toy-hook.json").write_text(json.dumps({k: config[k] for k in ("netinstall", "signed")}))

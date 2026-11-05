@@ -57,3 +57,9 @@ arches = ["x86_64", "aarch64"]
 # the upstream packages of the tests, from tests/upstream/, in versions to update to: see conftest.py
 [repos.toys]
 baseurl = "file://@TOYS@/{arch}/"
+
+# the ISO of the tests, with iso/ and its hook, when a test gives the installer's packages: the last table, for the
+# tests to add them to it
+[iso]
+name = "toy"
+version = "1.0"

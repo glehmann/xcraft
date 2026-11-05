@@ -526,7 +526,7 @@ def build(
     """
     if not dry_run:
         update_build_ids(project)
-    for attempt in range(2):
+    for attempt in (0, 1):
         keys, hashes, autorev = _record_cached(project, dev)
         plan = build_order(project.deps, targets, with_deps=with_deps)
         if dry_run:

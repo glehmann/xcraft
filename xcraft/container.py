@@ -83,13 +83,16 @@ def repo_file(project: Project) -> str:
 
 
 def _local_repos(project: Project) -> list[str]:
-    """Return the volumes of the repositories on this machine, of file:// URLs, at their paths in the containers."""
+    """Return the volumes of the repositories on this machine, and of their sources, of file:// URLs, at their paths
+    in the containers.
+    """
     return sorted(
         {
             f"{path}:{path}:ro"
             for platform in project.all_platforms()
             for repo in platform.repos.values()
-            if (url := repo.baseurl.format(arch=platform.arch)).startswith("file:///")
+            for url in (repo.baseurl.format(arch=platform.arch), repo.source_baseurl)
+            if url.startswith("file:///")
             for path in [url.removeprefix("file://").rstrip("/")]
         }
     )

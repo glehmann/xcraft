@@ -186,7 +186,7 @@ def repository(project: Project, names: Iterable[str] | None = None) -> Path:
         return repo
     with (store / ".lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)  # of the projects of the machine, which share it
-        for _ in range(2):
+        for _ in (1, 2):
             if not (repo / "repodata/repomd.xml").exists():
                 _make_repository(project, pinned, store, ident)
             if not (damaged := {n: p for n, p in pinned.items() if not _intact(repo / file_name(n, p), p)}):

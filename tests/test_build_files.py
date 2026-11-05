@@ -153,9 +153,10 @@ def test_stage_archives_of_the_manifest_hashed(
     hashed = hash_dir(pkg, project.root)
     fetch = rpmbuild.fetch_sources
 
-    def edited(*args: object) -> list[str]:  # the manifest edited once hashed, and restored after
+    # the manifest edited once hashed, and restored after
+    def edited(project: Project, name: str, manifest: dict[str, str] | None = None) -> list[str]:
         write_manifest(pkg / "sources", {"foo-2.tar.gz": digests["foo-2.tar.gz"]})
-        return fetch(*args)  # ty: ignore[invalid-argument-type]
+        return fetch(project, name, manifest)
 
     monkeypatch.setattr(rpmbuild, "fetch_sources", edited)
     tree = prepare_tree(project, "foo", hashed)

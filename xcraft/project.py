@@ -16,7 +16,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -179,13 +179,32 @@ class Iso(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    name: str = Field(default="", pattern=r"^([A-Za-z0-9][A-Za-z0-9_.+-]*)?$")
+    """Name of the distribution, which the ISOs are named after, like xcp-ng."""
+    version: str = Field(default="", pattern=r"^([A-Za-z0-9][A-Za-z0-9_.+-]*)?$")
+    """Version of the distribution the ISOs install, in their names."""
+    volid: str | None = Field(default=None, pattern=r"^[A-Z0-9_.-]{1,32}$")
+    """Volume id of the ISOs: the name and version, in capitals, with underscores, by default."""
     installer: list[str] = []
-    """Packages of the installer's root filesystem, install.img: they are published too."""
+    """Packages of the installer's root filesystem, install.img: they are published too. The ISO needs the name and
+    version, and the hook of the project, iso/hook: see xcraft/buildenv/iso.py."""
     packages: list[str] = []
     """Packages of the repository of the ISO, with what they need, unless --netinstall."""
     unattended: str = ""
     """Kernel arguments of an unattended installation, which xcraft boot --unattended adds to the default boot entry of
     the ISO, like an answer file of the installer: they do not change the ISO."""
+
+    @model_validator(mode="after")
+    def _named(self) -> Iso:
+        if self.installer and not (self.name and self.version):
+            msg = "[iso] needs the name and version of the distribution with the installer's packages"
+            raise ValueError(msg)
+        return self
+
+    @property
+    def default_volid(self) -> str:
+        """The volume id of the ISOs, but the one of -V: the name and version, in capitals, with underscores."""
+        return self.volid or re.sub(r"[^A-Z0-9]+", "_", f"{self.name}_{self.version}".upper())[:32]
 
 
 class Extra(BaseModel):
@@ -223,7 +242,7 @@ class Config(BaseModel):
     """The repositories the packages are published in: directories of the project, with one subdirectory per package."""
     main_branch: str = "master"
     """The git branch CI makes the final builds of, which the build IDs of the packages are numbered against."""
-    import_: Import = Field(Import(), alias="import")
+    import_: Import = Field(default=Import(), alias="import")
     remote: dict[Destination, Remote] = {}
     """The independent main and developer buckets, each with its own public URL and S3 settings."""
     logo: str | None = None
@@ -276,7 +295,7 @@ class Project:
             raise ProjectNotFoundError(msg)
         with (root / "xcraft.toml").open("rb") as f:
             config = Config.model_validate(tomllib.load(f))
-        platforms = {ARCHES[p]: p for p in config.platforms}
+        platforms: dict[str, Platform] = {ARCHES[p]: p for p in config.platforms}
         if arch := arch or os.environ.get("XCRAFT_ARCH"):
             if arch not in platforms:
                 msg = f"{arch} is not an architecture of the project: {', '.join(platforms)}"

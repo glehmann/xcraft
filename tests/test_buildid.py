@@ -331,10 +331,10 @@ def test_iso_of_development_builds(root: Path) -> None:
     edit(root, "changed", name="with-deps")
     assert dev_suffixes(Project.find(), "dev") == {"with-deps": "~1.dev"}
     assert len({key("dev"), key("other"), key(None)}) == 3
-    name = iso_name(Project.find(), "8.99.0", netinstall=False, signer=None, dev="dev")
+    name = iso_name(Project.find(), netinstall=False, signer=None, dev="dev")
     assert name.endswith(f".dev-{ARCH}.iso")
     assert name.removesuffix(f".dev-{ARCH}.iso") + f"-{ARCH}.iso" == iso_name(
-        Project.find(), "8.99.0", netinstall=False, signer=None
+        Project.find(), netinstall=False, signer=None
     )
 
 

@@ -16,8 +16,8 @@ import os
 import sys
 from pathlib import Path
 
-import dnf  # ty: ignore[unresolved-import]
-import dnf.rpm  # ty: ignore[unresolved-import]
+import dnf  # ty: ignore[unresolved-import]  # pyright: ignore[reportMissingImports]
+import dnf.rpm  # ty: ignore[unresolved-import]  # pyright: ignore[reportMissingImports]
 
 STORE = Path("/store")
 

@@ -1,0 +1,13 @@
+# the installer of the tests: shows the distribution it installs, with the kernel arguments, then reboots, which stops
+# the VM of xcraft boot
+[Unit]
+Description=Toy installer
+After=basic.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sh -c 'echo "toy installer of $(cat /etc/toy-installer): $(cat /proc/cmdline)" > /dev/ttyS0'
+ExecStartPost=/usr/bin/systemctl --no-block reboot
+
+[Install]
+WantedBy=multi-user.target

@@ -239,8 +239,8 @@ def activity(
     if not console.is_interactive:
         if in_ci() and not log:
             console.print(description)
-            with _still(still or Text.from_markup(description).plain) as update:
-                yield update
+            with _still(still or Text.from_markup(description).plain) as on_line:
+                yield on_line
             return
         if not log:
             yield lambda _: None

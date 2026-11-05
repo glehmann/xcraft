@@ -33,9 +33,10 @@ import tempfile
 from pathlib import Path
 from xml.sax.saxutils import quoteattr
 
+# pyright: reportPossiblyUnboundVariable=false
 try:
-    import dnf  # ty: ignore[unresolved-import]
-    import hawkey  # ty: ignore[unresolved-import]
+    import dnf  # ty: ignore[unresolved-import]  # pyright: ignore[reportMissingImports]
+    import hawkey  # ty: ignore[unresolved-import]  # pyright: ignore[reportMissingImports]
 except ImportError:  # out of the build environment, for the tests of the helpers
     pass
 

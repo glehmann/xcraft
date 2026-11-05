@@ -1,10 +1,16 @@
-"""Make the tree of the installation ISO from a snapshot of the distribution, like XCP-ng's create-install-image.
+"""Make the tree of the installation ISO from a snapshot of the distribution, with the hook of the project.
 
 Run as root in the build environment, with the tools making the ISO installed: ``iso.py <config>``. The config is a
-JSON object of ``snapshot``, the binaries of the snapshot for the architecture, ``templates``, the files of the ISO
-and of install.img, ``tree``, the directory to make, ``installer`` and ``packages`` (see xcraft.project.Iso),
-``netinstall``, ``signed`` and ``keys``, the files of the keys of the repositories. The tree, with ``info.json`` next
-to it, the version and volume id of the ISO, gets the owner of the config, even when it fails.
+JSON object of ``snapshot``, the binaries of the snapshot for the architecture, ``templates``, the files of the ISO,
+of install.img, and the hook, ``tree``, the directory to make, ``installer`` and ``packages`` (see
+xcraft.project.Iso), ``netinstall``, ``signed``, ``keys``, the files of the keys: ours first, when signed, then
+those of the repositories, and the ``name`` and ``version`` of the distribution. The tree gets the owner of the config,
+even when it fails.
+
+The hook, ``hook <stage> <dir> <hook.json>``, makes what is particular to the distribution: ``installimg``, on the root
+of install.img, before its modules are indexed and it is archived, then ``tree``, on the tree of the ISO, before
+efiboot.img is made of its EFI/BOOT/, with EFI/BOOT/efiboot.cfg for grub.cfg, if any. hook.json is the config, with
+``rpms``, the files of the latest packages of the snapshot by name.
 """
 
 from __future__ import annotations
@@ -13,17 +19,18 @@ import atexit
 import contextlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 from typing import IO
 
-# out of the build environment, for the tests of the helpers
+# out of the build environment, for the tests of the helpers, without dnf
+# pyright: reportPossiblyUnboundVariable=false
 with contextlib.suppress(ImportError):
-    import dnf  # ty: ignore[unresolved-import]
+    import dnf  # ty: ignore[unresolved-import]  # pyright: ignore[reportMissingImports]
 
 SYSLINUX = Path("/usr/share/syslinux")
 MEMTEST = Path("/usr/lib64/memtest86+")
@@ -70,6 +77,11 @@ def one(directory: Path, pattern: str) -> Path:
     return found[0]
 
 
+def hook(stage: str, directory: Path) -> None:
+    """Run the hook of the project at `stage`, on `directory`."""
+    sh(templates / "hook", stage, directory, tree.parent / "hook.json")
+
+
 def prune_firmware(root: Path) -> None:
     """Remove the firmware files no driver names: the root filesystem would get too large to boot."""
     modules = [str(m) for m in (root / "usr/lib/modules").rglob("*.ko*") if m.is_file()]
@@ -93,8 +105,28 @@ def prune_firmware(root: Path) -> None:
             f.unlink()
 
 
+def kernel(root: Path) -> Path:
+    """Return the kernel of the installer's root filesystem `root`, from its package, as scriptlets may remove it, like
+    host-installer's: in the directory of its modules, like AlmaLinux's, or else in /boot.
+    """
+    query = ["rpm", f"--root={root}", "-qa", "--qf", "[%{=NAME} %{FILENAMES}\n]"]
+    files = [
+        line.split(" ", 1)
+        for line in subprocess.run(query, capture_output=True, text=True, check=True).stdout.splitlines()
+    ]
+    found = [f for f in files if re.fullmatch(r"(/usr)?/lib/modules/[^/]+/vmlinuz", f[1])] or [
+        f for f in files if re.fullmatch(r"/boot/vmlinuz-[^/]*[0-9]", f[1])
+    ]
+    if len(found) != 1:
+        sys.exit(f"not one kernel in install.img: {found}")
+    name, path = found[0]
+    return extract(name, f".{path}") / path.lstrip("/")
+
+
 def install_img(dest: Path) -> None:
-    """Make the installer's root filesystem, as a cpio archive compressed with zstd."""
+    """Make the installer's root filesystem, as a cpio archive compressed with zstd, and copy its kernel to
+    boot/vmlinuz.
+    """
     root, cache = Path(tempfile.mkdtemp()), tempfile.mkdtemp()  # a cache of its own, see installable.py
     sh(
         "dnf", "-q", "-y", f"--installroot={root}", "--disableplugin=*", "--disablerepo=*",
@@ -104,25 +136,17 @@ def install_img(dest: Path) -> None:
         f"--setopt=cachedir={cache}", f"--setopt=system_cachedir={cache}",
         "install", *config["installer"],
     )  # fmt: skip
-    shadow = root / "etc/shadow"
-    shadow.write_text("".join("root::::::::\n" if line.startswith("root:") else line
-                              for line in shadow.read_text().splitlines(keepends=True)))  # fmt: skip
-    for path in ("usr/share/cracklib", "usr/lib/udev/hwdb.d", "var/lib/dnf", "var/cache/dnf"):
+    for path in ("var/lib/dnf", "var/cache/dnf"):
         shutil.rmtree(root / path, ignore_errors=True)
     for f in (root / "usr").rglob("*.py[co]"):
         f.unlink()
     prune_firmware(root)
     (root / "init").symlink_to("/sbin/init")
     shutil.copytree(templates / "installimg", root, symlinks=True, dirs_exist_ok=True)
+    hook("installimg", root)
     for version in (root / "usr/lib/modules").iterdir():
         sh("depmod", "-a", "-b", root, version.name)
-    installer = root / "opt/xensource/installer"
-    (installer / "EULA").symlink_to("../../../EULA")
-    branding = one(root / "usr/lib", "python3*/site-packages/xcp/branding.py")
-    (installer / "version.py").symlink_to(f"../../../{branding.relative_to(root)}")
-    sh("systemctl", f"--root={root}", "enable", "installer", "installer-getty@tty2")
-    for unit in ("getty@tty1", "fcoe", "lldpad", "xen-init-dom0", "xenconsoled", "xenstored", "chronyd", "chrony-wait"):
-        subprocess.run(["systemctl", f"--root={root}", "--quiet", "disable", unit], check=False)  # when installed
+    shutil.copy2(kernel(root), tree / "boot/vmlinuz")
     with dest.open("wb") as out:
         sh("bash", "-o", "pipefail", "-c",
            "find . -print0 | LC_ALL=C sort -z | cpio -o -0 -H newc --quiet --reproducible | zstd -q -T0",
@@ -130,48 +154,22 @@ def install_img(dest: Path) -> None:
     shutil.rmtree(root)
 
 
-def boot_params(param: str) -> None:
-    """Add `param` to the kernel command line of all the entries of the boot loaders."""
-    for cfg in [tree / "boot/isolinux/isolinux.cfg", *(tree / "EFI/BOOT").glob("grub*.cfg")]:
-        cfg.write_text(cfg.read_text().replace("/vmlinuz", f"/vmlinuz {param}"))
-
-
-def efiboot(efi: Path, grub_cfg: Path) -> None:
-    """Make the FAT image the UEFI firmwares boot from, with grub, its modules, and `grub_cfg`."""
+def efiboot(efi: Path) -> None:
+    """Make the FAT image the UEFI firmwares boot from, with grub, its modules, and efiboot.cfg or grub.cfg."""
     image = tree / "boot/efiboot.img"
     size = sum(f.stat().st_size + 4096 for f in efi.rglob("*") if f.is_file()) // 1024 + 1024
     sh("mkfs.fat", "-C", "-n", "EFIBOOT", image, str(size), stdout=subprocess.DEVNULL)
     sh("mmd", "-i", image, "::/EFI", "::/EFI/BOOT")
     sh("mcopy", "-s", "-i", image, efi / "BOOTX64.EFI", efi / "x86_64-efi", "::/EFI/BOOT/")
-    sh("mcopy", "-i", image, grub_cfg, "::/EFI/BOOT/grub.cfg")
-
-
-def repository(branding: dict[str, str]) -> None:
-    """Add the repository of the packages to install, and the description of the ISO's tree."""
-    treeinfo = tree / ".treeinfo"
-    text = treeinfo.read_text().replace("@@TIMESTAMP@@", f"{time.time():.2f}")
-    for name in ("PLATFORM_NAME", "PLATFORM_VERSION", "PRODUCT_BRAND", "PRODUCT_VERSION"):
-        text = text.replace(f"@@{name}@@", branding[name])
-    if not config["signed"]:
-        # the installer looks for the keys even without checking the signatures
-        text = text.replace("\nkey", "\n#key")
-    else:
-        # The installer reads only the first key file, so bundle the upstream keys with ours. It imports them in the
-        # installed system, which checks its updates with them.
-        (tree / "RPM-GPG-KEY-xcpng").write_text("".join(Path(k).read_text().strip() + "\n" for k in config["keys"]))
-    treeinfo.write_text(text)
-    packages = tree / "Packages"
-    packages.mkdir()
-    for p in resolver(config["packages"]).transaction.install_set:
-        shutil.copy2(snapshot / p.location, packages)
-    # with gzip: the installer does not read the zstd of newer createrepo_c
-    sh("createrepo_c", "-q", "--compatibility", tree)
+    cfg = efi / "efiboot.cfg"
+    sh("mcopy", "-i", image, cfg if cfg.exists() else efi / "grub.cfg", "::/EFI/BOOT/grub.cfg")
+    cfg.unlink(missing_ok=True)
 
 
 def give_back() -> None:
     """Give what was made to the owner of the config, even on errors: the host could not remove what root owns."""
     owner = Path(sys.argv[1]).stat()
-    for path in [tree.parent / "info.json", tree, *tree.rglob("*")]:
+    for path in [tree.parent / "hook.json", tree, *tree.rglob("*")]:
         if path.is_symlink() or path.exists():
             os.lchown(path, owner.st_uid, owner.st_gid)
 
@@ -179,60 +177,35 @@ def give_back() -> None:
 if __name__ == "__main__":
     config = json.loads(Path(sys.argv[1]).read_text())
     snapshot, templates, tree = Path(config["snapshot"]), Path(config["templates"]), Path(config["tree"])
-    rpms = {p.name: snapshot / p.location for p in resolver().sack.query().available().latest()}
+    rpms = {p.name: str(snapshot / p.location) for p in resolver().sack.query().available().latest()}
+    (tree.parent / "hook.json").write_text(json.dumps({**config, "rpms": rpms}))
     atexit.register(give_back)
     shutil.rmtree(tree, ignore_errors=True)
     shutil.copytree(templates / "tree", tree)
-    install_img(tree / "install.img")
     boot = tree / "boot"
-    shutil.copy2(one(extract("kernel", "./boot/vmlinuz-*") / "boot", "vmlinuz-*[0-9]"), boot / "vmlinuz")
-    # the debug builds of the hypervisor, like XenServer, for a more useful xl dmesg when something goes wrong
-    shutil.copy2(one(extract("xen-hypervisor-elf", "./boot/*") / "boot", "xen-*-d.gz"), boot / "xen.gz")
+    boot.mkdir(exist_ok=True)
+    install_img(tree / "install.img")
     shutil.copy2(MEMTEST / "memtest86+x64.bin", boot / "memtest.bin")
     shutil.copy2(MEMTEST / "memtest86+x64.efi", boot)
-    branding_dir = extract("branding-xcp-ng", "./usr/src/branding/*") / "usr/src/branding"
-    for name in ("EULA", "LICENSES"):
-        shutil.copy2(branding_dir / name, tree)
-    branding = dict(
-        line.split("=", 1) for line in (branding_dir / "branding").read_text().splitlines() if line[:1].isupper()
-    )
-    for directory, files in [
-        ("isolinux", ["isolinux.bin", "ldlinux.c32", "libcom32.c32", "libutil.c32", "mboot.c32", "menu.c32"]),
-        # for PXE boot, where XCP-ng 8 had them
-        ("pxelinux", ["pxelinux.0", "ldlinux.c32", "libcom32.c32", "libutil.c32", "mboot.c32", "menu.c32"]),
-    ]:
-        (boot / directory).mkdir(exist_ok=True)
-        for name in files:
-            shutil.copy2(SYSLINUX / name, boot / directory)
-    # grub's image for CDs, which reads its configuration and its modules in /EFI/BOOT, and host-installer's
-    # configurations
+    (boot / "isolinux").mkdir(exist_ok=True)
+    for name in ("isolinux.bin", "ldlinux.c32", "libcom32.c32", "libutil.c32", "menu.c32"):
+        shutil.copy2(SYSLINUX / name, boot / "isolinux")
+    # grub's image for CDs, which reads its configuration, grub.cfg of the templates or the hook, and its modules in
+    # /EFI/BOOT
     efi = tree / "EFI/BOOT"
-    efi.mkdir(parents=True)
+    efi.mkdir(parents=True, exist_ok=True)
     shutil.copy2(
-        extract("grub2-efi-x64-cdboot", "*/gcdx64.efi") / "boot/efi/EFI/almalinux/gcdx64.efi", efi / "BOOTX64.EFI"
+        one(extract("grub2-efi-x64-cdboot", "*/gcdx64.efi") / "boot/efi/EFI", "*/gcdx64.efi"), efi / "BOOTX64.EFI"
     )
     shutil.copytree(
         extract("grub2-efi-x64-modules", "./usr/lib/grub/*") / "usr/lib/grub/x86_64-efi", efi / "x86_64-efi"
     )
-    grub = extract("host-installer-bootloader", "./EFI/almalinux/*") / "EFI/almalinux"
-    # with grub-usb.cfg for efiboot.img, which some firmwares take for the root, finding the ISO's files by install.img
-    for name in ("grub.cfg", "grub-usb.cfg"):
-        # our xen.efi has no multiboot2 header, unlike XenServer's: grub boots the ELF one
-        (efi / name).write_text((grub / name).read_text().replace("/boot/xen.efi", "/boot/xen.gz"))
-    if config["netinstall"]:
-        (tree / ".treeinfo").unlink()
-        boot_params("netinstall")
-    else:
-        repository(branding)
-        if not config["signed"]:
-            boot_params("no-repo-gpgcheck")
-    efiboot(efi, efi / "grub-usb.cfg")
-    (efi / "grub-usb.cfg").unlink()
-    (tree.parent / "info.json").write_text(
-        json.dumps(
-            {
-                "version": branding["PRODUCT_VERSION"],
-                "volid": f"XCP-NG_{branding['PRODUCT_VERSION_TEXT'].replace('.', '')}",
-            }
-        )
-    )
+    if not config["netinstall"]:
+        packages = tree / "Packages"
+        packages.mkdir()
+        for p in resolver(config["packages"]).transaction.install_set:
+            shutil.copy2(snapshot / p.location, packages)
+        # with gzip, which older installers read, rather than the zstd of newer createrepo_c
+        sh("createrepo_c", "-q", "--compatibility", tree)
+    hook("tree", tree)
+    efiboot(efi)

@@ -9,7 +9,7 @@ import pathlib
 import subprocess
 import sys
 
-import rpm  # ty: ignore[unresolved-import]
+import rpm  # ty: ignore[unresolved-import]  # pyright: ignore[reportMissingImports]
 from rpmdeps import deps  # next to it, in /xcraft
 
 MARKER = "XCRAFTAUTOREV"
