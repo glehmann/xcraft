@@ -70,6 +70,19 @@ def prepare_tree(project: Project, name: str, expected: str | None = None) -> Pa
     return tree
 
 
+DUNE_CACHE = "export DUNE_CACHE=enabled DUNE_CACHE_ROOT=/dune-cache DUNE_CACHE_STORAGE_MODE=copy\n"
+"""The cache of dune, for the builds with it, like ccache's for the compilers, but kept on this machine only: in the
+build environment, but not in the recipe of the builds, which it does not change. All the rules are cached, those of
+the projects too: enabled-except-user-rules caches none of xapi's. One missing a dependency may get an output of a
+previous build, which xcraft clean --dune-cache forgets; CI, without the cache, never does. The entries are copied,
+from another filesystem than the build tree's."""
+
+
+def dune_cache(project: Project, name: str) -> Path:
+    """Return the cache of dune of `name`, which its builds use, if they run dune."""
+    return project.state / "dune-cache" / name
+
+
 def run_build(
     project: Project,
     name: str,
@@ -119,19 +132,6 @@ def run_build(
     finally:
         with contextlib.suppress(OSError):  # but those of the builds with dune
             dune.rmdir()
-
-
-DUNE_CACHE = "export DUNE_CACHE=enabled DUNE_CACHE_ROOT=/dune-cache DUNE_CACHE_STORAGE_MODE=copy\n"
-"""The cache of dune, for the builds with it, like ccache's for the compilers, but kept on this machine only: in the
-build environment, but not in the recipe of the builds, which it does not change. All the rules are cached, those of
-the projects too: enabled-except-user-rules caches none of xapi's. One missing a dependency may get an output of a
-previous build, which xcraft clean --dune-cache forgets; CI, without the cache, never does. The entries are copied,
-from another filesystem than the build tree's."""
-
-
-def dune_cache(project: Project, name: str) -> Path:
-    """Return the cache of dune of `name`, which its builds use, if they run dune."""
-    return project.state / "dune-cache" / name
 
 
 def image_replacements(resolved: Resolved, name: str) -> list[str]:

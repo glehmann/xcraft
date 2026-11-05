@@ -26,6 +26,13 @@ def _complete_step(incomplete: str) -> list[str]:
     return [step for step in _STEPS if step.startswith(incomplete)]
 
 
+def _read_lines(path: Path) -> Iterator[str]:
+    """Yield the lines of `path`, if it exists, read as needed: logs can be large."""
+    if path.exists():
+        with path.open(errors="replace") as f:
+            yield from (line.rstrip("\n") for line in f)
+
+
 def log(
     package: OnePackage,
     step: Annotated[
@@ -66,10 +73,3 @@ def log(
     for line in follow_log(path, lambda: builder.building(project, package)):
         if not grep or re.search(grep, line):
             print_log_line(line)
-
-
-def _read_lines(path: Path) -> Iterator[str]:
-    """Yield the lines of `path`, if it exists, read as needed: logs can be large."""
-    if path.exists():
-        with path.open(errors="replace") as f:
-            yield from (line.rstrip("\n") for line in f)

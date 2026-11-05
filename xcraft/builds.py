@@ -84,10 +84,26 @@ def builds_path(project: Project) -> Path:
     return project.root / "xcraft.builds"
 
 
-def load_builds(project: Project) -> Builds:
-    """Return the lock of the builds of the project, empty when there is none yet."""
-    path = builds_path(project)
-    return parse_builds(path.read_text()) if path.exists() else Builds()
+def _package(line: str) -> str:
+    """Return the package of a line of the file, or of its comment line."""
+    if line.startswith("# "):
+        return line[2:]
+    return json.loads(line[: line.index('"', 1) + 1]) if line.startswith('"') else line.split(".", 1)[0]
+
+
+def _unconflicted(text: str) -> str:
+    """Return `text` without its conflicts, git's or jj's, and the lines of their packages."""
+    kept, conflicted, inside = [], set(), False
+    for line in text.splitlines():
+        if line.startswith("<<<<<<<"):
+            inside = True
+        elif line.startswith(">>>>>>>"):
+            inside = False
+        elif not inside:
+            kept.append(line)
+        elif (line := line.lstrip("+- ")) and not re.match(r"([=|%+\\-])\1{6}", line):
+            conflicted.add(_package(line))
+    return "\n".join(line for line in kept if not line or _package(line) not in conflicted)
 
 
 def parse_builds(text: str) -> Builds:
@@ -110,26 +126,10 @@ def parse_builds(text: str) -> Builds:
     return builds
 
 
-def _package(line: str) -> str:
-    """Return the package of a line of the file, or of its comment line."""
-    if line.startswith("# "):
-        return line[2:]
-    return json.loads(line[: line.index('"', 1) + 1]) if line.startswith('"') else line.split(".", 1)[0]
-
-
-def _unconflicted(text: str) -> str:
-    """Return `text` without its conflicts, git's or jj's, and the lines of their packages."""
-    kept, conflicted, inside = [], set(), False
-    for line in text.splitlines():
-        if line.startswith("<<<<<<<"):
-            inside = True
-        elif line.startswith(">>>>>>>"):
-            inside = False
-        elif not inside:
-            kept.append(line)
-        elif (line := line.lstrip("+- ")) and not re.match(r"([=|%+\\-])\1{6}", line):
-            conflicted.add(_package(line))
-    return "\n".join(line for line in kept if not line or _package(line) not in conflicted)
+def load_builds(project: Project) -> Builds:
+    """Return the lock of the builds of the project, empty when there is none yet."""
+    path = builds_path(project)
+    return parse_builds(path.read_text()) if path.exists() else Builds()
 
 
 def _parsed(project: Project) -> dict[str, dict[str, Package]]:

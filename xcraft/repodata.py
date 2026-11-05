@@ -57,6 +57,11 @@ def _decompress(path: Path) -> bytes | None:
     return data
 
 
+def location(entry: Entry) -> str:
+    """Return the location of a package in its repository."""
+    return unescape(found[1], {"&quot;": '"'}) if (found := _HREF.search(entry[0])) else ""
+
+
 def files(repomd: bytes) -> dict[str, str]:
     """Return the locations of the metadata of the packages in a repomd.xml, by kind, and raise ValueError for those
     out of its repodata/ directory: it may come unsigned, from the upstream copy.
@@ -82,11 +87,6 @@ def read(repo: Path) -> dict[str, Entry] | None:
             if pkgid := _PKGID.search(package):
                 found.setdefault(pkgid[1] or pkgid[2], ["", "", ""])[i] = package
     return {pkgid: (p, f, o) for pkgid, (p, f, o) in found.items() if p and f and o}
-
-
-def location(entry: Entry) -> str:
-    """Return the location of a package in its repository."""
-    return unescape(found[1], {"&quot;": '"'}) if (found := _HREF.search(entry[0])) else ""
 
 
 def sourcerpm(entry: Entry) -> str:

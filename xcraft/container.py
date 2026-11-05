@@ -95,6 +95,12 @@ def _local_repos(project: Project) -> list[str]:
     )
 
 
+def _image_pins(project: Project) -> dict[str, Pin]:
+    """Return the pinned binary packages of the image of the platform."""
+    pins = pinned.pins(project)
+    return {name: pins[name] for name in cached_lock(project).image.get(project.arch, [])}
+
+
 def _image_files(project: Project) -> dict[str, str]:
 
     return {
@@ -105,12 +111,6 @@ def _image_files(project: Project) -> dict[str, str]:
         "pins.list": "".join(f"{name} {pin.text()}\n" for name, pin in sorted(_image_pins(project).items())),
         "macros.xcraft": "".join(f"%{name} {value}\n" for name, value in sorted(project.config.macros.items())),
     }
-
-
-def _image_pins(project: Project) -> dict[str, Pin]:
-    """Return the pinned binary packages of the image of the platform."""
-    pins = pinned.pins(project)
-    return {name: pins[name] for name in cached_lock(project).image.get(project.arch, [])}
 
 
 def _image_definition(project: Project) -> tuple[str, dict[str, str], dict[str, str]]:
@@ -143,47 +143,36 @@ def _exists(tag: str) -> bool:
     return True
 
 
-def built_image(project: Project) -> str:
-    """Return the tag of the build environment image, building it if needed.
-
-    A new image must have the packages resolved for it, or it is removed. Its
-    packages must be locked: see resolution.prepare().
-    """
-    if not project.native and (problem := host.emulation_problem(project.arch)):
-        raise ContainerError(problem)
-    tag, args, files = _image_definition(project)
-    if _exists(tag):
-        return tag
-    try:
-        with project.lock():
-            if not _exists(tag):
-                _build_image(project, tag, args, files)
-            return tag
-    except ProjectLockedError as e:
-        msg = f"{e}, and the build environment image must be built first: try again when it is done"
-        raise ProjectLockedError(msg) from None
+def _dnf_cache(project: Project) -> str:
+    """Return the volume of the dnf cache, which the containers of the platform share."""
+    return "xcraft-dnf-" + re.sub(r"[^a-z0-9]+", "-", project.platform)
 
 
-def _build_image(project: Project, tag: str, args: dict[str, str], files: dict[str, str]) -> None:
+def _kill(container: str) -> None:
+    # bash, the init process of the container, ignores the signals stopping podman: killed, and removed at once,
+    # not later by --rm, as another container of the same name may follow
+    process.run(["podman", "rm", "--force", "--time", "0", container], check=False, capture=True)
 
-    _podman_build(
-        project,
-        "image",
-        tag,
-        files,
-        args,
-        show="the build environment image",
-        pinned=pinned.repository(project, _image_pins(project)),  # its own only
-    )
-    try:
-        resolved = {f"{n}-{p.evr}.{p.arch}" for n, p in _image_pins(project).items()}
-        if differences := changes(resolved, {f"{n}-{p.evr}.{p.arch}" for n, p in image_packages(project, tag).items()}):
-            msg = f"the build environment image does not have the packages resolved for it: {', '.join(differences)}"
-            raise ContainerError(msg)  # noqa: TRY301, removed like on any error
-    except BaseException:  # not to be used unchecked by the next commands
-        process.run(["podman", "rmi", tag], capture=True, check=False)
-        _existing.discard(tag)
-        raise
+
+def _run_logged(cmd: list[str], log: Path, on_line: Callable[[str], None] | None, container: str | None) -> int:
+    """Run `cmd` with its output in `log`, stopping `container` when the log gets too large."""
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with (
+        log.open("w", buffering=1) as f,  # line buffered, for xcraft log --follow
+        process.popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as proc,
+    ):
+        out = proc.stdout
+        assert out  # noqa: S101
+        # in parts of the longest lines, not to keep in memory those never ending
+        for line in iter(lambda: out.readline(_LINE), ""):
+            f.write(line)
+            if f.tell() > MAX_LOG_SIZE and container:
+                _kill(container)  # before leaving the block, which waits for podman
+                msg = f"stopped, its log got larger than {MAX_LOG_SIZE // 2**20} MiB, see {log}"
+                raise ContainerError(msg)
+            if on_line:
+                on_line(line)
+    return proc.returncode
 
 
 def _podman_build(
@@ -222,9 +211,142 @@ def _podman_build(
                 raise ContainerError(msg)
 
 
-def _dnf_cache(project: Project) -> str:
-    """Return the volume of the dnf cache, which the containers of the platform share."""
-    return "xcraft-dnf-" + re.sub(r"[^a-z0-9]+", "-", project.platform)
+def run_container(
+    project: Project,
+    script: str,
+    *,
+    container: str,
+    volumes: list[str],
+    network: bool = True,
+    log: Path | None = None,
+    on_line: Callable[[str], None] | None = None,
+    image: str = "",
+    install: bool = False,
+) -> None:
+    """Run a bash `script` in a container called `container`, of the build environment image, or of `image`.
+
+    The volumes are mounted with the scripts of the build environment, in
+    /xcraft, the repository of the pinned packages with `install`, for the
+    scripts installing packages, all of them downloaded first, and a volume keeping the dnf cache
+    between containers. The output goes to `log`, or to an interactive terminal
+    when there is no log, and `on_line` is called with each line written to the
+    log. The container is stopped when interrupted, or when its log gets larger
+    than MAX_LOG_SIZE.
+    """
+    image = image or built_image(project)
+    volumes = [*volumes, f"{BUILDENV}:/xcraft:ro", *([f"{pinned.repository(project)}:/pinned:ro"] if install else [])]
+    cmd = [
+        # replacing a container of a killed xcraft
+        "podman", "run", "--rm", "--replace", "--name", container, "--platform", project.platform,
+        "--userns=keep-id:uid=1000,gid=1000", "--security-opt", "label=disable",
+        *([] if network else ["--network", "none"]), *(["--interactive", "--tty"] if log is None else []),
+        *(arg for volume in [f"{_dnf_cache(project)}:/var/cache/dnf", *volumes] for arg in ("--volume", volume)),
+        image, "bash", "-c", script,
+    ]  # fmt: skip
+    try:
+        returncode = (
+            process.run(cmd, check=False).returncode if log is None else _run_logged(cmd, log, on_line, container)
+        )
+    except BaseException:
+        _kill(container)
+        raise
+    if returncode:
+        msg = "failed" + (f", see {log}" if log else "")
+        raise ContainerError(msg)
+
+
+def run(
+    project: Project,
+    step: str,
+    script: str,
+    *,
+    volumes: Sequence[str] = (),
+    show: str = "",
+    on_line: Callable[[str], None] | None = None,
+    network: bool = True,
+    image: str = "",
+    install: bool = False,
+) -> None:
+    """Run a bash `script` for the `step` of xcraft, in a container, logged in .xcraft/logs/_<step>.log.
+
+    `show` is shown while it runs, with the last line of the log, or the lines
+    are given to `on_line`. See run_container() for the rest.
+    """
+    log = project.state / f"logs/_{step}.log"
+    with activity(show) if show else nullcontext(on_line) as progress:
+        try:
+            run_container(
+                project,
+                script,
+                container=f"xcraft-{step}-{os.getpid()}",
+                volumes=list(volumes),
+                network=network,
+                log=log,
+                on_line=progress,
+                image=image,
+                install=install,
+            )
+        except ContainerError as e:
+            msg = f"{e}{_tail(log)}"
+            raise ContainerError(msg) from None
+
+
+def image_packages(project: Project, image: str) -> dict[str, Locked]:
+    """Return the upstream packages installed in `image`."""
+    with project.tmp_dir("record") as work:
+        run(
+            project,
+            "record",
+            f"{DNF_LOCK} python3 /xcraft/record.py /work/record.json",
+            volumes=[f"{work}:/work"],
+            show="recording the packages of the image",
+            image=image,
+        )
+        installed = json.loads((work / "record.json").read_text())["installed"]
+        return {name: Locked.model_validate(p) for name, p in installed.items()}
+
+
+def _build_image(project: Project, tag: str, args: dict[str, str], files: dict[str, str]) -> None:
+
+    _podman_build(
+        project,
+        "image",
+        tag,
+        files,
+        args,
+        show="the build environment image",
+        pinned=pinned.repository(project, _image_pins(project)),  # its own only
+    )
+    try:
+        resolved = {f"{n}-{p.evr}.{p.arch}" for n, p in _image_pins(project).items()}
+        if differences := changes(resolved, {f"{n}-{p.evr}.{p.arch}" for n, p in image_packages(project, tag).items()}):
+            msg = f"the build environment image does not have the packages resolved for it: {', '.join(differences)}"
+            raise ContainerError(msg)  # noqa: TRY301, removed like on any error
+    except BaseException:  # not to be used unchecked by the next commands
+        process.run(["podman", "rmi", tag], capture=True, check=False)
+        _existing.discard(tag)
+        raise
+
+
+def built_image(project: Project) -> str:
+    """Return the tag of the build environment image, building it if needed.
+
+    A new image must have the packages resolved for it, or it is removed. Its
+    packages must be locked: see resolution.prepare().
+    """
+    if not project.native and (problem := host.emulation_problem(project.arch)):
+        raise ContainerError(problem)
+    tag, args, files = _image_definition(project)
+    if _exists(tag):
+        return tag
+    try:
+        with project.lock():
+            if not _exists(tag):
+                _build_image(project, tag, args, files)
+            return tag
+    except ProjectLockedError as e:
+        msg = f"{e}, and the build environment image must be built first: try again when it is done"
+        raise ProjectLockedError(msg) from None
 
 
 def run_dnf(
@@ -260,21 +382,6 @@ def run_dnf(
             ],
             show=show,
         )
-
-
-def image_packages(project: Project, image: str) -> dict[str, Locked]:
-    """Return the upstream packages installed in `image`."""
-    with project.tmp_dir("record") as work:
-        run(
-            project,
-            "record",
-            f"{DNF_LOCK} python3 /xcraft/record.py /work/record.json",
-            volumes=[f"{work}:/work"],
-            show="recording the packages of the image",
-            image=image,
-        )
-        installed = json.loads((work / "record.json").read_text())["installed"]
-        return {name: Locked.model_validate(p) for name, p in installed.items()}
 
 
 def base_image(project: Project) -> str:
@@ -346,42 +453,6 @@ def run_natively(
             raise ContainerError(msg)
 
 
-def run(
-    project: Project,
-    step: str,
-    script: str,
-    *,
-    volumes: Sequence[str] = (),
-    show: str = "",
-    on_line: Callable[[str], None] | None = None,
-    network: bool = True,
-    image: str = "",
-    install: bool = False,
-) -> None:
-    """Run a bash `script` for the `step` of xcraft, in a container, logged in .xcraft/logs/_<step>.log.
-
-    `show` is shown while it runs, with the last line of the log, or the lines
-    are given to `on_line`. See run_container() for the rest.
-    """
-    log = project.state / f"logs/_{step}.log"
-    with activity(show) if show else nullcontext(on_line) as progress:
-        try:
-            run_container(
-                project,
-                script,
-                container=f"xcraft-{step}-{os.getpid()}",
-                volumes=list(volumes),
-                network=network,
-                log=log,
-                on_line=progress,
-                image=image,
-                install=install,
-            )
-        except ContainerError as e:
-            msg = f"{e}{_tail(log)}"
-            raise ContainerError(msg) from None
-
-
 _SIGN_PACKAGES = ["rpm-sign", "gnupg2"]
 
 
@@ -403,74 +474,3 @@ def signing_image(project: Project) -> str:
         files = {"Containerfile": containerfile, "upstream.repo": repo_file(project)}
         _podman_build(project, "sign-image", tag, files, {}, show="the signing image")
     return tag
-
-
-def run_container(
-    project: Project,
-    script: str,
-    *,
-    container: str,
-    volumes: list[str],
-    network: bool = True,
-    log: Path | None = None,
-    on_line: Callable[[str], None] | None = None,
-    image: str = "",
-    install: bool = False,
-) -> None:
-    """Run a bash `script` in a container called `container`, of the build environment image, or of `image`.
-
-    The volumes are mounted with the scripts of the build environment, in
-    /xcraft, the repository of the pinned packages with `install`, for the
-    scripts installing packages, all of them downloaded first, and a volume keeping the dnf cache
-    between containers. The output goes to `log`, or to an interactive terminal
-    when there is no log, and `on_line` is called with each line written to the
-    log. The container is stopped when interrupted, or when its log gets larger
-    than MAX_LOG_SIZE.
-    """
-    image = image or built_image(project)
-    volumes = [*volumes, f"{BUILDENV}:/xcraft:ro", *([f"{pinned.repository(project)}:/pinned:ro"] if install else [])]
-    cmd = [
-        # replacing a container of a killed xcraft
-        "podman", "run", "--rm", "--replace", "--name", container, "--platform", project.platform,
-        "--userns=keep-id:uid=1000,gid=1000", "--security-opt", "label=disable",
-        *([] if network else ["--network", "none"]), *(["--interactive", "--tty"] if log is None else []),
-        *(arg for volume in [f"{_dnf_cache(project)}:/var/cache/dnf", *volumes] for arg in ("--volume", volume)),
-        image, "bash", "-c", script,
-    ]  # fmt: skip
-    try:
-        returncode = (
-            process.run(cmd, check=False).returncode if log is None else _run_logged(cmd, log, on_line, container)
-        )
-    except BaseException:
-        _kill(container)
-        raise
-    if returncode:
-        msg = "failed" + (f", see {log}" if log else "")
-        raise ContainerError(msg)
-
-
-def _kill(container: str) -> None:
-    # bash, the init process of the container, ignores the signals stopping podman: killed, and removed at once,
-    # not later by --rm, as another container of the same name may follow
-    process.run(["podman", "rm", "--force", "--time", "0", container], check=False, capture=True)
-
-
-def _run_logged(cmd: list[str], log: Path, on_line: Callable[[str], None] | None, container: str | None) -> int:
-    """Run `cmd` with its output in `log`, stopping `container` when the log gets too large."""
-    log.parent.mkdir(parents=True, exist_ok=True)
-    with (
-        log.open("w", buffering=1) as f,  # line buffered, for xcraft log --follow
-        process.popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as proc,
-    ):
-        out = proc.stdout
-        assert out  # noqa: S101
-        # in parts of the longest lines, not to keep in memory those never ending
-        for line in iter(lambda: out.readline(_LINE), ""):
-            f.write(line)
-            if f.tell() > MAX_LOG_SIZE and container:
-                _kill(container)  # before leaving the block, which waits for podman
-                msg = f"stopped, its log got larger than {MAX_LOG_SIZE // 2**20} MiB, see {log}"
-                raise ContainerError(msg)
-            if on_line:
-                on_line(line)
-    return proc.returncode

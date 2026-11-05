@@ -47,6 +47,17 @@ def _build_root_binaries(packages: dict[str, Package]) -> dict[str, list[Binary]
     return result
 
 
+def reachable(deps: Mapping[str, AbstractSet[str]], roots: Iterable[str]) -> set[str]:
+    """Return `roots` and what they depend on, directly or not."""
+    found = set(roots)
+    todo = list(found)
+    while todo:
+        for dep in deps.get(todo.pop(), set()) - found:
+            found.add(dep)
+            todo.append(dep)
+    return found
+
+
 def build_deps(
     packages: dict[str, Package], image: Iterable[str] = (), roots: Mapping[str, Iterable[str]] | None = None
 ) -> dict[str, set[str]]:
@@ -89,17 +100,6 @@ def upstream_deps(packages: dict[str, Package], upstream: UpstreamRequires) -> d
         capabilities = [*packages[name].buildrequires, *(r for binary in binaries for r in binary.requires)]
         deps[name] = {provider for c in capabilities for provider in upstream.providers.get(c, ())}
     return deps
-
-
-def reachable(deps: Mapping[str, AbstractSet[str]], roots: Iterable[str]) -> set[str]:
-    """Return `roots` and what they depend on, directly or not."""
-    found = set(roots)
-    todo = list(found)
-    while todo:
-        for dep in deps.get(todo.pop(), set()) - found:
-            found.add(dep)
-            todo.append(dep)
-    return found
 
 
 def dependents(deps: dict[str, set[str]], names: Iterable[str]) -> set[str]:

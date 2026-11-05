@@ -116,14 +116,6 @@ def release_signer(project: Project) -> Signer | None:
     return Signer(key=sign.key, gnupghome=Path(sign.gnupghome).expanduser() if sign.gnupghome else None)
 
 
-def key_signer(project: Project, key: str | None = None) -> Signer | None:
-    """Return the signer of `key`, in the keyring of [sign], or else the one of [sign], or else the developer's."""
-    signer = release_signer(project)
-    if key:
-        return Signer(fingerprint(key), signer.gnupghome if signer else None)
-    return signer or dev_signer(project)
-
-
 def dev_keyring(project: Project) -> Path:
     """Return the keyring of the developer's key for development builds."""
     return project.state / "key"
@@ -135,6 +127,14 @@ def dev_signer(project: Project) -> Signer | None:
     if not (keyring / "fingerprint").exists():
         return None
     return Signer(key=(keyring / "fingerprint").read_text().strip(), gnupghome=keyring)
+
+
+def key_signer(project: Project, key: str | None = None) -> Signer | None:
+    """Return the signer of `key`, in the keyring of [sign], or else the one of [sign], or else the developer's."""
+    signer = release_signer(project)
+    if key:
+        return Signer(fingerprint(key), signer.gnupghome if signer else None)
+    return signer or dev_signer(project)
 
 
 def create_dev_key(project: Project, name: str) -> Signer:

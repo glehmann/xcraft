@@ -16,6 +16,42 @@ from xcraft.project import Project, remove_durably, write_atomically
 from xcraft.resolution import available_versions, upstream_sources
 
 
+def _update(project: Project, packages: list[str], *, write: bool) -> int:
+    """Update the lock, for the `packages`, all by default, or only show what would change without `write`, and return
+    the number of changes.
+    """
+    # first, as it may lock them
+    sources = upstream_sources(project, packages) if packages else sorted(load_lock(project).sources)
+    current = load_lock(project)
+    chosen = choose_versions({p.arch: available_versions(p, sources) for p in project.all_platforms()})
+    changed = {s: v for s, v in chosen.items() if v != current.sources[s]}
+    for source, version in changed.items():
+        console.print(f"[bold]{source}[/] {current.sources[source]} -> {version}")
+    if not write:
+        # not what other contents of the same versions the repositories may have, which only --update pins
+        up_to_date = (
+            "versions up to date, not looking for other contents of the same versions: xcraft lock --update does"
+        )
+        console.print(f"{len(changed)} to update: xcraft lock --update updates them" if changed else up_to_date)
+        return len(changed)
+    current = load_lock(project)  # which may have locked new ones
+    current.sources |= changed
+    save_lock(project, current)
+    resolution.prepare(project, repin=set(sources))  # the images and build roots of the updated packages, pinned again
+    update_build_ids(project)  # the packages built with them get new numbers
+    pins = {arch: dict(pins) for arch, pins in current.binaries.items()}
+    repinned = sorted(
+        f"{name} ({arch})"
+        for arch, now in load_lock(project).binaries.items()
+        for name, pin in now.items()
+        if pin.source not in changed and pins.get(arch, {}).get(name, pin) != pin
+    )
+    if repinned:
+        console.print(f"pinned again, of the same versions: {', '.join(repinned)}")
+    console.print(f"{len(changed)} updated")
+    return len(changed) + len(repinned)
+
+
 def lock(
     packages: Annotated[
         list[str] | None,
@@ -90,39 +126,3 @@ def lock(
         f"generated for {len(builds.requires.shared)} binary packages of ours, the dynamic BuildRequires of "
         f"{len(builds.buildrequires.shared)} packages"
     )
-
-
-def _update(project: Project, packages: list[str], *, write: bool) -> int:
-    """Update the lock, for the `packages`, all by default, or only show what would change without `write`, and return
-    the number of changes.
-    """
-    # first, as it may lock them
-    sources = upstream_sources(project, packages) if packages else sorted(load_lock(project).sources)
-    current = load_lock(project)
-    chosen = choose_versions({p.arch: available_versions(p, sources) for p in project.all_platforms()})
-    changed = {s: v for s, v in chosen.items() if v != current.sources[s]}
-    for source, version in changed.items():
-        console.print(f"[bold]{source}[/] {current.sources[source]} -> {version}")
-    if not write:
-        # not what other contents of the same versions the repositories may have, which only --update pins
-        up_to_date = (
-            "versions up to date, not looking for other contents of the same versions: xcraft lock --update does"
-        )
-        console.print(f"{len(changed)} to update: xcraft lock --update updates them" if changed else up_to_date)
-        return len(changed)
-    current = load_lock(project)  # which may have locked new ones
-    current.sources |= changed
-    save_lock(project, current)
-    resolution.prepare(project, repin=set(sources))  # the images and build roots of the updated packages, pinned again
-    update_build_ids(project)  # the packages built with them get new numbers
-    pins = {arch: dict(pins) for arch, pins in current.binaries.items()}
-    repinned = sorted(
-        f"{name} ({arch})"
-        for arch, now in load_lock(project).binaries.items()
-        for name, pin in now.items()
-        if pin.source not in changed and pins.get(arch, {}).get(name, pin) != pin
-    )
-    if repinned:
-        console.print(f"pinned again, of the same versions: {', '.join(repinned)}")
-    console.print(f"{len(changed)} updated")
-    return len(changed) + len(repinned)

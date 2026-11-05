@@ -40,6 +40,31 @@ Inputs = Annotated[
 ]
 
 
+def _show_inputs(project: Project, names: list[str]) -> None:
+    """Show the build keys of the packages `names`, with their build IDs and what the keys are computed from, as JSON:
+    a key is the SHA-256 of its inputs, as JSON, keys sorted, then a NUL and the name of its package. The image the
+    specs were parsed in, which depends on the machine, is shown too, but not in the keys.
+    """
+    shown: dict[str, dict[str, list]] = {}
+    ids, parsed_in = buildid.compute(project, buildid.base(project), shown=shown), image_tag(project.on_host())
+    console.file.write(
+        json.dumps(
+            {
+                name: {
+                    "key": buildkey.key(shown[name], name),
+                    "build ID": ids[name].text(),
+                    "inputs": shown[name],
+                    "specs parsed in": parsed_in,
+                }
+                for name in names
+            },
+            indent=1,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
 def status(
     ctx: typer.Context,
     packages: Packages = None,
@@ -92,28 +117,3 @@ def status(
     finally:
         console.width = width
     console.print(", ".join(f"[{_STYLES[state]}]{states[state]} {state}[/]" for state in _STYLES if states[state]))
-
-
-def _show_inputs(project: Project, names: list[str]) -> None:
-    """Show the build keys of the packages `names`, with their build IDs and what the keys are computed from, as JSON:
-    a key is the SHA-256 of its inputs, as JSON, keys sorted, then a NUL and the name of its package. The image the
-    specs were parsed in, which depends on the machine, is shown too, but not in the keys.
-    """
-    shown: dict[str, dict[str, list]] = {}
-    ids, parsed_in = buildid.compute(project, buildid.base(project), shown=shown), image_tag(project.on_host())
-    console.file.write(
-        json.dumps(
-            {
-                name: {
-                    "key": buildkey.key(shown[name], name),
-                    "build ID": ids[name].text(),
-                    "inputs": shown[name],
-                    "specs parsed in": parsed_in,
-                }
-                for name in names
-            },
-            indent=1,
-            sort_keys=True,
-        )
-        + "\n"
-    )

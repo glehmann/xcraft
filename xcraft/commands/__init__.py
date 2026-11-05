@@ -23,11 +23,19 @@ def complete_package(incomplete: str) -> list[str]:
 Packages = Annotated[
     list[str] | None, typer.Argument(help="Packages.", show_default=False, autocompletion=complete_package)
 ]
+
+
 OnePackage = Annotated[str, typer.Argument(help="Package.", show_default=False, autocompletion=complete_package)]
+
+
 All = Annotated[bool, typer.Option("--all", help="All packages.")]
+
+
 Key = Annotated[
     str | None, typer.Option("--key", metavar="FINGERPRINT", help="Sign with this GPG key instead of the default key.")
 ]
+
+
 To = Annotated[Destination, typer.Option("--to", help="Bucket to upload to.")]
 
 
@@ -49,6 +57,17 @@ Arch = Annotated[
 ]
 
 
+def unprepared_project(names: list[str] | None = None, *, arch: str | None = None) -> Project:
+    """Return the project, checking `names` are packages, without the lock or the specs, for the commands needing
+    their directories only.
+    """
+    project = Project.find(arch)
+    if unknown := sorted(set(names or []) - project.package_dirs.keys()):
+        msg = f"unknown package(s): {', '.join(unknown)}"
+        raise typer.BadParameter(msg)
+    return project
+
+
 def prepared_project(names: list[str] | None = None, *, locked: bool = False, arch: str | None = None) -> Project:
     """Return the project, with its packages and their build dependencies, checking `names` are packages, once the
     lock has the upstream packages the builds need, which it may lock (see resolution.prepare()).
@@ -58,17 +77,6 @@ def prepared_project(names: list[str] | None = None, *, locked: bool = False, ar
     project = unprepared_project(names, arch=arch)  # before preparing, which may run containers
     project.frozen = locked
     resolution.prepare(project)
-    return project
-
-
-def unprepared_project(names: list[str] | None = None, *, arch: str | None = None) -> Project:
-    """Return the project, checking `names` are packages, without the lock or the specs, for the commands needing
-    their directories only.
-    """
-    project = Project.find(arch)
-    if unknown := sorted(set(names or []) - project.package_dirs.keys()):
-        msg = f"unknown package(s): {', '.join(unknown)}"
-        raise typer.BadParameter(msg)
     return project
 
 
@@ -91,6 +99,8 @@ Dev = Annotated[
         show_default=False,
     ),
 ]
+
+
 Final = Annotated[
     bool, typer.Option("--final", help="Final builds, without development suffixes, like CI on the main branch.")
 ]

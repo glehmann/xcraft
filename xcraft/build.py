@@ -151,6 +151,24 @@ def fetch_build(project: Project, name: str, key: str) -> bool:
         return remote.fetch_tree(project, build_path(project, name, key), cached_build(project, name, key), on_line)
 
 
+def _split_plan(
+    project: Project, plan: list[str], keys: dict[str, str], *, fetch: Fetch
+) -> tuple[list[str], set[str], set[str]]:
+    """Return the packages of `plan` to build, those only in the remote storage, and those of them to fetch."""
+    to_build = [name for name in plan if not cached_build(project, name, keys[name]).exists()]
+    stored = set()
+    if fetch != "none" and project.config.remote:
+        try:
+            stored = {
+                name for name in to_build if remote.tree_available(project, build_path(project, name, keys[name]))
+            }
+        except remote.RemoteError as e:
+            console.print(f"[yellow]remote storage unavailable[/]: {escape(str(e))}")
+        to_build = [name for name in to_build if name not in stored]
+    needed = reachable(project.deps, {d for n in to_build for d in project.deps[n]})
+    return to_build, stored, stored if fetch == "all" else stored & needed
+
+
 def _show_plan(project: Project, plan: list[str], keys: dict[str, str], *, fetch: Fetch) -> None:
     """Show what is to build or fetch in `plan`, and how long it took last time, with how many are cached, or only
     in the remote storage.
@@ -174,74 +192,6 @@ def _show_plan(project: Project, plan: list[str], keys: dict[str, str], *, fetch
     console.print(", ".join(summary + [f"{n} {what}" for what, n in counts.items() if n]))
 
 
-def _split_plan(
-    project: Project, plan: list[str], keys: dict[str, str], *, fetch: Fetch
-) -> tuple[list[str], set[str], set[str]]:
-    """Return the packages of `plan` to build, those only in the remote storage, and those of them to fetch."""
-    to_build = [name for name in plan if not cached_build(project, name, keys[name]).exists()]
-    stored = set()
-    if fetch != "none" and project.config.remote:
-        try:
-            stored = {
-                name for name in to_build if remote.tree_available(project, build_path(project, name, keys[name]))
-            }
-        except remote.RemoteError as e:
-            console.print(f"[yellow]remote storage unavailable[/]: {escape(str(e))}")
-        to_build = [name for name in to_build if name not in stored]
-    needed = reachable(project.deps, {d for n in to_build for d in project.deps[n]})
-    return to_build, stored, stored if fetch == "all" else stored & needed
-
-
-def build(
-    project: Project,
-    targets: list[str],
-    *,
-    with_deps: bool = True,
-    dry_run: bool = False,
-    verbose: bool = False,
-    dev: str | None = None,
-    fetch: Fetch = "all",
-    build_missing: bool = True,
-) -> tuple[list[Result], dict[str, str], dict[str, str]]:
-    """Build `targets` and, unless `with_deps` is false, what they need, skipping what is cached, and return how
-    it went, with the keys of all the packages, those of their builds, and the suffixes of the development builds.
-
-    `dev` is the identifier of the development builds, see xcraft.devbuilds, none for final builds. What is
-    not cached locally is fetched from the remote storage when it has it, but
-    only the builds of the dependencies of the packages to build with `fetch`
-    needed, or nothing with none: it is built then. Without `build_missing`,
-    what is neither cached nor in the remote
-    storage fails, rather than being built. When builds find what changes the
-    build roots of others, the builds are planned again, once. A package whose
-    directory, or one of its dependencies', changed since the start fails: the
-    builds work on the packages as they were then.
-
-    The build IDs are updated before the builds, and after, with what they found, or checked with --locked: all the
-    builds are numbered by them. The lock must be prepared: see resolution.prepare().
-    """
-    if not dry_run:
-        update_build_ids(project)
-    for attempt in range(2):
-        keys, hashes, autorev = _record_cached(project, dev)
-        plan = build_order(project.deps, targets, with_deps=with_deps)
-        if dry_run:
-            _show_plan(project, plan, keys, fetch=fetch)
-            return [], keys, autorev
-        _queue_file(project).parent.mkdir(parents=True, exist_ok=True)
-        run = _Run(project, hashes, keys, autorev, dev=dev, verbose=verbose, fetch=fetch, build_missing=build_missing)
-        try:
-            results = run.build(plan)
-        finally:
-            _queue_file(project).unlink(missing_ok=True)
-        keys, autorev = run.keys, run.autorev
-        if attempt or all(r.status != "again" for r in results):
-            break
-        console.print("the builds found what changes the build roots: planning them again")
-    update_build_ids(project)  # with what the builds found
-    # those to build again still, after the second attempt
-    return [Result(r.name, "failed") if r.status == "again" else r for r in results], keys, autorev
-
-
 def update_build_ids(project: Project) -> None:
     """Update the build IDs of the packages, showing the changed ones, or fail with --locked, see xcraft.buildid."""
     if changed := buildid.update(project):
@@ -263,6 +213,40 @@ def _record_cached(project: Project, dev: str | None) -> tuple[dict[str, str], d
         resolution.prepare(project)  # for what they recorded
     msg = "what the cached builds recorded keeps changing the keys"
     raise BuildError(msg)
+
+
+def _stored(project: Project, names: list[str], keys: dict[str, str]) -> dict[str, bool]:
+    """Return whether the remote storage has the builds of `names` with `keys`, by their paths in it, asked
+    concurrently: nothing when it cannot be asked, as each one is asked again then.
+    """
+    paths = [build_path(project, name, keys[name]) for name in names]
+    try:
+        with ThreadPoolExecutor(16) as pool:
+            return dict(zip(paths, pool.map(lambda p: remote.tree_available(project, p), paths), strict=True))
+    except remote.RemoteError:
+        return {}
+
+
+def _lock_state(project: Project) -> bytes:
+    """Return the content of the lock, and what the builds recorded, which the keys depend on."""
+    records = load_builds(project).model_dump_json(exclude={"ids"}).encode()
+    return (path.read_bytes() if (path := lock_path(project)).exists() else b"") + records
+
+
+def _show_failure(project: Project, name: str, error: Exception, *, verbose: bool) -> None:
+    """Show why the build of `name` failed, with the end of its log when it failed in the build environment, after
+    the whole log in CI, to debug it there: folded on GitHub Actions.
+    """
+    console.print(f"[bold red]✗[/] {name}: {escape(str(error))}")
+    if isinstance(error, ContainerError) and not verbose:
+        lines = read_tail(project.log(name), 16 * 2**20)
+        if in_ci():
+            fold = os.environ.get("GITHUB_ACTIONS") == "true"
+            console.file.write(f"::group::full {name} build log\n" if fold else f"full {name} build log:\n")
+            console.file.write("".join(f"{line}\n" for line in lines) + ("::endgroup::\n" if fold else ""))
+        for line in log_step(lines)[-40:]:
+            print_log_line(line)
+        console.print(f"[dim]full log: xcraft log {name}[/]")
 
 
 @dataclass
@@ -513,38 +497,54 @@ class _Run:
         )
 
 
-def _stored(project: Project, names: list[str], keys: dict[str, str]) -> dict[str, bool]:
-    """Return whether the remote storage has the builds of `names` with `keys`, by their paths in it, asked
-    concurrently: nothing when it cannot be asked, as each one is asked again then.
+def build(
+    project: Project,
+    targets: list[str],
+    *,
+    with_deps: bool = True,
+    dry_run: bool = False,
+    verbose: bool = False,
+    dev: str | None = None,
+    fetch: Fetch = "all",
+    build_missing: bool = True,
+) -> tuple[list[Result], dict[str, str], dict[str, str]]:
+    """Build `targets` and, unless `with_deps` is false, what they need, skipping what is cached, and return how
+    it went, with the keys of all the packages, those of their builds, and the suffixes of the development builds.
+
+    `dev` is the identifier of the development builds, see xcraft.devbuilds, none for final builds. What is
+    not cached locally is fetched from the remote storage when it has it, but
+    only the builds of the dependencies of the packages to build with `fetch`
+    needed, or nothing with none: it is built then. Without `build_missing`,
+    what is neither cached nor in the remote
+    storage fails, rather than being built. When builds find what changes the
+    build roots of others, the builds are planned again, once. A package whose
+    directory, or one of its dependencies', changed since the start fails: the
+    builds work on the packages as they were then.
+
+    The build IDs are updated before the builds, and after, with what they found, or checked with --locked: all the
+    builds are numbered by them. The lock must be prepared: see resolution.prepare().
     """
-    paths = [build_path(project, name, keys[name]) for name in names]
-    try:
-        with ThreadPoolExecutor(16) as pool:
-            return dict(zip(paths, pool.map(lambda p: remote.tree_available(project, p), paths), strict=True))
-    except remote.RemoteError:
-        return {}
-
-
-def _lock_state(project: Project) -> bytes:
-    """Return the content of the lock, and what the builds recorded, which the keys depend on."""
-    records = load_builds(project).model_dump_json(exclude={"ids"}).encode()
-    return (path.read_bytes() if (path := lock_path(project)).exists() else b"") + records
-
-
-def _show_failure(project: Project, name: str, error: Exception, *, verbose: bool) -> None:
-    """Show why the build of `name` failed, with the end of its log when it failed in the build environment, after
-    the whole log in CI, to debug it there: folded on GitHub Actions.
-    """
-    console.print(f"[bold red]✗[/] {name}: {escape(str(error))}")
-    if isinstance(error, ContainerError) and not verbose:
-        lines = read_tail(project.log(name), 16 * 2**20)
-        if in_ci():
-            fold = os.environ.get("GITHUB_ACTIONS") == "true"
-            console.file.write(f"::group::full {name} build log\n" if fold else f"full {name} build log:\n")
-            console.file.write("".join(f"{line}\n" for line in lines) + ("::endgroup::\n" if fold else ""))
-        for line in log_step(lines)[-40:]:
-            print_log_line(line)
-        console.print(f"[dim]full log: xcraft log {name}[/]")
+    if not dry_run:
+        update_build_ids(project)
+    for attempt in range(2):
+        keys, hashes, autorev = _record_cached(project, dev)
+        plan = build_order(project.deps, targets, with_deps=with_deps)
+        if dry_run:
+            _show_plan(project, plan, keys, fetch=fetch)
+            return [], keys, autorev
+        _queue_file(project).parent.mkdir(parents=True, exist_ok=True)
+        run = _Run(project, hashes, keys, autorev, dev=dev, verbose=verbose, fetch=fetch, build_missing=build_missing)
+        try:
+            results = run.build(plan)
+        finally:
+            _queue_file(project).unlink(missing_ok=True)
+        keys, autorev = run.keys, run.autorev
+        if attempt or all(r.status != "again" for r in results):
+            break
+        console.print("the builds found what changes the build roots: planning them again")
+    update_build_ids(project)  # with what the builds found
+    # those to build again still, after the second attempt
+    return [Result(r.name, "failed") if r.status == "again" else r for r in results], keys, autorev
 
 
 def make_repo(

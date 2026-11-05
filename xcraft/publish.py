@@ -74,6 +74,24 @@ def trusted_key(project: Project, signer: Signer | None) -> Signer | None:
     return signer or dev_signer(project)
 
 
+def _source_repos(project: Project) -> dict[str, str]:
+    """Return the repositories of the upstream source packages, by file name, only for their downloads, not to change
+    the build environment.
+    """
+    return {
+        "xcraft-sources.repo": "".join(
+            f"[{name}-source]\nname={name} sources\nbaseurl={repo.source_baseurl}\nenabled=0\ngpgcheck=0\n"
+            for name, repo in project.repos.items()
+            if repo.source_baseurl
+        )
+    }
+
+
+def snapshot_tree(project: Project, kind: str, name: str) -> str:
+    """Return the path of a snapshot in the storage, of its repositories or its ISOs: `kind` is repos or isos."""
+    return f"{kind}/{project.config.publish.release}/{project.config.publish.stage}/{name}"
+
+
 def _download(
     project: Project,
     files: dict[str, str],
@@ -152,19 +170,6 @@ def download_sources(project: Project, files: dict[str, str]) -> Path:
     that are found, to their cache, and return it, like _download().
     """
     return _download(project, files, lambda _: None, source=True, available=True)
-
-
-def _source_repos(project: Project) -> dict[str, str]:
-    """Return the repositories of the upstream source packages, by file name, only for their downloads, not to change
-    the build environment.
-    """
-    return {
-        "xcraft-sources.repo": "".join(
-            f"[{name}-source]\nname={name} sources\nbaseurl={repo.source_baseurl}\nenabled=0\ngpgcheck=0\n"
-            for name, repo in project.repos.items()
-            if repo.source_baseurl
-        )
-    }
 
 
 def _srpm_names(project: Project, names: list[str]) -> dict[str, str]:
@@ -275,11 +280,6 @@ def _check_installable(project: Project, repos: list[Path]) -> None:
     checked.touch()
 
 
-def snapshot_tree(project: Project, kind: str, name: str) -> str:
-    """Return the path of a snapshot in the storage, of its repositories or its ISOs: `kind` is repos or isos."""
-    return f"{kind}/{project.config.publish.release}/{project.config.publish.stage}/{name}"
-
-
 def _built(project: Project, *, fetch: Fetch, dev: str | None) -> dict[str, str]:
     """Build or fetch our packages, but only fetch them on the platforms the host emulates, and return their keys: with
     the development builds of the identifier `dev`, if any.
@@ -310,6 +310,15 @@ class Stored(NamedTuple):
 
     path: str
     digest: str
+
+
+def _put(storage: Remote | None, source: Path | str, dest: Path, digest: str) -> None:
+    """Put the local file `source`, or the one of `storage`, as `dest`, checking its SHA-256."""
+    if isinstance(source, Path):
+        localrepo.link(source, dest)
+    elif not (storage and remote.download(storage, source, dest)) or sha256_of(dest) != digest:
+        msg = f"{source} is missing or corrupted in the storage"
+        raise BuildError(msg)
 
 
 @dataclass
@@ -459,6 +468,15 @@ class _Assembler:
         check_signatures(project, self.dest, added, what="upstream packages")
 
 
+def _fetch_metadata(work: Path, repo: str, fetch: Callable[[str], bool]) -> bool:
+    """Download the metadata of `repo` to `work` with `fetch`, and return whether it got it all."""
+    if not fetch(repomd := f"{repo}/repodata/repomd.xml"):
+        return False
+    hrefs = repodata.files((work / repomd).read_bytes()).values()
+    with ThreadPoolExecutor(remote.REQUESTS) as pool:
+        return all(pool.map(fetch, [f"{repo}/{href}" for href in hrefs]))
+
+
 def previous(
     project: Project, storage: Remote, signer: Signer | None
 ) -> tuple[dict[str, tuple[Entry, str]], dict[str, str]]:
@@ -494,15 +512,6 @@ def previous(
     return known, sources
 
 
-def _fetch_metadata(work: Path, repo: str, fetch: Callable[[str], bool]) -> bool:
-    """Download the metadata of `repo` to `work` with `fetch`, and return whether it got it all."""
-    if not fetch(repomd := f"{repo}/repodata/repomd.xml"):
-        return False
-    hrefs = repodata.files((work / repomd).read_bytes()).values()
-    with ThreadPoolExecutor(remote.REQUESTS) as pool:
-        return all(pool.map(fetch, [f"{repo}/{href}" for href in hrefs]))
-
-
 def _with_copy(
     platforms: list[Project], storage: Remote, signer: Signer | None
 ) -> tuple[dict[str, tuple[Entry, str]], dict[str, str]]:
@@ -512,15 +521,6 @@ def _with_copy(
     known, sources = upstream_copy.stored(platforms[0], storage, [p.arch for p in platforms])
     latest, latest_sources = previous(platforms[0], storage, signer)
     return known | latest, sources | latest_sources
-
-
-def _put(storage: Remote | None, source: Path | str, dest: Path, digest: str) -> None:
-    """Put the local file `source`, or the one of `storage`, as `dest`, checking its SHA-256."""
-    if isinstance(source, Path):
-        localrepo.link(source, dest)
-    elif not (storage and remote.download(storage, source, dest)) or sha256_of(dest) != digest:
-        msg = f"{source} is missing or corrupted in the storage"
-        raise BuildError(msg)
 
 
 def snapshot(

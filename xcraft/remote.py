@@ -58,6 +58,11 @@ def _s3_url(storage: Remote, path: str) -> str:
     return f"s3://{storage.bucket}/{path}"
 
 
+MANY = 64
+"""The requests at the same time for the trees of many small files, like the compiler caches: the storage takes ~70ms
+to write each, which more requests at once hide."""
+
+
 @functools.cache
 def _pool() -> urllib3.PoolManager:
     """Return the connections to the storages, reused: a new one takes several round trips, with TLS."""
@@ -83,6 +88,14 @@ def _request(method: str, url: str) -> urllib3.BaseHTTPResponse:
     return response
 
 
+def _absent_or_raise(storage: Remote, path: str, error: OSError) -> bool:
+    """Return False when `error` is that the storage does not have `path`, or raise it as a RemoteError."""
+    if isinstance(error, urllib.error.HTTPError) and error.code == 404:  # noqa: PLR2004
+        return False
+    msg = f"{_url(storage, path)}: {error}"
+    raise RemoteError(msg) from error
+
+
 def exists(storage: Remote, path: str) -> bool:
     """Return whether the shared storage has `path`."""
     url = _url(storage, path)
@@ -99,9 +112,8 @@ def exists(storage: Remote, path: str) -> bool:
 
 REQUESTS = 16
 """The requests at the same time to the storage, many of which are only small: the time is in their round trips."""
-MANY = 64
-"""The requests at the same time for the trees of many small files, like the compiler caches: the storage takes ~70ms
-to write each, which more requests at once hide."""
+
+
 SINGLE = 8 * 2**20
 """The size of the files uploaded in one request, rather than in parts: those smaller than the parts of boto3."""
 
@@ -110,22 +122,6 @@ def existing(storage: Remote, paths: list[str]) -> set[str]:
     """Return those of `paths` the shared storage has, asking for them concurrently."""
     with ThreadPoolExecutor(REQUESTS) as pool:
         return {path for path, found in zip(paths, pool.map(lambda p: exists(storage, p), paths), strict=True) if found}
-
-
-def download(storage: Remote, path: str, dest: Path, on_line: Callable[[str], None] = lambda _: None) -> bool:
-    """Download `path` to `dest`, and return whether the shared storage has it."""
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    part = dest.with_name(f"{dest.name}.part")
-    try:
-        if _pooled(url := _url(storage, path)):
-            _get(url, part, download_progress(on_line))
-        else:
-            process.download(url, part, download_progress(on_line))
-    except OSError as e:
-        part.unlink(missing_ok=True)
-        return _absent_or_raise(storage, path, e)
-    part.rename(dest)
-    return True
 
 
 _BLOCK = 1 << 16
@@ -147,12 +143,20 @@ def _get(url: str, dest: Path, report: Callable[[int, int, int], None]) -> None:
         response.release_conn()
 
 
-def _absent_or_raise(storage: Remote, path: str, error: OSError) -> bool:
-    """Return False when `error` is that the storage does not have `path`, or raise it as a RemoteError."""
-    if isinstance(error, urllib.error.HTTPError) and error.code == 404:  # noqa: PLR2004
-        return False
-    msg = f"{_url(storage, path)}: {error}"
-    raise RemoteError(msg) from error
+def download(storage: Remote, path: str, dest: Path, on_line: Callable[[str], None] = lambda _: None) -> bool:
+    """Download `path` to `dest`, and return whether the shared storage has it."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    part = dest.with_name(f"{dest.name}.part")
+    try:
+        if _pooled(url := _url(storage, path)):
+            _get(url, part, download_progress(on_line))
+        else:
+            process.download(url, part, download_progress(on_line))
+    except OSError as e:
+        part.unlink(missing_ok=True)
+        return _absent_or_raise(storage, path, e)
+    part.rename(dest)
+    return True
 
 
 @functools.cache
@@ -207,9 +211,38 @@ def writing(storage: Remote, action: str) -> Generator[S3Client]:
         raise RemoteError(msg) from e
 
 
-def upload(storage: Remote, path: str, file: Path) -> None:
-    """Upload `file` as `path`, with the S3 credentials of the environment."""
-    transfer(storage, {path: file})
+KEYS = f"{INTERNAL}/keys"
+"""The public keys of the signed trees, by fingerprint, in the storage."""
+
+
+MANIFEST = "manifest.asc"
+"""The files of a tree in the storage, with their SHA-256, signed in clear, uploaded last: a tree without it is
+incomplete. Its text is the path of its files, then a ``<sha256>  <file>`` line by file, like sha256sum's, sorted.
+
+The files of the trees made once, like the builds, are in a directory of the tree of their own, its generation, named
+by the SHA-256 of what they are, see upload_tree(): uploads of other files, like those of the same build made on two
+machines at once, never write over them, and whichever manifest is written last, its files are as it says. Those of
+the trees updated in place, like the snapshots and the compiler caches, and those of older xcraft versions, are in
+the tree itself."""
+
+
+_checked: dict[tuple[str, str, frozenset[str]], tuple[str, dict[str, str]] | None] = {}
+"""The manifests checked, by storage, tree and trusted fingerprints, with the directory of their files, or None for
+the trees missing or not trusted, until written, or the next command."""
+
+
+_keys: dict[tuple[str, str], str | None] = {}
+"""The public keys of the storages, by storage and fingerprint, or None for those they miss or are not."""
+
+
+def _forget(storage: Remote, paths: list[str]) -> None:
+    """Forget what was read of the manifests and keys of `paths`, which are written."""
+    for path in paths:
+        if path.startswith(f"{KEYS}/"):
+            _keys.pop((storage.url, path.removeprefix(f"{KEYS}/").removesuffix(".asc")), None)
+    trees = {path.rsplit("/", 1)[0] for path in paths if path.endswith(f"/{MANIFEST}")}
+    for key in [k for k in _checked if k[0] == storage.url and k[1] in trees]:
+        del _checked[key]
 
 
 def transfer(
@@ -242,6 +275,35 @@ def transfer(
                 on_line(dest)
 
 
+def upload(storage: Remote, path: str, file: Path) -> None:
+    """Upload `file` as `path`, with the S3 credentials of the environment."""
+    transfer(storage, {path: file})
+
+
+INDEX = "index.html"
+"""The page of a directory, which the storage serves for it, but does not make."""
+
+
+def objects(s3: S3Client, bucket: str, prefix: str, *, below: bool) -> tuple[set[str], dict[str, Entry]]:
+    """Return the subdirectories and files of `prefix`, or with `below`, all the files below it, but the pages."""
+    log.debug("listing s3://%s/%s", bucket, prefix)
+    paginator = s3.get_paginator("list_objects_v2")
+    pages = (
+        paginator.paginate(Bucket=bucket, Prefix=prefix)
+        if below
+        else paginator.paginate(Bucket=bucket, Prefix=prefix, Delimiter="/")
+    )
+    dirs, files = set(), {}
+    for page in pages:
+        dirs |= {p["Prefix"].removeprefix(prefix).rstrip("/") for p in page.get("CommonPrefixes", [])}
+        files |= {
+            o["Key"].removeprefix(prefix): (o["Size"], o["LastModified"])
+            for o in page.get("Contents", [])
+            if o["Key"].rsplit("/", 1)[-1] != INDEX
+        }
+    return dirs, files
+
+
 def listing(storage: Remote, prefix: str) -> list[str]:
     """Return the files below the directory `prefix`, relative to it, but the pages of the directories, with the S3
     credentials, as the public reads cannot list.
@@ -266,17 +328,13 @@ def delete(storage: Remote, paths: list[str]) -> None:
                 raise RemoteError(msg)
 
 
-KEYS = f"{INTERNAL}/keys"
-"""The public keys of the signed trees, by fingerprint, in the storage."""
-MANIFEST = "manifest.asc"
-"""The files of a tree in the storage, with their SHA-256, signed in clear, uploaded last: a tree without it is
-incomplete. Its text is the path of its files, then a ``<sha256>  <file>`` line by file, like sha256sum's, sorted.
-
-The files of the trees made once, like the builds, are in a directory of the tree of their own, its generation, named
-by the SHA-256 of what they are, see upload_tree(): uploads of other files, like those of the same build made on two
-machines at once, never write over them, and whichever manifest is written last, its files are as it says. Those of
-the trees updated in place, like the snapshots and the compiler caches, and those of older xcraft versions, are in
-the tree itself."""
+def _in_tree(name: str) -> bool:
+    """Return whether `name` is a path in a tree, written as it is, and not changed by the signature in clear, which
+    ignores the spaces ending the lines.
+    """
+    path = PurePosixPath(name)
+    inside = path.parts and not path.is_absolute() and ".." not in path.parts
+    return bool(inside) and path.as_posix() == name == name.strip() and name.isprintable()
 
 
 class TreeManifest(BaseModel):
@@ -296,15 +354,6 @@ class TreeManifest(BaseModel):
                 msg = f"invalid SHA-256: {name}"
                 raise ValueError(msg)
         return files
-
-
-def _in_tree(name: str) -> bool:
-    """Return whether `name` is a path in a tree, written as it is, and not changed by the signature in clear, which
-    ignores the spaces ending the lines.
-    """
-    path = PurePosixPath(name)
-    inside = path.parts and not path.is_absolute() and ".." not in path.parts
-    return bool(inside) and path.as_posix() == name == name.strip() and name.isprintable()
 
 
 def manifest_text(root: str, files: dict[str, str]) -> str:
@@ -338,27 +387,10 @@ def _parse(prefix: str, text: str) -> tuple[str, dict[str, str]]:
     return root, TreeManifest(files=files).files
 
 
-_checked: dict[tuple[str, str, frozenset[str]], tuple[str, dict[str, str]] | None] = {}
-"""The manifests checked, by storage, tree and trusted fingerprints, with the directory of their files, or None for
-the trees missing or not trusted, until written, or the next command."""
-_keys: dict[tuple[str, str], str | None] = {}
-"""The public keys of the storages, by storage and fingerprint, or None for those they miss or are not."""
-
-
 def forget() -> None:
     """Forget the manifests and keys read in the storages, for a new command."""
     _checked.clear()
     _keys.clear()
-
-
-def _forget(storage: Remote, paths: list[str]) -> None:
-    """Forget what was read of the manifests and keys of `paths`, which are written."""
-    for path in paths:
-        if path.startswith(f"{KEYS}/"):
-            _keys.pop((storage.url, path.removeprefix(f"{KEYS}/").removesuffix(".asc")), None)
-    trees = {path.rsplit("/", 1)[0] for path in paths if path.endswith(f"/{MANIFEST}")}
-    for key in [k for k in _checked if k[0] == storage.url and k[1] in trees]:
-        del _checked[key]
 
 
 def _build_key(storage: Remote, fingerprint: str) -> str | None:
@@ -377,15 +409,6 @@ def _build_key(storage: Remote, fingerprint: str) -> str | None:
                 pass
         _keys[storage.url, fingerprint] = found
     return _keys[storage.url, fingerprint]
-
-
-def _manifest(storage: Remote, prefix: str, trusted: Signer | None) -> tuple[str, dict[str, str]] | None:
-    fingerprints = frozenset({*storage.build_keys, *([trusted.key.upper()] if trusted else [])})
-    if not fingerprints:
-        return None
-    if (storage.url, prefix, fingerprints) not in _checked:
-        _checked[storage.url, prefix, fingerprints] = _checked_manifest(storage, prefix, trusted, fingerprints)
-    return (checked[0], dict(checked[1])) if (checked := _checked[storage.url, prefix, fingerprints]) else None
 
 
 def _checked_manifest(
@@ -419,6 +442,15 @@ def _checked_manifest(
         for line in status.splitlines()
     )
     return parsed if valid else None
+
+
+def _manifest(storage: Remote, prefix: str, trusted: Signer | None) -> tuple[str, dict[str, str]] | None:
+    fingerprints = frozenset({*storage.build_keys, *([trusted.key.upper()] if trusted else [])})
+    if not fingerprints:
+        return None
+    if (storage.url, prefix, fingerprints) not in _checked:
+        _checked[storage.url, prefix, fingerprints] = _checked_manifest(storage, prefix, trusted, fingerprints)
+    return (checked[0], dict(checked[1])) if (checked := _checked[storage.url, prefix, fingerprints]) else None
 
 
 def tree_exists(storage: Remote, prefix: str, *, trusted: Signer | None = None) -> bool:
@@ -455,6 +487,39 @@ def _first[T](project: Project, attempt: Callable[[Remote], T]) -> T | None:
 def tree_available(project: Project, prefix: str) -> bool:
     """Return whether main, or else dev, has the trusted tree `prefix`, from its manifest only."""
     return bool(_first(project, lambda s: tree_exists(s, prefix, trusted=dev_signer(project))))
+
+
+def download_tree(
+    storage: Remote,
+    prefix: str,
+    dest: Path,
+    on_line: Callable[[str], None] = lambda _: None,
+    *,
+    trusted: Signer | None = None,
+) -> bool:
+    """Download the tree `prefix` as the new directory `dest`, and return whether the storage has it."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    # next to it, to move it there
+    with tempfile.TemporaryDirectory(dir=dest.parent, prefix=".download-") as tmp:
+        tree = Path(tmp) / "tree"
+        if (found := _manifest(storage, prefix, trusted)) is None:
+            return False
+        root, manifest = found
+        tree.mkdir()
+
+        def fetch(name: str, digest: str) -> None:
+            if not download(storage, f"{root}/{name}", tree / name, on_line) or sha256_of(tree / name) != digest:
+                msg = f"{root}/{name} is missing or corrupted in the storage"
+                raise RemoteError(msg)
+
+        with ThreadPoolExecutor(REQUESTS) as pool:
+            list(pool.map(fetch, manifest, manifest.values()))
+        try:
+            tree.rename(dest)
+        except OSError:
+            if not dest.is_dir():  # but made meanwhile by another command, from the same tree
+                raise
+    return True
 
 
 def fetch_tree(project: Project, prefix: str, dest: Path, on_line: Callable[[str], None] = lambda _: None) -> bool:
@@ -499,45 +564,31 @@ def update_tree(
     return True
 
 
-def download_tree(
-    storage: Remote,
-    prefix: str,
-    dest: Path,
-    on_line: Callable[[str], None] = lambda _: None,
-    *,
-    trusted: Signer | None = None,
-) -> bool:
-    """Download the tree `prefix` as the new directory `dest`, and return whether the storage has it."""
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    # next to it, to move it there
-    with tempfile.TemporaryDirectory(dir=dest.parent, prefix=".download-") as tmp:
-        tree = Path(tmp) / "tree"
-        if (found := _manifest(storage, prefix, trusted)) is None:
-            return False
-        root, manifest = found
-        tree.mkdir()
-
-        def fetch(name: str, digest: str) -> None:
-            if not download(storage, f"{root}/{name}", tree / name, on_line) or sha256_of(tree / name) != digest:
-                msg = f"{root}/{name} is missing or corrupted in the storage"
-                raise RemoteError(msg)
-
-        with ThreadPoolExecutor(REQUESTS) as pool:
-            list(pool.map(fetch, manifest, manifest.values()))
-        try:
-            tree.rename(dest)
-        except OSError:
-            if not dest.is_dir():  # but made meanwhile by another command, from the same tree
-                raise
-    return True
-
-
 def required_signer(signer: Signer | None) -> Signer:
     """Return `signer`, which the uploads need to sign the manifests of their trees."""
     if signer is None:
         msg = "no key to sign uploads: run xcraft key create, configure [sign], or use --key"
         raise RemoteError(msg)
     return signer
+
+
+def write_manifest(
+    storage: Remote, prefix: str, manifest: dict[str, str], *, signer: Signer | None, root: str | None = None
+) -> None:
+    """Write the manifest of the tree `prefix`, of its files in `root`, its generation, or else in the tree itself,
+    which completes it.
+    """
+    signer = required_signer(signer)
+    TreeManifest(files=manifest)
+    with tempfile.TemporaryDirectory(prefix="xcraft-sign-") as tmp:
+        work = Path(tmp)
+        payload, file = work / "payload", work / MANIFEST
+        payload.write_text(manifest_text(root or prefix, manifest))
+        signer.clearsign(payload, file)
+        key = work / "key.asc"
+        key.write_text(signer.public_key())
+        upload(storage, f"{KEYS}/{signer.key}.asc", key)
+        upload(storage, f"{prefix}/{MANIFEST}", file)
 
 
 def upload_tree(storage: Remote, prefix: str, src: Path, names: list[str], *, signer: Signer | None) -> dict[str, str]:
@@ -565,53 +616,13 @@ def read_manifest(storage: Remote, prefix: str, *, trusted: Signer | None = None
     return read_tree(storage, prefix, trusted=trusted)[1]
 
 
-def write_manifest(
-    storage: Remote, prefix: str, manifest: dict[str, str], *, signer: Signer | None, root: str | None = None
-) -> None:
-    """Write the manifest of the tree `prefix`, of its files in `root`, its generation, or else in the tree itself,
-    which completes it.
-    """
-    signer = required_signer(signer)
-    TreeManifest(files=manifest)
-    with tempfile.TemporaryDirectory(prefix="xcraft-sign-") as tmp:
-        work = Path(tmp)
-        payload, file = work / "payload", work / MANIFEST
-        payload.write_text(manifest_text(root or prefix, manifest))
-        signer.clearsign(payload, file)
-        key = work / "key.asc"
-        key.write_text(signer.public_key())
-        upload(storage, f"{KEYS}/{signer.key}.asc", key)
-        upload(storage, f"{prefix}/{MANIFEST}", file)
-
-
-INDEX = "index.html"
-"""The page of a directory, which the storage serves for it, but does not make."""
-
 Entry = tuple[int, dt.datetime]
 """Size and date of a file."""
 
 
-def objects(s3: S3Client, bucket: str, prefix: str, *, below: bool) -> tuple[set[str], dict[str, Entry]]:
-    """Return the subdirectories and files of `prefix`, or with `below`, all the files below it, but the pages."""
-    log.debug("listing s3://%s/%s", bucket, prefix)
-    paginator = s3.get_paginator("list_objects_v2")
-    pages = (
-        paginator.paginate(Bucket=bucket, Prefix=prefix)
-        if below
-        else paginator.paginate(Bucket=bucket, Prefix=prefix, Delimiter="/")
-    )
-    dirs, files = set(), {}
-    for page in pages:
-        dirs |= {p["Prefix"].removeprefix(prefix).rstrip("/") for p in page.get("CommonPrefixes", [])}
-        files |= {
-            o["Key"].removeprefix(prefix): (o["Size"], o["LastModified"])
-            for o in page.get("Contents", [])
-            if o["Key"].rsplit("/", 1)[-1] != INDEX
-        }
-    return dirs, files
-
-
 CCACHE = f"{INTERNAL}/ccache"
 """The compiler caches, a tree by architecture and package, see xcraft.ccache."""
+
+
 RESOLVED = f"{INTERNAL}/resolved"
 """The resolutions, a tree by architecture and key, see xcraft.resolution."""
