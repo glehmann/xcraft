@@ -854,6 +854,8 @@ ones included, against the local repository and the build environment's ones: it
 
 ## Development
 
+See [Concepts and code map](docs/code-overview.md) for the core concepts, build flow, and where to implement features.
+
 ```bash
 make install    # the dependencies, with the dev ones, and the pre-commit hooks
 make check      # ruff, ruff format, ty, typos and zizmor, like the GitHub workflows, without changing anything
