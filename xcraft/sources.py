@@ -15,7 +15,9 @@ import shutil
 import tempfile
 import urllib.parse
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
+
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from xcraft import process
 from xcraft.display import activity, download_progress
@@ -23,6 +25,26 @@ from xcraft.project import INTERNAL, write_atomically
 
 if TYPE_CHECKING:
     from xcraft.project import Project
+
+
+class SourceError(RuntimeError):
+    """Raised when an archive cannot be downloaded, or does not match its manifest."""
+
+
+class SourceManifest(BaseModel):
+    """The archives of a ``sources`` manifest, by file name, with their SHA-256: names of files of the source cache."""
+
+    files: dict[
+        Annotated[str, Field(pattern=r"^[^/\s](?:[^/]*[^/\s])?$")], Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    ]
+
+    @field_validator("files")
+    @classmethod
+    def _names(cls, files: dict[str, str]) -> dict[str, str]:
+        if bad := [name for name in files if name in (".", "..") or not name.isprintable()]:
+            msg = f"invalid file name: {bad[0]!r}"
+            raise ValueError(msg)
+        return files
 
 
 def sha256_of(path: Path) -> str:
@@ -37,8 +59,18 @@ def read_manifest(path: Path) -> dict[str, str]:
 
 
 def parse_manifest(text: str) -> dict[str, str]:
-    """Return the filename to SHA-256 mapping of the content of a ``sources`` manifest."""
-    return {name: digest for digest, name in (line.split(maxsplit=1) for line in text.splitlines() if line)}
+    """Return the filename to SHA-256 mapping of the content of a ``sources`` manifest, and raise SourceError for
+    the lines that are not a SHA-256 and a file name, or name a file twice.
+    """
+    lines = [[*line.split(maxsplit=1), ""][:2] for line in text.splitlines() if line]
+    if len(files := {name.rstrip(): digest for digest, name in lines}) != len(lines):
+        msg = "a file is twice in the sources manifest"
+        raise SourceError(msg)
+    try:
+        return SourceManifest(files=files).files
+    except ValidationError as e:
+        msg = f"invalid sources manifest: {e.errors()[0]['msg']}: {e.errors()[0].get('input')!r}"
+        raise SourceError(msg) from None
 
 
 def write_manifest(path: Path, entries: dict[str, str]) -> None:
@@ -59,10 +91,6 @@ def cache_source(cache_dir: Path, path: Path) -> str:
 def archive_name(url: str) -> str:
     """Return the file name of the archive at `url`: after its ``#/``, like rpm, or the last part of its path."""
     return url.rsplit("#/", maxsplit=1)[-1] if "#/" in url else urllib.parse.urlparse(url).path.rsplit("/", 1)[-1]
-
-
-class SourceError(RuntimeError):
-    """Raised when an archive cannot be downloaded, or does not match its manifest."""
 
 
 def source_path(filename: str, digest: str) -> str:

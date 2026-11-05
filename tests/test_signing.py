@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import http.server
 import shutil
 import subprocess
+import threading
+from functools import partial
 from typing import TYPE_CHECKING
 
 import pytest
@@ -75,8 +78,45 @@ def test_signer_selection(root: Path) -> None:
             choose_signer(project, local=True, unsigned=unsigned, dev_key=dev_key, key=key)
 
 
+def _check_with_keys_at_urls(root: Path, tmp_path: Path, signer: Signer, signed: list[Path]) -> None:
+    """Check the packages `signed` by `signer` with the keys of the repositories, at URLs which may give other keys:
+    checked again then.
+    """
+    (served := tmp_path / "served").mkdir()
+    (served / "key.asc").write_text(signer.public_key())
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+            pass
+
+    with http.server.ThreadingHTTPServer(("localhost", 0), partial(Handler, directory=served)) as server:
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        try:
+            project = Project.find()
+            repo = next(iter(project.config.repos.values()))
+            url = f"http://localhost:{server.server_port}/key.asc"
+            project.config.repos = {"keyed": repo.model_copy(update={"gpgkey": url})}
+            paths = [str(p.relative_to(root)) for p in signed]
+            check_signatures(project, root, paths, what="test")
+            log = project.log("_signatures")
+            checked = log.stat().st_mtime_ns
+            check_signatures(project, root, paths, what="test")
+            assert log.stat().st_mtime_ns == checked
+            (keyring := tmp_path / "other").mkdir(mode=0o700)
+            other = Signer("", keyring)
+            other.gpg("--passphrase", "", "--quick-generate-key", "Other", "ed25519", "sign", "never")
+            (served / "key.asc").write_text(other.gpg("--armor", "--export"))
+            with pytest.raises(SigningError, match="some test are not signed with the keys of the repositories"):
+                check_signatures(project, root, paths, what="test")
+        finally:
+            server.shutdown()
+            thread.join()
+            subprocess.run(["gpgconf", "--homedir", str(tmp_path / "other"), "--kill", "gpg-agent"], check=False)
+
+
 @needs_gpg
-def test_development_builds_are_signed(build_environment: Path, root: Path) -> None:
+def test_development_builds_are_signed(build_environment: Path, root: Path, tmp_path: Path) -> None:
     def rpms(dev: str) -> list[Path]:
         """Build trivial with the identifier `dev`, and return the RPMs of its development build."""
         code, output = xcraft("build", "trivial", "--dev", dev)
@@ -123,6 +163,8 @@ def test_development_builds_are_signed(build_environment: Path, root: Path) -> N
             what="test",
             public_key=signer.public_key(),
         )
+
+    _check_with_keys_at_urls(root, tmp_path, signer, signed)
 
     # their repositories too, with the key for the test hosts
     assert xcraft("repo", "trivial", "--dev", "key")[0] == 0

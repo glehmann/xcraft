@@ -25,10 +25,29 @@ if TYPE_CHECKING:
 
 
 def write_atomically(path: Path, text: str) -> None:
-    """Write `text` to `path`, in full or not at all."""
+    """Write `text` to `path`, in full or not at all, even on a power loss."""
     tmp = path.with_name(f".{path.name}.{os.getpid()}")
-    tmp.write_text(text)
+    with tmp.open("w") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
     tmp.replace(path)
+    _sync(path.parent)
+
+
+def remove_durably(path: Path) -> None:
+    """Remove the file `path`, even on a power loss, once returned."""
+    path.unlink()
+    _sync(path.parent)
+
+
+def _sync(directory: Path) -> None:
+    """Write the entries of `directory` to its disk."""
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 class ProjectLockedError(RuntimeError):

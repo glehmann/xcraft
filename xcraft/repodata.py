@@ -33,6 +33,7 @@ _PKGID = re.compile(r'<checksum type="sha256" pkgid="YES">([0-9a-f]{64})</checks
 _LOCATION = re.compile(r"<location\b[^>]*/>")
 _HREF = re.compile(r'<location\b[^>]*\bhref="([^"]*)"')
 _SOURCE = re.compile(r"<rpm:sourcerpm>([^<]*)</rpm:sourcerpm>")
+_METADATA = re.compile(r"repodata/(?!\.)[\w.+-]+")
 
 type Entry = tuple[str, str, str]
 """The primary, filelists and other entries of a package."""
@@ -57,13 +58,18 @@ def _decompress(path: Path) -> bytes | None:
 
 
 def files(repomd: bytes) -> dict[str, str]:
-    """Return the locations of the metadata of the packages in a repomd.xml, by kind."""
-    # those of the snapshots, checked with their manifests
-    return {
+    """Return the locations of the metadata of the packages in a repomd.xml, by kind, and raise ValueError for those
+    out of its repodata/ directory: it may come unsigned, from the upstream copy.
+    """
+    found = {
         d.get("type", ""): location.get("href", "")
         for d in ET.fromstring(repomd).iter(f"{_REPO}data")  # noqa: S314
         if d.get("type") in KINDS and (location := d.find(f"{_REPO}location")) is not None
     }
+    if bad := [href for href in found.values() if not _METADATA.fullmatch(href)]:
+        msg = f"invalid metadata location in repomd.xml: {bad[0]!r}"
+        raise ValueError(msg)
+    return found
 
 
 def read(repo: Path) -> dict[str, Entry] | None:

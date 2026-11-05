@@ -412,10 +412,11 @@ def test_bump_version_must_increase(root: Path, monkeypatch: pytest.MonkeyPatch,
     assert {path: path.read_bytes() for path in paths} == before
 
 
-def test_runaway_log_stops_the_build(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("output", ["yes looping", "yes looping | tr -d '\\n'"])  # in lines, or in a single one
+def test_runaway_log_stops_the_build(output: str, root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(container, "MAX_LOG_SIZE", 2**20)
     spec = root / "base/trivial/trivial.spec"
-    spec.write_text(spec.read_text().replace('echo "hello" > hello.txt', "yes looping"))
+    spec.write_text(spec.read_text().replace('echo "hello" > hello.txt', output))
     code, output = xcraft("build", "trivial")
     assert code == 1
     assert "✗ trivial: stopped, its log got larger than 1 MiB" in output
@@ -917,6 +918,22 @@ def test_patchset_during_a_build(root: Path, tmp_path: Path) -> None:
     assert xcraft("patchset", str(repo), "--package", "nope")[0] == 2
 
 
+def test_lock_upgrade_refused(root: Path) -> None:
+    """An upgrade of a lock of this format is refused, keeping nothing to start again from, which would undo what
+    follows.
+    """
+    project = Project.find()
+    refused = "the lock has the format 4, which this xcraft does not upgrade"
+    assert refused in xcraft("lock", "--upgrade")[1]
+    assert not (root / ".xcraft/xcraft.lock.upgrading").exists()
+    lock = load_lock(project)
+    lock.sources["later-edit"] = "1-1"
+    save_lock(project, lock)
+    edited = lock_path(project).read_bytes()
+    assert refused in xcraft("lock", "--upgrade")[1]
+    assert lock_path(project).read_bytes() == edited
+
+
 def test_lock_upgrade(root: Path) -> None:
     project = Project.find()
     sources = load_lock(project).sources
@@ -939,8 +956,32 @@ def test_lock_upgrade(root: Path) -> None:
     builds_path(project).unlink()
     (root / ".buildid").mkdir()
     (root / ".buildid/trivial").write_text(f"7 {'ab' * 32}\n")
-    code, output = xcraft("lock", "--upgrade")
+    # a failure before xcraft.builds has them, like without podman, leaves the lock as it was, to upgrade again
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("PATH", str(root / "no-tools"))
+        assert xcraft("lock", "--upgrade")[0] == 1
+    assert lock_path(project).read_text() == f"{text}\n{recorded}"
+    assert not builds_path(project).exists()
+    assert (root / ".buildid/trivial").exists()
+    assert not (root / ".xcraft/xcraft.lock.upgrading").exists()
+    # one interrupted once the lock is upgraded, before xcraft.builds has the records: the next one starts again
+    (root / ".xcraft/xcraft.lock.upgrading").write_text(f"{text}\n{recorded}")
+    lock_path(project).write_text(text.replace("version = 3", "version = 4"))
+    # its copy removed on the disk before .buildid/, which a power loss could otherwise bring back without it
+    synced = []
+    fsync = os.fsync
+
+    def recorded_fsync(fd: int) -> None:
+        if Path(f"/proc/self/fd/{fd}").samefile(root / ".xcraft"):
+            synced.append(((root / ".xcraft/xcraft.lock.upgrading").exists(), (root / ".buildid").exists()))
+        fsync(fd)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(os, "fsync", recorded_fsync)
+        code, output = xcraft("lock", "--upgrade")
     assert code == 0, output
+    assert synced[-1] == (False, True)
+    assert not (root / ".xcraft/xcraft.lock.upgrading").exists()
     assert not (root / ".buildid").exists()
     assert "[requires]" not in lock_path(project).read_text()
     builds = load_builds(project)
