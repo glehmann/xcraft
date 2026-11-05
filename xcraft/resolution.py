@@ -75,12 +75,13 @@ class Resolved(BaseModel):
     provides: dict[str, list[str]] = {}
     """For the binary packages of ours recorded, their generated capabilities that our specs require."""
     runtime: list[str] = []
-    """The upstream packages of the published repositories: what our packages, the extra ones and the installer's
-    need."""
+    """The upstream packages of the published repositories: what our packages, the extra ones, the installer's and
+    those of the repository of the ISO need."""
     tools: list[str] = []
     """The upstream packages of the tools making the ISO, but the image's."""
     runtime_errors: dict[str, str] = {}
-    """Why packages of the published repositories cannot be installed, by package, or group, like install.img."""
+    """Why packages of the published repositories cannot be installed, by package, or group, like install.img or
+    ISO."""
     tools_error: str = ""
     """Why the tools making the ISO cannot be installed."""
 
@@ -272,8 +273,13 @@ def _roots_data(project: Project) -> dict:
     }
     config = project.config
     # the ISOs are made for x86_64 only, for their boot loaders
-    tools = ISO_TOOLS if config.iso.installer and project.arch.startswith("x86_64") else []
-    runtime = {"extra": config.publish.extra, "installer": config.iso.installer, "tools": tools}
+    iso = config.iso.installer and project.arch.startswith("x86_64")
+    runtime = {
+        "extra": config.publish.extra,
+        "installer": config.iso.installer,
+        "iso": config.iso.packages if iso else [],
+        "tools": ISO_TOOLS if iso else [],
+    }
     return {**_image_data(project), "ours": _ours(project), "builds": builds, "runtime": runtime}
 
 
@@ -383,10 +389,12 @@ def _record_images(platforms: list[Project], recorded: Lock, lock: Lock, repin: 
 
 def _record_published(recorded: Lock, lock: Lock, arch: str, roots: Resolved) -> None:
     """Record in the `lock` the upstream binary packages of the published repositories and of the tools making the ISO
-    of `arch`, as resolved with the build `roots`, or as `recorded` until they can all be resolved.
+    of `arch`, as resolved with the build `roots`, each as `recorded` until it can be resolved.
     """
-    failed = roots.runtime_errors or roots.tools_error
-    for field, values in (("runtime", roots.runtime), ("iso", roots.tools)):
+    for field, values, failed in (
+        ("runtime", roots.runtime, roots.runtime_errors),
+        ("iso", roots.tools, roots.tools_error),
+    ):
         if values := getattr(recorded, field).get(arch, []) if failed else values:
             getattr(lock, field)[arch] = values
 

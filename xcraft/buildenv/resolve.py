@@ -15,7 +15,7 @@ The input has:
   the capabilities our specs require, to resolve what rpm generated for them;
 - ``versions``, upstream source packages to give the available versions of;
 - ``runtime``, with ours, what the published repositories need: the ``extra`` upstream packages published, the
-  ``installer``'s, and the ``tools`` making the ISO.
+  ``installer``'s, the ``iso`` packages of the repository of the ISO, and the ``tools`` making the ISO.
 
 The output has the locked binary ``packages``, the ``image``, the upstream ``buildroots`` and the ``ours`` binary
 packages of each build root, the ``requires`` and ``provides`` of the recorded binary packages, the ``errors``, by
@@ -276,15 +276,18 @@ class Resolver:
         finally:
             self.base.sack.remove_excludes(others)
 
-    def runtime(self, extra: list[str], installer: list[str], errors: dict[str, str]) -> list[str]:
+    def runtime(self, extra: list[str], installer: list[str], iso: list[str], errors: dict[str, str]) -> list[str]:
         """Return the upstream packages our binary packages, the extra upstream RPMs, and the `extra` upstream packages
         need, each resolved alone, on an empty system, without weak dependencies, as some of ours conflict with others,
-        and the packages of the `installer` together: some only need others along with another, like
-        (libsss_sudo if sudo).
+        and the packages of the `installer`, and those of the `iso` repository, each together: some only need others
+        along with another, like (libsss_sudo if sudo).
         """
         packages = {**self.binaries, **self.ours, **self.built}  # like dnf install, ours rather than upstream ones
         roots = [n for n in {*self.ours, *self.built} if not n.endswith(("-debuginfo", "-debugsource"))]
-        groups = [*((n, [n]) for n in sorted({*roots, *extra})), *([("install.img", installer)] if installer else [])]
+        groups = [
+            *((n, [n]) for n in sorted({*roots, *extra})),
+            *((name, group) for name, group in (("install.img", installer), ("ISO", iso)) if group),
+        ]
         needed = set()
         for name, group in groups:
             try:
@@ -368,7 +371,9 @@ def main() -> None:
         except dnf.exceptions.Error as e:
             result["errors"][name] = str(e)
     if runtime := data.get("runtime"):
-        result["runtime"] = resolver.runtime(runtime["extra"], runtime["installer"], result["runtime_errors"])
+        result["runtime"] = resolver.runtime(
+            runtime["extra"], runtime["installer"], runtime["iso"], result["runtime_errors"]
+        )
         if runtime["tools"]:
             result["tools"], result["tools_error"] = resolver.tools(image, runtime["tools"])
     locked = data["sources"]
