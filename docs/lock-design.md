@@ -137,6 +137,28 @@ the lock of the project: changed again from the new one otherwise, see `resoluti
 - **Publishing and the ISOs** take `[runtime]` and `[iso]`, pinned, and check them installable.
 - **Our copy of the upstream packages** copies the pins, and their source packages.
 
+## During a command
+
+What a command reads of the packages has two lifetimes:
+
+- **The specs**, as parsed, are read once by platform, in `Project.specs`, which the project on all its platforms
+  shares, see `Project.parsed`: what the builds find does not change them. The builds take the hashes of the package
+  directories once too, at the start, see `buildkey.directories()` and `build._Run`: a package edited meanwhile, or
+  one of its dependencies, fails rather than being built from other files than its key covers.
+- **What the locks give**, `Project.packages`, `spec_deps` and `deps`, the specs with the records of the lock of the
+  builds and the build roots of the lock, is computed once by `Project` object, and forgotten by `refresh()` after a
+  change of the locks: by `checks.record_dynamic()` and `checks.record_rpm_deps()`, and by `resolution.lock_sources()`.
+  `all_platforms()` and `on_host()` give new objects, which compute it again. `prepare()` does not forget it itself: the
+  commands prepare before reading it, and the builds forget it before preparing again.
+- **The keys** come from one read of both locks, see `buildkey.Inputs`. `build._Run` computes them again, after
+  `prepare()`, when the content of the locks changed, still with the hashes of the start, and `build()` plans the
+  builds again, once, when the builds found what changes the build roots of others.
+
+The builds change the lock of the builds first, under the lock of the project, from the file as read, then
+`prepare()` the lock, under the lock of the project only to save it, see `resolution._saved()`, resolving out of it.
+The two files are written apart, each one atomically, not together: a command stopped between them leaves records
+without the build roots they need, which the next `prepare()` resolves and pins.
+
 # Up to lock format 3
 
 ## Build IDs: `.buildid/`
