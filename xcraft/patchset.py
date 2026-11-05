@@ -18,7 +18,7 @@ from xcraft.process import git
 from xcraft.sources import archive_name
 
 if TYPE_CHECKING:
-    from xcraft.specs import Package
+    from xcraft.packages import Package
 
 BEGIN = "# xcraft patchset: "
 END = "# end of xcraft patchset"

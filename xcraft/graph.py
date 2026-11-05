@@ -5,13 +5,13 @@ from __future__ import annotations
 from graphlib import CycleError, TopologicalSorter
 from typing import TYPE_CHECKING
 
-from xcraft.specs import dep_name
+from xcraft.packages import dep_name
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
     from collections.abc import Set as AbstractSet
 
-    from xcraft.specs import Binary, Package
+    from xcraft.packages import Binary, Package
     from xcraft.upstream import UpstreamRequires
 
 

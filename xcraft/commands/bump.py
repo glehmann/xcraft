@@ -18,8 +18,8 @@ from xcraft.sources import archive_name, cache_source, read_manifest, write_mani
 from xcraft.specs import load_packages, main_spec
 
 if TYPE_CHECKING:
+    from xcraft.packages import Package
     from xcraft.project import Project
-    from xcraft.specs import Package
 
 
 def _check_parsed(packages: dict[str, Package], names: list[str]) -> None:

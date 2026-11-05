@@ -47,10 +47,11 @@ from xcraft.display import (
 from xcraft.graph import build_order, reachable
 from xcraft.localrepo import REPO_FILE, LocalRepo, repo_id
 from xcraft.lock import lock_path
+from xcraft.packages import is_debug
 from xcraft.resolution import prepare
 from xcraft.rpmbuild import image_replacements, prepare_tree, run_build
 from xcraft.signing import dev_signer
-from xcraft.specs import hash_dir, is_debug
+from xcraft.specs import hash_dir
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator

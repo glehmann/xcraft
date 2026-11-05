@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from xcraft.packages import Binary, Package
 from xcraft.patchset import BEGIN, END, PatchsetError, guess_base, guess_package, repo_name, update_patchset
-from xcraft.specs import Binary, Package
 
 if TYPE_CHECKING:
     from pathlib import Path

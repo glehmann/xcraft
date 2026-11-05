@@ -34,8 +34,8 @@ from xcraft.display import console
 from xcraft.graph import reachable
 from xcraft.localrepo import extra_rpms
 from xcraft.lock import Locked, Pin, choose_versions, load_lock, read_lock, save_lock
+from xcraft.packages import dep_name
 from xcraft.project import write_atomically
-from xcraft.specs import dep_name
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence

@@ -21,8 +21,8 @@ from xcraft.builds import (
     upgrade_builds,
 )
 from xcraft.lock import Recorded
+from xcraft.packages import Binary, Package
 from xcraft.project import Project
-from xcraft.specs import Binary, Package
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -7,10 +7,10 @@ import pytest
 
 from tests import config
 from xcraft.commands.bump import _update_specs, same_version
+from xcraft.packages import Binary, Package
 from xcraft.project import Project
 from xcraft.release import add_changelog_entry, bump_release, reset_release, set_version
 from xcraft.sources import archive_name
-from xcraft.specs import Binary, Package
 
 
 @pytest.mark.parametrize(

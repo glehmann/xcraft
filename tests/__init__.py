@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
+from xcraft.packages import Binary, Package
 from xcraft.project import Config, Project
 from xcraft.resolution import Resolved
-from xcraft.specs import Binary, Package
 
 PROJECT = Path(__file__).parent / "project"
 UPSTREAM = Path(__file__).parent / "upstream"
