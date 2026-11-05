@@ -283,7 +283,7 @@ def test_development_counters_of_components(
     # a cycle of the dependencies of all the architectures, and maybe a package it is built against, all developed
     ours(project, monkeypatch, cycle)
     save_lock(project, Lock())
-    monkeypatch.setattr(devbuilds, "base", lambda _: None)
+    monkeypatch.setattr(buildid, "base", lambda _: None)
     monkeypatch.setattr(devbuilds, "proposed", lambda _fork, ids: set(ids))
     hashes = dict.fromkeys(cycle, "1" * 64)
 

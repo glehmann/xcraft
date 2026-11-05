@@ -11,8 +11,9 @@ from html import escape
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
+from xcraft import remote
 from xcraft.process import log
-from xcraft.remote import CCACHE, INDEX, KEYS, REQUESTS, Entry, objects, writing
+from xcraft.remote import CCACHE, INDEX, KEYS, REQUESTS, Entry
 
 if TYPE_CHECKING:
     from mypy_boto3_s3 import S3Client
@@ -149,17 +150,17 @@ def update_pages(project: Project, storage: Remote, prefixes: list[str]) -> int:
     """
     pages: _Pages = {}
     parents: set[str] = set()
-    with writing(storage, "make the directory pages") as s3:
-        if objects(s3, storage.bucket, f"{KEYS}/", below=True)[1]:
+    with remote.writing(storage, "make the directory pages") as s3:
+        if remote.objects(s3, storage.bucket, f"{KEYS}/", below=True)[1]:
             prefixes = [*prefixes, f"{KEYS}/"]
         # those under another one are in its listing
         for prefix in sorted(p for p in set(prefixes) if not any(p != q and p.startswith(q) for q in prefixes)):
-            _add_listing(pages, prefix, objects(s3, storage.bucket, prefix, below=True)[1])
+            _add_listing(pages, prefix, remote.objects(s3, storage.bucket, prefix, below=True)[1])
             above = prefix.rstrip("/").split("/")[:-1] if prefix else []
             parents |= {"", *("".join(f"{p}/" for p in above[: i + 1]) for i in range(len(above)))}
         # the parents are only listed, the deepest first, with the totals of their subdirectories' pages
         for parent in sorted(parents - pages.keys(), key=lambda p: -p.count("/")):
-            dirs, files = objects(s3, storage.bucket, parent, below=False)
+            dirs, files = remote.objects(s3, storage.bucket, parent, below=False)
             pages[parent] = ({d: _subtotal(s3, storage.bucket, pages, f"{parent}{d}/") for d in dirs}, files)
 
         def write(prefix: str) -> None:

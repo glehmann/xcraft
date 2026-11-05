@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter
 
-from xcraft.buildid import base, compute, proposed
+from xcraft import buildid
+from xcraft.buildid import proposed
 from xcraft.buildkey import Inputs
 from xcraft.cache import build_keys
 from xcraft.graph import components
@@ -37,8 +38,8 @@ def _current(
     """Return the inputs of the keys, the build IDs, the cache keys of the final builds, and the packages with
     development builds, computed once, with the `hashes` of the package directories, those of now by default.
     """
-    fork, inputs = base(project), Inputs(project, hashes)
-    ids = compute(project, fork, inputs=inputs)
+    fork, inputs = buildid.base(project), Inputs(project, hashes)
+    ids = buildid.compute(project, fork, inputs=inputs)
     return inputs, ids, build_keys(project, ids=ids, inputs=inputs), proposed(fork, ids)
 
 
@@ -121,8 +122,8 @@ def keep_built(
 
 def developed(project: Project) -> set[str]:
     """Return the packages whose build ID is not the main branch's: their builds are development builds."""
-    fork = base(project)
-    return proposed(fork, compute(project, fork))
+    fork = buildid.base(project)
+    return proposed(fork, buildid.compute(project, fork))
 
 
 def built_dev_suffixes(project: Project) -> dict[str, str]:

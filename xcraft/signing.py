@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING
 
 from rich.markup import escape
 
-from xcraft import process
-from xcraft.container import ContainerError, image_tag, run, signing_image
+from xcraft import container, process
+from xcraft.container import ContainerError, image_tag, signing_image
 from xcraft.display import console
 from xcraft.project import fingerprint
 from xcraft.sources import sha256_of
@@ -83,7 +83,7 @@ class Signer:
             (work / "key.asc").write_text(self.public_key())
             (work / "rpms").write_text("".join(f"/signed/{rpm}\n" for rpm in rpms))
             try:
-                run(
+                container.run(
                     project.on_host(),  # natively: the signatures do not depend on the architecture
                     "sign",
                     script,
@@ -204,7 +204,7 @@ def check_signatures(
         importing = f"rpmkeys {db} --import {' '.join(imported)} && " if imported else ""
         check = f"mkdir /tmp/keys && {importing}{check} {db}"
         try:
-            run(
+            container.run(
                 native,
                 "signatures",
                 f"{check} > /work/checks 2>&1",

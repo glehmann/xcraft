@@ -26,8 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from xcraft import process
-from xcraft.container import run
+from xcraft import container, process
 from xcraft.process import git
 from xcraft.sources import cache_source, write_manifest
 
@@ -65,7 +64,7 @@ def _unpack_srpm(project: Project, srpm: Path, dest: Path, *, on_line: Callable[
     with tempfile.TemporaryDirectory(prefix="xcraft-srpm-") as content:
         # rpm2cpio is not on every host
         on_line(f"extracting {srpm.name}")
-        run(
+        container.run(
             project.on_host(),  # natively: the extraction does not depend on the architecture
             "import",
             f"cd /content && rpm2cpio /srpm/{shlex.quote(srpm.name)} | cpio -idm --quiet",

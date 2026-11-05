@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from rich.markup import escape
 
+from xcraft import resolution
 from xcraft.builds import load_builds, recordable, save_builds
 from xcraft.cache import BuildError, cached_build, release_suffix
 from xcraft.display import changes, console
@@ -19,7 +20,7 @@ from xcraft.graph import reachable
 from xcraft.lock import Locked, load_lock
 from xcraft.packages import is_debug
 from xcraft.project import write_atomically
-from xcraft.resolution import Resolved, prepare, resolve, resolve_rpm_deps, rpm_deps_context
+from xcraft.resolution import Resolved, resolve_rpm_deps, rpm_deps_context
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -35,7 +36,7 @@ def resolved_root(project: Project, name: str) -> Resolved:
     packages ours need, and of ours. It happens with requirements xcraft cannot
     see in the specs: files, versions.
     """
-    resolved = resolve(project)
+    resolved = resolution.resolve(project)
     if error := resolved.errors.get(name):
         msg = f"its build root cannot be resolved: {error}"
         raise BuildError(msg)
@@ -59,7 +60,7 @@ def _check_build_root(project: Project, name: str, installed: dict[str, Locked])
     version and architecture, or than ours resolved for it: the pinned ones were checked when downloaded, see
     xcraft.pinned.
     """
-    lock, arch, ours = load_lock(project), project.arch, resolve(project).ours[name]
+    lock, arch, ours = load_lock(project), project.arch, resolution.resolve(project).ours[name]
     pins = lock.binaries.get(arch, {})
     # but those of the image ours replace
     upstream = [n for n in [*lock.image[arch], *lock.roots.of(arch).get(name, [])] if n not in ours]
@@ -85,7 +86,7 @@ def record_dynamic(project: Project, name: str, tree: Path) -> bool:
             return False
         builds.buildrequires.record(project.arch, project.first, name, dynamic)
         save_builds(project, builds)
-    prepare(project)  # for the upstream packages they need
+    resolution.prepare(project)  # for the upstream packages they need
     return True
 
 

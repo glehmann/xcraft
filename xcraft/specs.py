@@ -15,7 +15,8 @@ from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter
 
-from xcraft.container import BUILDENV, built_image, image_tag, run
+from xcraft import container
+from xcraft.container import BUILDENV, built_image, image_tag
 from xcraft.packages import Package
 
 if TYPE_CHECKING:
@@ -111,7 +112,7 @@ def parse(project: Project, dirs: list[Path]) -> dict[str, Package]:
         built_image(native)
         specs = " ".join(f"/project/{main_spec(d).relative_to(project.root)}" for d in dirs)
         with project.tmp_dir("specs") as work:
-            run(
+            container.run(
                 native,
                 "specs",
                 f"python3 /xcraft/parse.py /work/specs.json {rpm_target(project.arch)} {specs}",

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Literal
 from rich.markup import escape
 from rich.text import Text
 
-from xcraft import buildid, buildkey, ccache, remote
+from xcraft import buildid, buildkey, ccache, remote, resolution
 from xcraft.builds import load_builds
 from xcraft.cache import (
     BuildError,
@@ -48,7 +48,6 @@ from xcraft.graph import build_order, reachable
 from xcraft.localrepo import REPO_FILE, LocalRepo, repo_id
 from xcraft.lock import lock_path
 from xcraft.packages import is_debug
-from xcraft.resolution import prepare
 from xcraft.rpmbuild import image_replacements, prepare_tree, run_build
 from xcraft.signing import dev_signer
 from xcraft.specs import hash_dir
@@ -261,7 +260,7 @@ def _record_cached(project: Project, dev: str | None) -> tuple[dict[str, str], d
             project, [n for n, k in keys.items() if cached_build(project, n, k).exists()], keys, quiet=True
         ):
             return keys, hashes, autorev
-        prepare(project)  # for what they recorded
+        resolution.prepare(project)  # for what they recorded
     msg = "what the cached builds recorded keeps changing the keys"
     raise BuildError(msg)
 
@@ -324,7 +323,7 @@ class _Run:
         as they were at the start.
         """
         if (state := _lock_state(self.project)) != self.recorded:
-            prepare(self.project)
+            resolution.prepare(self.project)
             (self.keys, self.autorev), self.recorded = dev_keys(self.project, self.dev, self.hashes), state
 
     def _done(self, name: str) -> Result | None:

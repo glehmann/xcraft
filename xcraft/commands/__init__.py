@@ -7,8 +7,8 @@ from typing import Annotated
 
 import typer
 
+from xcraft import resolution
 from xcraft.project import Destination, Project, Remote
-from xcraft.resolution import prepare
 from xcraft.signing import Signer, dev_signer, key_signer
 
 
@@ -57,7 +57,7 @@ def prepared_project(names: list[str] | None = None, *, locked: bool = False, ar
     """
     project = unprepared_project(names, arch=arch)  # before preparing, which may run containers
     project.frozen = locked
-    prepare(project)
+    resolution.prepare(project)
     return project
 
 
