@@ -510,6 +510,43 @@ def test_iso_tools(root: Path) -> None:
             _check_installed_tools(project, work / "tools.json")
 
 
+@pytest.mark.skipif(ARCH != "x86_64_v2", reason="the ISOs are for x86_64")
+def test_iso_packages_published(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # bc, which nothing else needs, in the repository of the ISO: published, for the snapshot to have it
+    iso = '[iso]\ninstaller = ["bash"]\npackages = ["bc"]\n'
+    (root / "xcraft.toml").write_text(f"{TOML}\n{iso}")
+    assert xcraft("build", "--dry-run")[0] == 0
+    lock = load_lock(Project.find())
+    assert "bc" in lock.runtime[ARCH]
+    assert "bc" not in lock.runtime["aarch64"]
+    # the tools making the ISO, which cannot be installed, kept as the lock has them, but not what is published
+    monkeypatch.setattr(resolution, "ISO_TOOLS", [*ISO_TOOLS, "no-such-package"])
+    (root / "xcraft.toml").write_text(f'{TOML}\n[publish]\nextra = ["toyrun"]\n\n{iso}')
+    assert xcraft("build", "--dry-run")[0] == 0
+    updated = load_lock(Project.find())
+    assert "toyrun" in updated.runtime[ARCH]
+    assert updated.iso == lock.iso
+
+
+def test_recorded_requires_of_the_image(root: Path) -> None:
+    # a script of trivial run by sh, of bash, in the image: published, as the snapshot does not have the image
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(
+        spec.read_text()
+        .replace('echo "hello" > hello.txt', 'printf "#!/bin/sh\\necho hello\\n" > hello.sh')
+        .replace("cp %{name}-%{version}/hello.txt %{buildroot}/usr/share/%{name}/",
+                 "install -m 755 %{name}-%{version}/hello.sh %{buildroot}/usr/share/%{name}/")
+        .replace("/usr/share/%{name}/hello.txt", "/usr/share/%{name}/hello.sh")
+    )  # fmt: skip
+    assert xcraft("build", "--dry-run")[0] == 0
+    assert "bash" not in load_lock(Project.find()).runtime.get(ARCH, [])
+    code, output = xcraft("build", "trivial")
+    assert code == 0, output
+    assert load_builds(Project.find()).requires.of(ARCH)["trivial"] == ["bash"]
+    assert xcraft("build", "--dry-run")[0] == 0
+    assert "bash" in load_lock(Project.find()).runtime[ARCH]
+
+
 def test_snapshots_checked_in_turn(root: Path, tmp_path: Path) -> None:
     # like those of two projects: the broken one, made first, is not checked with the newer metadata of the other, which
     # the dnf cache shared by the containers keeps
