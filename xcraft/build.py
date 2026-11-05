@@ -541,7 +541,7 @@ def _show_failure(project: Project, name: str, error: Exception, *, verbose: boo
         lines = read_tail(project.log(name), 16 * 2**20)
         if in_ci():
             fold = os.environ.get("GITHUB_ACTIONS") == "true"
-            console.file.write(f"::group::the log of {name}\n" if fold else f"the log of {name}:\n")
+            console.file.write(f"::group::full {name} build log\n" if fold else f"full {name} build log:\n")
             console.file.write("".join(f"{line}\n" for line in lines) + ("::endgroup::\n" if fold else ""))
         for line in log_step(lines)[-40:]:
             print_log_line(line)

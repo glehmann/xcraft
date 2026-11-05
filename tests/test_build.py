@@ -296,7 +296,7 @@ def test_failed_build_skips_dependents(root: Path, monkeypatch: pytest.MonkeyPat
     assert code == 1
     assert "✗ trivial: failed, see " in output
     # the whole log, folded, in CI, then the failed rpmbuild step
-    log = output[output.index("::group::the log of trivial\n") : output.index("::endgroup::\n")]
+    log = output[output.index("::group::full trivial build log\n") : output.index("::endgroup::\n")]
     assert "Executing(%prep)" in log
     assert "echo 'build failure'" in output[output.index("::endgroup::\n") :]
     assert "- with-deps skipped, needs trivial" in output
