@@ -78,10 +78,15 @@ def prune_firmware(root: Path) -> None:
         input="\0".join(modules), capture_output=True, text=True, check=True,
     ).stdout  # fmt: skip
     used = "\n".join(sorted({Path(name).name for name in names.split()}))
+
+    def named(f: Path) -> bool:
+        # like create-install-image: when its name is part of one of those named by the drivers
+        return f.name.removesuffix(".xz").removesuffix(".zst") in used
+
     firmware = root / "usr/lib/firmware"
+    targets = {f.resolve() for f in firmware.rglob("*") if f.is_symlink() and named(f)}
     for f in firmware.rglob("*"):
-        # like create-install-image: kept when its name is part of one of those named by the drivers
-        if f.is_file() and not f.is_symlink() and f.name.removesuffix(".xz").removesuffix(".zst") not in used:
+        if f.is_file() and not f.is_symlink() and not named(f) and f.resolve() not in targets:
             f.unlink()
     for f in firmware.rglob("*"):
         if f.is_symlink() and not f.exists():
@@ -119,7 +124,8 @@ def install_img(dest: Path) -> None:
     for unit in ("getty@tty1", "fcoe", "lldpad", "xen-init-dom0", "xenconsoled", "xenstored", "chronyd", "chrony-wait"):
         subprocess.run(["systemctl", f"--root={root}", "--quiet", "disable", unit], check=False)  # when installed
     with dest.open("wb") as out:
-        sh("sh", "-c", "find . -print0 | LC_ALL=C sort -z | cpio -o -0 -H newc --quiet --reproducible | zstd -q -T0",
+        sh("bash", "-o", "pipefail", "-c",
+           "find . -print0 | LC_ALL=C sort -z | cpio -o -0 -H newc --quiet --reproducible | zstd -q -T0",
            cwd=root, stdout=out)  # fmt: skip
     shutil.rmtree(root)
 
