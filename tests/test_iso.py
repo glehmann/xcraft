@@ -10,10 +10,11 @@ import pytest
 
 from tests import PROJECT, TOML
 from tests.test_build import xcraft
+from xcraft import buildkey
 from xcraft.builds import BuildId, load_builds, save_builds
 from xcraft.container import BUILDENV
 from xcraft.iso import Image, build_iso, cached_iso, iso_id, iso_key, iso_name
-from xcraft.lock import load_lock, save_lock
+from xcraft.lock import Pin, load_lock, save_lock
 from xcraft.project import Project, Remote
 from xcraft.signing import Signer
 from xcraft.sources import sha256_of
@@ -79,6 +80,32 @@ def test_iso_inputs(project: Project) -> None:
         builds.ids["trivial"] = BuildId.parse(text)
         save_builds(project, builds)
         assert key() != before
+
+
+def test_iso_inputs_of_the_builds(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    def key() -> str:
+        return iso_key(project, netinstall=False, volid=None, signer=None)
+
+    # what the build keys cover, before they are computed again, on all the architectures: the pins of the images and
+    # of the build roots, even of the same versions, and how xcraft makes the builds
+    pin = Pin(evr="1-1", arch="noarch", sha256="1" * 64, source="kernel")
+    for arch in (project.arch, "aarch64"):
+        for pinned in ("image", "roots"):
+            lock = load_lock(project)
+            lock.sources["kernel"] = "1-1"
+            lock.binaries.setdefault(arch, {})["tool"] = pin
+            if pinned == "image":
+                lock.image.setdefault(arch, []).append("tool")
+            else:
+                lock.roots.arches.setdefault(arch, {})["trivial"] = ["tool"]
+            save_lock(project, lock)
+            before = key()
+            lock.binaries[arch]["tool"] = pin.model_copy(update={"sha256": "2" * 64})
+            save_lock(project, lock)
+            assert key() != before
+    before = key()
+    monkeypatch.setattr(buildkey, "FORMAT", buildkey.FORMAT + 1)
+    assert key() != before
 
 
 def test_iso_lookup_before_preparation(project: Project, tmp_path: Path) -> None:

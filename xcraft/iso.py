@@ -96,20 +96,18 @@ def iso_key(
         project.platform,
         config,
         buildkey.directories(project),
-        # the numbers of the builds, in their releases, and the reuses of builds
-        {name: i.model_dump() for name, i in builds.ids.items()},
+        buildkey.recipe(project),
+        # all of the locks, which the build keys cover on all the architectures, read as they are, before prepare():
+        # the numbers of the builds, in their releases, and the reuses of builds too
+        builds.model_dump(mode="json"),
+        lock.model_dump(mode="json"),
         _templates(project),
-        lock.sources,
-        *[getattr(builds, f).of(project.arch) for f in ("requires", "provides", "buildrequires")],
-        *(
-            {n: lock.binaries[project.arch][n].text() for n in getattr(lock, f).get(project.arch, [])}
-            for f in ("runtime", "iso")
-        ),
         buildenv_hash(),
         [
             Path(__file__).with_name(module).read_text()
             for module in (
                 "iso.py",
+                "buildkey.py",
                 "publish.py",
                 "container.py",
                 "cache.py",
@@ -240,20 +238,20 @@ def push_isos(
         tree, path = cached_iso(project, key), iso_path(project, key)
         if not tree.exists():
             continue
-        image = _image(tree)
-        stored[iso_name(project, image.version, netinstall=netinstall, signer=signer)] = (
-            f"{path}/image.iso",
-            image.sha256,
-        )
-        if remote.tree_exists(storage, path, trusted=upload_signer or signer or signing_key(project)):
+        image, trusted = _image(tree), upload_signer or signer or signing_key(project)
+        if remote.tree_exists(storage, path, trusted=trusted):
             present += 1
-            continue
-        with activity("uploading the ISO", log=True):
-            remote.upload_tree(
-                storage, path, tree, ["image.iso", "image.json"], signer=upload_signer or signer or signing_key(project)
-            )
-        remote.update_pages(project, storage, [f"{path}/"])
-        count += 1
+        else:
+            with activity("uploading the ISO", log=True):
+                remote.upload_tree(storage, path, tree, ["image.iso", "image.json"], signer=trusted)
+            remote.update_pages(project, storage, [f"{path}/"])
+            count += 1
+        # as the manifest found or written has it, which may be of another machine's image
+        root, files = remote.read_tree(storage, path, trusted=trusted)
+        stored[iso_name(project, image.version, netinstall=netinstall, signer=signer)] = (
+            f"{root}/image.iso",
+            files["image.iso"],
+        )
     console.print(f"{count} ISOs pushed, {present} already in the remote storage")
     return stored
 

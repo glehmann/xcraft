@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
+from xml.etree import ElementTree as ET
 
 from xcraft import pinned, remote, repodata
 from xcraft.container import ContainerError, run_natively
@@ -58,7 +59,11 @@ def read(storage: Remote, directory: str, work: Path) -> tuple[dict[str, Entry],
     prefix = f"{PREFIX}/{directory}"
     if not remote.download(storage, f"{prefix}/repodata/repomd.xml", work / "repodata/repomd.xml"):
         return {}, []
-    hrefs = list(repodata.files((work / "repodata/repomd.xml").read_bytes()).values())
+    try:  # unsigned: its locations are checked before any download
+        hrefs = list(repodata.files((work / "repodata/repomd.xml").read_bytes()).values())
+    except (ValueError, ET.ParseError) as e:
+        msg = f"{prefix}/repodata/repomd.xml: {e}"
+        raise UpstreamError(msg) from e
     with ThreadPoolExecutor(remote.REQUESTS) as pool:
         if not all(pool.map(lambda href: remote.download(storage, f"{prefix}/{href}", work / href), hrefs)):
             msg = f"{prefix}/repodata/repomd.xml lists metadata the storage does not have"

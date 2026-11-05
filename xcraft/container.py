@@ -36,6 +36,9 @@ if TYPE_CHECKING:
 MAX_LOG_SIZE = 256 * 2**20
 """Size of log after which a container is stopped: the largest build logs are under 10 MiB."""
 
+_LINE = 2**16
+"""The longest part of a line of a log read at once."""
+
 BUILDENV = Path(__file__).parent / "buildenv"
 """The Containerfile of the image, and the scripts run in the containers, which have them in /xcraft."""
 
@@ -459,8 +462,10 @@ def _run_logged(cmd: list[str], log: Path, on_line: Callable[[str], None] | None
         log.open("w", buffering=1) as f,  # line buffered, for xcraft log --follow
         process.popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as proc,
     ):
-        assert proc.stdout  # noqa: S101
-        for line in proc.stdout:
+        out = proc.stdout
+        assert out  # noqa: S101
+        # in parts of the longest lines, not to keep in memory those never ending
+        for line in iter(lambda: out.readline(_LINE), ""):
             f.write(line)
             if f.tell() > MAX_LOG_SIZE and container:
                 _kill(container)  # before leaving the block, which waits for podman

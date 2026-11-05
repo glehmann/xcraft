@@ -185,21 +185,21 @@ def check_signatures(
         return
     # all: a package without signature fails too
     check = "xargs -a /work/packages rpmkeys --checksig --define '_pkgverify_level all'"
-    keys = repo_keys(project)
     native = project.on_host()  # the checks do not depend on the architecture
-    context = hashlib.sha256(json.dumps([image_tag(native), check, public_key, keys]).encode()).hexdigest()
-    cache = project.state / "cache/checks/signatures" / context
-    digests = {f: sha256_of(root / f) for f in files}
-    files = [f for f in files if not (cache / digests[f]).exists()]
-    if not files:
-        return
     with project.work("signatures") as work:
-        (work / "packages").write_text("".join(f"/checked/{f}\n" for f in files))
         if public_key:
             (work / "key.asc").write_text(public_key)
             imported = ["/work/key.asc"]
         else:
-            imported = key_paths(keys, work)
+            imported = key_paths(repo_keys(project), work)
+        # the keys themselves, which their URLs may give other ones of: those of the image are of its tag
+        keys = [sha256_of(work / k.removeprefix("/work/")) if k.startswith("/work/") else k for k in imported]
+        context = hashlib.sha256(json.dumps([image_tag(native), check, keys]).encode()).hexdigest()
+        cache = project.state / "cache/checks/signatures" / context
+        digests = {f: sha256_of(root / f) for f in files}
+        if not (files := [f for f in files if not (cache / digests[f]).exists()]):
+            return
+        (work / "packages").write_text("".join(f"/checked/{f}\n" for f in files))
         db = "--define '_dbpath /tmp/keys'"
         importing = f"rpmkeys {db} --import {' '.join(imported)} && " if imported else ""
         check = f"mkdir /tmp/keys && {importing}{check} {db}"

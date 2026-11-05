@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import fcntl
+import hashlib
 import http.client
 import http.server
 import logging
@@ -31,7 +32,7 @@ from xcraft import publish as publisher
 from xcraft.container import run
 from xcraft.iso import build_iso, fetch_isos, iso_key, iso_name, iso_path, push_isos
 from xcraft.lock import load_lock
-from xcraft.project import Project
+from xcraft.project import Project, Remote
 from xcraft.resolution import resolve_image
 from xcraft.rpmbuild import prepare_tree
 from xcraft.signing import Signer, check_signatures, create_dev_key, dev_signer, release_signer
@@ -39,8 +40,6 @@ from xcraft.sources import SourceError, cache_source, sha256_of, source_path, wr
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
-
-    from xcraft.project import Remote
 
 
 GARAGE = "docker.io/dxflrs/garage:v2.1.0"
@@ -201,7 +200,12 @@ def test_iso_cache(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture)
     assert not (project.state / "cache/builds").exists()
     shutil.rmtree(tree)
     key = iso_key(project, netinstall=False, volid=None, signer=signer)
-    remote.upload(project.config.remote["dev"], f"{iso_path(project, key)}/image.iso", root / "xcraft.toml")
+    storage = project.config.remote["dev"]
+    remote.upload(
+        storage,
+        f"{remote.read_tree(storage, iso_path(project, key), trusted=signer)[0]}/image.iso",
+        root / "xcraft.toml",
+    )
     with pytest.raises(remote.RemoteError, match="missing or corrupted"):
         # The transport rejects the changed payload before installing its cache directory.
         remote.fetch_tree(project, iso_path(project, key), tree)
@@ -336,17 +340,27 @@ def test_signed_trees(root: Path, tmp_path: Path) -> None:
     remote.upload(storage, f"{remote.KEYS}/{'0' * 40}.asc", key)
     assert not remote.tree_exists(storage.model_copy(update={"build_keys": ["0" * 40]}), prefix)
     # A signed manifest cannot be transplanted to another build key.
-    remote.transfer(storage, {f"{prefix}-other/{f}": f"{prefix}/{f}" for f in ("file", remote.MANIFEST)})
+    generation = remote.read_tree(storage, prefix)[0]
+    assert (
+        generation == f"{prefix}/{hashlib.sha256(f'{prefix}\n{sha256_of(src / "file")}  file\n'.encode()).hexdigest()}"
+    )
+    remote.transfer(
+        storage,
+        {
+            f"{prefix}-other/{remote.MANIFEST}": f"{prefix}/{remote.MANIFEST}",
+            f"{prefix}-other/{generation.rsplit('/')[-1]}/file": f"{generation}/file",
+        },
+    )
     assert not remote.download_tree(storage, f"{prefix}-other", tmp_path / "wrong-path")
     # Changed bytes fail even when the manifest is authentic.
     (src / "file").write_text("tampered")
-    remote.upload(storage, f"{prefix}/file", src / "file")
+    remote.upload(storage, f"{generation}/file", src / "file")
     with pytest.raises(remote.RemoteError, match="corrupted"):
         remote.download_tree(storage, prefix, tmp_path / "corrupt")
     assert not (tmp_path / "corrupt").exists()
-    # The manifest is signed in clear: the path of the tree, then its files like sha256sum's.
+    # The manifest is signed in clear: the path of the files of the tree, then its files like sha256sum's.
     signed = urllib.request.urlopen(f"{storage.url}/{prefix}/{remote.MANIFEST}").read().decode()  # noqa: S310
-    text = f"{prefix}\n{sha256_of(tmp_path / 'valid/file')}  file\n"
+    text = f"{generation}\n{sha256_of(tmp_path / 'valid/file')}  file\n"
     assert signed.startswith("-----BEGIN PGP SIGNED MESSAGE-----\nHash: ")
     assert text in signed
     # Only its signed part is read: lines around it do not add files.
@@ -355,7 +369,7 @@ def test_signed_trees(root: Path, tmp_path: Path) -> None:
     remote.upload(storage, f"{prefix}/{remote.MANIFEST}", src / remote.MANIFEST)
     assert remote.read_manifest(storage, prefix) == {"file": sha256_of(tmp_path / "valid/file")}
     # Replacing both bytes and manifest still cannot forge the signature, nor remove it.
-    for forged in (signed.replace(text, f"{prefix}\n{tampered}\n"), f"{prefix}\n{tampered}\n"):
+    for forged in (signed.replace(text, f"{generation}\n{tampered}\n"), f"{generation}\n{tampered}\n"):
         (src / remote.MANIFEST).write_text(forged)
         remote.upload(storage, f"{prefix}/{remote.MANIFEST}", src / remote.MANIFEST)
         assert not remote.tree_exists(storage, prefix)
@@ -401,7 +415,8 @@ def test_tree_fallback_checks_signatures(
         assert remote.fetch_tree(project, prefix, tmp_path / "valid")
     assert (tmp_path / "valid/file").read_text() == "trusted payload"
     assert not any(f"downloading {main.url}/{prefix}/file " in line for line in caplog.messages)
-    assert any(f"downloading {dev.url}/{prefix}/file " in line for line in caplog.messages)
+    generation = remote.generation(prefix, manifest)
+    assert any(f"downloading {dev.url}/{generation}/file " in line for line in caplog.messages)
     # The bucket does not grant trust. An unknown signer must not trigger payload downloads in either bucket.
     project.config.remote["main"] = main.model_copy(update={"build_keys": ["0" * 40]})
     caplog.clear()
@@ -582,7 +597,8 @@ def test_resolutions_from_the_remote_storage(root: Path, monkeypatch: pytest.Mon
     project = Project.find()
     roots = resolution._cache(project, resolution._roots_data(project))
     (tampered := root / "tampered.json").write_text("{}")
-    remote.upload(remote.storages(project)[0], f"{resolution.remote_tree(roots)}/{roots.name}", tampered)
+    storage, tree = remote.storages(project)[0], resolution.remote_tree(roots)
+    remote.upload(storage, f"{remote.read_tree(storage, tree)[0]}/{roots.name}", tampered)
     assert "no resolutions from the remote storage" in new_checkout()
     assert log.exists()
     assert sorted(resolved.rglob("*.json")) == caches
@@ -1070,6 +1086,93 @@ def test_publish_from_latest_metadata(root: Path, tmp_path: Path, caplog: pytest
     }
 
 
+def test_concurrent_uploads_of_a_tree(
+    s3: dict[str, str], build_signer: tuple[str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Uploads of other files as the same tree, like the build of a key made on two machines at once, leave it
+    complete, as its last manifest says, and a reader of the other one gets its files.
+    """
+    for name, value in s3.items():
+        monkeypatch.setenv(name, value)
+    signer = Signer(*build_signer)
+    storage = Remote(
+        url=f"http://xcraft-dev.web.garage.localhost:{WEB_PORT}",
+        s3_endpoint=f"http://localhost:{S3_PORT}",
+        bucket="xcraft-dev",
+        build_keys=[signer.key],
+    )
+    prefix = f".xcraft/builds/race/{secrets.token_hex(4)}"
+    for host in ("a", "b", "c"):
+        (tmp_path / host).mkdir()
+        (tmp_path / host / "build.log").write_text(f"built on {host}\n")
+
+    def read(dest: str) -> str:
+        remote.forget()  # as another command
+        assert remote.download_tree(storage, prefix, tmp_path / dest)
+        return (tmp_path / dest / "build.log").read_text()
+
+    write = remote.write_manifest
+
+    def raced(*args: object, **kwargs: object) -> None:  # a, its files uploaded, waits for b to complete the tree
+        monkeypatch.setattr(remote, "write_manifest", write)
+        remote.upload_tree(storage, prefix, tmp_path / "b", ["build.log"], signer=signer)
+        assert read("read-b") == "built on b\n"
+        write(*args, **kwargs)  # ty: ignore[invalid-argument-type]
+
+    monkeypatch.setattr(remote, "write_manifest", raced)
+    remote.upload_tree(storage, prefix, tmp_path / "a", ["build.log"], signer=signer)
+    assert read("read-a") == "built on a\n"
+
+    # one interrupted before its manifest leaves the tree as it was
+    def interrupted(*_: object, **__: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(remote, "write_manifest", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        remote.upload_tree(storage, prefix, tmp_path / "c", ["build.log"], signer=signer)
+    monkeypatch.setattr(remote, "write_manifest", write)
+    assert read("read-after") == "built on a\n"
+
+    # the trees of older versions, with their files in them, and not a generation of other files
+    remote.upload(storage, f"{prefix}/build.log", tmp_path / "c" / "build.log")
+    digest = sha256_of(tmp_path / "c" / "build.log")
+    remote.write_manifest(storage, prefix, {"build.log": digest}, signer=signer)
+    assert read("read-old") == "built on c\n"
+    remote.write_manifest(storage, prefix, {"build.log": digest}, signer=signer, root=f"{prefix}/{'0' * 64}")
+    remote.forget()
+    assert not remote.tree_exists(storage, prefix)
+
+
+@pytest.mark.parametrize("href", ["{outside}", "repodata/../../outside", "../outside", "repodata/sub/../../../x"])
+def test_upstream_copy_metadata_out_of_its_directory(
+    href: str, s3: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The unsigned metadata of the copy cannot write out of its work directory, even when it cannot be read."""
+    for name, value in s3.items():
+        monkeypatch.setenv(name, value)
+    storage = Remote(
+        url=f"http://xcraft-dev.web.garage.localhost:{WEB_PORT}",
+        s3_endpoint=f"http://localhost:{S3_PORT}",
+        bucket="xcraft-dev",
+    )
+    (outside := tmp_path / "outside").write_text("kept")
+    directory = f"evil-{secrets.token_hex(4)}"
+    (repomd := tmp_path / "repomd.xml").write_text(
+        '<repomd xmlns="http://linux.duke.edu/metadata/repo">'
+        f'<data type="primary"><location href="{href.format(outside=outside)}"/></data></repomd>'
+    )
+    prefix = f"{upstream_copy.PREFIX}/{directory}"
+    remote.upload(storage, f"{prefix}/repodata/repomd.xml", repomd)
+    remote.upload(storage, f"{prefix}/{outside.name}", repomd)
+    try:
+        with pytest.raises(upstream_copy.UpstreamError, match="invalid metadata location"):
+            upstream_copy.read(storage, directory, tmp_path / "work" / "deep")
+        assert outside.read_text() == "kept"
+        assert [p.name for p in (tmp_path / "work").rglob("*") if p.is_file()] == ["repomd.xml"]
+    finally:
+        remote.delete(storage, [f"{prefix}/repodata/repomd.xml", f"{prefix}/{outside.name}"])
+
+
 def _copied(storage: Remote, directory: str, work: Path) -> dict[str, str]:
     """Return the packages of the metadata of the upstream copy `directory` of `storage`, by SHA-256."""
     prefix = f"{upstream_copy.PREFIX}/{directory}"
@@ -1228,7 +1331,12 @@ def test_isos_fetched_for_publishing(root: Path, tmp_path: Path) -> None:
     # one corrupted: not there, for the publish to get the packages it is made from
     shutil.rmtree(trees[1])
     key = iso_key(project, netinstall=True, volid=None, signer=signer)
-    remote.upload(project.config.remote["dev"], f"{iso_path(project, key)}/image.iso", root / "xcraft.toml")
+    storage = project.config.remote["dev"]
+    remote.upload(
+        storage,
+        f"{remote.read_tree(storage, iso_path(project, key), trusted=signer)[0]}/image.iso",
+        root / "xcraft.toml",
+    )
     assert not fetch_isos(project, signer=signer)
     # the inputs of the netinstall ISOs too, without the others
     snapshot = tmp_path / "snapshot"

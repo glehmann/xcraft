@@ -464,10 +464,11 @@ def upload_snapshot(
     for platform, keys in platforms:
         for package, key in keys.items():
             tree = _stored_path(platform, signer, package, key)
-            for path, digest in remote.read_manifest(storage, tree, trusted=_trusted(project, signer)).items():
+            root, found = remote.read_tree(storage, tree, trusted=_trusted(project, signer))
+            for path, digest in found.items():
                 if repo := {"RPMS": f"{REPO}/{platform.arch}", "SRPMS": f"{REPO}/Source"}.get(path.split("/")[0]):
                     # those of the metadata, of the snapshot or of the first architecture, for the source packages
-                    stored.setdefault(f"{repo}/{Path(path).name}", (f"{tree}/{path}", digest))
+                    stored.setdefault(f"{repo}/{Path(path).name}", (f"{root}/{path}", digest))
     signed = [f"{INTERNAL}/signed/{signer.key}/{platform.arch}/" for platform, _ in platforms] if signer else []
     repos, latest = _tree(project, "repos", name), _tree(project, "repos", "latest")
     _upload(
@@ -658,13 +659,16 @@ def _with_copy(
 def _stored_build(
     project: Project, signer: Signer | None, name: str, key: str, storage: Remote | None
 ) -> tuple[Path | str, dict[str, str]]:
-    """Return the tree of the build of `name` with `key`, signed by `signer`, if any, in `storage`, or the local
-    one when there is no storage, or it misses it: signed now, and pushed there; with its files, by path in it, and
-    their SHA-256.
+    """Return the directory of the files of the build of `name` with `key`, signed by `signer`, if any, in `storage`,
+    or the local one when there is no storage, or it misses it: signed now, and pushed there; with its files, by path
+    in it, and their SHA-256.
     """
-    tree = _stored_path(project, signer, name, key)
-    if storage and (files := remote.read_manifest(storage, tree, trusted=_trusted(project, signer))):
-        return tree, files
+    if storage:
+        root, files = remote.read_tree(
+            storage, _stored_path(project, signer, name, key), trusted=_trusted(project, signer)
+        )
+        if files:
+            return root, files
     if not cached_build(project, name, key).exists() and not builder.fetch_build(project, name, key):
         msg = f"the build of {name} is neither cached nor in the remote storage"
         raise BuildError(msg)

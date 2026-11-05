@@ -172,9 +172,10 @@ It downloads only the manifest and candidate public keys before verifying them. 
 tree path in its signed payload, and the public keys must match locally configured fingerprints. An unknown signer
 or invalid signature must not trigger any build-file or compiler-cache payload downloads.
 
-- **The signature** is in clear, in the manifest, `manifest.asc`: its signed text is the path of the tree, then a
-  `<sha256>  <file>` line by file, sorted, like `sha256sum`'s. A signed manifest moved under another path, like the
-  key of another build, does not verify.
+- **The signature** is in clear, in the manifest, `manifest.asc`: its signed text is the path of the tree's files,
+  then a `<sha256>  <file>` line by file, sorted, like `sha256sum`'s. The path is the tree's, or its generation's,
+  `<tree>/<sha256>`, the SHA-256 of the tree path and the file lines, for the trees made once: see `remote.MANIFEST`.
+  A signed manifest moved under another path, like the key of another build, does not verify.
 - **The verification keys** are trusted public keys in `xcraft.toml`, by fingerprint:
 
   ```toml
@@ -191,6 +192,11 @@ or invalid signature must not trigger any build-file or compiler-cache payload d
 - **Where xcraft verifies:** xcraft fetch and xcraft build, for the builds and the compiler caches, and xcraft publish,
   for the builds it signs with the release key and the snapshots it copies files from. A tree without a valid
   signature is as if the storage did not have it: it is built again, or fails to publish.
+
+Concurrency: the trees made once, the builds, the signed builds, the resolutions and the ISOs, can be uploaded by many
+machines at once, each upload in a generation of its own. The snapshots of a release and stage, `latest` and the dated
+ones, are written in place: their publishes must be serialized, one at a time by stage, as the public dnf layout keeps
+their files at their paths.
 
 Publication computes its signed manifest from the locally checked snapshot. A remote object is reused by S3 copy
 only when its trusted manifest has the same hash. Publication does not download the copied payload again; signed-tree

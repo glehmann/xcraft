@@ -42,6 +42,9 @@ def link(src: Path, dest: Path) -> None:
     """Make `dest` a hard link to `src`, or a copy on another file system, replacing the file it was: never writing
     into it, which may be hard linked to the cache, like a build of another key of the same file name.
     """
+    if dest.absolute() == src.absolute():
+        msg = f"cannot link {src} to itself"
+        raise RepoError(msg)
     dest.unlink(missing_ok=True)
     try:
         dest.hardlink_to(src)

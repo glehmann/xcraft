@@ -165,18 +165,19 @@ is named by the hash of its key and of the names of the builds of ours it is bui
 |---|---|---|
 | The recipe | The build script, `xcraft/buildenv/build.sh`, the `.repo` file of the local repository, and the scripts recording what the builds install and isolating them from the network | A change to how xcraft builds, but one declared making the same packages |
 | The build environment | The base image, pinned by digest, the Containerfile, `packages` of `xcraft.toml`, the repositories, the RPM macros (`%dist`...), the `release_suffixes`, and the names and URLs of `extra_upstream` | Any change to these settings |
-| The image | The upstream source packages of the build environment image of all the architectures, with their versions, as the lock records them (see [The lock](#the-lock)) | An update of a package of the image |
+| The image | The upstream binary packages of the build environment image of all the architectures, by their pins in the lock: version, architecture and SHA-256 (see [The lock](#the-lock)) | An update of a package of the image, or other contents pinned for it |
 | The package | Its name, and all the files of `<repo>/<pkg>/`, but `origin`: their paths, contents, and whether they are executable. The `sources` manifest covers the archives by their SHA-256 | Any change to the spec, a patch, a source file, or an archive |
-| Its build root | The upstream source packages of its build root besides the image's, on all the architectures, with their versions, and what it is resolved from besides its `BuildRequires`: its dynamic `BuildRequires`, and what rpm generated for the binary packages of ours it may have, as `xcraft.builds` records them | `xcraft lock --update` of one of them, a change of its `BuildRequires`, or what the builds found |
+| Its build root | The upstream binary packages of its build root besides the image's, on all the architectures, by their pins, and what it is resolved from besides its `BuildRequires`: its dynamic `BuildRequires`, and what rpm generated for the binary packages of ours it may have, as `xcraft.builds` records them | `xcraft lock --update` of one of them, a change of its `BuildRequires`, or what the builds found |
 | Its dependencies | The build IDs, numbers and keys, of the packages of ours its build installs (see [Dependencies](#dependencies)), like `kernel-headers`, in all the build roots | Any change to one of them, recursively |
 
 The first three are common to all the packages: changing one of them rebuilds everything. Packages depending on each
 other, a cycle, share the hash of them all, from which each one gets its own key.
 
 **What it does not cover.** The architecture, which is the directory of the builds; the path of the checkout, the
-machine, the user and the time; `origin`, and the files out of `<repo>/<pkg>/`, but those above; the SHA-256 and
-architecture of the upstream packages, only their versions. So the same commit gives the same keys everywhere, on all
-the architectures: a build pushed by CI, or by a colleague, is fetched by any checkout instead of being built again.
+machine, the user and the time; `origin`, and the files out of `<repo>/<pkg>/`, but those above; the upstream
+packages of the source packages `xcraft reuse --dep` ignores the updates of, but their names and architectures. So the
+same commit gives the same keys everywhere, on all the architectures: a build pushed by CI, or by a colleague, is
+fetched by any checkout instead of being built again.
 The local repository of the builds gets its own name in each checkout, `xcraft-<project id>`, for its own metadata in
 the dnf cache the containers share, but the recipe the key covers has a placeholder instead.
 
@@ -189,7 +190,7 @@ the dnf cache the containers share, but the recipe the key covers has a placehol
 - the configuration of the build environment, or a new version of xcraft changing the recipe: everything.
 
 **Same builds.** A change to the recipe which makes the same packages, like a fix of how it fails, can keep the
-builds: `_SAME_BUILDS` of `xcraft/cache.py` maps its hash to the one of the earliest recipe making the same packages,
+builds: `_SAME_BUILDS` of `xcraft/buildkey.py` maps its hash to the one of the earliest recipe making the same packages,
 which stays in the keys.
 Not the packages, nor the image: what a package directory has goes in its source RPM, and what the image has can change
 the builds. `test_recipe` fails on a change to the recipe in the keys, giving the new hash, to choose between both.
@@ -371,8 +372,9 @@ the same for the full and netinstall ones of all the architectures: the beginnin
 cover the packages, the lock and the ISO's configuration.
 Images are cached in `.xcraft/cache/isos/<arch>/<key>/`. Both `xcraft iso` and `xcraft boot` reuse the matching local
 image, then try the trusted remote storage, and only assemble a snapshot and build an ISO on a cache miss. A cache
-hit needs no build containers or signing secrets. The key covers package inputs and locked dependencies, ISO
-templates and configuration, the build recipe, architecture, netinstall and volume-id options, and signing identity.
+hit needs no build containers or signing secrets. The key covers package inputs and the whole of both locks, on all
+the architectures, as the build keys do, read before the build IDs are computed again, ISO templates and
+configuration, the build recipe and its format, architecture, netinstall and volume-id options, and signing identity.
 Local edits invalidate it; the publish stage, remote credentials and output path do not affect it.
 
 Like `xcraft build`, `xcraft iso` and `xcraft boot` take the development builds of the packages whose build ID is not
@@ -554,9 +556,19 @@ key; it cannot be combined with `--key` or `--dev-key`.
 `remote.main.build_keys` only lists trusted public keys for verification; its order does not select the signing key.
 The checkout also trusts its own developer key, without any configuration change.
 Public keys are uploaded to `.xcraft/keys/<fingerprint>.asc` and checked against the configured
-fingerprints. Each `manifest.asc` is signed in clear: its text is the tree path, then a line by file of the tree,
-sorted, as `sha256sum` writes them, so that `gpg --decrypt manifest.asc | tail -n +2 | sha256sum -c` checks a
-downloaded tree.
+fingerprints. Each `manifest.asc` is signed in clear: its text is the path of the tree's files, then a line by file
+of the tree, sorted, as `sha256sum` writes them, so that `gpg --decrypt manifest.asc | tail -n +2 | sha256sum -c`
+checks a downloaded tree.
+The trees made once, like the builds, the signed builds, the resolutions and the ISOs, have their files in a
+directory of their own, their generation, `<tree>/<sha256>/`, named by the SHA-256 of the tree path and its file
+lines: machines uploading the same tree with other files, like two builds of the same key, never write over each
+other's files, and the tree is as its last manifest says, for the readers of either manifest. A tree whose upload is
+interrupted before its manifest is as it was. The snapshots and the compiler caches, updated in place, and the trees
+of older versions of xcraft, have their files in the tree itself.
+So the uploads of the builds, the signed builds, the resolutions and the ISOs can run on many machines at once, while
+the publishes of a release and stage must not: they copy into its `latest` snapshot, and its dated ones, in place,
+which CI must serialize, one publish of a stage at a time. The compiler caches of a package keep the entries of its
+last push, whichever ran last, each checked against its manifest when fetched.
 Only the text gpg verified is read.
 Missing or invalid signatures make a remote tree unavailable. There is no unsigned-tree fallback.
 Only the manifest and public keys are downloaded before verifying the signer and signature. Build
@@ -797,7 +809,9 @@ and `jj log -r "diff_lines(regex:'^xen\.', 'xcraft.builds')"`, or `xcraft histor
 
 An architecture which finds others has its own entries, which replace the shared ones, like `xen.aarch64.requires`.
 So a bump of a package changes its spec and its `build` and `key` lines only. `xcraft lock --upgrade` moves
-`.buildid/` and what the lock of format 3 recorded to it.
+`.buildid/` and what the lock of format 3 recorded to it, keeping the original lock in `.xcraft/xcraft.lock.upgrading`
+until `xcraft.builds` has them: a failed upgrade restores it, and an interrupted one, like by a power loss, starts
+again from it when run again.
 
 **Build roots, resolved.** Before building, dnf resolves the build environment image, from the base image and
 `packages` of `xcraft.toml`, and the build root of each package, from its `BuildRequires`, against the upstream

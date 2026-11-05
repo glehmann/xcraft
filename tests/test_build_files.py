@@ -30,7 +30,7 @@ from xcraft.project import Extra, Project, ProjectLockedError
 from xcraft.publish import build_dependencies
 from xcraft.resolution import Resolved
 from xcraft.rpmbuild import prepare_tree
-from xcraft.sources import cache_source, write_manifest
+from xcraft.sources import SourceError, cache_source, parse_manifest, write_manifest
 from xcraft.specs import STAGED_TIME, Binary, Package, hash_dir, main_spec
 
 if TYPE_CHECKING:
@@ -80,6 +80,38 @@ def test_stage_like_a_packaging_repository(project: Project, tmp_path: Path) -> 
         match=re.escape("foo-2.0.tar.gz is not in the source cache, the remote storage, nor at a URL of the spec"),
     ):
         prepare_tree(project, "foo")
+
+
+@pytest.mark.parametrize("name", ["{outside}", "../../../outside", "sub/../x", ".."])
+def test_stage_no_archive_out_of_the_cache(name: str, project: Project, tmp_path: Path) -> None:
+    """A manifest naming a file out of the cache, of the right SHA-256, leaves it as it is."""
+    pkg = project.root / "base/foo"
+    pkg.mkdir(parents=True)
+    (pkg / "foo.spec").write_text("foo")
+    (outside := tmp_path / "outside").write_text("known")
+    (pkg / "sources").write_text(f"{hashlib.sha256(b'known').hexdigest()}  {name.format(outside=outside)}\n")
+    with pytest.raises(SourceError, match="invalid sources manifest"):
+        prepare_tree(project, "foo")
+    assert outside.read_text() == "known"
+    assert outside.stat().st_mode & 0o777 != 0o444
+
+
+def test_manifest_lines() -> None:
+    digest = "a" * 64
+    assert parse_manifest(f"{digest}  foo.tar.gz\n\n{digest}\tfoo bar.tgz \n") == {
+        "foo.tar.gz": digest,
+        "foo bar.tgz": digest,
+    }
+    for text in (f"{digest.upper()}  foo", f"{digest}", "abc  foo", f"{digest}  foo\n{digest}  foo"):
+        with pytest.raises(SourceError):
+            parse_manifest(text)
+
+
+def test_link_to_itself(tmp_path: Path) -> None:
+    (file := tmp_path / "file").write_text("kept")
+    with pytest.raises(RepoError, match="to itself"):
+        link(file, tmp_path / "." / "file")
+    assert file.read_text() == "kept"
 
 
 def test_stage_whatever_the_umask(project: Project) -> None:
