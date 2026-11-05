@@ -19,7 +19,7 @@ class GraphError(RuntimeError):
     """Raised when packages cannot be ordered for building."""
 
 
-def build_root_binaries(packages: dict[str, Package]) -> dict[str, list[Binary]]:
+def _build_root_binaries(packages: dict[str, Package]) -> dict[str, list[Binary]]:
     """Return, for each package, the binaries of the project its build installs.
 
     Those provide its BuildRequires, or are required at runtime by those
@@ -62,7 +62,7 @@ def build_deps(
     owners = {binary.name: package.name for package in packages.values() for binary in package.binaries}
     deps = {
         name: {owners[binary.name] for binary in binaries} - {name}
-        for name, binaries in build_root_binaries(packages).items()
+        for name, binaries in _build_root_binaries(packages).items()
     }
     for owner in sorted({owners[name] for name in image if name in owners}):
         for name in deps.keys() - reachable(deps, [owner]):
@@ -85,7 +85,7 @@ def upstream_deps(packages: dict[str, Package], upstream: UpstreamRequires) -> d
     their builds install. Upstream ones need those providing their Requires.
     """
     deps = {name: set(requires) for name, requires in upstream.requires.items()}
-    for name, binaries in build_root_binaries(packages).items():
+    for name, binaries in _build_root_binaries(packages).items():
         capabilities = [*packages[name].buildrequires, *(r for binary in binaries for r in binary.requires)]
         deps[name] = {provider for c in capabilities for provider in upstream.providers.get(c, ())}
     return deps

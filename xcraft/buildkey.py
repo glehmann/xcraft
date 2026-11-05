@@ -14,7 +14,7 @@ from xcraft.builds import load_builds, locked_packages
 from xcraft.container import BUILDENV, PACKAGES
 from xcraft.graph import build_deps, reachable
 from xcraft.localrepo import REPO_FILE
-from xcraft.lock import read_lock
+from xcraft.lock import cached_lock
 from xcraft.specs import hash_dir
 
 if TYPE_CHECKING:
@@ -154,7 +154,7 @@ class Inputs:
         """Read them for `project`, with the `hashes` of its package directories, those of directories() unless given,
         and `lock` and `builds`, its own unless given, like those of another commit.
         """
-        self.lock = (lock or read_lock(project)).model_copy(deep=True)
+        self.lock = (lock or cached_lock(project)).model_copy(deep=True)
         self.builds = (builds or load_builds(project)).model_copy(deep=True)
         # with the specs `project` parsed already, which the locks do not change
         self.platforms = [

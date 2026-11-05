@@ -12,10 +12,10 @@ from xcraft.lock import (
     LockFormatError,
     Pin,
     Recorded,
+    cached_lock,
     choose_versions,
     load_lock,
     lock_path,
-    read_lock,
     save_lock,
     upgrade_lock,
 )
@@ -71,7 +71,7 @@ def test_lock_parsed_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     project = Project(tmp_path, config())
     save_lock(project, Lock(sources={"glibc": "1-1"}))
     first = load_lock(project)
-    assert read_lock(project) is read_lock(project)  # shared by the callers only reading it
+    assert cached_lock(project) is cached_lock(project)  # shared by the callers only reading it
     # parsed again only once changed, but a copy for each caller, which may change it
     monkeypatch.setattr("xcraft.lock.parse_lock", lambda _: pytest.fail("parsed again"))
     first.sources["zlib"] = "1-1"

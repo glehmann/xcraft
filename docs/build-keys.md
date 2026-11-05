@@ -125,7 +125,7 @@ of it is used, by each command: one damaged in the store is downloaded again. A 
 pinned yet is not installed: the build records it, it is pinned, and the package built again. The packages the base
 image has already, in their pinned versions, are not installed again: they are those of its digest. What the builds
 installed is checked against the pins too, by name, version and architecture, as the database of rpm has them, see
-`checks.check_build()`. The image has its pins before installing them, so other pins build another image, rather than
+`checks.record_build()`. The image has its pins before installing them, so other pins build another image, rather than
 taking a layer of the cache of podman.
 
 ## The dependencies

@@ -384,11 +384,11 @@ def _manifest(storage: Remote, prefix: str, trusted: Signer | None) -> tuple[str
     if not fingerprints:
         return None
     if (storage.url, prefix, fingerprints) not in _checked:
-        _checked[storage.url, prefix, fingerprints] = _check(storage, prefix, trusted, fingerprints)
+        _checked[storage.url, prefix, fingerprints] = _checked_manifest(storage, prefix, trusted, fingerprints)
     return (checked[0], dict(checked[1])) if (checked := _checked[storage.url, prefix, fingerprints]) else None
 
 
-def _check(
+def _checked_manifest(
     storage: Remote, prefix: str, trusted: Signer | None, fingerprints: frozenset[str]
 ) -> tuple[str, dict[str, str]] | None:
     """Return the directory of the files of the MANIFEST of `prefix`, and those files, when signed with the keys of
@@ -532,7 +532,7 @@ def download_tree(
     return True
 
 
-def required(signer: Signer | None) -> Signer:
+def required_signer(signer: Signer | None) -> Signer:
     """Return `signer`, which the uploads need to sign the manifests of their trees."""
     if signer is None:
         msg = "no key to sign uploads: run xcraft key create, configure [sign], or use --key"
@@ -544,7 +544,7 @@ def upload_tree(storage: Remote, prefix: str, src: Path, names: list[str], *, si
     """Upload the entries `names` of the directory `src` as the tree `prefix`, made once, in its generation of their
     files, and return their SHA-256: see MANIFEST.
     """
-    required(signer)
+    required_signer(signer)
     files = sorted(f for name in names for f in [src / name, *(src / name).rglob("*")] if f.is_file())
     manifest = {f.relative_to(src).as_posix(): sha256_of(f) for f in files}
     root = generation(prefix, manifest)
@@ -571,7 +571,7 @@ def write_manifest(
     """Write the manifest of the tree `prefix`, of its files in `root`, its generation, or else in the tree itself,
     which completes it.
     """
-    signer = required(signer)
+    signer = required_signer(signer)
     TreeManifest(files=manifest)
     with tempfile.TemporaryDirectory(prefix="xcraft-sign-") as tmp:
         work = Path(tmp)

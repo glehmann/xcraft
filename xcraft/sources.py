@@ -149,11 +149,11 @@ def fetch_sources(project: Project, name: str, manifest: dict[str, str] | None =
     return [
         filename
         for filename, digest in manifest.items()
-        if not cached_source(project, filename, digest) and not _fetch_source(project, name, filename, digest)
+        if not has_cached_source(project, filename, digest) and not _fetch_source(project, name, filename, digest)
     ]
 
 
-def cached_source(project: Project, filename: str, digest: str) -> bool:
+def has_cached_source(project: Project, filename: str, digest: str) -> bool:
     """Return whether the source cache has the archive `filename`, and raise when it has other contents than
     `digest`.
     """

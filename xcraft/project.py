@@ -375,10 +375,10 @@ class Project:
         of ours its build root gets rather than the upstream ones of the lock, like kernel-headers with gcc.
         """
         from xcraft.graph import build_deps  # noqa: PLC0415, which needs the project
-        from xcraft.lock import read_lock  # noqa: PLC0415
+        from xcraft.lock import cached_lock  # noqa: PLC0415
         from xcraft.resolution import resolve_image  # noqa: PLC0415
 
-        return build_deps(self.packages, resolve_image(self).image, read_lock(self).roots.of(self.arch))
+        return build_deps(self.packages, resolve_image(self).image, cached_lock(self).roots.of(self.arch))
 
     def refresh(self) -> None:
         """Forget the packages and their dependencies, after a change of the locks."""

@@ -58,7 +58,7 @@ def _is_file_to_import(path: Path, top: Path) -> bool:
     return path.is_file()
 
 
-def unpack_srpm(project: Project, srpm: Path, dest: Path, *, on_line: Callable[[str], None]) -> None:
+def _unpack_srpm(project: Project, srpm: Path, dest: Path, *, on_line: Callable[[str], None]) -> None:
     """Unpack the source RPM `srpm` into `dest`, but its archives: they go into the source cache, and the ``sources``
     manifest of `dest`.
     """
@@ -207,7 +207,7 @@ def _commit(repo: str, ref: str) -> str | None:
     return found.stdout.strip() if found.returncode == 0 else None
 
 
-def _update(repo: str, ref: str, commit: str) -> None:
+def _fast_forward(repo: str, ref: str, commit: str) -> None:
     """Move the branch `ref` forward to `commit`, refusing to drop its commits."""
     old = _commit(repo, ref)
     if old and process.run(["git", "-C", repo, "merge-base", "--is-ancestor", old, commit], check=False).returncode:
@@ -273,7 +273,7 @@ def import_history(root: Path, pkg_dir: Path, url: str, branches: list[str]) -> 
         process.run_bytes(["git", "-C", repo, "fast-import", "--quiet", "--force"], b"".join(stream))
         heads = {b: git("-C", repo, "rev-parse", ref) for b, ref in imported.items()}
         for branch, commit in heads.items():
-            _update(repo, f"refs/heads/import/{pkg_dir.name}/{branch}", commit)
+            _fast_forward(repo, f"refs/heads/import/{pkg_dir.name}/{branch}", commit)
     finally:
         for ref in [
             *fetched.values(),
@@ -297,7 +297,7 @@ def import_srpm(
     with project.tmp_dir("import-srpm") as work:
         dest = work / "tree" / pkg_dir.resolve().relative_to(repo)
         dest.mkdir(parents=True)
-        unpack_srpm(project, srpm, dest, on_line=on_line)
+        _unpack_srpm(project, srpm, dest, on_line=on_line)
         removed = [f for f in project.config.import_.removed if (dest / f).exists()]
         for f in removed:
             (dest / f).unlink()
@@ -318,5 +318,5 @@ def import_srpm(
     commit = process.run(
         ["git", "-C", repo, "commit-tree", tree, "-p", parent], capture=True, input=message
     ).stdout.strip()
-    _update(repo, ref, commit)
+    _fast_forward(repo, ref, commit)
     return commit

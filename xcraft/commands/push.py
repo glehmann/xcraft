@@ -10,14 +10,14 @@ from rich.markup import escape
 
 from xcraft import ccache, remote, remote_pages, upstream_copy
 from xcraft.cache import BUILD_FILES, build_keys, build_path, cached_build
-from xcraft.commands import Arch, Final, Key, Packages, To, find, load, remote_storage
+from xcraft.commands import Arch, Final, Key, Packages, To, prepared_project, remote_storage, unprepared_project
 from xcraft.devbuilds import developed
 from xcraft.display import activity, console
 from xcraft.iso import push_isos
 from xcraft.project import Project, Remote
 from xcraft.resolution import remote_tree, resolutions_read
-from xcraft.signing import Signer, signing_key
-from xcraft.sources import cached_source, read_manifest, source_path
+from xcraft.signing import Signer, key_signer
+from xcraft.sources import has_cached_source, read_manifest, source_path
 
 app = typer.Typer()
 
@@ -37,10 +37,10 @@ def everything(ctx: typer.Context, final: Final = False, arch: Arch = None, key:
         # all the options given before the subcommand are its defaults: those given after it win
         ctx.default_map = {ctx.invoked_subcommand: {k: v for k, v in ctx.params.items() if v is not None}}
         return
-    project = load(arch=arch)
+    project = prepared_project(arch=arch)
     storage = remote_storage(project, to)
     absent = _push_sources(project, storage, None)
-    signer = signing_key(project, key)
+    signer = key_signer(project, key)
     not_built = _push_builds(project, storage, None, signer=signer, final=final)
     _push_resolutions(project, storage, signer=signer)
     copied = _push_upstream(project, storage)
@@ -62,7 +62,7 @@ def sources(
     to: To = "dev",
 ) -> None:
     """Upload cached sources to the selected bucket, or only check it with --check."""
-    project = find(packages, arch=arch)
+    project = unprepared_project(packages, arch=arch)
     if absent := _push_sources(project, remote_storage(project, to), packages, check=check):
         msg = f"not in the source cache: {', '.join(absent)}"
         raise RuntimeError(msg)
@@ -86,7 +86,7 @@ def _push_sources(project: Project, storage: Remote, packages: list[str] | None,
         if missing:
             raise typer.Exit(1)
         return []
-    absent = [archive for archive in missing if not cached_source(project, *archive)]
+    absent = [archive for archive in missing if not has_cached_source(project, *archive)]
     missing = [archive for archive in missing if archive not in absent]
     for filename, digest in missing:
         with activity(f"uploading {filename}"):
@@ -106,8 +106,8 @@ def builds(packages: Packages = None, final: Final = False, arch: Arch = None, k
     Development builds are never uploaded: the packages with ones are skipped, unless --final, which uploads their
     final builds.
     """
-    project = load(packages, arch=arch)
-    storage, signer = remote_storage(project, to), signing_key(project, key)
+    project = prepared_project(packages, arch=arch)
+    storage, signer = remote_storage(project, to), key_signer(project, key)
     if not_built := _push_builds(project, storage, packages, signer=signer, final=final):
         msg = f"not built: {', '.join(not_built)}"
         raise RuntimeError(msg)
@@ -128,8 +128,8 @@ def isos(
         push_isos(
             project,
             remote_storage(project, to),
-            signer=None if unsigned else signing_key(project, key),
-            upload_signer=signing_key(project, key),
+            signer=None if unsigned else key_signer(project, key),
+            upload_signer=key_signer(project, key),
         )
 
 
@@ -172,8 +172,8 @@ def resolutions(arch: Arch = None, key: Key = None, to: To = "dev") -> None:
     """Upload the resolutions of the project as it is: the images and the build roots of all the architectures, which
     the commands fetch rather than resolving them, like in a new checkout.
     """
-    project = load(arch=arch)
-    _push_resolutions(project, remote_storage(project, to), signer=signing_key(project, key))
+    project = prepared_project(arch=arch)
+    _push_resolutions(project, remote_storage(project, to), signer=key_signer(project, key))
 
 
 def _push_resolutions(project: Project, storage: Remote, *, signer: Signer | None) -> None:
@@ -227,12 +227,12 @@ def caches(packages: Packages = None, arch: Arch = None, key: Key = None, to: To
 
     They are not uploaded by xcraft push without a command: they are large, and change with each build.
     """
-    project = load(packages, arch=arch)
+    project = prepared_project(packages, arch=arch)
     storage = remote_storage(project, to)
     pushed = [
         name
         for name in packages or sorted(project.packages)
-        if ccache.push(project, storage, name, signer=signing_key(project, key))
+        if ccache.push(project, storage, name, signer=key_signer(project, key))
     ]
     for name in pushed:
         console.print(f"[green]↑[/] {name}")

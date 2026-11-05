@@ -116,7 +116,7 @@ def release_signer(project: Project) -> Signer | None:
     return Signer(key=sign.key, gnupghome=Path(sign.gnupghome).expanduser() if sign.gnupghome else None)
 
 
-def signing_key(project: Project, key: str | None = None) -> Signer | None:
+def key_signer(project: Project, key: str | None = None) -> Signer | None:
     """Return the signer of `key`, in the keyring of [sign], or else the one of [sign], or else the developer's."""
     signer = release_signer(project)
     if key:

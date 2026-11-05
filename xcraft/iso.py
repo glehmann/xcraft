@@ -24,7 +24,7 @@ from xcraft.display import activity, changes, console
 from xcraft.lock import load_lock
 from xcraft.pinned import REPO_ID
 from xcraft.project import INTERNAL
-from xcraft.signing import key_paths, repo_keys, signing_key
+from xcraft.signing import key_paths, key_signer, repo_keys
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
@@ -237,7 +237,7 @@ def push_isos(
         tree, path = cached_iso(project, key), iso_path(project, key)
         if not tree.exists():
             continue
-        image, trusted = _verified_image(tree), upload_signer or signer or signing_key(project)
+        image, trusted = _verified_image(tree), upload_signer or signer or key_signer(project)
         if remote.tree_exists(storage, path, trusted=trusted):
             present += 1
         else:
@@ -320,7 +320,7 @@ def _assemble_iso(
     return made, info["version"]
 
 
-def snapshot_iso(
+def _snapshot_iso(
     project: Project,
     snapshot: Path,
     output: Path | None,
@@ -366,7 +366,7 @@ def snapshot_isos(project: Project, snapshot: Path, dest: Path, *, signer: Signe
     dest.mkdir(parents=True, exist_ok=True)
     isos = []
     for netinstall in (False, True):
-        iso = snapshot_iso(project, snapshot, None, netinstall=netinstall, volid=None, signer=signer)
+        iso = _snapshot_iso(project, snapshot, None, netinstall=netinstall, volid=None, signer=signer)
         isos.append(Path(shutil.move(iso, dest / iso.name)))
         if signer:
             signer.sign_file(isos[-1])
@@ -398,7 +398,7 @@ def checkout_iso(
         if checkout != _checkout_inputs(project):
             msg = "ISO inputs changed while assembling the snapshot: run again"
             raise RuntimeError(msg)
-        return snapshot_iso(
+        return _snapshot_iso(
             project,
             dest / publish.REPO / project.arch,
             output,

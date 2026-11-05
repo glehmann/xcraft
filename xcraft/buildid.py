@@ -140,7 +140,7 @@ def proposed(fork: dict[str, BuildId] | None, ids: dict[str, BuildId]) -> set[st
     return {name for name, i in ids.items() if not i.same(fork.get(name))}
 
 
-def on_main(project: Project) -> bool:
+def _on_main(project: Project) -> bool:
     """Return whether the current commit is on the main branch, whose build IDs are those of the final builds."""
     return bool(main := _main(project)) and _git(project, "merge-base", "--is-ancestor", "HEAD", main) is not None
 
@@ -149,7 +149,7 @@ def final_only(project: Project) -> bool:
     """Return whether the builds of the checkout are all final ones, without computing their IDs: out of a git
     repository, without the main branch, or on it without changes.
     """
-    return _fork(project) is None or (on_main(project) and not _git(project, "status", "--porcelain"))
+    return _fork(project) is None or (_on_main(project) and not _git(project, "status", "--porcelain"))
 
 
 def check_first_parent(project: Project, ids: dict[str, BuildId]) -> None:
@@ -157,7 +157,7 @@ def check_first_parent(project: Project, ids: dict[str, BuildId]) -> None:
     commit have greater numbers: one number is never given to two different builds, even by a merge conflict resolved
     by keeping one side.
     """
-    if not on_main(project):
+    if not _on_main(project):
         return
     if not (parent := _git(project, "rev-parse", "-q", "--verify", "HEAD^")):
         console.print("[yellow]warning[/]: the build IDs are not checked against the previous commit, not fetched")

@@ -29,8 +29,9 @@ want to change in `xcraft/commands/`, then follow its calls into the modules bel
 
 ## Follow a build
 
-1. `__main__.py` registers Typer commands. `commands/__init__.py::find()` discovers a project without preparing
-   metadata; `load()` also calls `resolution.prepare()`. Directory-only commands can avoid container work.
+1. `__main__.py` registers Typer commands. `commands/__init__.py::unprepared_project()` discovers a project without
+   preparing metadata; `prepared_project()` also calls `resolution.prepare()`. Directory-only commands can avoid
+   container work.
 2. Preparation resolves upstream packages and records the lock. `graph.py` computes dependencies among project
    packages, including runtime dependencies of the binaries installed into build roots, and our packages replacing
    upstream ones of the image or of a build root, like `kernel-headers`, for the builds installing them.

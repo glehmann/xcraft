@@ -8,7 +8,7 @@ from typing import Annotated
 import typer
 
 from xcraft import rpmbuild
-from xcraft.commands import Arch, complete_package, load
+from xcraft.commands import Arch, complete_package, prepared_project
 from xcraft.project import Project
 
 
@@ -41,6 +41,6 @@ def shell(
     packages, and ours.
     """
     name = package_of(Project.find(arch), package)
-    project = load([name], arch=arch)
+    project = prepared_project([name], arch=arch)
     with project.lock():
         rpmbuild.shell(project, name)

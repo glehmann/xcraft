@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 
 from xcraft import host, pinned, process
 from xcraft.display import activity, changes, read_tail
-from xcraft.lock import Locked, read_lock
+from xcraft.lock import Locked, cached_lock
 from xcraft.project import ProjectLockedError, write_atomically
 
 if TYPE_CHECKING:
@@ -110,10 +110,10 @@ def _image_files(project: Project) -> dict[str, str]:
 def _image_pins(project: Project) -> dict[str, Pin]:
     """Return the pinned binary packages of the image of the platform."""
     pins = pinned.pins(project)
-    return {name: pins[name] for name in read_lock(project).image.get(project.arch, [])}
+    return {name: pins[name] for name in cached_lock(project).image.get(project.arch, [])}
 
 
-def _image(project: Project) -> tuple[str, dict[str, str], dict[str, str]]:
+def _image_definition(project: Project) -> tuple[str, dict[str, str], dict[str, str]]:
     """Return the tag of the build environment image, with its build args and files.
 
     The tag is a hash of its definition, which pins the versions of its packages,
@@ -128,7 +128,7 @@ def _image(project: Project) -> tuple[str, dict[str, str], dict[str, str]]:
 
 def image_tag(project: Project) -> str:
     """Return the tag of the build environment image, built or not."""
-    return _image(project)[0]
+    return _image_definition(project)[0]
 
 
 _existing: set[str] = set()
@@ -143,7 +143,7 @@ def _exists(tag: str) -> bool:
     return True
 
 
-def build_image(project: Project) -> str:
+def built_image(project: Project) -> str:
     """Return the tag of the build environment image, building it if needed.
 
     A new image must have the packages resolved for it, or it is removed. Its
@@ -151,7 +151,7 @@ def build_image(project: Project) -> str:
     """
     if not project.native and (problem := host.emulation_problem(project.arch)):
         raise ContainerError(problem)
-    tag, args, files = _image(project)
+    tag, args, files = _image_definition(project)
     if _exists(tag):
         return tag
     try:
@@ -390,7 +390,7 @@ def signing_image(project: Project) -> str:
 
     It is apart from the build environment image, so as not to change it, and the cache keys with it.
     """
-    base = build_image(project)
+    base = built_image(project)
     tag = f"localhost/xcraft-sign:{hashlib.sha256(json.dumps([base, _SIGN_PACKAGES]).encode()).hexdigest()[:16]}"
     if not _exists(tag):
         # the versions of rpm-sign follow rpm's, which the lock may not have anymore
@@ -427,7 +427,7 @@ def run_container(
     log. The container is stopped when interrupted, or when its log gets larger
     than MAX_LOG_SIZE.
     """
-    image = image or build_image(project)
+    image = image or built_image(project)
     volumes = [*volumes, f"{BUILDENV}:/xcraft:ro", *([f"{pinned.repository(project)}:/pinned:ro"] if install else [])]
     cmd = [
         # replacing a container of a killed xcraft

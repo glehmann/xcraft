@@ -42,9 +42,9 @@ def _podman() -> tuple[list[tuple[str, str]], list[str], list[host.Fix]]:
     error = (podman.stderr.strip().splitlines() or ["failed"])[-1]
     checks = [("error", f"podman: not working rootless, and the builds run in its containers: {error}")]
     if shutil.which("newuidmap"):
-        return checks, [], host.subids(getpass.getuser())
+        return checks, [], host.subid_fixes(getpass.getuser())
     checks.append(("error", "newuidmap: not found, needed by rootless podman"))
-    return checks, ["newuidmap"], host.subids(getpass.getuser())
+    return checks, ["newuidmap"], host.subid_fixes(getpass.getuser())
 
 
 def _storage(project: Project) -> list[tuple[str, str]]:
@@ -101,7 +101,7 @@ def _checks(project: Project | None) -> tuple[list[tuple[str, str]], list[host.F
             else:
                 checks.append(("ok", f"emulation of {arch}"))
         checks += _storage(project)
-    install = host.install(missing)
+    install = host.install_fixes(missing)
     if missing and not install:
         checks.append(("warning", f"install {', '.join(missing)} with the package manager of the distribution"))
     # the installs first, and each command once, like the creation of /etc/binfmt.d/ for several architectures

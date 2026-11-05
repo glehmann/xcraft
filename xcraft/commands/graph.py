@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 from rich.tree import Tree
 
-from xcraft.commands import Arch, complete_package, load
+from xcraft.commands import Arch, complete_package, prepared_project
 from xcraft.display import console
 from xcraft.graph import build_order, reachable, upstream_deps
 from xcraft.resolution import resolve_image
@@ -60,7 +60,7 @@ def graph(
     arch: Arch = None,
 ) -> None:
     """Show the packages a package is built against, as a tree."""
-    project = load(arch=arch)
+    project = prepared_project(arch=arch)
     packages, deps = project.packages, project.deps
     upstream = upstream or package not in packages
     edges = {name: set(names) for name, names in deps.items()}

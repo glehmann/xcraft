@@ -31,8 +31,8 @@ from xcraft.cache import (
     previous_duration,
     release_suffix,
 )
-from xcraft.checks import BuildRootChangedError, check_build, check_resolved, record_dynamic, record_rpm_deps
-from xcraft.container import ContainerError, build_image, run_dnf
+from xcraft.checks import BuildRootChangedError, record_build, record_dynamic, record_rpm_deps, resolved_root
+from xcraft.container import ContainerError, built_image, run_dnf
 from xcraft.devbuilds import dev_keys, keep_built
 from xcraft.display import (
     activity,
@@ -156,7 +156,7 @@ def _show_plan(project: Project, plan: list[str], keys: dict[str, str], *, fetch
     """Show what is to build or fetch in `plan`, and how long it took last time, with how many are cached, or only
     in the remote storage.
     """
-    to_build, stored, fetched = _sources(project, plan, keys, fetch=fetch)
+    to_build, stored, fetched = _split_plan(project, plan, keys, fetch=fetch)
     for name in plan:
         if name in to_build:
             console.print(f"[bold]build[/]    {name}{_estimate(project, name)}")
@@ -175,7 +175,7 @@ def _show_plan(project: Project, plan: list[str], keys: dict[str, str], *, fetch
     console.print(", ".join(summary + [f"{n} {what}" for what, n in counts.items() if n]))
 
 
-def _sources(
+def _split_plan(
     project: Project, plan: list[str], keys: dict[str, str], *, fetch: Fetch
 ) -> tuple[list[str], set[str], set[str]]:
     """Return the packages of `plan` to build, those only in the remote storage, and those of them to fetch."""
@@ -401,7 +401,7 @@ class _Run:
 
     def _build_shown(self, name: str, status: str | None) -> Result:
         """Build `name` with _build_one(), and show how it went."""
-        build_image(self.project)  # only when a package is to build, rather than cached, fetched or stored: failing all
+        built_image(self.project)  # only when a package is to build, rather than cached, fetched or stored: failing all
         start = time.monotonic()
         try:
             self._build_one(name, status)
@@ -431,7 +431,7 @@ class _Run:
         project = self.project
         if error := project.packages[name].error:
             raise BuildError(error)
-        replace = image_replacements(check_resolved(project, name), name)
+        replace = image_replacements(resolved_root(project, name), name)
         repo = deps_repo(project, name, self.keys)
         tree = prepare_tree(project, name, self.hashes[name])
         suffix = release_suffix(self.keys[name])
@@ -457,7 +457,7 @@ class _Run:
         what it recorded.
         """
         project, keys = self.project, self.keys
-        if check_build(project, name, tree, suffix=suffix):
+        if record_build(project, name, tree, suffix=suffix):
             keys = build_keys(project, self.autorev, self.hashes)  # covering what the build recorded
             if release_suffix(keys[name]) != suffix:
                 msg = (

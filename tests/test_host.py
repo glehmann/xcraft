@@ -102,7 +102,7 @@ def test_emulation_unregistered(binfmt: Path) -> None:
 def test_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, os_release: str, commands: list[str]) -> None:
     (tmp_path / "os-release").write_text(os_release)
     monkeypatch.setattr(host, "_OS_RELEASE", tmp_path / "os-release")
-    assert [str(fix) for fix in host.install(["podman", "gpg", "qemu-x86_64_v2", "qemu-aarch64"])] == commands
+    assert [str(fix) for fix in host.install_fixes(["podman", "gpg", "qemu-x86_64_v2", "qemu-aarch64"])] == commands
 
 
 @pytest.mark.parametrize(
@@ -130,7 +130,7 @@ def test_install_vm_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, distr
     (tmp_path / "os-release").write_text(f"ID={distro}\n")
     monkeypatch.setattr(host, "_OS_RELEASE", tmp_path / "os-release")
     tools = ["qemu-system-x86_64", "qemu-img", "ovmf", "qemu-aarch64"]
-    assert [str(fix) for fix in host.install(tools)] == commands
+    assert [str(fix) for fix in host.install_fixes(tools)] == commands
 
 
 @pytest.mark.parametrize("missing_tools", [False, True])
@@ -179,13 +179,13 @@ def test_doctor_invalid_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 def test_subids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     subuid, subgid = tmp_path / "subuid", tmp_path / "subgid"
     monkeypatch.setattr(host, "_SUBIDS", (subuid, subgid))
-    assert host.subids("dev") == [
+    assert host.subid_fixes("dev") == [
         Fix(["sudo", "usermod", "--add-subuids", "100000-165535", "--add-subgids", "100000-165535", "dev"]),
         Fix(["podman", "system", "migrate"]),
     ]
     # after the ranges of the others
     subuid.write_text("dev:100000:65536\n")
     subgid.write_text("other:165536:65536\n")
-    assert host.subids("dev")[0] == Fix(["sudo", "usermod", "--add-subgids", "231072-296607", "dev"])
+    assert host.subid_fixes("dev")[0] == Fix(["sudo", "usermod", "--add-subgids", "231072-296607", "dev"])
     subgid.write_text("dev:100000:65536\n")
-    assert host.subids("dev") == []
+    assert host.subid_fixes("dev") == []

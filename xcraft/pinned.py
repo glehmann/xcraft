@@ -6,7 +6,7 @@ them all, see xcraft.upstream_copy, or else from the upstream repositories, see 
 pins of an architecture is made once, in the store too, of those RPMs, checked against the pins before it is used, and
 mounted read-only on
 /pinned in the containers installing from it:
-the build of the image, see container.build_image(), and the builds, see buildenv/build.sh, which install nothing
+the build of the image, see container.built_image(), and the builds, see buildenv/build.sh, which install nothing
 else upstream. The packages of the base image, of the same versions, are not installed again: they are those of its
 digest.
 """
@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 
 from xcraft import process
 from xcraft.display import activity
-from xcraft.lock import read_lock
+from xcraft.lock import cached_lock
 from xcraft.process import log
 from xcraft.sources import sha256_of
 
@@ -50,7 +50,7 @@ class PinnedError(RuntimeError):
 
 def pins(project: Project) -> dict[str, Pin]:
     """Return the pinned binary packages of the architecture of `project`, of its lock."""
-    if not (pinned := read_lock(project).binaries.get(project.arch)):
+    if not (pinned := cached_lock(project).binaries.get(project.arch)):
         msg = f"no binary packages pinned for {project.arch} in the lock: see xcraft lock"
         raise PinnedError(msg)
     return dict(pinned)  # of the lock shared by the callers
@@ -78,7 +78,7 @@ def repository(project: Project, names: Iterable[str] | None = None) -> Path:
         fcntl.flock(lock, fcntl.LOCK_EX)  # of the projects of the machine, which share it
         for _ in range(2):
             if not (repo / "repodata/repomd.xml").exists():
-                _make(project, pinned, store, ident)
+                _make_repository(project, pinned, store, ident)
             if not (damaged := {n: p for n, p in pinned.items() if not _intact(repo / file_name(n, p), p)}):
                 _checked.add(repo)
                 return repo
@@ -168,10 +168,10 @@ def stored(name: str, pin: Pin) -> Path | None:
 
 def download(project: Project, pinned: dict[str, Pin]) -> None:
     """Download into the store the `pinned` packages it misses that the repositories still have, see pin.py."""
-    _pin(project, pinned)
+    _run_pin(project, pinned)
 
 
-def _pin(project: Project, pinned: dict[str, Pin], *directory: str) -> None:
+def _run_pin(project: Project, pinned: dict[str, Pin], *directory: str) -> None:
     """Run pin.py on the `pinned` packages, making their `directory` in the store, if given."""
     from xcraft.container import run_natively  # noqa: PLC0415, which builds the image of the pins
 
@@ -187,7 +187,7 @@ def _pin(project: Project, pinned: dict[str, Pin], *directory: str) -> None:
         )
 
 
-def _make(project: Project, pinned: dict[str, Pin], store: Path, ident: str) -> None:
+def _make_repository(project: Project, pinned: dict[str, Pin], store: Path, ident: str) -> None:
     """Make the repository `ident` of the `pinned` packages, of their RPMs downloaded and checked: from a copy of the
     remote storages, or else see pin.py.
     """
@@ -195,7 +195,7 @@ def _make(project: Project, pinned: dict[str, Pin], store: Path, ident: str) -> 
 
     part = f"repos/.{ident}.{os.getpid()}"
     if not _from_copies(project, pinned, store / part):
-        _pin(project, pinned, part)
+        _run_pin(project, pinned, part)
         # with the tool of the host, in this container only
         run_natively(
             project.on_host(),

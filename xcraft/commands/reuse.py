@@ -5,7 +5,7 @@ from __future__ import annotations
 import typer
 
 from xcraft import buildid
-from xcraft.commands import Dep, Packages, load
+from xcraft.commands import Dep, Packages, prepared_project
 from xcraft.display import console
 from xcraft.resolution import upstream_sources
 
@@ -21,7 +21,7 @@ def reuse(packages: Packages = None, dep: Dep = None) -> None:
     if not (packages or dep):
         msg = "no package given, nor --dep"
         raise typer.BadParameter(msg)
-    project = load(packages)
+    project = prepared_project(packages)
     with project.lock():
         # first, as it may lock them
         sources = upstream_sources(project, dep) if dep else []
