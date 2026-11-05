@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 from rich.markup import escape
 
-from xcraft import buildkey, remote
+from xcraft import buildkey, remote, remote_pages
 from xcraft.buildid import final_only
 from xcraft.builds import load_builds
 from xcraft.container import DNF_LOCK, buildenv_hash, run
@@ -244,7 +244,7 @@ def push_isos(
         else:
             with activity("uploading the ISO", log=True):
                 remote.upload_tree(storage, path, tree, ["image.iso", "image.json"], signer=trusted)
-            remote.update_pages(project, storage, [f"{path}/"])
+            remote_pages.update_pages(project, storage, [f"{path}/"])
             count += 1
         # as the manifest found or written has it, which may be of another machine's image
         root, files = remote.read_tree(storage, path, trusted=trusted)

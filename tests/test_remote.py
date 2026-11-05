@@ -27,7 +27,7 @@ import pytest
 from tests import ARCH, PLATFORM, TOML, copy_project, needs_gpg
 from tests.test_build import results, write_spec, xcraft
 from tests.test_iso import cache_image
-from xcraft import buildid, ccache, pinned, remote, repodata, resolution, upload, upstream_copy
+from xcraft import buildid, ccache, pinned, remote, remote_pages, repodata, resolution, upload, upstream_copy
 from xcraft import publish as publisher
 from xcraft.container import run
 from xcraft.iso import build_iso, fetch_isos, iso_key, iso_name, iso_path, push_isos
@@ -310,7 +310,7 @@ def test_sources_from_the_spec(root: Path, tmp_path: Path) -> None:
 
 def test_files_not_deleted(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     storage = Project.find().config.remote["main"]
-    with remote._writing(storage, "delete") as s3:
+    with remote.writing(storage, "delete") as s3:
         # in a response of success, which no storage gives on purpose
         error = {"Key": "file", "Code": "InternalError", "Message": "We encountered an internal error"}
         monkeypatch.setattr(s3, "delete_objects", lambda **_: {"Deleted": [], "Errors": [error]})
@@ -1464,7 +1464,7 @@ def test_pages_of_nested_directories(root: Path, tmp_path: Path) -> None:
     storage = Project.find().config.remote["main"]
     (tmp_path / "file").write_bytes(b"x" * 1000)
     remote.upload(storage, "nested/a/b/file", tmp_path / "file")
-    remote.update_pages(Project.find(), storage, ["nested/a/", "nested/"])
+    remote_pages.update_pages(Project.find(), storage, ["nested/a/", "nested/"])
     assert 'href="b/">b/</a></td><td data-k="1000"' in page("nested/a/")
     assert 'href="a/">a/</a></td><td data-k="1000"' in page("nested/")
     assert "<img" not in page("nested/")
@@ -1476,7 +1476,7 @@ def test_directory_totals_behind_proxy(root: Path, tmp_path: Path) -> None:
     file = tmp_path / "file"
     file.write_bytes(b"x" * 1000)
     remote.upload(storage, "cased/file", file)
-    remote.update_pages(project, storage, ["cased/"])
+    remote_pages.update_pages(project, storage, ["cased/"])
 
     class Proxy(http.server.BaseHTTPRequestHandler):
         def do_HEAD(self) -> None:
@@ -1496,8 +1496,8 @@ def test_directory_totals_behind_proxy(root: Path, tmp_path: Path) -> None:
         thread.start()
         try:
             proxied = storage.model_copy(update={"s3_endpoint": f"http://localhost:{proxy.server_port}"})
-            with remote._writing(proxied, "read cached totals") as s3:
-                size, newest = remote._stored_total(s3, storage.bucket, "cased/")
+            with remote.writing(proxied, "read cached totals") as s3:
+                size, newest = remote_pages._stored_total(s3, storage.bucket, "cased/")
             assert size == 1000
             assert newest
         finally:
@@ -1513,7 +1513,7 @@ def test_signing_keys_have_a_directory_page(root: Path, tmp_path: Path) -> None:
     file = tmp_path / "file"
     file.write_text("signed tree")
     remote.upload_tree(storage, "pages-with-key", tmp_path, ["file"], signer=signer)
-    remote.update_pages(project, storage, ["pages-with-key/"])
+    remote_pages.update_pages(project, storage, ["pages-with-key/"])
     assert f'href="{signer.key}.asc"' in page(".xcraft/keys/")
     internal = page(".xcraft/")
     assert 'href="keys/"' in internal
@@ -1524,11 +1524,11 @@ def test_logo_on_the_pages(root: Path, tmp_path: Path) -> None:
     storage = Project.find().config.remote["main"]
     (tmp_path / "file").write_bytes(b"x" * 1000)
     remote.upload(storage, "nested/x", tmp_path / "file")
-    remote.update_pages(Project.find(), storage, ["nested/"])
+    remote_pages.update_pages(Project.find(), storage, ["nested/"])
     assert "<img" not in page("nested/")
     before, sep, after = (root / "xcraft.toml").read_text().partition("\n[")
     (root / "xcraft.toml").write_text(f'{before}logo = "https://xcp-ng.org/assets/img/mainlogo.png"\n{sep}{after}')
-    remote.update_pages(Project.find(), Project.find().config.remote["main"], ["nested/"])
+    remote_pages.update_pages(Project.find(), Project.find().config.remote["main"], ["nested/"])
     assert '<img src="https://xcp-ng.org/assets/img/mainlogo.png" alt="">' in page("nested/")
 
 
