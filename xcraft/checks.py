@@ -130,6 +130,24 @@ the builds recorded before are recorded again. 2: the binary packages named with
 packages of ours they need, by their names in the specs."""
 
 
+def _enumerate(names: list[str]) -> str:
+    """Return `names` in a sentence, like ``a, b and c``."""
+    return " and ".join(filter(None, [", ".join(names[:-1]), names[-1]]))
+
+
+def _unbuilt_providers(project: Project, supplied: dict[str, str]) -> dict[str, str]:
+    """Return the packages of ours without a build of their current keys, not in `supplied`, by the names and the
+    capabilities of their binary packages: as their specs declare them, and as their builds recorded them.
+    """
+    return {
+        capability: name
+        for name, package in project.packages.items()
+        if name not in supplied
+        for binary in package.binaries
+        for capability in (binary.name, *(p.split(" ", 1)[0] for p in binary.provides))
+    }
+
+
 def _record_new_rpm_deps(
     project: Project, builds: dict[str, Path], supplied: dict[str, str], context: str, *, quiet: bool
 ) -> None:
@@ -187,24 +205,6 @@ def _record_new_rpm_deps(
             f" {_enumerate(waited)}, which {'it needs' if len(waiting) == 1 else 'they need'},"
             f" {'is' if len(waited) == 1 else 'are'} built"
         )
-
-
-def _enumerate(names: list[str]) -> str:
-    """Return `names` in a sentence, like ``a, b and c``."""
-    return " and ".join(filter(None, [", ".join(names[:-1]), names[-1]]))
-
-
-def _unbuilt_providers(project: Project, supplied: dict[str, str]) -> dict[str, str]:
-    """Return the packages of ours without a build of their current keys, not in `supplied`, by the names and the
-    capabilities of their binary packages: as their specs declare them, and as their builds recorded them.
-    """
-    return {
-        capability: name
-        for name, package in project.packages.items()
-        if name not in supplied
-        for binary in package.binaries
-        for capability in (binary.name, *(p.split(" ", 1)[0] for p in binary.provides))
-    }
 
 
 def _unsuffixed(project: Project, name: str, value: str, suffix: str) -> str:

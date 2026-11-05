@@ -78,28 +78,8 @@ def rpm_target(arch: str) -> str:
     return f"{arch.removesuffix('_v2')}-linux"
 
 
-def load_packages(project: Project) -> dict[str, Package]:
-    """Return the metadata of all the packages of `project`, by name, for its architecture: a binary package of
-    several of them is an error, which would make two packages of a name, and their records ambiguous.
-    """
-    packages = parse(project, list(project.package_dirs.values()))
-    owners: dict[str, list[str]] = {}
-    for name, package in packages.items():
-        for b in package.binaries:
-            owners.setdefault(b.name, []).append(name)
-    if shared := sorted(f"{b} ({', '.join(names)})" for b, names in owners.items() if len(names) > 1):
-        msg = f"binary packages of several packages for {project.arch}: {'; '.join(shared)}"
-        raise RuntimeError(msg)
-    return packages
-
-
 _read: set[Path] = set()
 """The cached metadata of the specs read by this process, by file."""
-
-
-def specs_read() -> set[Path]:
-    """Return the files of the cached metadata of the specs this process read: those of the specs as they are."""
-    return set(_read)
 
 
 def parse(project: Project, dirs: list[Path]) -> dict[str, Package]:
@@ -127,3 +107,23 @@ def parse(project: Project, dirs: list[Path]) -> dict[str, Package]:
     for name, package in packages.items():
         package.name = name
     return packages
+
+
+def load_packages(project: Project) -> dict[str, Package]:
+    """Return the metadata of all the packages of `project`, by name, for its architecture: a binary package of
+    several of them is an error, which would make two packages of a name, and their records ambiguous.
+    """
+    packages = parse(project, list(project.package_dirs.values()))
+    owners: dict[str, list[str]] = {}
+    for name, package in packages.items():
+        for b in package.binaries:
+            owners.setdefault(b.name, []).append(name)
+    if shared := sorted(f"{b} ({', '.join(names)})" for b, names in owners.items() if len(names) > 1):
+        msg = f"binary packages of several packages for {project.arch}: {'; '.join(shared)}"
+        raise RuntimeError(msg)
+    return packages
+
+
+def specs_read() -> set[Path]:
+    """Return the files of the cached metadata of the specs this process read: those of the specs as they are."""
+    return set(_read)

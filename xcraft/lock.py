@@ -52,6 +52,7 @@ their SHA-256; 3, those of the published repositories and of the tools making th
 record, in the lock of the builds, see xcraft.builds. A lock of another format is upgraded by xcraft lock --upgrade
 only."""
 
+
 _UNPINNED = {1: ("image", "roots", "runtime", "iso"), 2: ("runtime", "iso"), 3: ()}
 """What a lock of an older format has without pins, by format, which xcraft lock --upgrade drops."""
 
@@ -200,6 +201,31 @@ _parsed: dict[Path, tuple[str, Lock]] = {}
 """The last lock parsed of each file, with its content: the commands read it many times, and parsing it is slow."""
 
 
+def _recorded(entries: dict) -> dict:
+    """Return the data of a table of the lock by package, for all the architectures or for some."""
+    return {
+        "shared": {name: values for name, values in entries.items() if isinstance(values, list)},
+        "arches": {arch: values for arch, values in entries.items() if isinstance(values, dict)},
+    }
+
+
+def _validate(data: dict) -> Lock:
+    """Return the lock of the `data` of a lock file."""
+    data["binaries"] = {
+        arch: {n: Pin.parse(t) for n, t in pins.items()} for arch, pins in data.get("binaries", {}).items()
+    }
+    return Lock.model_validate(data | {"roots": _recorded(data.get("roots", {}))})
+
+
+def parse_lock(text: str) -> Lock:
+    """Return the lock of the content of a lock file, of the format of this xcraft."""
+    data = tomllib.loads(text)
+    if text and data.get("version") != FORMAT:
+        msg = f"the lock has the format {data.get('version', 1)}, not {FORMAT}: xcraft lock --upgrade upgrades it"
+        raise LockFormatError(msg)
+    return _validate(data)
+
+
 def cached_lock(project: Project) -> Lock:
     """Return the lock of the project, empty when there is none yet, shared by the callers: not to change, see
     load_lock().
@@ -217,21 +243,8 @@ def load_lock(project: Project) -> Lock:
     return cached_lock(project).model_copy(deep=True)
 
 
-def parse_lock(text: str) -> Lock:
-    """Return the lock of the content of a lock file, of the format of this xcraft."""
-    data = tomllib.loads(text)
-    if text and data.get("version") != FORMAT:
-        msg = f"the lock has the format {data.get('version', 1)}, not {FORMAT}: xcraft lock --upgrade upgrades it"
-        raise LockFormatError(msg)
-    return _validate(data)
-
-
-def _validate(data: dict) -> Lock:
-    """Return the lock of the `data` of a lock file."""
-    data["binaries"] = {
-        arch: {n: Pin.parse(t) for n, t in pins.items()} for arch, pins in data.get("binaries", {}).items()
-    }
-    return Lock.model_validate(data | {"roots": _recorded(data.get("roots", {}))})
+_RECORDS = ("requires", "provides", "buildrequires")
+"""The tables of what the builds recorded, in a lock of format 3 or older."""
 
 
 def upgrade_lock(project: Project) -> tuple[Lock, dict[str, Recorded]]:
@@ -246,18 +259,6 @@ def upgrade_lock(project: Project) -> tuple[Lock, dict[str, Recorded]]:
         raise LockFormatError(msg)
     records = {field: Recorded.model_validate(_recorded(data.pop(field, {}))) for field in _RECORDS}
     return _validate({k: v for k, v in data.items() if k not in (*_UNPINNED[version], "version")}), records
-
-
-_RECORDS = ("requires", "provides", "buildrequires")
-"""The tables of what the builds recorded, in a lock of format 3 or older."""
-
-
-def _recorded(entries: dict) -> dict:
-    """Return the data of a table of the lock by package, for all the architectures or for some."""
-    return {
-        "shared": {name: values for name, values in entries.items() if isinstance(values, list)},
-        "arches": {arch: values for arch, values in entries.items() if isinstance(values, dict)},
-    }
 
 
 def _array(items: list[str]) -> str:

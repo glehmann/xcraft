@@ -24,6 +24,15 @@ if TYPE_CHECKING:
     from xcraft.packages import Package
 
 
+def _sync(directory: Path) -> None:
+    """Write the entries of `directory` to its disk."""
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def write_atomically(path: Path, text: str) -> None:
     """Write `text` to `path`, in full or not at all, even on a power loss."""
     tmp = path.with_name(f".{path.name}.{os.getpid()}")
@@ -39,15 +48,6 @@ def remove_durably(path: Path) -> None:
     """Remove the file `path`, even on a power loss, once returned."""
     path.unlink()
     _sync(path.parent)
-
-
-def _sync(directory: Path) -> None:
-    """Write the entries of `directory` to its disk."""
-    fd = os.open(directory, os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
 
 
 class ProjectLockedError(RuntimeError):
@@ -76,13 +76,19 @@ class Repo(BaseModel):
 
 
 Platform = Literal["linux/amd64/v2", "linux/amd64", "linux/arm64"]
+
+
 ARCHES: dict[Platform, str] = {"linux/amd64/v2": "x86_64_v2", "linux/amd64": "x86_64", "linux/arm64": "aarch64"}
 """The RPM architecture of each platform."""
+
+
 _HOST: dict[str, Platform] = {"x86_64": "linux/amd64", "aarch64": "linux/arm64"}
 """The platform of each machine, for a host running none of the project's."""
 
 
 Destination = Literal["main", "dev"]
+
+
 INTERNAL = ".xcraft"
 """The directory of the remote storage with what xcraft keeps for itself: the source archives, the builds, the
 signed builds, the compiler caches, the keys and the ISOs, apart from the published repositories and ISOs."""

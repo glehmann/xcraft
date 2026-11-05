@@ -34,18 +34,6 @@ class Launch(BaseModel):
     qemu_args: list[str]
 
 
-class Session(BaseModel):
-    """The launch details retained after the launching CLI exits."""
-
-    pid: int
-    arch: str
-    disk: Path
-    iso: Path | None
-    ssh_port: int
-    command: list[str]
-    launch: Launch | None = None  # None: launched by an xcraft without xcraft vm start
-
-
 class Reply(BaseModel):
     """A QMP response; asynchronous events have neither result nor error."""
 
@@ -122,6 +110,68 @@ def running(directory: Path) -> bool:
     except (OSError, RuntimeError):
         return False
     return True
+
+
+def _failure(directory: Path) -> str:
+    """Return why QEMU failed, from the end of its log."""
+    lines = (directory / "qemu.log").read_text(errors="replace").strip().splitlines()
+    return f": {lines[-1]}" if lines else f": see {directory / 'qemu.log'}"
+
+
+def launch(directory: Path, session: Session) -> subprocess.Popen[bytes]:
+    """Launch QEMU, preserving previous transcripts and waiting for its monitor."""
+    (directory / "qmp.sock").unlink(missing_ok=True)
+    fifo = directory / "serial.in"
+    fifo.unlink(missing_ok=True)
+    os.mkfifo(fifo, 0o600)
+    for name in ("serial.log", "qemu.log"):
+        path = directory / name
+        if path.exists():
+            path.rename(path.with_name(f"{name}.{time.time_ns()}"))
+    # QEMU retains both ends on stdin, so disconnecting a writer never sends EOF.
+    fd = os.open(fifo, os.O_RDWR)
+    try:
+        with (directory / "qemu.log").open("wb") as errors, (directory / "serial.log").open("wb") as output:
+            proc = subprocess.Popen(
+                session.command,
+                cwd=directory,
+                stdin=fd,
+                stdout=output,
+                stderr=errors,
+                start_new_session=True,
+            )
+    finally:
+        os.close(fd)
+    session.pid = proc.pid
+    write_atomically(directory / "session.json", session.model_dump_json(indent=2) + "\n")
+    try:
+        for _ in range(200):
+            if proc.poll() is not None:
+                if proc.returncode == 0:
+                    return proc
+                msg = f"QEMU exited with {proc.returncode}{_failure(directory)}"
+                raise RuntimeError(msg)  # noqa: TRY301
+            if running(directory):
+                return proc
+            time.sleep(0.05)
+        msg = f"QEMU did not open its monitor: see {directory / 'qemu.log'}"
+        raise RuntimeError(msg)  # noqa: TRY301
+    except BaseException:
+        proc.terminate()
+        proc.wait(timeout=10)
+        raise
+
+
+class Session(BaseModel):
+    """The launch details retained after the launching CLI exits."""
+
+    pid: int
+    arch: str
+    disk: Path
+    iso: Path | None
+    ssh_port: int
+    command: list[str]
+    launch: Launch | None = None  # None: launched by an xcraft without xcraft vm start
 
 
 def firmware(code: Path | None, template: Path | None) -> tuple[Path, Path]:
@@ -215,56 +265,6 @@ def free_port(start: int = 2222) -> int:
         return port
     msg = f"no free port from {start} to {start + 99} on localhost: give one with --ssh-port"
     raise RuntimeError(msg)
-
-
-def _failure(directory: Path) -> str:
-    """Return why QEMU failed, from the end of its log."""
-    lines = (directory / "qemu.log").read_text(errors="replace").strip().splitlines()
-    return f": {lines[-1]}" if lines else f": see {directory / 'qemu.log'}"
-
-
-def launch(directory: Path, session: Session) -> subprocess.Popen[bytes]:
-    """Launch QEMU, preserving previous transcripts and waiting for its monitor."""
-    (directory / "qmp.sock").unlink(missing_ok=True)
-    fifo = directory / "serial.in"
-    fifo.unlink(missing_ok=True)
-    os.mkfifo(fifo, 0o600)
-    for name in ("serial.log", "qemu.log"):
-        path = directory / name
-        if path.exists():
-            path.rename(path.with_name(f"{name}.{time.time_ns()}"))
-    # QEMU retains both ends on stdin, so disconnecting a writer never sends EOF.
-    fd = os.open(fifo, os.O_RDWR)
-    try:
-        with (directory / "qemu.log").open("wb") as errors, (directory / "serial.log").open("wb") as output:
-            proc = subprocess.Popen(
-                session.command,
-                cwd=directory,
-                stdin=fd,
-                stdout=output,
-                stderr=errors,
-                start_new_session=True,
-            )
-    finally:
-        os.close(fd)
-    session.pid = proc.pid
-    write_atomically(directory / "session.json", session.model_dump_json(indent=2) + "\n")
-    try:
-        for _ in range(200):
-            if proc.poll() is not None:
-                if proc.returncode == 0:
-                    return proc
-                msg = f"QEMU exited with {proc.returncode}{_failure(directory)}"
-                raise RuntimeError(msg)  # noqa: TRY301
-            if running(directory):
-                return proc
-            time.sleep(0.05)
-        msg = f"QEMU did not open its monitor: see {directory / 'qemu.log'}"
-        raise RuntimeError(msg)  # noqa: TRY301
-    except BaseException:
-        proc.terminate()
-        proc.wait(timeout=10)
-        raise
 
 
 def wait(proc: subprocess.Popen[bytes], directory: Path) -> None:

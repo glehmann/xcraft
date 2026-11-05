@@ -229,176 +229,11 @@ def lock_sources(project: Project, sources: list[str]) -> None:
     project.refresh()
 
 
-def _locking(project: Project, resolve: Callable[[Project], Resolved]) -> None:
-    """Lock the upstream source packages what `resolve` resolves for `project` needs."""
-    for _ in range(3):
-        if not (resolved := resolve(project)).unlocked:
-            return
-        lock_sources(project, resolved.unlocked)
-    msg = f"upstream source packages needed, but locked in a version {project.arch} does not have: "
-    raise ResolutionError(msg + ", ".join(resolved.unlocked))
-
-
 def _locked(resolved: Resolved) -> Resolved:
     if resolved.unlocked:
         msg = f"upstream source packages not locked yet: {', '.join(resolved.unlocked)}"
         raise ResolutionError(msg)
     return resolved
-
-
-def prepare(project: Project, *, roots: bool = True, repin: set[str] | None = None) -> None:
-    """Lock the upstream source packages needed by the build environment image, the one of the host too, for the
-    specs, and the build roots, unless not `roots`: what the commands resolving do first, and the builds once they
-    recorded what they found.
-
-    With the build roots, those of all the architectures are recorded in the lock, with their images, and what is
-    published and the tools making the ISO: the build keys cover them, on any architecture, and publishing gets them
-    pinned. Their resolutions are cached, so only a change resolves them again. The binary
-    packages of the source packages `repin` are pinned again, from the repositories as they are now, see _pins().
-    """
-    if repin:
-        _forget(project)
-    native, repinned = project.on_host(), frozenset(repin or ())
-    images = [native] if native == project else [native, project]
-    for platform in images:
-        _locking(platform, _image)
-    # pinned, for the images to be built: the one of the host parses the specs, which the build roots need
-    _saved(project, lambda recorded, lock: _record_images(images, recorded, lock, repinned))
-    if roots:
-        for platform in project.all_platforms():
-            _locking(platform, _image)
-            _locking(platform, _roots)
-        _record(project, repinned)
-    project.refresh()  # for the build roots recorded
-
-
-def _forget(project: Project) -> None:
-    """Forget what was resolved, and the metadata of the repositories, to resolve from the repositories as they are,
-    rather than from the resolutions of the remote storage, until the end of the command.
-    """
-    _resolved.clear()
-    _unreachable.add(project.root)
-    shutil.rmtree(project.state / "cache/resolved", ignore_errors=True)
-    for platform in project.all_platforms():
-        run_natively(
-            platform, "expire", ["dnf", "-q", "clean", "expire-cache"], volumes=[], show="forgetting the metadata"
-        )
-
-
-def _pins(
-    arch: str, recorded: Lock, resolutions: list[Resolved], names: set[str], repin: frozenset[str]
-) -> dict[str, Pin]:
-    """Return the pinned binary packages `names` of `arch`, of the `resolutions`: those of the `recorded` lock, whatever
-    the repositories have now, but those of the source packages `repin`, which xcraft lock --update pins again, and
-    the new ones. Raise when a pinned package is resolved in another version or architecture: only an update pins it
-    again.
-    """
-    resolved: dict[str, Pin] = {}
-    for resolution in resolutions:
-        for name, p in resolution.packages.items():
-            pin = Pin(evr=p.evr, arch=p.arch, sha256=p.sha256, source=p.source)
-            if resolved.setdefault(name, pin) != pin:
-                msg = f"{name} resolved for {arch} as {resolved[name].text()}, and as {pin.text()}"
-                raise ResolutionError(msg)
-    pins = {}
-    for name in sorted(names):
-        old, new = recorded.binaries.get(arch, {}).get(name), resolved.get(name)
-        if old and old.source not in repin:
-            if new and (old.evr, old.arch, old.source) != (new.evr, new.arch, new.source):
-                msg = (
-                    f"{name} is pinned for {arch} as {old.text()}, but resolved as {new.text()}: xcraft lock --update "
-                    f"{old.source} pins it again"
-                )
-                raise ResolutionError(msg)
-            pins[name] = old
-        elif new:
-            pins[name] = new
-        else:
-            msg = f"{name} is neither pinned nor resolved for {arch}"
-            raise ResolutionError(msg)
-    return pins
-
-
-def _saved(project: Project, record: Callable[[Lock, Lock], None]) -> None:
-    """Change the lock as `record` does, from the lock as read, and to a copy of it, which is saved only when it did
-    not change meanwhile, by another command: changed again from the new one otherwise.
-    """
-    for _ in range(3):
-        recorded = load_lock(project)
-        lock = recorded.model_copy(deep=True)
-        record(recorded, lock)
-        if lock == recorded:
-            return
-        with project.lock():
-            if load_lock(project) == recorded:
-                save_lock(project, lock)
-                return
-    msg = "the lock keeps changing, by other commands"
-    raise ResolutionError(msg)
-
-
-def _record_images(platforms: list[Project], recorded: Lock, lock: Lock, repin: frozenset[str]) -> None:
-    """Record in the `lock` the upstream binary packages of the images of the `platforms`, pinned, see _pins(), with
-    those the `recorded` lock pins for the build roots.
-    """
-    for platform in platforms:
-        image = _locked(_image(platform))
-        if error := image.errors.get("image"):
-            msg = f"the build environment image cannot be resolved for {platform.arch}: {error}"
-            raise ResolutionError(msg)
-        lock.image[platform.arch] = sorted(image.image)
-        pinned = _pins(platform.arch, recorded, [image], set(image.image), repin)
-        lock.binaries[platform.arch] = {**recorded.binaries.get(platform.arch, {}), **pinned}
-
-
-def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
-    """Record in the lock the upstream binary packages of the images, of the build roots, of the published
-    repositories and of the tools making the ISO, of all the architectures, pinned, see _pins(), with the versions of
-    their source packages only, and keep in the lock of the builds what the builds found for the packages of the
-    project only.
-    """
-    platforms = project.all_platforms()
-    drop_gone(project)
-
-    def record(recorded: Lock, lock: Lock) -> None:
-        lock.image, lock.binaries, lock.runtime, lock.iso = {}, {}, {}, {}
-        lock.roots.keep({*project.package_dirs})
-        lock.roots.arches = {}
-        for platform in platforms:
-            image, roots = _locked(_image(platform)), _locked(_roots(platform))
-            if error := image.errors.get("image"):
-                msg = f"the build environment image cannot be resolved for {platform.arch}: {error}"
-                raise ResolutionError(msg)
-            lock.image[platform.arch] = sorted(image.image)
-            for name in sorted(project.package_dirs):
-                # what the lock has for those that cannot be resolved, until they can
-                values = (
-                    recorded.roots.of(platform.arch).get(name, [])
-                    if name in roots.errors
-                    else sorted(set(roots.buildroots.get(name, [])) - {*image.image})
-                )
-                lock.roots.record(platform.arch, project.first, name, values)
-            _record_published(recorded, lock, platform.arch, roots)
-            names = {
-                *image.image, *(n for values in lock.roots.of(platform.arch).values() for n in values),
-                *lock.runtime.get(platform.arch, []), *lock.iso.get(platform.arch, []),
-            }  # fmt: skip
-            lock.binaries[platform.arch] = _pins(platform.arch, recorded, [image, roots], names, repin)
-        # those of no pin left, like those of a package published no more, in their latest version when needed again
-        used = {pin.source for pins in lock.binaries.values() for pin in pins.values()}
-        lock.sources = {source: version for source, version in lock.sources.items() if source in used}
-
-    _saved(project, record)
-
-
-def _record_published(recorded: Lock, lock: Lock, arch: str, roots: Resolved) -> None:
-    """Record in the `lock` the upstream binary packages of the published repositories and of the tools making the ISO
-    of `arch`, as resolved with the build `roots`, or as `recorded` until they can all be resolved.
-    """
-    failed = roots.runtime_errors or roots.tools_error
-    for field, values in (("runtime", roots.runtime), ("iso", roots.tools)):
-        if values := getattr(recorded, field).get(arch, []) if failed else values:
-            getattr(lock, field)[arch] = values
 
 
 def _image(project: Project) -> Resolved:
@@ -457,6 +292,171 @@ def resolve(project: Project) -> Resolved:
     return _locked(_roots(project))
 
 
+def _locking(project: Project, resolve: Callable[[Project], Resolved]) -> None:
+    """Lock the upstream source packages what `resolve` resolves for `project` needs."""
+    for _ in range(3):
+        if not (resolved := resolve(project)).unlocked:
+            return
+        lock_sources(project, resolved.unlocked)
+    msg = f"upstream source packages needed, but locked in a version {project.arch} does not have: "
+    raise ResolutionError(msg + ", ".join(resolved.unlocked))
+
+
+def _forget(project: Project) -> None:
+    """Forget what was resolved, and the metadata of the repositories, to resolve from the repositories as they are,
+    rather than from the resolutions of the remote storage, until the end of the command.
+    """
+    _resolved.clear()
+    _unreachable.add(project.root)
+    shutil.rmtree(project.state / "cache/resolved", ignore_errors=True)
+    for platform in project.all_platforms():
+        run_natively(
+            platform, "expire", ["dnf", "-q", "clean", "expire-cache"], volumes=[], show="forgetting the metadata"
+        )
+
+
+def _saved(project: Project, record: Callable[[Lock, Lock], None]) -> None:
+    """Change the lock as `record` does, from the lock as read, and to a copy of it, which is saved only when it did
+    not change meanwhile, by another command: changed again from the new one otherwise.
+    """
+    for _ in range(3):
+        recorded = load_lock(project)
+        lock = recorded.model_copy(deep=True)
+        record(recorded, lock)
+        if lock == recorded:
+            return
+        with project.lock():
+            if load_lock(project) == recorded:
+                save_lock(project, lock)
+                return
+    msg = "the lock keeps changing, by other commands"
+    raise ResolutionError(msg)
+
+
+def _pins(
+    arch: str, recorded: Lock, resolutions: list[Resolved], names: set[str], repin: frozenset[str]
+) -> dict[str, Pin]:
+    """Return the pinned binary packages `names` of `arch`, of the `resolutions`: those of the `recorded` lock, whatever
+    the repositories have now, but those of the source packages `repin`, which xcraft lock --update pins again, and
+    the new ones. Raise when a pinned package is resolved in another version or architecture: only an update pins it
+    again.
+    """
+    resolved: dict[str, Pin] = {}
+    for resolution in resolutions:
+        for name, p in resolution.packages.items():
+            pin = Pin(evr=p.evr, arch=p.arch, sha256=p.sha256, source=p.source)
+            if resolved.setdefault(name, pin) != pin:
+                msg = f"{name} resolved for {arch} as {resolved[name].text()}, and as {pin.text()}"
+                raise ResolutionError(msg)
+    pins = {}
+    for name in sorted(names):
+        old, new = recorded.binaries.get(arch, {}).get(name), resolved.get(name)
+        if old and old.source not in repin:
+            if new and (old.evr, old.arch, old.source) != (new.evr, new.arch, new.source):
+                msg = (
+                    f"{name} is pinned for {arch} as {old.text()}, but resolved as {new.text()}: xcraft lock --update "
+                    f"{old.source} pins it again"
+                )
+                raise ResolutionError(msg)
+            pins[name] = old
+        elif new:
+            pins[name] = new
+        else:
+            msg = f"{name} is neither pinned nor resolved for {arch}"
+            raise ResolutionError(msg)
+    return pins
+
+
+def _record_images(platforms: list[Project], recorded: Lock, lock: Lock, repin: frozenset[str]) -> None:
+    """Record in the `lock` the upstream binary packages of the images of the `platforms`, pinned, see _pins(), with
+    those the `recorded` lock pins for the build roots.
+    """
+    for platform in platforms:
+        image = _locked(_image(platform))
+        if error := image.errors.get("image"):
+            msg = f"the build environment image cannot be resolved for {platform.arch}: {error}"
+            raise ResolutionError(msg)
+        lock.image[platform.arch] = sorted(image.image)
+        pinned = _pins(platform.arch, recorded, [image], set(image.image), repin)
+        lock.binaries[platform.arch] = {**recorded.binaries.get(platform.arch, {}), **pinned}
+
+
+def _record_published(recorded: Lock, lock: Lock, arch: str, roots: Resolved) -> None:
+    """Record in the `lock` the upstream binary packages of the published repositories and of the tools making the ISO
+    of `arch`, as resolved with the build `roots`, or as `recorded` until they can all be resolved.
+    """
+    failed = roots.runtime_errors or roots.tools_error
+    for field, values in (("runtime", roots.runtime), ("iso", roots.tools)):
+        if values := getattr(recorded, field).get(arch, []) if failed else values:
+            getattr(lock, field)[arch] = values
+
+
+def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
+    """Record in the lock the upstream binary packages of the images, of the build roots, of the published
+    repositories and of the tools making the ISO, of all the architectures, pinned, see _pins(), with the versions of
+    their source packages only, and keep in the lock of the builds what the builds found for the packages of the
+    project only.
+    """
+    platforms = project.all_platforms()
+    drop_gone(project)
+
+    def record(recorded: Lock, lock: Lock) -> None:
+        lock.image, lock.binaries, lock.runtime, lock.iso = {}, {}, {}, {}
+        lock.roots.keep({*project.package_dirs})
+        lock.roots.arches = {}
+        for platform in platforms:
+            image, roots = _locked(_image(platform)), _locked(_roots(platform))
+            if error := image.errors.get("image"):
+                msg = f"the build environment image cannot be resolved for {platform.arch}: {error}"
+                raise ResolutionError(msg)
+            lock.image[platform.arch] = sorted(image.image)
+            for name in sorted(project.package_dirs):
+                # what the lock has for those that cannot be resolved, until they can
+                values = (
+                    recorded.roots.of(platform.arch).get(name, [])
+                    if name in roots.errors
+                    else sorted(set(roots.buildroots.get(name, [])) - {*image.image})
+                )
+                lock.roots.record(platform.arch, project.first, name, values)
+            _record_published(recorded, lock, platform.arch, roots)
+            names = {
+                *image.image, *(n for values in lock.roots.of(platform.arch).values() for n in values),
+                *lock.runtime.get(platform.arch, []), *lock.iso.get(platform.arch, []),
+            }  # fmt: skip
+            lock.binaries[platform.arch] = _pins(platform.arch, recorded, [image, roots], names, repin)
+        # those of no pin left, like those of a package published no more, in their latest version when needed again
+        used = {pin.source for pins in lock.binaries.values() for pin in pins.values()}
+        lock.sources = {source: version for source, version in lock.sources.items() if source in used}
+
+    _saved(project, record)
+
+
+def prepare(project: Project, *, roots: bool = True, repin: set[str] | None = None) -> None:
+    """Lock the upstream source packages needed by the build environment image, the one of the host too, for the
+    specs, and the build roots, unless not `roots`: what the commands resolving do first, and the builds once they
+    recorded what they found.
+
+    With the build roots, those of all the architectures are recorded in the lock, with their images, and what is
+    published and the tools making the ISO: the build keys cover them, on any architecture, and publishing gets them
+    pinned. Their resolutions are cached, so only a change resolves them again. The binary
+    packages of the source packages `repin` are pinned again, from the repositories as they are now, see _pins().
+    """
+    if repin:
+        _forget(project)
+    native, repinned = project.on_host(), frozenset(repin or ())
+    images = [native] if native == project else [native, project]
+    for platform in images:
+        _locking(platform, _image)
+    # pinned, for the images to be built: the one of the host parses the specs, which the build roots need
+    _saved(project, lambda recorded, lock: _record_images(images, recorded, lock, repinned))
+    if roots:
+        for platform in project.all_platforms():
+            _locking(platform, _image)
+            _locking(platform, _roots)
+        _record(project, repinned)
+    project.refresh()  # for the build roots recorded
+
+
 def published(project: Project) -> list[str]:
     """Return the upstream packages of the published repositories of the platform, which prepare() pinned in the lock.
 
@@ -468,6 +468,13 @@ def published(project: Project) -> list[str]:
         msg = f"cannot install, on {project.arch}: {', '.join(sorted(errors))}"
         raise ResolutionError(msg)
     return cached_lock(project).runtime.get(project.arch, [])
+
+
+def _wanted(project: Project) -> list[str]:
+    """Return the capabilities our specs require, which the resolution of what rpm generated records the providers
+    of.
+    """
+    return sorted({dep_name(r) for p in project.parsed.values() for r in p.requirements})
 
 
 def resolve_rpm_deps(project: Project, names: dict[str, str], rpms: list[Path]) -> Resolved:
@@ -486,13 +493,6 @@ def resolve_rpm_deps(project: Project, names: dict[str, str], rpms: list[Path]) 
         "wanted": _wanted(project),
     }
     return _run(project, data, show="recording what rpm generated for the packages built", rpms=rpms)
-
-
-def _wanted(project: Project) -> list[str]:
-    """Return the capabilities our specs require, which the resolution of what rpm generated records the providers
-    of.
-    """
-    return sorted({dep_name(r) for p in project.parsed.values() for r in p.requirements})
 
 
 def rpm_deps_context(project: Project, builds: dict[str, str]) -> str:

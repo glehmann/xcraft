@@ -30,50 +30,6 @@ class BuildIdError(RuntimeError):
     """Raised when the build IDs would change, which --locked forbids, or give a number to two different builds."""
 
 
-def compute(
-    project: Project,
-    fork: dict[str, BuildId] | None,
-    hashes: dict[str, str] | None = None,
-    reuse: Callable[[str, dict[str, BuildId]], bool] | None = None,
-    shown: dict[str, dict[str, list]] | None = None,
-    inputs: buildkey.Inputs | None = None,
-) -> dict[str, BuildId]:
-    """Return the build ID of each package, from those of the main branch where the current one forks from it, `fork`,
-    see base(), from the `inputs` of the keys, read with the `hashes` of the package directories unless given (see
-    xcraft.buildkey.Inputs).
-
-    The build keys are those of xcraft.buildkey, see docs/build-keys.md: their inputs are put in `shown`, by package,
-    if given.
-
-    A package with the key of the fork keeps its build ID, and so does one reusing a build for the key, there or in the
-    working tree, while it is the fork's. Otherwise, a package `reuse` takes, with the build IDs of those before it,
-    reuses the build of the fork, accepting the key; and the others get the next number of the fork's. The numbers the
-    main branch gave since the fork do not count: giving one again conflicts on merge, in the lines of the package.
-    Without the main branch, the numbers are those of the working tree, 1 for new packages: there is nothing to number
-    them against.
-    """
-    inputs, current = inputs or buildkey.Inputs(project, hashes), read(project)
-    ids: dict[str, BuildId] = {}
-    for component in components(inputs.deps):  # the dependencies first
-        of = inputs.of(component, ids)
-        for name in sorted(component):
-            key = buildkey.key(of, name)
-            if shown is not None:
-                shown[name] = of
-            known = (current if fork is None else fork).get(name)
-            # still the fork's build
-            reused = [i for i in (current.get(name),) if i and i.accepts and (fork is None or i.same(fork.get(name)))]
-            if found := next((i for i in [*filter(None, [known]), *reused] if i.matches(key)), None):
-                ids[name] = found
-            elif known and reuse and reuse(name, ids):
-                ids[name] = known.model_copy(update={"accepts": key})
-            elif fork is None:
-                ids[name] = BuildId(number=known.number if known else 1, key=key)
-            else:
-                ids[name] = BuildId(number=known.number + 1 if known else 1, key=key)
-    return ids
-
-
 def read(project: Project) -> dict[str, BuildId]:
     """Return the build IDs of the working tree, but those of a merge conflict, which update() gives again."""
     return load_builds(project).ids
@@ -82,6 +38,10 @@ def read(project: Project) -> dict[str, BuildId]:
 def _git(project: Project, *args: str) -> str | None:
     result = process.run(["git", "-C", str(project.root), *args], check=False, capture=True)
     return result.stdout.strip() if result.returncode == 0 else None
+
+
+def _builds_at(project: Project, commit: str) -> Builds:
+    return parse_builds(_git(project, "show", f"{commit}:./{builds_path(project).name}") or "")
 
 
 _commits: dict[tuple[str, str], dict[str, BuildId]] = {}
@@ -94,16 +54,20 @@ def _at(project: Project, commit: str) -> dict[str, BuildId]:
     return _commits[str(project.root), commit]
 
 
-def _builds_at(project: Project, commit: str) -> Builds:
-    return parse_builds(_git(project, "show", f"{commit}:./{builds_path(project).name}") or "")
-
-
 def _main(project: Project) -> str | None:
     """Return the commit of the main branch: the remote's, as last fetched, or else the local one, if any."""
     branch = project.config.main_branch
     return next(
         filter(None, (_git(project, "rev-parse", "-q", "--verify", ref) for ref in (f"origin/{branch}", branch))), None
     )
+
+
+def _fork(project: Project) -> str | None:
+    """Return the commit of the main branch where the current branch forks from it, if any: with a merge in progress,
+    where the merge forks from it.
+    """
+    merging = _git(project, "rev-parse", "-q", "--verify", "MERGE_HEAD")
+    return (main := _main(project)) and _git(project, "merge-base", main, "HEAD", *filter(None, [merging]))
 
 
 def base(project: Project) -> dict[str, BuildId] | None:
@@ -122,34 +86,9 @@ def base(project: Project) -> dict[str, BuildId] | None:
     return _at(project, fork)
 
 
-def _fork(project: Project) -> str | None:
-    """Return the commit of the main branch where the current branch forks from it, if any: with a merge in progress,
-    where the merge forks from it.
-    """
-    merging = _git(project, "rev-parse", "-q", "--verify", "MERGE_HEAD")
-    return (main := _main(project)) and _git(project, "merge-base", main, "HEAD", *filter(None, [merging]))
-
-
-def proposed(fork: dict[str, BuildId] | None, ids: dict[str, BuildId]) -> set[str]:
-    """Return the packages whose build ID of `ids` is not the one of the main branch where the current one forks from
-    it, `fork`, see base(): those of development builds, none without the main branch. A reused build is the main
-    branch's.
-    """
-    if fork is None:
-        return set()
-    return {name for name, i in ids.items() if not i.same(fork.get(name))}
-
-
 def _on_main(project: Project) -> bool:
     """Return whether the current commit is on the main branch, whose build IDs are those of the final builds."""
     return bool(main := _main(project)) and _git(project, "merge-base", "--is-ancestor", "HEAD", main) is not None
-
-
-def final_only(project: Project) -> bool:
-    """Return whether the builds of the checkout are all final ones, without computing their IDs: out of a git
-    repository, without the main branch, or on it without changes.
-    """
-    return _fork(project) is None or (_on_main(project) and not _git(project, "status", "--porcelain"))
 
 
 def check_first_parent(project: Project, ids: dict[str, BuildId]) -> None:
@@ -241,3 +180,64 @@ def reuse(project: Project, names: list[str], sources: list[str]) -> list[str]:
         )  # fmt: skip
 
     return update(project, reusable)
+
+
+def compute(
+    project: Project,
+    fork: dict[str, BuildId] | None,
+    hashes: dict[str, str] | None = None,
+    reuse: Callable[[str, dict[str, BuildId]], bool] | None = None,
+    shown: dict[str, dict[str, list]] | None = None,
+    inputs: buildkey.Inputs | None = None,
+) -> dict[str, BuildId]:
+    """Return the build ID of each package, from those of the main branch where the current one forks from it, `fork`,
+    see base(), from the `inputs` of the keys, read with the `hashes` of the package directories unless given (see
+    xcraft.buildkey.Inputs).
+
+    The build keys are those of xcraft.buildkey, see docs/build-keys.md: their inputs are put in `shown`, by package,
+    if given.
+
+    A package with the key of the fork keeps its build ID, and so does one reusing a build for the key, there or in the
+    working tree, while it is the fork's. Otherwise, a package `reuse` takes, with the build IDs of those before it,
+    reuses the build of the fork, accepting the key; and the others get the next number of the fork's. The numbers the
+    main branch gave since the fork do not count: giving one again conflicts on merge, in the lines of the package.
+    Without the main branch, the numbers are those of the working tree, 1 for new packages: there is nothing to number
+    them against.
+    """
+    inputs, current = inputs or buildkey.Inputs(project, hashes), read(project)
+    ids: dict[str, BuildId] = {}
+    for component in components(inputs.deps):  # the dependencies first
+        of = inputs.of(component, ids)
+        for name in sorted(component):
+            key = buildkey.key(of, name)
+            if shown is not None:
+                shown[name] = of
+            known = (current if fork is None else fork).get(name)
+            # still the fork's build
+            reused = [i for i in (current.get(name),) if i and i.accepts and (fork is None or i.same(fork.get(name)))]
+            if found := next((i for i in [*filter(None, [known]), *reused] if i.matches(key)), None):
+                ids[name] = found
+            elif known and reuse and reuse(name, ids):
+                ids[name] = known.model_copy(update={"accepts": key})
+            elif fork is None:
+                ids[name] = BuildId(number=known.number if known else 1, key=key)
+            else:
+                ids[name] = BuildId(number=known.number + 1 if known else 1, key=key)
+    return ids
+
+
+def proposed(fork: dict[str, BuildId] | None, ids: dict[str, BuildId]) -> set[str]:
+    """Return the packages whose build ID of `ids` is not the one of the main branch where the current one forks from
+    it, `fork`, see base(): those of development builds, none without the main branch. A reused build is the main
+    branch's.
+    """
+    if fork is None:
+        return set()
+    return {name for name, i in ids.items() if not i.same(fork.get(name))}
+
+
+def final_only(project: Project) -> bool:
+    """Return whether the builds of the checkout are all final ones, without computing their IDs: out of a git
+    repository, without the main branch, or on it without changes.
+    """
+    return _fork(project) is None or (_on_main(project) and not _git(project, "status", "--porcelain"))

@@ -203,6 +203,30 @@ class _ExpectedBar(ProgressColumn):
 
 
 @contextlib.contextmanager
+def _still(what: str) -> Generator[Callable[[str], None]]:
+    """Print every minute that `what` is still running, with the elapsed time and the last line given to the returned
+    function.
+    """
+    started, last, done = time.monotonic(), "", threading.Event()
+
+    def update(line: str) -> None:
+        nonlocal last
+        last = Text.from_ansi(line).plain.strip()[:200]
+
+    def report() -> None:
+        while not done.wait(_STILL_INTERVAL):
+            console.print(f"  still {what} ({duration(time.monotonic() - started)}): {last}", markup=False)
+
+    thread = threading.Thread(target=report, daemon=True)
+    thread.start()
+    try:
+        yield update
+    finally:
+        done.set()
+        thread.join()
+
+
+@contextlib.contextmanager
 def activity(
     description: str, expected: float | None = None, *, log: bool = False, still: str | None = None
 ) -> Generator[Callable[[str], None]]:
@@ -248,30 +272,6 @@ def activity(
     ) as progress:
         task = progress.add_task(description, line="")
         yield lambda line: progress.update(task, line=Text.from_ansi(line).plain.strip()[:100])
-
-
-@contextlib.contextmanager
-def _still(what: str) -> Generator[Callable[[str], None]]:
-    """Print every minute that `what` is still running, with the elapsed time and the last line given to the returned
-    function.
-    """
-    started, last, done = time.monotonic(), "", threading.Event()
-
-    def update(line: str) -> None:
-        nonlocal last
-        last = Text.from_ansi(line).plain.strip()[:200]
-
-    def report() -> None:
-        while not done.wait(_STILL_INTERVAL):
-            console.print(f"  still {what} ({duration(time.monotonic() - started)}): {last}", markup=False)
-
-    thread = threading.Thread(target=report, daemon=True)
-    thread.start()
-    try:
-        yield update
-    finally:
-        done.set()
-        thread.join()
 
 
 def download_progress(on_line: Callable[[str], None], prefix: str = "") -> Callable[[int, int, int], None]:

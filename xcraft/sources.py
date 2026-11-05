@@ -53,11 +53,6 @@ def sha256_of(path: Path) -> str:
         return hashlib.file_digest(f, "sha256").hexdigest()
 
 
-def read_manifest(path: Path) -> dict[str, str]:
-    """Return the filename to SHA-256 mapping of a ``sources`` manifest."""
-    return parse_manifest(path.read_text())
-
-
 def parse_manifest(text: str) -> dict[str, str]:
     """Return the filename to SHA-256 mapping of the content of a ``sources`` manifest, and raise SourceError for
     the lines that are not a SHA-256 and a file name, or name a file twice.
@@ -71,6 +66,11 @@ def parse_manifest(text: str) -> dict[str, str]:
     except ValidationError as e:
         msg = f"invalid sources manifest: {e.errors()[0]['msg']}: {e.errors()[0].get('input')!r}"
         raise SourceError(msg) from None
+
+
+def read_manifest(path: Path) -> dict[str, str]:
+    """Return the filename to SHA-256 mapping of a ``sources`` manifest."""
+    return parse_manifest(path.read_text())
 
 
 def write_manifest(path: Path, entries: dict[str, str]) -> None:
@@ -139,6 +139,19 @@ def _fetch_source(project: Project, name: str, filename: str, digest: str) -> bo
     return False
 
 
+def has_cached_source(project: Project, filename: str, digest: str) -> bool:
+    """Return whether the source cache has the archive `filename`, and raise when it has other contents than
+    `digest`.
+    """
+    archive = project.source_cache / digest / filename
+    if not archive.exists():
+        return False
+    if sha256_of(archive) != digest:
+        msg = f"{filename} in the source cache does not match the sha256 of the manifest"
+        raise SourceError(msg)
+    return True
+
+
 def fetch_sources(project: Project, name: str, manifest: dict[str, str] | None = None) -> list[str]:
     """Put the archives of `name` in the source cache, downloaded when missing, and return those found nowhere: those
     of its `manifest`, the filename to SHA-256 mapping of its ``sources``, read from it unless given.
@@ -151,16 +164,3 @@ def fetch_sources(project: Project, name: str, manifest: dict[str, str] | None =
         for filename, digest in manifest.items()
         if not has_cached_source(project, filename, digest) and not _fetch_source(project, name, filename, digest)
     ]
-
-
-def has_cached_source(project: Project, filename: str, digest: str) -> bool:
-    """Return whether the source cache has the archive `filename`, and raise when it has other contents than
-    `digest`.
-    """
-    archive = project.source_cache / digest / filename
-    if not archive.exists():
-        return False
-    if sha256_of(archive) != digest:
-        msg = f"{filename} in the source cache does not match the sha256 of the manifest"
-        raise SourceError(msg)
-    return True

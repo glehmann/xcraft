@@ -22,6 +22,102 @@ from xcraft.sources import has_cached_source, read_manifest, source_path
 app = typer.Typer()
 
 
+def _push_sources(project: Project, storage: Remote, packages: list[str] | None, *, check: bool = False) -> list[str]:
+    """Upload cached sources to `storage`, or only check it, and return those missing from it and the source cache."""
+    archives = {
+        source_path(filename, digest): (filename, digest)
+        for name in packages or sorted(project.package_dirs)
+        if (manifest := project.package_dirs[name] / "sources").exists()
+        for filename, digest in sorted(read_manifest(manifest).items())
+    }
+    with activity("checking the remote storage"):
+        present = remote.existing(storage, list(archives))
+    missing = [archive for path, archive in sorted(archives.items()) if path not in present]
+    if check:
+        for filename, _ in missing:
+            console.print(f"[red]✗[/] {filename} is not in the remote storage")
+        console.print(f"{len(archives) - len(missing)} archives in the remote storage, {len(missing)} missing")
+        if missing:
+            raise typer.Exit(1)
+        return []
+    absent = [archive for archive in missing if not has_cached_source(project, *archive)]
+    missing = [archive for archive in missing if archive not in absent]
+    for filename, digest in missing:
+        with activity(f"uploading {filename}"):
+            remote.upload(storage, source_path(filename, digest), project.source_cache / digest / filename)
+        console.print(f"[green]↑[/] {filename}")
+    if missing:
+        with activity("making the pages of the directories"):
+            remote_pages.update_pages(project, storage, [f"{source_path(f, d).rsplit('/', 1)[0]}/" for f, d in missing])
+    console.print(f"{len(missing)} pushed, {len(archives) - len(missing) - len(absent)} already in the remote storage")
+    return [filename for filename, _ in absent]
+
+
+def _push_builds(
+    project: Project, storage: Remote, packages: list[str] | None, *, signer: Signer | None, final: bool
+) -> list[str]:
+    """Upload the current builds of `packages`, all by default, and return those not built: the final builds, but
+    of the packages with development builds, unless `final`.
+    """
+    keys, skipped = build_keys(project), set() if final else developed(project)
+    if shown := sorted(skipped & {*(packages or project.packages)}):
+        console.print(f"development builds, not pushed: {', '.join(shown)}")
+    names = [name for name in packages or sorted(project.packages) if name not in skipped]
+    paths = {name: build_path(project, name, keys[name]) for name in names}
+    # first: a build of xcraft build --fetch=needed may be in the storage only
+    with activity("checking the remote storage"), ThreadPoolExecutor(remote.REQUESTS) as pool:
+        found = pool.map(lambda path: remote.tree_exists(storage, path, trusted=signer), paths.values())
+        present = [name for name, exists in zip(paths, found, strict=True) if exists]
+    not_built = [n for n in paths if n not in present and not cached_build(project, n, keys[n]).exists()]
+    pushed = [name for name in paths if name not in present and name not in not_built]
+    for name in pushed:
+        with activity(f"uploading the build of {name}"):
+            remote.upload_tree(
+                storage,
+                paths[name],
+                cached_build(project, name, keys[name]),
+                BUILD_FILES,
+                signer=signer,
+            )
+        console.print(f"[green]↑[/] {name}")
+    if pushed:
+        with activity("making the pages of the directories"):
+            remote_pages.update_pages(project, storage, [f"{paths[name]}/" for name in pushed])
+    console.print(f"{len(pushed)} pushed, {len(present)} already in the remote storage")
+    return not_built
+
+
+def _push_resolutions(project: Project, storage: Remote, *, signer: Signer | None) -> None:
+    """Upload the resolutions this process read, those of the project as it is once loaded, which `storage` misses."""
+    caches = project.state / "cache/resolved"
+    trees = {remote_tree(cache): cache for cache in sorted(resolutions_read()) if cache.is_relative_to(caches)}
+    with activity("checking the remote storage"), ThreadPoolExecutor(remote.REQUESTS) as pool:
+        missing = [
+            t
+            for t, exists in zip(
+                trees, pool.map(lambda t: remote.tree_exists(storage, t, trusted=signer), trees), strict=True
+            )
+            if not exists
+        ]
+    for tree in missing:
+        with activity("uploading the resolutions"):
+            remote.upload_tree(storage, tree, trees[tree].parent, [trees[tree].name], signer=signer)
+    if missing:
+        with activity("making the pages of the directories"):
+            remote_pages.update_pages(project, storage, [f"{tree}/" for tree in missing])
+    console.print(f"resolutions: {len(missing)} pushed, {len(trees) - len(missing)} already in the remote storage")
+
+
+def _push_upstream(project: Project, storage: Remote) -> list[str]:
+    """Copy the pinned upstream packages the upstream copy of `storage` misses, and return the problems: without the
+    lock of the project, like during a build, as it only reads the lock, and writes its own files.
+    """
+    problems = upstream_copy.push(project, storage)
+    for problem in problems:
+        console.print(f"[red]✗[/] {escape(problem)}")
+    return [f"the upstream copy is incomplete: {len(problems)} problems, see above"] if problems else []
+
+
 @app.callback(invoke_without_command=True)
 def everything(ctx: typer.Context, final: Final = False, arch: Arch = None, key: Key = None, to: To = "dev") -> None:
     """Upload to the remote storage what it does not have yet.
@@ -68,37 +164,6 @@ def sources(
         raise RuntimeError(msg)
 
 
-def _push_sources(project: Project, storage: Remote, packages: list[str] | None, *, check: bool = False) -> list[str]:
-    """Upload cached sources to `storage`, or only check it, and return those missing from it and the source cache."""
-    archives = {
-        source_path(filename, digest): (filename, digest)
-        for name in packages or sorted(project.package_dirs)
-        if (manifest := project.package_dirs[name] / "sources").exists()
-        for filename, digest in sorted(read_manifest(manifest).items())
-    }
-    with activity("checking the remote storage"):
-        present = remote.existing(storage, list(archives))
-    missing = [archive for path, archive in sorted(archives.items()) if path not in present]
-    if check:
-        for filename, _ in missing:
-            console.print(f"[red]✗[/] {filename} is not in the remote storage")
-        console.print(f"{len(archives) - len(missing)} archives in the remote storage, {len(missing)} missing")
-        if missing:
-            raise typer.Exit(1)
-        return []
-    absent = [archive for archive in missing if not has_cached_source(project, *archive)]
-    missing = [archive for archive in missing if archive not in absent]
-    for filename, digest in missing:
-        with activity(f"uploading {filename}"):
-            remote.upload(storage, source_path(filename, digest), project.source_cache / digest / filename)
-        console.print(f"[green]↑[/] {filename}")
-    if missing:
-        with activity("making the pages of the directories"):
-            remote_pages.update_pages(project, storage, [f"{source_path(f, d).rsplit('/', 1)[0]}/" for f, d in missing])
-    console.print(f"{len(missing)} pushed, {len(archives) - len(missing) - len(absent)} already in the remote storage")
-    return [filename for filename, _ in absent]
-
-
 @app.command()
 def builds(packages: Packages = None, final: Final = False, arch: Arch = None, key: Key = None, to: To = "dev") -> None:
     """Upload the current builds of the given packages, all by default.
@@ -133,40 +198,6 @@ def isos(
         )
 
 
-def _push_builds(
-    project: Project, storage: Remote, packages: list[str] | None, *, signer: Signer | None, final: bool
-) -> list[str]:
-    """Upload the current builds of `packages`, all by default, and return those not built: the final builds, but
-    of the packages with development builds, unless `final`.
-    """
-    keys, skipped = build_keys(project), set() if final else developed(project)
-    if shown := sorted(skipped & {*(packages or project.packages)}):
-        console.print(f"development builds, not pushed: {', '.join(shown)}")
-    names = [name for name in packages or sorted(project.packages) if name not in skipped]
-    paths = {name: build_path(project, name, keys[name]) for name in names}
-    # first: a build of xcraft build --fetch=needed may be in the storage only
-    with activity("checking the remote storage"), ThreadPoolExecutor(remote.REQUESTS) as pool:
-        found = pool.map(lambda path: remote.tree_exists(storage, path, trusted=signer), paths.values())
-        present = [name for name, exists in zip(paths, found, strict=True) if exists]
-    not_built = [n for n in paths if n not in present and not cached_build(project, n, keys[n]).exists()]
-    pushed = [name for name in paths if name not in present and name not in not_built]
-    for name in pushed:
-        with activity(f"uploading the build of {name}"):
-            remote.upload_tree(
-                storage,
-                paths[name],
-                cached_build(project, name, keys[name]),
-                BUILD_FILES,
-                signer=signer,
-            )
-        console.print(f"[green]↑[/] {name}")
-    if pushed:
-        with activity("making the pages of the directories"):
-            remote_pages.update_pages(project, storage, [f"{paths[name]}/" for name in pushed])
-    console.print(f"{len(pushed)} pushed, {len(present)} already in the remote storage")
-    return not_built
-
-
 @app.command()
 def resolutions(arch: Arch = None, key: Key = None, to: To = "dev") -> None:
     """Upload the resolutions of the project as it is: the images and the build roots of all the architectures, which
@@ -174,27 +205,6 @@ def resolutions(arch: Arch = None, key: Key = None, to: To = "dev") -> None:
     """
     project = prepared_project(arch=arch)
     _push_resolutions(project, remote_storage(project, to), signer=key_signer(project, key))
-
-
-def _push_resolutions(project: Project, storage: Remote, *, signer: Signer | None) -> None:
-    """Upload the resolutions this process read, those of the project as it is once loaded, which `storage` misses."""
-    caches = project.state / "cache/resolved"
-    trees = {remote_tree(cache): cache for cache in sorted(resolutions_read()) if cache.is_relative_to(caches)}
-    with activity("checking the remote storage"), ThreadPoolExecutor(remote.REQUESTS) as pool:
-        missing = [
-            t
-            for t, exists in zip(
-                trees, pool.map(lambda t: remote.tree_exists(storage, t, trusted=signer), trees), strict=True
-            )
-            if not exists
-        ]
-    for tree in missing:
-        with activity("uploading the resolutions"):
-            remote.upload_tree(storage, tree, trees[tree].parent, [trees[tree].name], signer=signer)
-    if missing:
-        with activity("making the pages of the directories"):
-            remote_pages.update_pages(project, storage, [f"{tree}/" for tree in missing])
-    console.print(f"resolutions: {len(missing)} pushed, {len(trees) - len(missing)} already in the remote storage")
 
 
 @app.command("upstream")
@@ -208,16 +218,6 @@ def upstream_packages(arch: Arch = None, to: To = "dev") -> None:
     project = Project.find(arch)
     if problems := _push_upstream(project, remote_storage(project, to)):
         raise RuntimeError("; ".join(problems))
-
-
-def _push_upstream(project: Project, storage: Remote) -> list[str]:
-    """Copy the pinned upstream packages the upstream copy of `storage` misses, and return the problems: without the
-    lock of the project, like during a build, as it only reads the lock, and writes its own files.
-    """
-    problems = upstream_copy.push(project, storage)
-    for problem in problems:
-        console.print(f"[red]✗[/] {escape(problem)}")
-    return [f"the upstream copy is incomplete: {len(problems)} problems, see above"] if problems else []
 
 
 @app.command("ccache")

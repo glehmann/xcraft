@@ -60,36 +60,28 @@ _checked: set[Path] = set()
 """The repositories whose RPMs this process checked."""
 
 
-def repository(project: Project, names: Iterable[str] | None = None) -> Path:
-    """Return the repository of the pinned binary packages `names` of the architecture of `project`, all of them by
-    default, made if needed, with RPMs of the SHA-256 of their pins: those missing, or of other contents, in the store
-    are downloaded again, and the repository made again, one command at a time; another one using it then fails, as it
-    would with what was damaged. The RPMs are shared by the repositories, downloaded once.
-    """
-    pinned = pins(project)
-    if names is not None:
-        pinned = {name: pinned[name] for name in names}
-    ident = hashlib.sha256(json.dumps({n: p.text() for n, p in sorted(pinned.items())}).encode()).hexdigest()
-    store = _store()
-    repo = store / "repos" / ident
-    if repo in _checked:
-        return repo
-    with (store / ".lock").open("w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)  # of the projects of the machine, which share it
-        for _ in range(2):
-            if not (repo / "repodata/repomd.xml").exists():
-                _make_repository(project, pinned, store, ident)
-            if not (damaged := {n: p for n, p in pinned.items() if not _intact(repo / file_name(n, p), p)}):
-                _checked.add(repo)
-                return repo
-            for name, pin in damaged.items():  # in the store, which the repository has them hard-linked from
-                (store / "rpms" / pin.sha256 / file_name(name, pin)).unlink(missing_ok=True)
-            shutil.rmtree(repo)
-    msg = (
-        f"{', '.join(sorted(damaged))} of {project.arch} still not of the SHA-256 of their pins once downloaded again, "
-        f"in the store {store}: only xcraft writes there"
-    )
-    raise PinnedError(msg)
+def _intact(path: Path, pin: Pin) -> bool:
+    """Return whether the RPM `path` is there, with the SHA-256 of its `pin`."""
+    return path.exists() and sha256_of(path) == pin.sha256
+
+
+def file_name(name: str, pin: Pin) -> str:
+    """Return the file name of the RPM of the pinned package `name`, in the store and the repositories, as pin.py."""
+    return f"{name}-{pin.evr.split(':')[-1]}.{pin.arch}.rpm"
+
+
+@functools.cache
+def _volume(name: str) -> Path:
+    """Return the directory of the podman volume `name`, made if needed, once by process."""
+    if process.run(["podman", "volume", "exists", name], check=False).returncode:
+        process.run(["podman", "volume", "create", name], capture=True)
+    inspect = ["podman", "volume", "inspect", "--format", "{{.Mountpoint}}", name]
+    return Path(process.run(inspect, capture=True).stdout.strip())
+
+
+def _store() -> Path:
+    """Return the store, made if needed."""
+    return _volume(VOLUME)
 
 
 def _from_copies(project: Project, pinned: dict[str, Pin], directory: Path) -> bool:
@@ -137,40 +129,6 @@ def _from_copies(project: Project, pinned: dict[str, Pin], directory: Path) -> b
     return False
 
 
-def _intact(path: Path, pin: Pin) -> bool:
-    """Return whether the RPM `path` is there, with the SHA-256 of its `pin`."""
-    return path.exists() and sha256_of(path) == pin.sha256
-
-
-def file_name(name: str, pin: Pin) -> str:
-    """Return the file name of the RPM of the pinned package `name`, in the store and the repositories, as pin.py."""
-    return f"{name}-{pin.evr.split(':')[-1]}.{pin.arch}.rpm"
-
-
-def _store() -> Path:
-    """Return the store, made if needed."""
-    return _volume(VOLUME)
-
-
-@functools.cache
-def _volume(name: str) -> Path:
-    """Return the directory of the podman volume `name`, made if needed, once by process."""
-    if process.run(["podman", "volume", "exists", name], check=False).returncode:
-        process.run(["podman", "volume", "create", name], capture=True)
-    inspect = ["podman", "volume", "inspect", "--format", "{{.Mountpoint}}", name]
-    return Path(process.run(inspect, capture=True).stdout.strip())
-
-
-def stored(name: str, pin: Pin) -> Path | None:
-    """Return the RPM of the pinned package `name` in the store, if it has it, of the SHA-256 of its `pin`."""
-    return path if _intact(path := _store() / "rpms" / pin.sha256 / file_name(name, pin), pin) else None
-
-
-def download(project: Project, pinned: dict[str, Pin]) -> None:
-    """Download into the store the `pinned` packages it misses that the repositories still have, see pin.py."""
-    _run_pin(project, pinned)
-
-
 def _run_pin(project: Project, pinned: dict[str, Pin], *directory: str) -> None:
     """Run pin.py on the `pinned` packages, making their `directory` in the store, if given."""
     from xcraft.container import run_natively  # noqa: PLC0415, which builds the image of the pins
@@ -210,3 +168,45 @@ def _make_repository(project: Project, pinned: dict[str, Pin], store: Path, iden
         if not (store / "repos" / ident / "repodata/repomd.xml").exists():
             raise
         shutil.rmtree(store / part)  # made meanwhile, by another command
+
+
+def repository(project: Project, names: Iterable[str] | None = None) -> Path:
+    """Return the repository of the pinned binary packages `names` of the architecture of `project`, all of them by
+    default, made if needed, with RPMs of the SHA-256 of their pins: those missing, or of other contents, in the store
+    are downloaded again, and the repository made again, one command at a time; another one using it then fails, as it
+    would with what was damaged. The RPMs are shared by the repositories, downloaded once.
+    """
+    pinned = pins(project)
+    if names is not None:
+        pinned = {name: pinned[name] for name in names}
+    ident = hashlib.sha256(json.dumps({n: p.text() for n, p in sorted(pinned.items())}).encode()).hexdigest()
+    store = _store()
+    repo = store / "repos" / ident
+    if repo in _checked:
+        return repo
+    with (store / ".lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)  # of the projects of the machine, which share it
+        for _ in range(2):
+            if not (repo / "repodata/repomd.xml").exists():
+                _make_repository(project, pinned, store, ident)
+            if not (damaged := {n: p for n, p in pinned.items() if not _intact(repo / file_name(n, p), p)}):
+                _checked.add(repo)
+                return repo
+            for name, pin in damaged.items():  # in the store, which the repository has them hard-linked from
+                (store / "rpms" / pin.sha256 / file_name(name, pin)).unlink(missing_ok=True)
+            shutil.rmtree(repo)
+    msg = (
+        f"{', '.join(sorted(damaged))} of {project.arch} still not of the SHA-256 of their pins once downloaded again, "
+        f"in the store {store}: only xcraft writes there"
+    )
+    raise PinnedError(msg)
+
+
+def stored(name: str, pin: Pin) -> Path | None:
+    """Return the RPM of the pinned package `name` in the store, if it has it, of the SHA-256 of its `pin`."""
+    return path if _intact(path := _store() / "rpms" / pin.sha256 / file_name(name, pin), pin) else None
+
+
+def download(project: Project, pinned: dict[str, Pin]) -> None:
+    """Download into the store the `pinned` packages it misses that the repositories still have, see pin.py."""
+    _run_pin(project, pinned)

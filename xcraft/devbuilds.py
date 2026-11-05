@@ -43,6 +43,36 @@ def _current(
     return inputs, ids, build_keys(project, ids=ids, inputs=inputs), proposed(fork, ids)
 
 
+def developed(project: Project) -> set[str]:
+    """Return the packages whose build ID is not the main branch's: their builds are development builds."""
+    fork = buildid.base(project)
+    return proposed(fork, buildid.compute(project, fork))
+
+
+def _suffixes(
+    project: Project,
+    current: tuple[Inputs, dict[str, BuildId], dict[str, str], set[str]],
+    suffix: Callable[[dict[str, str], str], dict[str, str]],
+) -> dict[str, str]:
+    """Return the suffixes of the development builds of `current`, see _current(), by package, those `suffix` returns
+    for the developed packages of each component, with the keys of their counters, and the fingerprint of the
+    component: the hash of the final cache keys of its packages and of the cache keys of the packages they are built
+    against, out of it, with their suffixes, chosen before, rather than with their own counters.
+    """
+    inputs, ids, final, developed = current
+    suffixes: dict[str, str] = {}
+    for component in components(inputs.deps):  # the dependencies first
+        if not (members := {name: f"{name} {ids[name].number}" for name in sorted(component & developed)}):
+            continue
+        keys = build_keys(project, suffixes, ids=ids, inputs=inputs)
+        outside = {dep: keys[dep] for name in component for dep in inputs.deps[name] - component}
+        inside = [final[name] for name in sorted(component)]
+        suffixes |= suffix(
+            members, hashlib.sha256(json.dumps([inside, dict(sorted(outside.items()))]).encode()).hexdigest()
+        )
+    return suffixes
+
+
 def dev_keys(
     project: Project, ident: str | None, hashes: dict[str, str] | None = None
 ) -> tuple[dict[str, str], dict[str, str]]:
@@ -72,30 +102,6 @@ def dev_keys(
     return build_keys(project, suffixes, ids=current[1], inputs=current[0]), suffixes
 
 
-def _suffixes(
-    project: Project,
-    current: tuple[Inputs, dict[str, BuildId], dict[str, str], set[str]],
-    suffix: Callable[[dict[str, str], str], dict[str, str]],
-) -> dict[str, str]:
-    """Return the suffixes of the development builds of `current`, see _current(), by package, those `suffix` returns
-    for the developed packages of each component, with the keys of their counters, and the fingerprint of the
-    component: the hash of the final cache keys of its packages and of the cache keys of the packages they are built
-    against, out of it, with their suffixes, chosen before, rather than with their own counters.
-    """
-    inputs, ids, final, developed = current
-    suffixes: dict[str, str] = {}
-    for component in components(inputs.deps):  # the dependencies first
-        if not (members := {name: f"{name} {ids[name].number}" for name in sorted(component & developed)}):
-            continue
-        keys = build_keys(project, suffixes, ids=ids, inputs=inputs)
-        outside = {dep: keys[dep] for name in component for dep in inputs.deps[name] - component}
-        inside = [final[name] for name in sorted(component)]
-        suffixes |= suffix(
-            members, hashlib.sha256(json.dumps([inside, dict(sorted(outside.items()))]).encode()).hexdigest()
-        )
-    return suffixes
-
-
 def keep_built(
     project: Project, ident: str | None, autorev: dict[str, str], names: list[str], hashes: dict[str, str]
 ) -> None:
@@ -118,12 +124,6 @@ def keep_built(
     write_atomically(
         project.state / "dev-builds.json", _COUNTERS.dump_json(dict(sorted(counters.items())), indent=1).decode() + "\n"
     )
-
-
-def developed(project: Project) -> set[str]:
-    """Return the packages whose build ID is not the main branch's: their builds are development builds."""
-    fork = buildid.base(project)
-    return proposed(fork, buildid.compute(project, fork))
 
 
 def built_dev_suffixes(project: Project) -> dict[str, str]:

@@ -49,70 +49,6 @@ Arch = Annotated[
 ]
 
 
-@app.callback(invoke_without_command=True)
-def everything(
-    ctx: typer.Context,
-    locked: Locked = False,
-    local: Local = False,
-    output: Output = None,
-    unsigned: Unsigned = False,
-    dev_key: DevKey = False,
-    key: Key = None,
-    to: To = "dev",
-    stage: Stage = None,
-    arch: Arch = None,
-) -> None:
-    r"""Publish a snapshot of the distribution in the remote storage, as the latest one, for all the architectures.
-
-    Without a command: its repositories, and its ISOs, when \[iso] in xcraft.toml has the installer's packages. It has
-    all our packages, built or fetched first, and the upstream packages they need at runtime, and the extra ones of
-    xcraft.toml, as locked, and it must be self-contained. Those of the architectures the host emulates are only
-    fetched, built by native builders.
-    """
-    if ctx.invoked_subcommand:
-        # all the options given before the subcommand are its defaults: those given after it win
-        ctx.default_map = {ctx.invoked_subcommand: {k: v for k, v in ctx.params.items() if v is not None}}
-        return
-    _publish(None, **ctx.params)
-
-
-@app.command()
-def repos(
-    ctx: typer.Context,
-    locked: Locked = False,
-    local: Local = False,
-    output: Output = None,
-    unsigned: Unsigned = False,
-    dev_key: DevKey = False,
-    key: Key = None,
-    to: To = "dev",
-    stage: Stage = None,
-    arch: Arch = None,
-) -> None:
-    """Publish repositories as repos/<release>/<stage>/<date>/, and as the stage's latest snapshot."""
-    _publish("repos", **ctx.params)
-
-
-@app.command()
-def isos(
-    ctx: typer.Context,
-    locked: Locked = False,
-    local: Local = False,
-    output: Output = None,
-    unsigned: Unsigned = False,
-    dev_key: DevKey = False,
-    key: Key = None,
-    to: To = "dev",
-    stage: Stage = None,
-    arch: Arch = None,
-) -> None:
-    """Publish signed packages and netinstall ISOs as isos/<release>/<stage>/<date>/, and as the stage's latest ones.
-
-    They are made for the x86_64 architectures, like xcraft iso, in the ISO directory of the snapshot.
-    """
-    _publish("isos", **ctx.params)
-
-
 def _iso_platforms(project: Project, platforms: list[Project], only: str | None) -> list[Project]:
     """Return the `platforms` of the ISOs to publish, unless `only` the repos: those of x86_64, for their boot loaders,
     when [iso] has the installer's packages.
@@ -197,3 +133,67 @@ def _publish(  # noqa: C901, PLR0912
                 uploader.upload_snapshot(built, dest, name, stored=stored)
             if with_isos:
                 uploader.upload_isos(dest, name, stored=isos)
+
+
+@app.callback(invoke_without_command=True)
+def everything(
+    ctx: typer.Context,
+    locked: Locked = False,
+    local: Local = False,
+    output: Output = None,
+    unsigned: Unsigned = False,
+    dev_key: DevKey = False,
+    key: Key = None,
+    to: To = "dev",
+    stage: Stage = None,
+    arch: Arch = None,
+) -> None:
+    r"""Publish a snapshot of the distribution in the remote storage, as the latest one, for all the architectures.
+
+    Without a command: its repositories, and its ISOs, when \[iso] in xcraft.toml has the installer's packages. It has
+    all our packages, built or fetched first, and the upstream packages they need at runtime, and the extra ones of
+    xcraft.toml, as locked, and it must be self-contained. Those of the architectures the host emulates are only
+    fetched, built by native builders.
+    """
+    if ctx.invoked_subcommand:
+        # all the options given before the subcommand are its defaults: those given after it win
+        ctx.default_map = {ctx.invoked_subcommand: {k: v for k, v in ctx.params.items() if v is not None}}
+        return
+    _publish(None, **ctx.params)
+
+
+@app.command()
+def repos(
+    ctx: typer.Context,
+    locked: Locked = False,
+    local: Local = False,
+    output: Output = None,
+    unsigned: Unsigned = False,
+    dev_key: DevKey = False,
+    key: Key = None,
+    to: To = "dev",
+    stage: Stage = None,
+    arch: Arch = None,
+) -> None:
+    """Publish repositories as repos/<release>/<stage>/<date>/, and as the stage's latest snapshot."""
+    _publish("repos", **ctx.params)
+
+
+@app.command()
+def isos(
+    ctx: typer.Context,
+    locked: Locked = False,
+    local: Local = False,
+    output: Output = None,
+    unsigned: Unsigned = False,
+    dev_key: DevKey = False,
+    key: Key = None,
+    to: To = "dev",
+    stage: Stage = None,
+    arch: Arch = None,
+) -> None:
+    """Publish signed packages and netinstall ISOs as isos/<release>/<stage>/<date>/, and as the stage's latest ones.
+
+    They are made for the x86_64 architectures, like xcraft iso, in the ISO directory of the snapshot.
+    """
+    _publish("isos", **ctx.params)

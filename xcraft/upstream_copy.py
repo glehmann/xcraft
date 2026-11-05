@@ -87,56 +87,6 @@ def stored(project: Project, storage: Remote, arches: list[str]) -> tuple[dict[s
     return known, sources
 
 
-def push(project: Project, storage: Remote) -> list[str]:
-    """Copy to `storage` the pinned packages of the architecture of `project` its copy misses, and the source packages
-    of those the snapshots publish, from the store of the pinned RPMs of the machine, the latest snapshot, or else the
-    upstream repositories, and return the problems: the packages found nowhere, and those of the file names of others.
-    """
-    from xcraft import publish  # noqa: PLC0415, which uses this module
-
-    pins = pinned.pins(project)
-    snapshot: list[tuple[dict[str, tuple[Entry, str]], dict[str, str]]] = []
-
-    def latest() -> tuple[dict[str, tuple[Entry, str]], dict[str, str]]:
-        if not snapshot:  # read once, when needed
-            snapshot.append(publish.previous(project, storage, None))
-        return snapshot[0]
-
-    with project.tmp_dir("upstream") as work:
-        entries, hrefs = read(storage, project.arch, work / "metadata")
-        wanted, problems = _wanted(entries, {pinned.file_name(n, p): (n, p) for n, p in pins.items()})
-        copies: Copies = {f: (rpm, None) for f, (n, p) in wanted.items() if (rpm := pinned.stored(n, p))}
-        if left := [f for f in wanted if f not in copies]:
-            known = latest()[0]
-            copies |= {f: (known[s][1], known[s][0]) for f in left if (s := wanted[f][1].sha256) in known}
-        if left := {n: p for f, (n, p) in wanted.items() if f not in copies}:
-            pinned.download(project, left)
-            copies |= {
-                f: (rpm, None) for f, (n, p) in wanted.items() if f not in copies and (rpm := pinned.stored(n, p))
-            }
-        problems += [f"{f}: in no repository, nor in the store of the pinned RPMs" for f in wanted if f not in copies]
-        new = _update(project, storage, project.arch, work, entries, hrefs, copies)
-        entries |= {wanted[f][1].sha256: entry for f, entry in new.items()}
-        # the source packages of those the snapshots publish, from their metadata
-        binaries = {pins[n].sha256: f"{n}-{pins[n].evr}.{pins[n].arch}" for n in _published(project)}
-        srpms = {repodata.sourcerpm(e): binaries[s] for s, e in entries.items() if s in binaries}
-        entries, hrefs = read(storage, SOURCE, work / "source-metadata")
-        have = {repodata.location(e) for e in entries.values()}
-        if missing := {f: nevra for f, nevra in srpms.items() if f not in have}:
-            known, sources = latest()
-            copies = {f: (known[s][1], known[s][0]) for f in missing if (s := sources.get(f, "")) in known}
-            if left := {f: nevra for f, nevra in missing.items() if f not in copies}:
-                try:
-                    cache = publish.download_sources(project, left)
-                except ContainerError as e:
-                    problems.append(f"source packages: {e}")
-                else:
-                    copies |= {f: (cache / f, None) for f in left if (cache / f).exists()}
-            problems += [f"{f}: in no repository, nor in the latest snapshot" for f in missing if f not in copies]
-            _update(project, storage, SOURCE, work, entries, hrefs, copies)
-    return problems
-
-
 def _published(project: Project) -> set[str]:
     """Return the pinned packages the snapshots publish, of the lock: those of the published repositories, and of the
     build environment and the build roots, with the build repository, see publish.build_dependencies().
@@ -205,3 +155,53 @@ def _update(
         if stale := [p for p in remote.listing(storage, f"{prefix}/repodata/") if f"repodata/{p}" not in keep]:
             remote.delete(storage, [f"{prefix}/repodata/{p}" for p in stale])
     return new
+
+
+def push(project: Project, storage: Remote) -> list[str]:
+    """Copy to `storage` the pinned packages of the architecture of `project` its copy misses, and the source packages
+    of those the snapshots publish, from the store of the pinned RPMs of the machine, the latest snapshot, or else the
+    upstream repositories, and return the problems: the packages found nowhere, and those of the file names of others.
+    """
+    from xcraft import publish  # noqa: PLC0415, which uses this module
+
+    pins = pinned.pins(project)
+    snapshot: list[tuple[dict[str, tuple[Entry, str]], dict[str, str]]] = []
+
+    def latest() -> tuple[dict[str, tuple[Entry, str]], dict[str, str]]:
+        if not snapshot:  # read once, when needed
+            snapshot.append(publish.previous(project, storage, None))
+        return snapshot[0]
+
+    with project.tmp_dir("upstream") as work:
+        entries, hrefs = read(storage, project.arch, work / "metadata")
+        wanted, problems = _wanted(entries, {pinned.file_name(n, p): (n, p) for n, p in pins.items()})
+        copies: Copies = {f: (rpm, None) for f, (n, p) in wanted.items() if (rpm := pinned.stored(n, p))}
+        if left := [f for f in wanted if f not in copies]:
+            known = latest()[0]
+            copies |= {f: (known[s][1], known[s][0]) for f in left if (s := wanted[f][1].sha256) in known}
+        if left := {n: p for f, (n, p) in wanted.items() if f not in copies}:
+            pinned.download(project, left)
+            copies |= {
+                f: (rpm, None) for f, (n, p) in wanted.items() if f not in copies and (rpm := pinned.stored(n, p))
+            }
+        problems += [f"{f}: in no repository, nor in the store of the pinned RPMs" for f in wanted if f not in copies]
+        new = _update(project, storage, project.arch, work, entries, hrefs, copies)
+        entries |= {wanted[f][1].sha256: entry for f, entry in new.items()}
+        # the source packages of those the snapshots publish, from their metadata
+        binaries = {pins[n].sha256: f"{n}-{pins[n].evr}.{pins[n].arch}" for n in _published(project)}
+        srpms = {repodata.sourcerpm(e): binaries[s] for s, e in entries.items() if s in binaries}
+        entries, hrefs = read(storage, SOURCE, work / "source-metadata")
+        have = {repodata.location(e) for e in entries.values()}
+        if missing := {f: nevra for f, nevra in srpms.items() if f not in have}:
+            known, sources = latest()
+            copies = {f: (known[s][1], known[s][0]) for f in missing if (s := sources.get(f, "")) in known}
+            if left := {f: nevra for f, nevra in missing.items() if f not in copies}:
+                try:
+                    cache = publish.download_sources(project, left)
+                except ContainerError as e:
+                    problems.append(f"source packages: {e}")
+                else:
+                    copies |= {f: (cache / f, None) for f in left if (cache / f).exists()}
+            problems += [f"{f}: in no repository, nor in the latest snapshot" for f in missing if f not in copies]
+            _update(project, storage, SOURCE, work, entries, hrefs, copies)
+    return problems

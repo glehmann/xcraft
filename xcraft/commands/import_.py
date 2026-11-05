@@ -19,6 +19,33 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
+def _names(project: Project, sources: list[str], repo: str, url: str | None) -> list[str]:
+    """Return the names of the packages of `sources`, checking them with the other arguments."""
+    names = [
+        s.rsplit("/", 1)[-1].removesuffix(".src.rpm").rsplit("-", 2)[0] if s.endswith(".src.rpm") else s
+        for s in sources
+    ]
+    if bad := [name for name in [*names, repo] if not re.fullmatch(r"[A-Za-z0-9][\w.+-]*", name)]:
+        msg = f"not package names: {', '.join(map(repr, bad))}"
+        raise typer.BadParameter(msg)
+    if repo not in project.config.repositories:
+        msg = f"{repo} is not a repository of the project: {', '.join(project.config.repositories)}"
+        raise typer.BadParameter(msg)
+    if url and len(sources) > 1:
+        msg = "--url applies to a single package"
+        raise typer.BadParameter(msg)
+    return names
+
+
+def _download(source: str, work: Path, on_line: Callable[[str], None]) -> Path:
+    """Return the path of the source RPM `source`, downloaded into `work` from a URL."""
+    if "://" not in source:
+        return Path(source).absolute()
+    path = work / source.rsplit("/", 1)[-1]
+    process.download(source, path, download_progress(on_line, f"downloading {path.name}: "))
+    return path
+
+
 def import_(
     sources: Annotated[
         list[str] | None,
@@ -77,30 +104,3 @@ def import_(
             for head, commit in heads.items():
                 console.print(f"[bold]{name}[/]: import/{name}/{head} at {commit[:12]}")
     console.print("merge them into the project with [bold]git merge import/<pkg>/<branch>[/]")
-
-
-def _names(project: Project, sources: list[str], repo: str, url: str | None) -> list[str]:
-    """Return the names of the packages of `sources`, checking them with the other arguments."""
-    names = [
-        s.rsplit("/", 1)[-1].removesuffix(".src.rpm").rsplit("-", 2)[0] if s.endswith(".src.rpm") else s
-        for s in sources
-    ]
-    if bad := [name for name in [*names, repo] if not re.fullmatch(r"[A-Za-z0-9][\w.+-]*", name)]:
-        msg = f"not package names: {', '.join(map(repr, bad))}"
-        raise typer.BadParameter(msg)
-    if repo not in project.config.repositories:
-        msg = f"{repo} is not a repository of the project: {', '.join(project.config.repositories)}"
-        raise typer.BadParameter(msg)
-    if url and len(sources) > 1:
-        msg = "--url applies to a single package"
-        raise typer.BadParameter(msg)
-    return names
-
-
-def _download(source: str, work: Path, on_line: Callable[[str], None]) -> Path:
-    """Return the path of the source RPM `source`, downloaded into `work` from a URL."""
-    if "://" not in source:
-        return Path(source).absolute()
-    path = work / source.rsplit("/", 1)[-1]
-    process.download(source, path, download_progress(on_line, f"downloading {path.name}: "))
-    return path
