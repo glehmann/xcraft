@@ -7,7 +7,10 @@ and of install.img, ``tree``, the directory to make, ``installer`` and ``package
 to it, the version and volume id of the ISO, gets the owner of the config, even when it fails.
 """
 
+from __future__ import annotations
+
 import atexit
+import contextlib
 import json
 import os
 import shutil
@@ -18,10 +21,10 @@ import time
 from pathlib import Path
 from typing import IO
 
-import dnf  # ty: ignore[unresolved-import]
+# out of the build environment, for the tests of the helpers
+with contextlib.suppress(ImportError):
+    import dnf  # ty: ignore[unresolved-import]
 
-config = json.loads(Path(sys.argv[1]).read_text())
-snapshot, templates, tree = Path(config["snapshot"]), Path(config["templates"]), Path(config["tree"])
 SYSLINUX = Path("/usr/share/syslinux")
 MEMTEST = Path("/usr/lib64/memtest86+")
 
@@ -47,9 +50,6 @@ def resolver(packages: list[str] | None = None) -> dnf.Base:
     if packages:
         base.resolve()
     return base
-
-
-rpms = {p.name: snapshot / p.location for p in resolver().sack.query().available().latest()}
 
 
 def extract(package: str, *patterns: str) -> Path:
@@ -176,52 +176,63 @@ def give_back() -> None:
             os.lchown(path, owner.st_uid, owner.st_gid)
 
 
-atexit.register(give_back)
-shutil.rmtree(tree, ignore_errors=True)
-shutil.copytree(templates / "tree", tree)
-install_img(tree / "install.img")
-boot = tree / "boot"
-shutil.copy2(one(extract("kernel", "./boot/vmlinuz-*") / "boot", "vmlinuz-*[0-9]"), boot / "vmlinuz")
-# the debug builds of the hypervisor, like XenServer, for a more useful xl dmesg when something goes wrong
-shutil.copy2(one(extract("xen-hypervisor-elf", "./boot/*") / "boot", "xen-*-d.gz"), boot / "xen.gz")
-shutil.copy2(MEMTEST / "memtest86+x64.bin", boot / "memtest.bin")
-shutil.copy2(MEMTEST / "memtest86+x64.efi", boot)
-branding_dir = extract("branding-xcp-ng", "./usr/src/branding/*") / "usr/src/branding"
-for name in ("EULA", "LICENSES"):
-    shutil.copy2(branding_dir / name, tree)
-branding = dict(
-    line.split("=", 1) for line in (branding_dir / "branding").read_text().splitlines() if line[:1].isupper()
-)
-for directory, files in [
-    ("isolinux", ["isolinux.bin", "ldlinux.c32", "libcom32.c32", "libutil.c32", "mboot.c32", "menu.c32"]),
-    # for PXE boot, where XCP-ng 8 had them
-    ("pxelinux", ["pxelinux.0", "ldlinux.c32", "libcom32.c32", "libutil.c32", "mboot.c32", "menu.c32"]),
-]:
-    (boot / directory).mkdir(exist_ok=True)
-    for name in files:
-        shutil.copy2(SYSLINUX / name, boot / directory)
-# grub's image for CDs, which reads its configuration and its modules in /EFI/BOOT, and host-installer's
-# configurations
-efi = tree / "EFI/BOOT"
-efi.mkdir(parents=True)
-shutil.copy2(extract("grub2-efi-x64-cdboot", "*/gcdx64.efi") / "boot/efi/EFI/almalinux/gcdx64.efi", efi / "BOOTX64.EFI")
-shutil.copytree(extract("grub2-efi-x64-modules", "./usr/lib/grub/*") / "usr/lib/grub/x86_64-efi", efi / "x86_64-efi")
-grub = extract("host-installer-bootloader", "./EFI/almalinux/*") / "EFI/almalinux"
-# with grub-usb.cfg for efiboot.img, which some firmwares take for the root, finding the ISO's files by install.img
-for name in ("grub.cfg", "grub-usb.cfg"):
-    # our xen.efi has no multiboot2 header, unlike XenServer's: grub boots the ELF one
-    (efi / name).write_text((grub / name).read_text().replace("/boot/xen.efi", "/boot/xen.gz"))
-if config["netinstall"]:
-    (tree / ".treeinfo").unlink()
-    boot_params("netinstall")
-else:
-    repository(branding)
-    if not config["signed"]:
-        boot_params("no-repo-gpgcheck")
-efiboot(efi, efi / "grub-usb.cfg")
-(efi / "grub-usb.cfg").unlink()
-(tree.parent / "info.json").write_text(
-    json.dumps(
-        {"version": branding["PRODUCT_VERSION"], "volid": f"XCP-NG_{branding['PRODUCT_VERSION_TEXT'].replace('.', '')}"}
+if __name__ == "__main__":
+    config = json.loads(Path(sys.argv[1]).read_text())
+    snapshot, templates, tree = Path(config["snapshot"]), Path(config["templates"]), Path(config["tree"])
+    rpms = {p.name: snapshot / p.location for p in resolver().sack.query().available().latest()}
+    atexit.register(give_back)
+    shutil.rmtree(tree, ignore_errors=True)
+    shutil.copytree(templates / "tree", tree)
+    install_img(tree / "install.img")
+    boot = tree / "boot"
+    shutil.copy2(one(extract("kernel", "./boot/vmlinuz-*") / "boot", "vmlinuz-*[0-9]"), boot / "vmlinuz")
+    # the debug builds of the hypervisor, like XenServer, for a more useful xl dmesg when something goes wrong
+    shutil.copy2(one(extract("xen-hypervisor-elf", "./boot/*") / "boot", "xen-*-d.gz"), boot / "xen.gz")
+    shutil.copy2(MEMTEST / "memtest86+x64.bin", boot / "memtest.bin")
+    shutil.copy2(MEMTEST / "memtest86+x64.efi", boot)
+    branding_dir = extract("branding-xcp-ng", "./usr/src/branding/*") / "usr/src/branding"
+    for name in ("EULA", "LICENSES"):
+        shutil.copy2(branding_dir / name, tree)
+    branding = dict(
+        line.split("=", 1) for line in (branding_dir / "branding").read_text().splitlines() if line[:1].isupper()
     )
-)
+    for directory, files in [
+        ("isolinux", ["isolinux.bin", "ldlinux.c32", "libcom32.c32", "libutil.c32", "mboot.c32", "menu.c32"]),
+        # for PXE boot, where XCP-ng 8 had them
+        ("pxelinux", ["pxelinux.0", "ldlinux.c32", "libcom32.c32", "libutil.c32", "mboot.c32", "menu.c32"]),
+    ]:
+        (boot / directory).mkdir(exist_ok=True)
+        for name in files:
+            shutil.copy2(SYSLINUX / name, boot / directory)
+    # grub's image for CDs, which reads its configuration and its modules in /EFI/BOOT, and host-installer's
+    # configurations
+    efi = tree / "EFI/BOOT"
+    efi.mkdir(parents=True)
+    shutil.copy2(
+        extract("grub2-efi-x64-cdboot", "*/gcdx64.efi") / "boot/efi/EFI/almalinux/gcdx64.efi", efi / "BOOTX64.EFI"
+    )
+    shutil.copytree(
+        extract("grub2-efi-x64-modules", "./usr/lib/grub/*") / "usr/lib/grub/x86_64-efi", efi / "x86_64-efi"
+    )
+    grub = extract("host-installer-bootloader", "./EFI/almalinux/*") / "EFI/almalinux"
+    # with grub-usb.cfg for efiboot.img, which some firmwares take for the root, finding the ISO's files by install.img
+    for name in ("grub.cfg", "grub-usb.cfg"):
+        # our xen.efi has no multiboot2 header, unlike XenServer's: grub boots the ELF one
+        (efi / name).write_text((grub / name).read_text().replace("/boot/xen.efi", "/boot/xen.gz"))
+    if config["netinstall"]:
+        (tree / ".treeinfo").unlink()
+        boot_params("netinstall")
+    else:
+        repository(branding)
+        if not config["signed"]:
+            boot_params("no-repo-gpgcheck")
+    efiboot(efi, efi / "grub-usb.cfg")
+    (efi / "grub-usb.cfg").unlink()
+    (tree.parent / "info.json").write_text(
+        json.dumps(
+            {
+                "version": branding["PRODUCT_VERSION"],
+                "volid": f"XCP-NG_{branding['PRODUCT_VERSION_TEXT'].replace('.', '')}",
+            }
+        )
+    )
