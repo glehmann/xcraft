@@ -1,8 +1,10 @@
 name: Static code checkers
 
-# the pull requests of forks too, which the pushes of the repository do not cover: they run with a read-only token,
-# without secrets
-on: [push, pull_request]
+# master, and the pull requests, those of forks too: they run with a read-only token, without secrets
+on:
+  push:
+    branches: [master]
+  pull_request:
 
 permissions: {}
 
@@ -11,7 +13,6 @@ env:
 
 jobs:
   check:
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
