@@ -33,6 +33,10 @@ SCRIPTS = ("build.sh", "offline.py", "record.py", "made.py", "rpmdeps.py")
 RECIPE = hashlib.sha256("".join([REPO_FILE, *((BUILDENV / s).read_text() for s in SCRIPTS)]).encode()).hexdigest()
 """What makes the builds, besides the image and the packages: a change to it rebuilds them all, but see _SAME_BUILDS."""
 _SAME_BUILDS: dict[str, str] = {
+    # the replacements of packages of the image with the pinned packages they need, which failed without them
+    "7436941e7cc32e09edb1c1a1791e09a9af861bf1db5f3d226f7e4585ab53a3bf": (
+        "4b928b99728b60533308a1f147188072c2495311781bd54ff6441657aa19b2a5"
+    ),
     # SIGPIPE and SIGXFSZ restored: a write to a closed pipe kills rather than fails with EPIPE, and an error
     "b9b332f9df354013f4f94a02c6ad1e10f47e13a708a9e358ef80f188e015f54d": (
         "4b928b99728b60533308a1f147188072c2495311781bd54ff6441657aa19b2a5"

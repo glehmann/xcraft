@@ -124,13 +124,28 @@ def _extra(project: Project) -> dict[str, dict[str, str]]:
     return {name: extra.model_dump() for name, extra in project.config.extra_upstream.items()}
 
 
+def _pinned(project: Project) -> dict[str, str]:
+    """Return the pinned upstream packages of the architecture of the project: those of the source versions locked,
+    as the repositories had them when pinned, which may publish other contents of the same versions since.
+    """
+    return {name: pin.text() for name, pin in read_lock(project).binaries.get(project.arch, {}).items()}
+
+
 def _cache(project: Project, data: dict) -> Path:
     """Return the cache of what resolve.py resolves from `data`, by its key: the script, the repositories, the
-    request, with the base image by reference rather than its packages, which _run() reads, and the extra upstream
-    RPMs, which _run() gives it, like the build keys: by their URLs. The same on all the machines, for the remote
-    storage, see remote_tree().
+    request, with the base image by reference rather than its packages, which _run() reads, the extra upstream
+    RPMs, which _run() gives it, like the build keys: by their URLs, and the pinned packages, which another content
+    of the same versions, pinned again by xcraft lock --update, resolves again. The same on all the machines, for
+    the remote storage, see remote_tree().
     """
-    inputs = [_SCRIPT.read_text(), repo_file(project), data, project.config.base_image, _extra(project)]
+    inputs = [
+        _SCRIPT.read_text(),
+        repo_file(project),
+        data,
+        project.config.base_image,
+        _extra(project),
+        _pinned(project),
+    ]
     key = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode())
     return project.state / "cache/resolved" / project.arch / f"{key.hexdigest()}.json"
 
@@ -141,7 +156,8 @@ def remote_tree(cache: Path) -> str:
 
 
 _unreachable: set[Path] = set()
-"""The projects whose remote storage failed, not asked again by this process."""
+"""The projects whose remote storage failed, or which resolve from the repositories as they are, see _forget(): not
+asked again by this process."""
 
 
 def _fetched(project: Project, cache: Path) -> bool:
@@ -256,8 +272,11 @@ def prepare(project: Project, *, roots: bool = True, repin: set[str] | None = No
 
 
 def _forget(project: Project) -> None:
-    """Forget what was resolved, and the metadata of the repositories, to resolve from the repositories as they are."""
+    """Forget what was resolved, and the metadata of the repositories, to resolve from the repositories as they are,
+    rather than from the resolutions of the remote storage, until the end of the command.
+    """
     _resolved.clear()
+    _unreachable.add(project.root)
     shutil.rmtree(project.state / "cache/resolved", ignore_errors=True)
     for platform in project.all_platforms():
         run_natively(
@@ -477,14 +496,15 @@ def _wanted(project: Project) -> list[str]:
 
 def rpm_deps_context(project: Project, builds: dict[str, str]) -> str:
     """Return the hash of what resolve_rpm_deps() resolves with, but the binary packages it records, which their
-    builds cover: its script, the repositories, the request of _image_data(), with the base image by digest rather
-    than its packages, the capabilities our specs require, the extra upstream RPMs, and the `builds` of ours it gets,
-    by package and cache key.
+    builds cover: its script, the repositories, the request of _image_data(), the pinned packages, with the base
+    image by digest rather than its packages, the capabilities our specs require, the extra upstream RPMs, and the
+    `builds` of ours it gets, by package and cache key.
     """
     config = project.config
     inputs = [
         _SCRIPT.read_text(), repo_file(project), project.arch, config.release_suffixes, read_lock(project).sources,
-        config.base_image, sorted({*config.packages, *PACKAGES}), _wanted(project), _extra(project), builds,
+        _pinned(project), config.base_image, sorted({*config.packages, *PACKAGES}), _wanted(project), _extra(project),
+        builds,
     ]  # fmt: skip
     return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
 

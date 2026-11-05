@@ -234,16 +234,16 @@ def test_build_root_packages_replaced_by_ours(root: Path) -> None:
 
 
 def test_image_packages_replaced_by_ours(root: Path) -> None:
-    # openblas-srpm-macros is in the image, and harmless to replace
+    # openblas-srpm-macros is in the image, and harmless to replace, by one requiring a pinned package it does not have
     write_spec(root, "openblas-srpm-macros", files="/usr/share/xcraft-test/openblas-srpm-macros")
+    spec = root / "base/openblas-srpm-macros/openblas-srpm-macros.spec"
+    spec.write_text(spec.read_text().replace("Summary: test", "Requires: toyrun\nSummary: test"))
     code, output = xcraft("build", "trivial")
     assert code == 0, output
     assert [line.split(" built")[0] for line in results(output)[:2]] == ["✓ openblas-srpm-macros", "✓ trivial"]
-    assert re.search(
-        r"^Downgrading:\n openblas-srpm-macros .* xcraft-[0-9a-f]{8} ",
-        root.joinpath(".xcraft/logs/trivial.log").read_text(),
-        re.MULTILINE,
-    )
+    log = root.joinpath(".xcraft/logs/trivial.log").read_text()
+    assert re.search(r"^Downgrading:\n openblas-srpm-macros .* xcraft-[0-9a-f]{8} ", log, re.MULTILINE)
+    assert re.search(r"^ toyrun .* xcraft-pinned ", log, re.MULTILINE), log
 
 
 def test_repo_host_options(root: Path) -> None:
