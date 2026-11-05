@@ -317,12 +317,13 @@ class Resolver:
         return sorted({p.name for p in installed} - {p.name for p in image}), ""
 
     def generated(self, image: list, name: str, declared: dict) -> tuple[list[str], list[str]]:
-        """Return the packages the generated requirements of the built package `name` resolve to, but those of the
-        `image`, and its generated capabilities and files the specs require, but those it `declared`.
+        """Return the packages the generated requirements of the built package `name` resolve to, on the `image`, with
+        its packages too, which the published repositories need, and its generated capabilities and files the specs
+        require, but those it `declared`.
         """
         built = self.built[name]
         installed = self.resolve([built], [], weak=False, installed=image)
-        others = self.base.sack.query().filter(pkg=installed).filter(name__neq=[name, *(p.name for p in image)])
+        others = self.base.sack.query().filter(pkg=installed).filter(name__neq=name)
         generated = [r for r in built.requires if str(r) not in declared["requires"]]
         wanted = set(self.data["wanted"])
         return (
