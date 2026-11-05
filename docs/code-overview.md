@@ -78,8 +78,9 @@ reuse, and [lock design](lock-design.md) for preparation and findings. For stora
 [CI secrets](ci-secret-management-design.md) and [rebuild releases](rebuild-release-workflow-design.md). Preserve
 `--locked`, checksum/signature checks, and existing lock boundaries. The `Containerfile`, `build.sh`, `offline.py`,
 `record.py`, `made.py` and `rpmdeps.py` of `buildenv/` are in [the recipe](build-keys.md#the-recipe) of every build
-key: editing them builds everything again, but a script change making the same packages, which `_SAME_BUILDS`
-maps to the earlier scripts.
+key. Changes to these files normally invalidate every build key. For equivalent changes to the hashed build
+scripts, `buildkey._SAME_BUILDS` can explicitly preserve the earlier script hash. This exception does not cover
+`Containerfile` changes.
 
 Tests use `tests/project/` and toy upstream packages, built once from the specs of `tests/upstream/` into
 `tests/upstream/repos/`. The checked-in project has no prepared lock;
