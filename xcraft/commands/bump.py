@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Annotated
 
 import typer
@@ -66,9 +66,17 @@ def _new_archives(project: Project, before: dict[str, Package], after: dict[str,
 
 
 def _update_specs(
-    project: Project, before: dict[str, Package], names: list[str], *, version: str, author: str, message: str
+    project: Project,
+    before: dict[str, Package],
+    names: list[str],
+    *,
+    version: str,
+    author: str,
+    message: str,
+    day: date,
 ) -> dict[str, Package]:
-    """Bump the specs of `names`, or set their `version`, with a changelog entry, and return the packages after.
+    """Bump the specs of `names`, or set their `version`, with a changelog entry of `day`, and return the packages
+    after.
 
     The specs and the sources manifests are written back as they were on errors.
     """
@@ -92,7 +100,6 @@ def _update_specs(
         _check_parsed(after, names)
         if version:
             _new_archives(project, before, after, names)
-        day = datetime.now(UTC).date()
         for package, spec in specs.items():
             write_atomically(
                 spec,
@@ -149,7 +156,9 @@ def bump(
         else:
             names = sorted(packages)
         message = message or (f"Update to {version}" if version else "")
-        after = _update_specs(project, before, names, version=version, author=author, message=message)
+        after = _update_specs(
+            project, before, names, version=version, author=author, message=message, day=datetime.now(UTC).date()
+        )
         for package in names:
             console.print(f"[bold]{package}[/]: {_evr(before[package])} -> {_evr(after[package])}")
     if version:
