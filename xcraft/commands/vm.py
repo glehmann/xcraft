@@ -44,7 +44,7 @@ def directory(ctx: typer.Context) -> Path:
 
 def check_port(port: int | None) -> None:
     """Raise when the SSH `port` given is in use on localhost."""
-    if port and not vm.free(port):
+    if port and not vm.port_free(port):
         msg = f"port {port} is in use on localhost: give another one, or none for the first free one from 2222"
         raise typer.BadParameter(msg, param_hint="--ssh-port")
 
@@ -97,8 +97,8 @@ def start(
         update={"memory": memory or session.launch.memory, "cpus": cpus or session.launch.cpus}
     )
     if ssh_port is None:
-        ssh_port = session.ssh_port if not session.ssh_port or vm.free(session.ssh_port) else vm.free_port()
-    cmd = vm.command(root, launch, disk=session.disk, iso=None, ssh_port=ssh_port, headless=headless or background)
+        ssh_port = session.ssh_port if not session.ssh_port or vm.port_free(session.ssh_port) else vm.free_port()
+    cmd = vm.qemu_command(root, launch, disk=session.disk, iso=None, ssh_port=ssh_port, headless=headless or background)
     session = session.model_copy(update={"iso": None, "ssh_port": ssh_port, "command": cmd, "launch": launch})
     proc = vm.launch(root, session)
     show(root, session)

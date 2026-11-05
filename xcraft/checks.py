@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from xcraft.project import Project
 
 
-def check_resolved(project: Project, name: str) -> Resolved:
+def resolved_root(project: Project, name: str) -> Resolved:
     """Return what is resolved for the build of `name`, but raise when its build root cannot be resolved, or has
     upstream packages with the names of ours.
 
@@ -257,7 +257,7 @@ def record_rpm_deps(project: Project, names: list[str], keys: dict[str, str], *,
     return True
 
 
-def check_build(project: Project, name: str, tree: Path, *, suffix: str) -> bool:
+def record_build(project: Project, name: str, tree: Path, *, suffix: str) -> bool:
     """Record the dynamic BuildRequires of the build of `name` in `tree`, check what it installed and made, with its
     release `suffix`, and return whether the lock of the builds changed.
     """

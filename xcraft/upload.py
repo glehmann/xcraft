@@ -21,7 +21,7 @@ from xcraft.iso import iso_inputs
 from xcraft.localrepo import OUTPUT_MARKER
 from xcraft.project import INTERNAL
 from xcraft.publish import ISO_DIR, REPO, Stored, snapshot_key, snapshot_tree, stored_path, trusted_key
-from xcraft.signing import Signer, signing_key
+from xcraft.signing import Signer, key_signer
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
@@ -92,7 +92,7 @@ class Uploader:
     @property
     def _signing(self) -> Signer | None:
         """The key signing the trees: the one of the snapshot, or that of xcraft.toml."""
-        return self.signer or signing_key(self.project)
+        return self.signer or key_signer(self.project)
 
     @property
     def _trusted(self) -> Signer | None:

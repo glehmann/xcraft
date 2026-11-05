@@ -21,7 +21,7 @@ from xcraft.builds import load_builds, save_builds
 from xcraft.cache import BuildError, build_keys, previous_duration
 from xcraft.checks import _check_made, record_rpm_deps
 from xcraft.clean import clean, repos_disk_usage
-from xcraft.commands import complete_arch, load
+from xcraft.commands import complete_arch, prepared_project
 from xcraft.commands.repo import _kept
 from xcraft.commands.shell import package_of
 from xcraft.localrepo import OUTPUT_MARKER, RepoError, extra_rpms, fresh_dir, link
@@ -490,7 +490,7 @@ def test_record_providers_named_with_their_releases(project: Project, monkeypatc
 def test_builds_still_to_build_again_fail(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     project.deps = {"a": set()}
     monkeypatch.setattr(build, "prepare", lambda _: None)
-    monkeypatch.setattr(build, "build_image", lambda _: "image")
+    monkeypatch.setattr(build, "built_image", lambda _: "image")
     monkeypatch.setattr(build, "_record_cached", lambda *_: ({"a": "key"}, {}, {}))
     monkeypatch.setattr(build, "update_build_ids", lambda _: None)
     attempts = []
@@ -606,7 +606,7 @@ def test_unknown_packages_before_preparing(project: Project, monkeypatch: pytest
     monkeypatch.setenv("XCRAFT_PROJECT", str(project.root))
     monkeypatch.setattr("xcraft.commands.prepare", lambda _: pytest.fail("prepared"))
     with pytest.raises(typer.BadParameter, match="unknown package"):
-        load(["nope"])
+        prepared_project(["nope"])
 
 
 def test_packages_kept_by_test_hosts() -> None:

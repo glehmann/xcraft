@@ -317,7 +317,7 @@ def test_ssh_port_in_use(root: Path, tmp_path: Path) -> None:
         taken.listen()
         port = taken.getsockname()[1]
         # the first free one by default, after those in use, like by another VM
-        assert not vm.free(port)
+        assert not vm.port_free(port)
         assert vm.free_port(port) > port
         # and an error for one given in use, before making anything
         iso = tmp_path / "installer.iso"

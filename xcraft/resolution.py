@@ -33,7 +33,7 @@ from xcraft.container import BUILDENV, PACKAGES, base_packages, repo_file, run_n
 from xcraft.display import console
 from xcraft.graph import reachable
 from xcraft.localrepo import extra_rpms
-from xcraft.lock import Locked, Pin, choose_versions, load_lock, read_lock, save_lock
+from xcraft.lock import Locked, Pin, cached_lock, choose_versions, load_lock, save_lock
 from xcraft.packages import dep_name
 from xcraft.project import write_atomically
 
@@ -128,7 +128,7 @@ def _pinned(project: Project) -> dict[str, str]:
     """Return the pinned upstream packages of the architecture of the project: those of the source versions locked,
     as the repositories had them when pinned, which may publish other contents of the same versions since.
     """
-    return {name: pin.text() for name, pin in read_lock(project).binaries.get(project.arch, {}).items()}
+    return {name: pin.text() for name, pin in cached_lock(project).binaries.get(project.arch, {}).items()}
 
 
 def _cache(project: Project, data: dict) -> Path:
@@ -195,7 +195,7 @@ def _image_data(project: Project) -> dict:
     return {
         "arch": project.arch,
         "suffixes": config.release_suffixes,
-        "sources": read_lock(project).sources,
+        "sources": cached_lock(project).sources,
         "image": sorted({*config.packages, *PACKAGES}),
         "ours": [],
         "builds": {},
@@ -467,7 +467,7 @@ def published(project: Project) -> list[str]:
             console.print(f"[red]✗[/] {escape(f'{name}: {error}')}")
         msg = f"cannot install, on {project.arch}: {', '.join(sorted(errors))}"
         raise ResolutionError(msg)
-    return read_lock(project).runtime.get(project.arch, [])
+    return cached_lock(project).runtime.get(project.arch, [])
 
 
 def resolve_rpm_deps(project: Project, names: dict[str, str], rpms: list[Path]) -> Resolved:
@@ -503,7 +503,7 @@ def rpm_deps_context(project: Project, builds: dict[str, str]) -> str:
     """
     config = project.config
     inputs = [
-        _SCRIPT.read_text(), repo_file(project), project.arch, config.release_suffixes, read_lock(project).sources,
+        _SCRIPT.read_text(), repo_file(project), project.arch, config.release_suffixes, cached_lock(project).sources,
         _pinned(project), config.base_image, sorted({*config.packages, *PACKAGES}), _wanted(project), _extra(project),
         builds,
     ]  # fmt: skip
@@ -525,7 +525,7 @@ def upstream_sources(project: Project, names: list[str]) -> list[str]:
     return sorted({n if n in lock.sources else binaries[n] for n in names})
 
 
-def lock_installed(project: Project, installed: dict[str, Locked]) -> bool:
+def _lock_installed(project: Project, installed: dict[str, Locked]) -> bool:
     """Lock the upstream source packages of the `installed` packages not locked yet, and return whether all of them
     were installed in the locked versions: those locked here may get other ones, which the other architectures have,
     and the packages have to be installed again.
@@ -535,7 +535,7 @@ def lock_installed(project: Project, installed: dict[str, Locked]) -> bool:
 
     def changed() -> list[str]:
         """Return the installed packages of locked sources not in their locked versions, or not in them at all."""
-        locked, sources = resolve_image(project).packages, read_lock(project).sources
+        locked, sources = resolve_image(project).packages, cached_lock(project).sources
         return sorted(
             n
             for n, p in installed.items()
@@ -545,7 +545,7 @@ def lock_installed(project: Project, installed: dict[str, Locked]) -> bool:
     if before := changed():
         msg = f"packages installed in another version than locked: {', '.join(before)}"
         raise ResolutionError(msg)
-    if new := sorted({p.source for p in installed.values()} - read_lock(project).sources.keys()):
+    if new := sorted({p.source for p in installed.values()} - cached_lock(project).sources.keys()):
         lock_sources(project, new)
         return not changed()
     return True

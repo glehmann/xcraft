@@ -116,14 +116,14 @@ def test_spec_changed_during_build_is_not_cached(root: Path) -> None:
 
 def test_spec_changed_before_its_build_is_not_cached(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spec = root / "base/trivial/trivial.spec"
-    check_resolved = builder.check_resolved
+    resolved_root = builder.resolved_root
 
     def changed(project: Project, name: str) -> object:
         # after the check of the directories of the keys, before the build tree has its files
         spec.write_text(f"{spec.read_text()}# changed\n")
-        return check_resolved(project, name)
+        return resolved_root(project, name)
 
-    monkeypatch.setattr(builder, "check_resolved", changed)
+    monkeypatch.setattr(builder, "resolved_root", changed)
     code, output = xcraft("build", "trivial")
     assert code == 1
     assert "base/trivial changed since the builds started, build it again" in output
@@ -259,7 +259,7 @@ def test_repo_host_options(root: Path) -> None:
 
 def test_dnf_lock_is_shared_by_containers(root: Path) -> None:
     logs = [root / f"lock-{i}.log" for i in range(2)]
-    container.build_image(Project.find())  # before the threads, which would both build it
+    container.built_image(Project.find())  # before the threads, which would both build it
 
     def hold(log: Path) -> None:
         script = f"{container.DNF_LOCK} sh -c 'date +%s.%N; sleep 1; date +%s.%N'"
@@ -806,7 +806,7 @@ def test_images_of_other_contents(root: Path, tmp_path: Path) -> None:
             code, output = xcraft("lock", "--update", "toypayload")
             assert code == 0, output
             assert "pinned again, of the same versions: toypayload" in output
-        images.append(image := container.build_image(Project.find()))
+        images.append(image := container.built_image(Project.find()))
         # with the layers of the cache of podman: those of the pins of the image only
         cat = ["podman", "run", "--rm", image, "cat", "/usr/share/toypayload"]
         installed = subprocess.run(cat, capture_output=True, text=True, check=True)

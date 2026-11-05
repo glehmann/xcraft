@@ -9,7 +9,7 @@ import typer
 from rpm_version import evr_compare  # ty: ignore[unresolved-import]
 
 from xcraft import process
-from xcraft.commands import Packages, load
+from xcraft.commands import Packages, prepared_project
 from xcraft.display import activity, console, download_progress
 from xcraft.process import git
 from xcraft.project import write_atomically
@@ -145,7 +145,7 @@ def bump(
     if version and len(packages) != 1:
         msg = "--version needs one package"
         raise typer.BadParameter(msg)
-    project = load(packages)
+    project = prepared_project(packages)
     before = project.packages
     name, email = (git("-C", str(project.root), "config", key) for key in ("user.name", "user.email"))
     author = f"{name} <{email}>"

@@ -165,7 +165,7 @@ def check_stopped(directory: Path) -> None:
         raise RuntimeError(msg)
 
 
-def command(
+def qemu_command(
     directory: Path, launch: Launch, *, disk: Path, iso: Path | None, ssh_port: int, headless: bool
 ) -> list[str]:
     """Return the QEMU command of the VM, copying the template of the firmware variables it writes, once."""
@@ -199,7 +199,7 @@ def command(
     return [*cmd, *launch.qemu_args]
 
 
-def free(port: int) -> bool:
+def port_free(port: int) -> bool:
     """Return whether `port` is free on localhost, for QEMU to forward."""
     with socket.socket() as sock:
         try:
@@ -211,7 +211,7 @@ def free(port: int) -> bool:
 
 def free_port(start: int = 2222) -> int:
     """Return the first port from `start` free on localhost."""
-    if port := next((p for p in range(start, start + 100) if free(p)), None):
+    if port := next((p for p in range(start, start + 100) if port_free(p)), None):
         return port
     msg = f"no free port from {start} to {start + 99} on localhost: give one with --ssh-port"
     raise RuntimeError(msg)

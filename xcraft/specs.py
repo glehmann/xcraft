@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter
 
-from xcraft.container import BUILDENV, build_image, image_tag, run
+from xcraft.container import BUILDENV, built_image, image_tag, run
 from xcraft.packages import Package
 
 if TYPE_CHECKING:
@@ -72,7 +72,7 @@ def hash_dir(path: Path, root: Path | None = None, stage: Callable[[str, bytes, 
     return h.hexdigest()
 
 
-def target(arch: str) -> str:
+def rpm_target(arch: str) -> str:
     """Return the rpm target of an RPM architecture: our packages are built for x86_64 on x86_64_v2."""
     return f"{arch.removesuffix('_v2')}-linux"
 
@@ -105,16 +105,16 @@ def parse(project: Project, dirs: list[Path]) -> dict[str, Package]:
     """Return the metadata of the packages of the directories `dirs`, by name, for the architecture of `project`."""
     hashes = [(d.name, hash_dir(d, project.root)) for d in dirs]
     native = project.on_host()
-    key = json.dumps([*_SCRIPTS, image_tag(native), target(project.arch), *hashes])
+    key = json.dumps([*_SCRIPTS, image_tag(native), rpm_target(project.arch), *hashes])
     cache = project.state / "cache/specs" / project.arch / f"{hashlib.sha256(key.encode()).hexdigest()}.json"
     if not cache.exists():
-        build_image(native)
+        built_image(native)
         specs = " ".join(f"/project/{main_spec(d).relative_to(project.root)}" for d in dirs)
         with project.tmp_dir("specs") as work:
             run(
                 native,
                 "specs",
-                f"python3 /xcraft/parse.py /work/specs.json {target(project.arch)} {specs}",
+                f"python3 /xcraft/parse.py /work/specs.json {rpm_target(project.arch)} {specs}",
                 volumes=[f"{project.root}:/project:ro", f"{work}:/work"],
                 show="parsing the specs",
                 network=False,

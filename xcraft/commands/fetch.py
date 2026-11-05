@@ -7,7 +7,7 @@ import typer
 from xcraft import build as builder
 from xcraft import ccache
 from xcraft.cache import build_keys, cached_build
-from xcraft.commands import Arch, Final, Packages, find, load
+from xcraft.commands import Arch, Final, Packages, prepared_project, unprepared_project
 from xcraft.devbuilds import developed
 from xcraft.display import console
 from xcraft.project import Project
@@ -37,7 +37,7 @@ def sources(packages: Packages = None, arch: Arch = None) -> None:
 
     Those missing are downloaded from the remote storage, or else from the source of the spec with their URL.
     """
-    project = find(packages, arch=arch)
+    project = unprepared_project(packages, arch=arch)
     missing = {}
     for name in packages or sorted(project.package_dirs):
         try:  # the others too, when a download fails
@@ -61,7 +61,7 @@ def caches(packages: Packages = None, arch: Arch = None) -> None:
     They are not downloaded by xcraft fetch without a command, but a build gets the one of its package when it has
     none.
     """
-    project = find(packages, arch=arch)
+    project = unprepared_project(packages, arch=arch)
     if not project.config.remote:
         msg = "no remote storage: see [remote.main] and [remote.dev] in xcraft.toml"
         raise typer.BadParameter(msg)
@@ -77,7 +77,7 @@ def builds(packages: Packages = None, final: Final = False, arch: Arch = None) -
 
     The packages with development builds are skipped, unless --final, which downloads their final builds, if any.
     """
-    project = load(packages, arch=arch)
+    project = prepared_project(packages, arch=arch)
     if not project.config.remote:
         msg = "no remote storage: see [remote.main] and [remote.dev] in xcraft.toml"
         raise typer.BadParameter(msg)

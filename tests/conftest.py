@@ -15,7 +15,7 @@ import pytest
 from tests import ARCH, PROJECT, TOML, TOYS, UPSTREAM, config
 from xcraft import container, process, resolution, upstream_copy
 from xcraft.cache import build_keys
-from xcraft.container import BUILDENV, build_image, repo_file, run_natively
+from xcraft.container import BUILDENV, built_image, repo_file, run_natively
 from xcraft.localrepo import extra_rpms
 from xcraft.project import Project, write_atomically
 from xcraft.resolution import Resolved, prepare
@@ -118,7 +118,7 @@ def build_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path
             with pytest.MonkeyPatch.context() as patch:
                 patch.setattr(resolution, "_run", _shared_resolutions(resolutions))
                 prepare(native)
-                build_image(native)
+                built_image(native)
                 build_keys(native)
     if "PYTEST_XDIST_WORKER" not in os.environ:
         yield root

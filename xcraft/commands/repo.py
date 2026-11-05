@@ -11,7 +11,7 @@ import typer
 from xcraft import build as builder
 from xcraft import process
 from xcraft.cache import release_suffix
-from xcraft.commands import Arch, Dev, Final, Packages, dev_ident, load
+from xcraft.commands import Arch, Dev, Final, Packages, dev_ident, prepared_project
 from xcraft.display import activity, console
 from xcraft.graph import dependents
 from xcraft.packages import is_debug
@@ -118,7 +118,7 @@ def repo(  # noqa: C901
     if hosts and baseurl:
         msg = f"with --host, the hosts find the repository in {REMOTE}/<ID>: no --baseurl"
         raise typer.BadParameter(msg)
-    project = load(packages, arch=arch)
+    project = prepared_project(packages, arch=arch)
     names = list(packages or sorted(project.packages))
     if with_dependents:
         names += sorted(dependents(project.deps, names) - set(names))

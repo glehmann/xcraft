@@ -184,7 +184,7 @@ def distribution() -> str:
     return next((i for i in [fields.get("ID", ""), *fields.get("ID_LIKE", "").split()] if i in _DISTROS), "")
 
 
-def install(tools: list[str]) -> list[Fix]:
+def install_fixes(tools: list[str]) -> list[Fix]:
     """Return the commands installing `tools`, like `qemu-<RPM arch>` for an emulator, on the host's distribution."""
     installers = _DISTROS.get(distribution(), [])
     commands: dict[str, list[str]] = {}
@@ -197,7 +197,7 @@ def install(tools: list[str]) -> list[Fix]:
     return [Fix(["sudo", *cmd.split(), *dict.fromkeys(packages)]) for cmd, packages in commands.items()]
 
 
-def subids(user: str) -> list[Fix]:
+def subid_fixes(user: str) -> list[Fix]:
     """Return the commands giving `user` the subordinate ids rootless podman needs, when it has none."""
     ranges = {path: [line.split(":") for line in path.read_text().split()] if path.exists() else [] for path in _SUBIDS}
     missing = [path for path, lines in ranges.items() if not any(name == user for name, _, _ in lines)]

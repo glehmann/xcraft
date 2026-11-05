@@ -8,7 +8,7 @@ import typer
 
 from xcraft import clean as cleaner
 from xcraft.cache import build_keys
-from xcraft.commands import Arch, Packages, load
+from xcraft.commands import Arch, Packages, prepared_project
 from xcraft.devbuilds import built_dev_suffixes
 from xcraft.display import activity, console
 
@@ -31,7 +31,7 @@ def clean(
 
     The source archives are always kept.
     """
-    project = load(packages, arch=arch)
+    project = prepared_project(packages, arch=arch)
     keys = build_keys(project)
     developed = build_keys(project, built_dev_suffixes(project))  # as last built
     with project.lock(), activity("cleaning"):

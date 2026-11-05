@@ -110,7 +110,7 @@ def test_inputs_read_once(project: Project, monkeypatch: pytest.MonkeyPatch) -> 
     other = buildkey.Inputs(project, hashes, Lock(), Builds(buildrequires=Recorded(shared={"c": ["a"]})))
     assert (other.deps["c"], buildkey.Inputs(project, hashes).deps["c"]) == ({"a"}, set())
     # and nothing more after
-    monkeypatch.setattr(buildkey, "read_lock", lambda _: pytest.fail("read again"))
+    monkeypatch.setattr(buildkey, "cached_lock", lambda _: pytest.fail("read again"))
     monkeypatch.setattr(buildkey, "load_builds", lambda _: pytest.fail("read again"))
     monkeypatch.setattr("xcraft.resolution.resolve_image", lambda _: pytest.fail("resolved again"))
     project.parsed = {}

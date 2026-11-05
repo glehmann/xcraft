@@ -13,7 +13,7 @@ from rich.table import Table
 from xcraft import build as builder
 from xcraft import buildid, buildkey
 from xcraft.cache import cached_build, has_normal_build, release_suffix
-from xcraft.commands import Arch, Dev, Final, Packages, dev_ident, load
+from xcraft.commands import Arch, Dev, Final, Packages, dev_ident, prepared_project
 from xcraft.container import image_tag
 from xcraft.devbuilds import dev_keys
 from xcraft.display import console
@@ -55,7 +55,7 @@ def status(
     built, outdated (only older versions are built), and missing.
     """
     ident = dev_ident(ctx, dev, final=final)
-    project = load(packages, arch=arch)
+    project = prepared_project(packages, arch=arch)
     if with_inputs:
         _show_inputs(project, sorted(set(packages or project.packages)))
         return

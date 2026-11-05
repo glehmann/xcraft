@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from xcraft import publish as publisher
 from xcraft.build import update_build_ids
-from xcraft.commands import Key, To, choose_signer, complete_arch, load, remote_storage
+from xcraft.commands import Key, To, choose_signer, complete_arch, prepared_project, remote_storage
 from xcraft.display import console
 from xcraft.iso import fetch_isos, push_isos, snapshot_isos
 from xcraft.project import Destination, Project, Publish
@@ -142,7 +142,7 @@ def _publish(  # noqa: C901, PLR0912
     arch: str | None,
 ) -> None:
     """Publish the repositories and the ISOs of a snapshot, or `only` the repos or the isos."""
-    project = load(locked=locked, arch=None if arch == "all" else arch)
+    project = prepared_project(locked=locked, arch=None if arch == "all" else arch)
     if stage is not None:
         try:
             publish = Publish.model_validate(project.config.publish.model_dump() | {"stage": stage})

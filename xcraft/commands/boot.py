@@ -128,7 +128,7 @@ def boot(
             disk.parent.mkdir(parents=True, exist_ok=True)
             process.run(["qemu-img", "create", "-f", "qcow2", str(disk), disk_size])
         launch = vm.Launch(name=project.id, memory=memory, cpus=cpus, accel=accel, ovmf=ovmf, qemu_args=qemu_arg or [])
-        cmd = vm.command(vm_dir, launch, disk=disk, iso=iso, ssh_port=ssh_port, headless=headless or background)
+        cmd = vm.qemu_command(vm_dir, launch, disk=disk, iso=iso, ssh_port=ssh_port, headless=headless or background)
         session = vm.Session(
             pid=0, arch=project.arch, disk=disk, iso=iso.absolute(), ssh_port=ssh_port, command=cmd, launch=launch
         )

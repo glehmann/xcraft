@@ -9,7 +9,7 @@ import typer
 
 from xcraft import build as builder
 from xcraft.cache import cached_build
-from xcraft.commands import Arch, Dev, Final, Packages, dev_ident, load
+from xcraft.commands import Arch, Dev, Final, Packages, dev_ident, prepared_project
 from xcraft.display import console
 from xcraft.graph import dependents
 
@@ -42,7 +42,7 @@ def build(
     The packages whose build ID is not the main branch's get development builds, unless --final, see --dev.
     """
     ident = dev_ident(ctx, dev, final=final)
-    project = load(packages, locked=locked, arch=arch)
+    project = prepared_project(packages, locked=locked, arch=arch)
     names = list(packages or sorted(project.packages))
     if with_dependents:
         names += sorted(dependents(project.deps, names) - set(names))

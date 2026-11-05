@@ -19,7 +19,7 @@ from rich.markup import escape
 from xcraft import pinned, remote
 from xcraft.container import DNF_LOCK, run
 from xcraft.display import activity, console
-from xcraft.lock import read_lock
+from xcraft.lock import cached_lock
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
@@ -55,7 +55,7 @@ def remote_path(project: Project, name: str) -> str:
 
 def used(project: Project, name: str) -> bool:
     """Return whether the builds of `name` use ccache: whether its build root has it."""
-    return "ccache" in read_lock(project).roots.of(project.arch).get(name, [])
+    return "ccache" in cached_lock(project).roots.of(project.arch).get(name, [])
 
 
 def note_build(project: Project, name: str, start: float) -> None:
@@ -89,7 +89,7 @@ def push(project: Project, storage: Remote, name: str, *, signer: Signer | None)
     """
     if not (cache := local_path(project, name)).is_dir():
         return False
-    signer = remote.required(signer)  # before uploading anything
+    signer = remote.required_signer(signer)  # before uploading anything
     since = int(float(last.read_text())) if (last := cache / _LAST_BUILD).exists() else 0
     prefix = remote_path(project, name)
     stored = remote.read_manifest(storage, prefix, trusted=signer)

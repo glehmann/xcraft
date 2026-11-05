@@ -19,7 +19,7 @@ from xcraft.cache import build_keys, cached_build
 from xcraft.commands import choose_signer
 from xcraft.project import Project, Sign
 from xcraft.publish import _signed_build
-from xcraft.signing import Signer, SigningError, check_signatures, create_dev_key, dev_keyring, dev_signer, signing_key
+from xcraft.signing import Signer, SigningError, check_signatures, create_dev_key, dev_keyring, dev_signer, key_signer
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -58,16 +58,16 @@ def test_dev_key(root: Path) -> None:
 def test_signer_selection(root: Path) -> None:
     project = Project.find()
     developer = create_dev_key(project, "Developer")
-    assert signing_key(project) == developer
+    assert key_signer(project) == developer
     assert choose_signer(project, local=False, unsigned=False, dev_key=False) == developer
-    assert signing_key(project, "A" * 40) == Signer("A" * 40)
+    assert key_signer(project, "A" * 40) == Signer("A" * 40)
     project.config.sign = Sign(key="B" * 40, gnupghome=str(root / "release-keyring"))
-    assert signing_key(project) == Signer("B" * 40, root / "release-keyring")
-    assert signing_key(project, "A" * 40) == Signer("A" * 40, root / "release-keyring")
+    assert key_signer(project) == Signer("B" * 40, root / "release-keyring")
+    assert key_signer(project, "A" * 40) == Signer("A" * 40, root / "release-keyring")
     # fingerprints, in uppercase, like the storage has the public keys
-    assert signing_key(project, "a" * 40) == Signer("A" * 40, root / "release-keyring")
+    assert key_signer(project, "a" * 40) == Signer("A" * 40, root / "release-keyring")
     with pytest.raises(ValueError, match="not the fingerprint of a key"):
-        signing_key(project, "Developer")
+        key_signer(project, "Developer")
     assert Sign(key="b" * 40).key == "B" * 40
     with pytest.raises(ValueError, match="not the fingerprint of a key"):
         Sign(key="B" * 39)

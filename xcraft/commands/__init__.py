@@ -9,7 +9,7 @@ import typer
 
 from xcraft.project import Destination, Project, Remote
 from xcraft.resolution import prepare
-from xcraft.signing import Signer, dev_signer, signing_key
+from xcraft.signing import Signer, dev_signer, key_signer
 
 
 def complete_package(incomplete: str) -> list[str]:
@@ -49,19 +49,19 @@ Arch = Annotated[
 ]
 
 
-def load(names: list[str] | None = None, *, locked: bool = False, arch: str | None = None) -> Project:
+def prepared_project(names: list[str] | None = None, *, locked: bool = False, arch: str | None = None) -> Project:
     """Return the project, with its packages and their build dependencies, checking `names` are packages, once the
     lock has the upstream packages the builds need, which it may lock (see resolution.prepare()).
 
     With `locked`, the lock cannot change: it fails instead.
     """
-    project = find(names, arch=arch)  # before preparing, which may run containers
+    project = unprepared_project(names, arch=arch)  # before preparing, which may run containers
     project.frozen = locked
     prepare(project)
     return project
 
 
-def find(names: list[str] | None = None, *, arch: str | None = None) -> Project:
+def unprepared_project(names: list[str] | None = None, *, arch: str | None = None) -> Project:
     """Return the project, checking `names` are packages, without the lock or the specs, for the commands needing
     their directories only.
     """
@@ -123,7 +123,7 @@ def choose_signer(
     project: Project, *, local: bool, unsigned: bool, dev_key: bool, key: str | None = None
 ) -> Signer | None:
     """Return the key signing a snapshot: `key`, the developer's with `dev_key`, or the default one, see
-    signing_key(), or none when `unsigned`.
+    key_signer(), or none when `unsigned`.
     """
     if key and dev_key:
         msg = "--key and --dev-key cannot be used together"
@@ -131,7 +131,7 @@ def choose_signer(
     if unsigned and (key or dev_key):
         msg = "--unsigned cannot be used with --key or --dev-key"
         raise typer.BadParameter(msg)
-    signer = None if unsigned else dev_signer(project) if dev_key else signing_key(project, key)
+    signer = None if unsigned else dev_signer(project) if dev_key else key_signer(project, key)
     if dev_key and not signer:
         msg = "no developer's key: run xcraft key create"
         raise typer.BadParameter(msg)
