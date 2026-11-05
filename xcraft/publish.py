@@ -95,7 +95,7 @@ def _download(
     cache = project.state / ("cache/srpms" if source else "cache/rpms")
     if not (missing := {f: nevra for f, nevra in files.items() if not (cache / f).exists()}):
         return cache
-    with project.work("download") as work:
+    with project.tmp_dir("download") as work:
         if storage := project.config.remote.get("main"):
             latest, directory = snapshot_tree(project, "repos", "latest"), "Source" if source else project.arch
             copy = f"{upstream_copy.PREFIX}/{directory}"
@@ -177,7 +177,7 @@ def _srpm_names(project: Project, names: list[str]) -> dict[str, str]:
         return {}
     locked = pins(project)
     nevras = {name: _nevra(locked, name) for name in names}
-    with project.work("srpms") as work:
+    with project.tmp_dir("srpms") as work:
         run_natively(
             project,
             "srpms",
@@ -258,7 +258,7 @@ def _check_installable(project: Project, repos: list[Path]) -> None:
     checked = project.state / "cache/checks/installable" / key
     if checked.exists():
         return
-    with project.work("snapshot") as work:
+    with project.tmp_dir("snapshot") as work:
         run_natively(
             project,
             "snapshot",
@@ -473,7 +473,7 @@ def previous(
     latest = snapshot_tree(project, "repos", "latest")
     manifest = remote.read_manifest(storage, latest, trusted=trusted_key(project, signer))
     known = {}
-    with project.work("previous") as work, activity("reading the metadata of the latest snapshot", log=True):
+    with project.tmp_dir("previous") as work, activity("reading the metadata of the latest snapshot", log=True):
 
         def fetch(path: str) -> bool:
             # of the manifest only, whose paths stay in the tree

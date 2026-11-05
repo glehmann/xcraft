@@ -500,7 +500,7 @@ def test_iso_tools(root: Path) -> None:
     assert {"dosfstools", "libisoburn", "memtest86+", "mtools", "syslinux"} <= lock.sources.keys()  # by source
     assert lock.iso.keys() == {project.arch}
     # installed from the pinned packages
-    with project.work("tools") as work:
+    with project.tmp_dir("tools") as work:
         record = f"{container.DNF_LOCK} python3 /xcraft/record.py /work/tools.json"
         container.run(project, "tools", f"{_INSTALL_TOOLS} && {record}", volumes=[f"{work}:/work"], install=True)
         _check_installed_tools(project, work / "tools.json")

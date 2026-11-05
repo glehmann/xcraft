@@ -98,7 +98,7 @@ def _run(project: Project, data: dict, *, show: str, rpms: Sequence[Path] = ()) 
     data = {"rpms": paths, "record": {}, "wanted": [], "versions": [], **data}
     if "base" not in data:  # by reference in the cache keys, see _cache()
         data["base"] = base_packages(project)
-    with project.work("resolve") as work:
+    with project.tmp_dir("resolve") as work:
         (work / "input.json").write_text(json.dumps(data))
         run_natively(
             project,

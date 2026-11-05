@@ -147,7 +147,7 @@ class Uploader:
         otherwise.
         """
         latest = snapshot_tree(self.project, kind, "latest")
-        with self.project.work("snapshot-inputs") as work:
+        with self.project.tmp_dir("snapshot-inputs") as work:
             try:
                 if not remote.download_tree(self.storage, inputs_tree(latest), work / "inputs", trusted=self._trusted):
                     return {}
@@ -260,7 +260,7 @@ class Uploader:
             remote.delete(self.storage, [f"{latest}/{remote.MANIFEST}"])
             changed = {f: f"{tree}/{f}" for f in manifest if previous.get(f) != manifest[f]}
             self._write(latest, manifest, changed, on_line)
-            with self.project.work("snapshot-inputs") as work:
+            with self.project.tmp_dir("snapshot-inputs") as work:
                 (work / INPUTS).write_text(SnapshotInputs(keys=inputs, files=manifest).model_dump_json())
                 remote.upload_tree(self.storage, inputs_tree(latest), work, [INPUTS], signer=self._signing)
             on_line("the pages of the directories")

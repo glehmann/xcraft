@@ -46,7 +46,7 @@ def upstream_requires(project: Project) -> UpstreamRequires:
     key = hashlib.sha256(json.dumps([script, image_tag(project), data]).encode()).hexdigest()
     cache = project.state / "cache/upstream" / f"{key}.json"
     if not cache.exists():
-        with project.work("upstream") as work:
+        with project.tmp_dir("upstream") as work:
             (work / "input.json").write_text(data)
             run_natively(
                 project,
