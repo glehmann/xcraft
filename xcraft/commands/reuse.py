@@ -21,16 +21,17 @@ def reuse(packages: Packages = None, dep: Dep = None) -> None:
     if not (packages or dep):
         msg = "no package given, nor --dep"
         raise typer.BadParameter(msg)
+    packages = packages or []
     project = prepared_project(packages)
     with project.lock():
         # first, as it may lock them
         sources = upstream_sources(project, dep) if dep else []
-        changed = buildid.reuse(project, packages or [], sources)
+        changed = buildid.reuse(project, packages, sources)
         ids = buildid.read(project)
-        for name in sorted({*changed, *(packages or [])}):
+        for name in sorted({*changed, *packages}):
             if name in ids and ids[name].accepts:
                 console.print(f"[bold]{name}[/]: reuses its build {ids[name].number}")
-            elif name in (packages or []):
+            elif name in packages:
                 console.print(f"[yellow]{name}[/]: changed itself, built again")
             elif name in ids:
                 console.print(f"{name}: build {ids[name].number}")

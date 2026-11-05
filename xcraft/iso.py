@@ -1,6 +1,6 @@
-"""The installation ISO, made from a snapshot of the distribution, like XCP-ng's create-install-image does.
+"""The installation ISO, made from a snapshot of the distribution, with the hook of the project, iso/hook.
 
-Its repository is the closure of xcp-ng-deps in the snapshot, and install.img, the installer's root filesystem, is
+Its repository is the closure of [iso] packages in the snapshot, and install.img, the installer's root filesystem, is
 installed from the snapshot too, which has its packages. The tools making it, which are not in the build
 environment image, are installed in its containers, from the packages pinned for them in the lock.
 """
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shlex
 import shutil
 import tempfile
@@ -36,14 +37,11 @@ _INSTALL_TOOLS = (
     + " ".join(resolution.ISO_TOOLS)
 )
 """Installs the tools making the ISO, which the image does not have, from the pinned packages only."""
-KEY_FILE = "RPM-GPG-KEY-xcpng"
-"""The public key of the signed repository of the ISO, as named in its .treeinfo."""
 
 
 class Image(BaseModel):
-    """A cached ISO: the version of the distribution it installs, and its SHA-256."""
+    """A cached ISO: its SHA-256."""
 
-    version: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.+-]*$")
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
@@ -147,12 +145,12 @@ def iso_id(project: Project, *, signer: Signer | None) -> str:
     return hashlib.sha256(json.dumps(keys).encode()).hexdigest()[:6]
 
 
-def iso_name(project: Project, version: str, *, netinstall: bool, signer: Signer | None, dev: str | None = None) -> str:
-    """Return the file name of an ISO of the distribution `version`, with its identifier, the one of its development
-    builds `dev`, if any, and its architecture.
+def iso_name(project: Project, *, netinstall: bool, signer: Signer | None, dev: str | None = None) -> str:
+    """Return the file name of an ISO of the checkout: the name and version of the distribution, with its
+    identifier, the one of its development builds `dev`, if any, and its architecture.
     """
-    ident = f"{iso_id(project, signer=signer)}{f'.{dev}' if dev else ''}"
-    return f"xcp-ng-{version}-{ident}-{project.arch}{'-netinstall' if netinstall else ''}.iso"
+    iso, ident = project.config.iso, f"{iso_id(project, signer=signer)}{f'.{dev}' if dev else ''}"
+    return f"{iso.name}-{iso.version}-{ident}-{project.arch}{'-netinstall' if netinstall else ''}.iso"
 
 
 def cached_iso(project: Project, key: str) -> Path:
@@ -179,8 +177,9 @@ def _copy_iso(
 ) -> Path:
     """Copy the cached ISO in `tree` to `output`, or with its name in .xcraft/iso/ by default, and return it."""
     image = _verified_image(tree)
-    name = iso_name(project, image.version, netinstall=netinstall, signer=signer, dev=dev)
-    output = (output or project.state / "iso" / name).absolute()
+    output = (
+        output or project.state / "iso" / iso_name(project, netinstall=netinstall, signer=signer, dev=dev)
+    ).absolute()
     output.parent.mkdir(parents=True, exist_ok=True)
     if not output.exists() or sha256_of(output) != image.sha256:
         with tempfile.TemporaryDirectory(dir=output.parent, prefix=".iso-") as tmp:
@@ -237,7 +236,8 @@ def push_isos(
         tree, path = cached_iso(project, key), iso_path(project, key)
         if not tree.exists():
             continue
-        image, trusted = _verified_image(tree), upload_signer or signer or key_signer(project)
+        _verified_image(tree)
+        trusted = upload_signer or signer or key_signer(project)
         if remote.tree_exists(storage, path, trusted=trusted):
             present += 1
         else:
@@ -247,7 +247,7 @@ def push_isos(
             count += 1
         # as the manifest found or written has it, which may be of another machine's image
         root, files = remote.read_tree(storage, path, trusted=trusted)
-        stored[iso_name(project, image.version, netinstall=netinstall, signer=signer)] = publish.Stored(
+        stored[iso_name(project, netinstall=netinstall, signer=signer)] = publish.Stored(
             f"{root}/image.iso", files["image.iso"]
         )
     console.print(f"{count} ISOs pushed, {present} already in the remote storage")
@@ -272,20 +272,24 @@ def _check_installed_tools(project: Project, recorded: Path) -> None:
 
 def _assemble_iso(
     project: Project, snapshot: Path, *, netinstall: bool, volid: str | None, signer: Signer | None
-) -> tuple[Path, str]:
-    """Make the ISO of `snapshot`, its binaries for the architecture, in .xcraft/tmp/, and return it, with the
-    version of the distribution it installs.
-    """
+) -> Path:
+    """Make the ISO of `snapshot`, its binaries for the architecture, in .xcraft/tmp/, and return it."""
     iso = project.config.iso
     if error := resolution.resolve(project).tools_error:
         msg = f"the tools making the ISO cannot be installed: {error}"
         raise RuntimeError(msg)
+    if not os.access(project.root / "iso/hook", os.X_OK):
+        msg = "the ISO needs the hook of the project, an executable iso/hook: see xcraft/buildenv/iso.py"
+        raise RuntimeError(msg)
     with project.tmp_dir("iso") as work:
+        if signer:
+            (work / "key.asc").write_text(signer.public_key())
         (work / "config.json").write_text(
             json.dumps({
                 "snapshot": "/snapshot", "templates": "/templates", "tree": "/work/tree", "installer": iso.installer,
                 "packages": iso.packages, "netinstall": netinstall, "signed": bool(signer),
-                "keys": key_paths(repo_keys(project), work) if signer else [],
+                "keys": ["/work/key.asc", *key_paths(repo_keys(project), work)] if signer else [],
+                "name": iso.name, "version": iso.version,
             })
         )  # fmt: skip
         volumes = [f"{snapshot}:/snapshot:ro", f"{project.root / 'iso'}:/templates:ro", f"{work}:/work"]
@@ -302,12 +306,10 @@ def _assemble_iso(
         tree = work / "tree"
         if signer and not netinstall:
             signer.sign_file(tree / "repodata/repomd.xml")
-            keys = tree / KEY_FILE
-            keys.write_text(signer.public_key() + "\n" + keys.read_text())
-        info = json.loads((work / "info.json").read_text())
         # hybrid, for BIOS and UEFI, from a CD or a USB stick
         xorriso = (
-            f"xorriso -as mkisofs -quiet -o /work/image.iso -V {shlex.quote(volid or info['volid'])} -R -J -joliet-long"
+            f"xorriso -as mkisofs -quiet -o /work/image.iso -V {shlex.quote(volid or iso.default_volid)}"
+            " -R -J -joliet-long"
             " -b boot/isolinux/isolinux.bin -c boot/isolinux/boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table"
             " -isohybrid-mbr /usr/share/syslinux/isohdpfx.bin"
             " -eltorito-alt-boot -e boot/efiboot.img -no-emul-boot -isohybrid-gpt-basdat /work/tree"
@@ -317,7 +319,7 @@ def _assemble_iso(
         )
         made = project.state / "tmp" / f"{work.name}.iso"
         shutil.move(work / "image.iso", made)
-    return made, info["version"]
+    return made
 
 
 def _snapshot_iso(
@@ -338,7 +340,7 @@ def _snapshot_iso(
         if found := _existing_iso(project, key, output, netinstall=netinstall, signer=signer, dev=dev):
             return found
         checkout = _checkout_inputs(project)
-        made, version = _assemble_iso(project, snapshot, netinstall=netinstall, volid=volid, signer=signer)
+        made = _assemble_iso(project, snapshot, netinstall=netinstall, volid=volid, signer=signer)
         if checkout != _checkout_inputs(project):
             msg = "ISO inputs changed while making the image: run again"
             raise RuntimeError(msg)
@@ -348,9 +350,7 @@ def _snapshot_iso(
             staged = work / "tree"
             staged.mkdir()
             shutil.move(made, staged / "image.iso")
-            (staged / "image.json").write_text(
-                Image(version=version, sha256=sha256_of(staged / "image.iso")).model_dump_json()
-            )
+            (staged / "image.json").write_text(Image(sha256=sha256_of(staged / "image.iso")).model_dump_json())
             tree.parent.mkdir(parents=True, exist_ok=True)
             if not tree.exists():  # of the same inputs, kept from before the lock went back to them
                 staged.rename(tree)

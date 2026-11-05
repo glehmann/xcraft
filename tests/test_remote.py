@@ -175,7 +175,7 @@ def test_iso_cache(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture)
     assert "0 ISOs pushed, 1 already" in xcraft("push", "isos")[1]
     storage = project.config.remote["dev"]
     snapshot = tmp_path / "snapshot"
-    published = snapshot / "iso" / iso_name(project, "8.99.0", netinstall=False, signer=signer)
+    published = snapshot / "iso" / iso_name(project, netinstall=False, signer=signer)
     published.parent.mkdir(parents=True)
     shutil.copy2(image, published)
     with caplog.at_level(logging.DEBUG, logger="xcraft"):
@@ -1082,7 +1082,9 @@ def test_publish_rebuilt_package(root: Path, tmp_path: Path) -> None:
     assert storage
     rpm = f"base/{ARCH}/trivial-1.0-1+b1.xcpng8.99.noarch.rpm"
     local = root / ".xcraft/publish" / rpm
-    for name in (re.search(r"published (repos/\S+),", output)[1], f"repos/9.0/{STAGE}/latest"):  # ty: ignore[not-subscriptable]
+    published = re.search(r"published (repos/\S+),", output)
+    assert published, output
+    for name in (published[1], f"repos/9.0/{STAGE}/latest"):
         assert remote.read_manifest(storage, name)[rpm] == sha256_of(local)
         assert remote.download(storage, f"{name}/{rpm}", tmp_path / name.replace("/", "_"))
         assert sha256_of(tmp_path / name.replace("/", "_")) == sha256_of(local)
@@ -1163,11 +1165,14 @@ def test_concurrent_uploads_of_a_tree(
 
     write = remote.write_manifest
 
-    def raced(*args: object, **kwargs: object) -> None:  # a, its files uploaded, waits for b to complete the tree
+    # a, its files uploaded, waits for b to complete the tree
+    def raced(
+        target: Remote, path: str, manifest: dict[str, str], *, signer: Signer | None, root: str | None = None
+    ) -> None:
         monkeypatch.setattr(remote, "write_manifest", write)
         remote.upload_tree(storage, prefix, tmp_path / "b", ["build.log"], signer=signer)
         assert read("read-b") == "built on b\n"
-        write(*args, **kwargs)  # ty: ignore[invalid-argument-type]
+        write(target, path, manifest, signer=signer, root=root)
 
     monkeypatch.setattr(remote, "write_manifest", raced)
     remote.upload_tree(storage, prefix, tmp_path / "a", ["build.log"], signer=signer)
@@ -1391,7 +1396,7 @@ def test_isos_fetched_for_publishing(root: Path, tmp_path: Path) -> None:
     assert not fetch_isos(project, signer=signer)
     # the inputs of the netinstall ISOs too, without the others
     snapshot = tmp_path / "snapshot"
-    netinstall = snapshot / "iso" / iso_name(project, "8.99.0", netinstall=True, signer=signer)
+    netinstall = snapshot / "iso" / iso_name(project, netinstall=True, signer=signer)
     netinstall.parent.mkdir(parents=True)
     shutil.copy2(image, netinstall)
     storage = project.config.remote["main"]

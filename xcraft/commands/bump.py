@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Annotated
 
 import typer
-from rpm_version import evr_compare  # ty: ignore[unresolved-import]
+from rpm_version import evr_compare  # ty: ignore[unresolved-import]  # pyright: ignore[reportAttributeAccessIssue]
 
 from xcraft import process
 from xcraft.commands import Packages, prepared_project

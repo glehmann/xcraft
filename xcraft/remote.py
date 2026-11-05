@@ -295,11 +295,12 @@ def objects(s3: S3Client, bucket: str, prefix: str, *, below: bool) -> tuple[set
     )
     dirs, files = set(), {}
     for page in pages:
-        dirs |= {p["Prefix"].removeprefix(prefix).rstrip("/") for p in page.get("CommonPrefixes", [])}
+        # which S3 always gives, but its stubs do not require
+        dirs |= {p["Prefix"].removeprefix(prefix).rstrip("/") for p in page.get("CommonPrefixes", [])}  # pyright: ignore[reportTypedDictNotRequiredAccess]
         files |= {
-            o["Key"].removeprefix(prefix): (o["Size"], o["LastModified"])
+            o["Key"].removeprefix(prefix): (o["Size"], o["LastModified"])  # pyright: ignore[reportTypedDictNotRequiredAccess]
             for o in page.get("Contents", [])
-            if o["Key"].rsplit("/", 1)[-1] != INDEX
+            if o["Key"].rsplit("/", 1)[-1] != INDEX  # pyright: ignore[reportTypedDictNotRequiredAccess]
         }
     return dirs, files
 
@@ -445,7 +446,7 @@ def _checked_manifest(
 
 
 def _manifest(storage: Remote, prefix: str, trusted: Signer | None) -> tuple[str, dict[str, str]] | None:
-    fingerprints = frozenset({*storage.build_keys, *([trusted.key.upper()] if trusted else [])})
+    fingerprints = frozenset(storage.build_keys + ([trusted.key.upper()] if trusted else []))
     if not fingerprints:
         return None
     if (storage.url, prefix, fingerprints) not in _checked:

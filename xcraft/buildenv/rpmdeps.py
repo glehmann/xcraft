@@ -1,6 +1,6 @@
 """The dependencies of rpm headers, as xcraft compares them: the parsed specs, the built packages."""
 
-import rpm  # ty: ignore[unresolved-import]
+import rpm  # ty: ignore[unresolved-import]  # pyright: ignore[reportMissingImports]
 
 
 def deps(header: rpm.hdr, tag: int) -> list[str]:

@@ -490,7 +490,7 @@ def test_lock_records_runtime(root: Path) -> None:
 
 @pytest.mark.skipif(ARCH != "x86_64_v2", reason="the tools of the ISO are for x86_64")
 def test_iso_tools(root: Path) -> None:
-    (root / "xcraft.toml").write_text(f'{TOML}\n[iso]\ninstaller = ["bash"]\n')
+    (root / "xcraft.toml").write_text(f'{TOML}installer = ["bash"]\n')
     assert xcraft("build", "--dry-run")[0] == 0
     project = Project.find()
     lock = load_lock(project)
@@ -513,15 +513,15 @@ def test_iso_tools(root: Path) -> None:
 @pytest.mark.skipif(ARCH != "x86_64_v2", reason="the ISOs are for x86_64")
 def test_iso_packages_published(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # bc, which nothing else needs, in the repository of the ISO: published, for the snapshot to have it
-    iso = '[iso]\ninstaller = ["bash"]\npackages = ["bc"]\n'
-    (root / "xcraft.toml").write_text(f"{TOML}\n{iso}")
+    iso = 'installer = ["bash"]\npackages = ["bc"]\n'
+    (root / "xcraft.toml").write_text(f"{TOML}{iso}")
     assert xcraft("build", "--dry-run")[0] == 0
     lock = load_lock(Project.find())
     assert "bc" in lock.runtime[ARCH]
     assert "bc" not in lock.runtime["aarch64"]
     # the tools making the ISO, which cannot be installed, kept as the lock has them, but not what is published
     monkeypatch.setattr(resolution, "ISO_TOOLS", [*ISO_TOOLS, "no-such-package"])
-    (root / "xcraft.toml").write_text(f'{TOML}\n[publish]\nextra = ["toyrun"]\n\n{iso}')
+    (root / "xcraft.toml").write_text(f'{TOML}{iso}\n[publish]\nextra = ["toyrun"]\n')
     assert xcraft("build", "--dry-run")[0] == 0
     updated = load_lock(Project.find())
     assert "toyrun" in updated.runtime[ARCH]
@@ -915,9 +915,9 @@ def test_building_until_recorded(root: Path, monkeypatch: pytest.MonkeyPatch) ->
     states = []
     record = builder.record_rpm_deps
 
-    def recording(project: Project, names: list[str], *args: object, **kwargs: object) -> bool:
+    def recording(project: Project, names: list[str], keys: dict[str, str], *, quiet: bool = False) -> bool:
         states.extend(builder.building(project, name) for name in names)
-        return record(project, names, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+        return record(project, names, keys, quiet=quiet)
 
     monkeypatch.setattr(builder, "record_rpm_deps", recording)
     code, output = xcraft("build", "trivial")

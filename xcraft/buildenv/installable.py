@@ -10,7 +10,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-import dnf  # ty: ignore[unresolved-import]
+import dnf  # ty: ignore[unresolved-import]  # pyright: ignore[reportMissingImports]
 
 
 def main() -> None:

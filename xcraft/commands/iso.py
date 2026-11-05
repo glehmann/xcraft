@@ -19,9 +19,9 @@ def iso(
         bool, typer.Option("--netinstall", help="Without the packages, installed from a repository on the network.")
     ] = False,
     output: Annotated[
-        Path | None, typer.Option(help="The ISO. .xcraft/iso/xcp-ng-<version>[-netinstall].iso by default.")
+        Path | None, typer.Option(help="The ISO. .xcraft/iso/<name>-<version>-<id>-<arch>[-netinstall].iso by default.")
     ] = None,
-    volid: Annotated[str | None, typer.Option("-V", help="Volume id. XCP-NG_<version> by default.")] = None,
+    volid: Annotated[str | None, typer.Option("-V", help="Volume id. [iso] volid of xcraft.toml by default.")] = None,
     locked: Annotated[
         bool, typer.Option("--locked", help="Fail when making the ISO would change the lock, for CI.")
     ] = False,
@@ -41,7 +41,8 @@ def iso(
     """Make the installation ISO, from a local snapshot of the distribution, as xcraft publish --local makes it.
 
     The installer's root filesystem, install.img, comes from the snapshot, which has its packages, and so does the
-    repository of the ISO, with xcp-ng-deps and what it needs. Like xcraft build, it has the development builds of the
+    repository of the ISO, with [iso] packages and what they need. The hook of the project, iso/hook, makes what is
+    particular to the distribution. Like xcraft build, it has the development builds of the
     packages whose build ID is not the main branch's, unless --final.
     """
     ident = dev_ident(ctx, dev, final=final)

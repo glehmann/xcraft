@@ -353,20 +353,32 @@ them, and `xcraft bump` makes a release of them.
 
 ## Installation ISO
 
-`xcraft iso` makes the installation ISO of XCP-ng, like [create-install-image](https://github.com/xcp-ng/create-install-image)
-does, from a snapshot like `xcraft publish --local` makes, of its architecture only, with nothing else to install:
+`xcraft iso` makes the installation ISO of the distribution, from a snapshot like `xcraft publish --local` makes, of
+its architecture only, with nothing else to install, like
+[create-install-image](https://github.com/xcp-ng/create-install-image) does for XCP-ng:
 
 - `install.img`, the installer's root filesystem, is installed from the snapshot: its packages, `[iso] installer` in
   `xcraft.toml`, are published with the others. The firmware files no driver names are removed, and the files of
   `iso/installimg/` of the project are added, like its systemd units;
-- the boot files come from our packages: the kernel, Xen's debug builds, grub's image for CDs and host-installer's
-  grub configurations, for UEFI, with isolinux, for BIOS, configured by the files of `iso/tree/`;
+- the boot files are its kernel, grub's image for CDs and its modules, from `grub2-efi-x64-cdboot` and
+  `grub2-efi-x64-modules` of the snapshot, for UEFI, and isolinux, for BIOS, configured by the files of `iso/tree/`;
 - its repository has `[iso] packages`, like `xcp-ng-deps`, and what they need, signed like the snapshot, unless
   `--netinstall`, where the installer gets the packages from the network;
 - it is hybrid: it boots with BIOS and UEFI, from a CD or a USB stick.
 
+What is particular to the distribution, like the installer, Xen or the branding of XCP-ng, is made by the hook of the
+project, the executable `iso/hook`, which xcraft runs as root in the build environment, on `install.img` then on the
+tree of the ISO: see `xcraft/buildenv/iso.py` for its arguments. `[iso]` names the ISOs:
+
+```toml
+[iso]
+name = "xcp-ng"
+version = "8.99.0"
+volid = "XCP-NG_899"  # the name and version, in capitals, with underscores, by default
+```
+
 The tools making it, like xorriso and syslinux, are installed in the containers making it, from the packages pinned
-for them in the lock, in `iso`, resolved with the build roots. The ISO is `.xcraft/iso/xcp-ng-<version>-<id>-<arch>[-netinstall].iso` by default:
+for them in the lock, in `iso`, resolved with the build roots. The ISO is `.xcraft/iso/<name>-<version>-<id>-<arch>[-netinstall].iso` by default:
 `<arch>` is the RPM architecture, like `x86_64_v2`, and `<id>`, like `4772c1`, identifies what the ISOs are made of,
 the same for the full and netinstall ones of all the architectures: the beginning of a hash of their keys, which
 cover the packages, the lock and the ISO's configuration.
@@ -380,7 +392,7 @@ Local edits invalidate it; the publish stage, remote credentials and output path
 Like `xcraft build`, `xcraft iso` and `xcraft boot` take the development builds of the packages whose build ID is not
 the main branch's, see [Development builds](#development-builds), with `--dev ID`, or final builds with `--final`: the
 ISO is the one of what `xcraft build` just made, without building them again as final ones. Its key covers the
-suffixes of the development builds, and its name has their identifier, like `xcp-ng-<version>-<id>.dev-<arch>.iso`;
+suffixes of the development builds, and its name has their identifier, like `<name>-<version>-<id>.dev-<arch>.iso`;
 it is never taken from the remote storage, nor pushed to it, like them.
 
 `xcraft push isos` uploads cached images matching the checkout, with signed manifests like RPM builds. Use

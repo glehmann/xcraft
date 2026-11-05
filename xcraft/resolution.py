@@ -300,7 +300,7 @@ def resolve(project: Project) -> Resolved:
 
 def _locking(project: Project, resolve: Callable[[Project], Resolved]) -> None:
     """Lock the upstream source packages what `resolve` resolves for `project` needs."""
-    for _ in range(3):
+    for _ in (1, 2, 3):
         if not (resolved := resolve(project)).unlocked:
             return
         lock_sources(project, resolved.unlocked)

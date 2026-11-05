@@ -41,6 +41,10 @@ _SAME_BUILDS: dict[str, str] = {
     "b9b332f9df354013f4f94a02c6ad1e10f47e13a708a9e358ef80f188e015f54d": (
         "4b928b99728b60533308a1f147188072c2495311781bd54ff6441657aa19b2a5"
     ),
+    # pyright's comments on the imports of the build environment
+    "29c33cba085b64d826ac79e52005810ad38ef1db16ec3d0d747117564ebe8622": (
+        "4b928b99728b60533308a1f147188072c2495311781bd54ff6441657aa19b2a5"
+    ),
 }
 """Recipes making the same packages as an earlier one, by their hash, with the earliest one: their builds keep its
 keys."""

@@ -15,7 +15,7 @@ from xcraft.builds import BuildId, load_builds, save_builds
 from xcraft.container import BUILDENV
 from xcraft.iso import Image, cached_iso, checkout_iso, iso_id, iso_key, iso_name
 from xcraft.lock import Pin, load_lock, save_lock
-from xcraft.project import Project, Remote
+from xcraft.project import Iso, Project, Remote
 from xcraft.signing import Signer
 from xcraft.sources import sha256_of
 
@@ -34,7 +34,7 @@ def cache_image(project: Project, image: Path, *, signer: Signer | None = None, 
     tree = cached_iso(project, iso_key(project, netinstall=netinstall, volid=None, signer=signer))
     tree.mkdir(parents=True)
     shutil.copy2(image, tree / "image.iso")
-    (tree / "image.json").write_text(Image(version="8.99.0", sha256=sha256_of(image)).model_dump_json())
+    (tree / "image.json").write_text(Image(sha256=sha256_of(image)).model_dump_json())
     return tree
 
 
@@ -114,7 +114,7 @@ def test_iso_lookup_before_preparation(project: Project, tmp_path: Path) -> None
     image.write_bytes(b"cached ISO contents")
     tree = cache_image(project, image)
     assert xcraft("iso", "--locked", "--unsigned")[0] == 0
-    output = project.state / "iso" / iso_name(project, "8.99.0", netinstall=False, signer=None)
+    output = project.state / "iso" / iso_name(project, netinstall=False, signer=None)
     assert output.read_bytes() == image.read_bytes()
     output.write_bytes(b"changed output")
     assert checkout_iso(project) == output
@@ -132,7 +132,6 @@ def test_iso_masked_units_invalidate_cache(project: Project) -> None:
 
     original = key()
     unit = project.root / "iso/installimg/etc/systemd/system/masked.service"
-    unit.parent.mkdir(parents=True)
     unit.symlink_to("/dev/null")
     masked = key()
     assert masked != original
@@ -143,24 +142,17 @@ def test_iso_masked_units_invalidate_cache(project: Project) -> None:
     assert key() == original
 
 
-def test_iso_metadata_path(project: Project, tmp_path: Path) -> None:
-    image = tmp_path / "test.iso"
-    image.write_bytes(b"image")
-    tree = cache_image(project, image)
-    (tree / "image.json").write_text('{"version":"../../outside","sha256":"' + sha256_of(image) + '"}')
+def test_iso_names_are_not_paths() -> None:
     with pytest.raises(ValueError, match="version"):
-        checkout_iso(project)
+        Iso(name="toy", version="../../outside")
 
 
 def test_iso_names(project: Project) -> None:
-    full = iso_name(project, "8.99.0", netinstall=False, signer=None)
-    assert re.fullmatch(rf"xcp-ng-8\.99\.0-[0-9a-f]{{6}}-{project.arch}\.iso", full)
+    full = iso_name(project, netinstall=False, signer=None)
+    assert re.fullmatch(rf"toy-1\.0-[0-9a-f]{{6}}-{project.arch}\.iso", full)
     # the same identifier for the netinstall ISO, and those of the other architectures
-    ident = full.split("-")[3]
-    assert (
-        iso_name(project, "8.99.0", netinstall=True, signer=None)
-        == f"xcp-ng-8.99.0-{ident}-{project.arch}-netinstall.iso"
-    )
+    ident = full.split("-")[2]
+    assert iso_name(project, netinstall=True, signer=None) == f"toy-1.0-{ident}-{project.arch}-netinstall.iso"
     for platform in project.all_platforms():
         assert iso_id(platform, signer=None) == ident
     # another one for other contents
