@@ -27,7 +27,7 @@ import pytest
 from tests import ARCH, PLATFORM, TOML, copy_project, needs_gpg
 from tests.test_build import results, write_spec, xcraft
 from tests.test_iso import cache_image
-from xcraft import buildid, ccache, pinned, remote, repodata, resolution, upstream_copy
+from xcraft import buildid, ccache, pinned, remote, repodata, resolution, upload, upstream_copy
 from xcraft import publish as publisher
 from xcraft.container import run
 from xcraft.iso import build_iso, fetch_isos, iso_key, iso_name, iso_path, push_isos
@@ -181,15 +181,15 @@ def test_iso_cache(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture)
     shutil.copy2(image, published)
     with caplog.at_level(logging.DEBUG, logger="xcraft"):
         stored = push_isos(project, storage, signer=signer)
-        publisher.upload_isos(project, snapshot, storage, "cache-reuse", signer=signer, stored=stored)
+        upload.Uploader(project, storage, signer, build=False).upload_isos(snapshot, "cache-reuse", stored=stored)
     assert any(m.startswith("copying ") and "/image.iso to " in m for m in caplog.messages)
     assert not any(m.startswith(f"uploading {published} ") for m in caplog.messages)
     assert not any(m.startswith("downloading ") and f"/{published.name} to " in m for m in caplog.messages)
     # with the checksums of the ISOs of all the architectures, signed
     manifest = remote.read_manifest(storage, f"isos/9.0/{STAGE}/cache-reuse", trusted=signer)
-    assert {published.name, publisher.SUMS, f"{publisher.SUMS}.asc"} <= manifest.keys()
-    sums = tmp_path / publisher.SUMS
-    assert remote.download(storage, f"isos/9.0/{STAGE}/cache-reuse/{publisher.SUMS}", sums)
+    assert {published.name, upload.SUMS, f"{upload.SUMS}.asc"} <= manifest.keys()
+    sums = tmp_path / upload.SUMS
+    assert remote.download(storage, f"isos/9.0/{STAGE}/cache-reuse/{upload.SUMS}", sums)
     assert sums.read_text() == f"{sha256_of(image)}  {published.name}\n"
     shutil.rmtree(project.state / "cache")
     # No snapshot, RPMs, prepared container state or signing operations are needed to fetch the image.
@@ -1335,28 +1335,29 @@ def test_publish_reuses_remote_snapshot(root: Path, caplog: pytest.LogCaptureFix
     assert manifest == remote.read_manifest(storage, f"{prefix}/latest")
     # what it was made from is out of it
     assert not [f for f in manifest if "inputs" in f]
-    assert remote.read_manifest(storage, publisher.inputs_tree(f"{prefix}/latest")).keys() == {publisher.INPUTS}
+    assert remote.read_manifest(storage, upload.inputs_tree(f"{prefix}/latest")).keys() == {upload.INPUTS}
 
     project.config.publish.extra.append("bc")
-    assert not publisher.reuse_published(
-        [project], storage, signer=release_signer(project), build=False, only="repos", isos=[]
+    assert not upload.Uploader(project, storage, release_signer(project), build=False).reuse(
+        [project], only="repos", isos=[]
     )
     project.config.publish.extra.clear()
     # nor another latest snapshot than the one it was made from
     signer = release_signer(project)
     assert signer
+    uploader = upload.Uploader(project, storage, signer, build=False)
     remote.write_manifest(storage, f"{prefix}/latest", {**manifest, "other": "0" * 64}, signer=signer)
-    assert not publisher.reuse_published([project], storage, signer=signer, build=False, only="repos", isos=[])
+    assert not uploader.reuse([project], only="repos", isos=[])
     remote.write_manifest(storage, f"{prefix}/latest", manifest, signer=signer)
-    assert publisher.reuse_published([project], storage, signer=signer, build=False, only="repos", isos=[])
+    assert uploader.reuse([project], only="repos", isos=[])
     # nor with a package missing in the latest snapshot: assembled again, as the name of the copy, deleted
     remote.delete(storage, [f"{prefix}/latest/{next(f for f in manifest if f.endswith('.rpm'))}"])
-    name = publisher.snapshot_name(project, storage)
-    assert not publisher.reuse_published([project], storage, signer=signer, build=False, only="repos", isos=[])
+    name = uploader.snapshot_name()
+    assert not uploader.reuse([project], only="repos", isos=[])
     assert not remote.listing(storage, f"{prefix}/{name}/")
     # nor with what it was made from changed
-    remote.upload(storage, f"{publisher.inputs_tree(f'{prefix}/latest')}/{publisher.INPUTS}", root / "xcraft.toml")
-    assert not publisher.reuse_published([project], storage, signer=signer, build=False, only="repos", isos=[])
+    remote.upload(storage, f"{upload.inputs_tree(f'{prefix}/latest')}/{upload.INPUTS}", root / "xcraft.toml")
+    assert not uploader.reuse([project], only="repos", isos=[])
 
 
 @pytest.mark.parametrize("command", [[], ["repos"], ["isos"]])
@@ -1396,10 +1397,10 @@ def test_isos_fetched_for_publishing(root: Path, tmp_path: Path) -> None:
     shutil.copy2(image, netinstall)
     storage = project.config.remote["main"]
     project.config.publish.stage = f"netinstall-{secrets.token_hex(4)}"
-    publisher.upload_isos(project, snapshot, storage, "netinstall", signer=signer)
-    inputs = publisher.inputs_tree(f"isos/9.0/{project.config.publish.stage}/latest")
+    upload.Uploader(project, storage, signer, build=False).upload_isos(snapshot, "netinstall")
+    inputs = upload.inputs_tree(f"isos/9.0/{project.config.publish.stage}/latest")
     assert remote.download_tree(storage, inputs, tmp_path / "inputs")
-    assert publisher.SnapshotInputs.model_validate_json((tmp_path / "inputs" / publisher.INPUTS).read_bytes()).keys
+    assert upload.SnapshotInputs.model_validate_json((tmp_path / "inputs" / upload.INPUTS).read_bytes()).keys
 
 
 def test_iso_stages(root: Path, tmp_path: Path) -> None:
@@ -1414,10 +1415,10 @@ def test_iso_stages(root: Path, tmp_path: Path) -> None:
     stages = [f"{STAGE}-incoming", f"{STAGE}-testing"]
     for stage in stages:
         project.config.publish.stage = stage
-        assert publisher.snapshot_name(project, storage) == day
+        assert upload.Uploader(project, storage, None, build=False).snapshot_name() == day
         image.write_text(stage)
-        publisher.upload_isos(project, tmp_path, storage, day, signer=signer)
-        assert publisher.snapshot_name(project, storage) == f"{day}.2"
+        upload.Uploader(project, storage, signer, build=False).upload_isos(tmp_path, day)
+        assert upload.Uploader(project, storage, None, build=False).snapshot_name() == f"{day}.2"
     for stage in stages:
         for name in (day, "latest"):
             prefix = f"isos/9.0/{stage}/{name}"
@@ -1436,7 +1437,7 @@ def test_iso_snapshot_names_with_an_unconfigured_signer(root: Path) -> None:
     prefix = f"isos/9.0/{project.config.publish.stage}/{day}"
     remote.write_manifest(storage, prefix, {}, signer=signer)
     assert not remote.tree_exists(storage, prefix)
-    assert publisher.snapshot_name(project, storage) == f"{day}.2"
+    assert upload.Uploader(project, storage, None, build=False).snapshot_name() == f"{day}.2"
 
 
 def test_manifest_paths_stay_in_their_tree(root: Path, tmp_path: Path) -> None:

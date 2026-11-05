@@ -493,9 +493,7 @@ def test_builds_still_to_build_again_fail(project: Project, monkeypatch: pytest.
     monkeypatch.setattr(build, "_record_cached", lambda *_: ({"a": "key"}, {}, {}))
     monkeypatch.setattr(build, "update_build_ids", lambda _: None)
     attempts = []
-    monkeypatch.setattr(
-        build, "_build_all", lambda *_, **__: attempts.append(1) or ([build.Result("a", "again")], {"a": "key"}, {})
-    )
+    monkeypatch.setattr(build._Run, "build", lambda *_: attempts.append(1) or [build.Result("a", "again")])
     assert build.build(project, ["a"]) == ([build.Result("a", "failed")], {"a": "key"}, {})
     assert len(attempts) == 2
 
@@ -511,17 +509,15 @@ def test_packages_edited_while_building(project: Project, monkeypatch: pytest.Mo
     keys = build_keys(project, hashes=hashes)
     (cache.cached_build(project, "b", keys["b"])).mkdir(parents=True)
 
-    def building(_project: Project, name: str, *_: object, **__: object) -> build.Result:
+    def building(_run: build._Run, name: str, _status: str | None) -> build.Result:
         if name == "c":  # a, which b depends on, edited meanwhile
             (project.root / "base/a/a.spec").write_text("a edited")
         cache.cached_build(project, name, keys[name]).mkdir(parents=True)
         return build.Result(name, "built")
 
-    monkeypatch.setattr(build, "_build_shown", building)
+    monkeypatch.setattr(build._Run, "_build_shown", building)
     (project.state / "build").mkdir(parents=True)  # for the queue, which build() makes
-    results, _, _ = build._build_all(
-        project, ["a", "c", "b"], keys, hashes, verbose=False, dev=None, autorev={}, fetch="none", build_missing=True
-    )
+    results = build._Run(project, hashes, keys, {}, fetch="none").build(["a", "c", "b"])
     # the builds work on the packages as they were at the start: b fails, rather than b cached with the old a
     assert results == [build.Result("a", "built"), build.Result("c", "built"), build.Result("b", "failed")]
 
@@ -549,9 +545,8 @@ def test_keys_changed_by_the_last_recording(project: Project, monkeypatch: pytes
 
     monkeypatch.setattr(build, "record_rpm_deps", record)
     (project.state / "build").mkdir(parents=True)  # for the queue, which build() makes
-    results, after, _ = build._build_all(
-        project, ["a", "b"], keys, hashes, verbose=False, dev=None, autorev={}, fetch="none", build_missing=True
-    )
+    run = build._Run(project, hashes, keys, {}, fetch="none")
+    results, after = run.build(["a", "b"]), run.keys
     # b to build again, with its new key, not cached
     assert results == [build.Result("a", "cached"), build.Result("b", "again")]
     assert (after["a"], after["b"]) == (keys["a"], after["b"])
@@ -570,20 +565,19 @@ def test_keys_changed_during_the_builds(project: Project, monkeypatch: pytest.Mo
     for name in ("a", "b", "c"):
         cache.cached_build(project, name, keys[name]).mkdir(parents=True)
     monkeypatch.setattr(build, "record_rpm_deps", lambda *_, **__: False)  # the last recording changes nothing
-    done = build._done
+    done = build._Run._done
 
-    def changing(project: Project, name: str, *args: object, **kwargs: object) -> build.Result | None:
+    def changing(run: build._Run, name: str) -> build.Result | None:
         if name == "c":  # what changes the build root of b, found after it, like by another command
             builds = load_builds(project)
             builds.buildrequires.shared["b"] = ["found"]
             save_builds(project, builds)
-        return done(project, name, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+        return done(run, name)
 
-    monkeypatch.setattr(build, "_done", changing)
+    monkeypatch.setattr(build._Run, "_done", changing)
     (project.state / "build").mkdir(parents=True)  # for the queue, which build() makes
-    results, after, _ = build._build_all(
-        project, ["a", "b", "c"], keys, hashes, verbose=False, dev=None, autorev={}, fetch="none", build_missing=True
-    )
+    run = build._Run(project, hashes, keys, {}, fetch="none")
+    results, after = run.build(["a", "b", "c"]), run.keys
     # b to build again, with its new key, not cached
     assert results == [build.Result("a", "cached"), build.Result("b", "again"), build.Result("c", "cached")]
     assert after["b"] != keys["b"]
@@ -595,7 +589,7 @@ def test_stored_builds_of_keys_changed(project: Project, monkeypatch: pytest.Mon
     stored = {cache.build_path(project, "a", keys["a"]): True, cache.build_path(project, "b", "3" * 64): True}
     results = {name: build.Result(name, "stored") for name in keys}
     # b in the storage with the key it had then, not with the final one: fetched or built again
-    after = build._recorded_again(project, results, keys, {}, b"", stored, dev=None, hashes={})[0]
+    after = build._Run(project, {}, keys, {}, results=results, stored=stored)._recorded_again()
     assert after == [build.Result("a", "stored"), build.Result("b", "again")]
 
 

@@ -175,23 +175,29 @@ def _s3(endpoint: str, region: str, access_key: str, secret_key: str, session_to
     )
 
 
-@contextlib.contextmanager
-def _writing(storage: Remote, action: str) -> Generator[S3Client]:
-    """Return the S3 client of `storage`, reporting the S3 errors of `action` as RemoteError."""
+def _client(storage: Remote) -> S3Client:
+    """Return the S3 client of `storage`, with the credentials of the environment."""
     if not (storage.s3_endpoint and storage.bucket):
         msg = "pushing needs the s3_endpoint and bucket of the storage, in xcraft.toml"
         raise RemoteError(msg)
     if not (os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY")):
         msg = "pushing needs the S3 credentials, in AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY"
         raise RemoteError(msg)
+    return _s3(
+        storage.s3_endpoint,
+        storage.region,
+        os.environ["AWS_ACCESS_KEY_ID"],
+        os.environ["AWS_SECRET_ACCESS_KEY"],
+        os.environ.get("AWS_SESSION_TOKEN", ""),
+    )
+
+
+@contextlib.contextmanager
+def _writing(storage: Remote, action: str) -> Generator[S3Client]:
+    """Return the S3 client of `storage`, reporting the S3 errors of `action` as RemoteError."""
+    client = _client(storage)
     try:
-        yield _s3(
-            storage.s3_endpoint,
-            storage.region,
-            os.environ["AWS_ACCESS_KEY_ID"],
-            os.environ["AWS_SECRET_ACCESS_KEY"],
-            os.environ.get("AWS_SESSION_TOKEN", ""),
-        )
+        yield client
     except Exception as e:
         # those of boto3 and botocore, imported with it, not those of xcraft
         from boto3.exceptions import Boto3Error  # noqa: PLC0415
@@ -285,22 +291,22 @@ class TreeManifest(BaseModel):
     def valid_files(cls, files: dict[str, str]) -> dict[str, str]:
         """Refuse the paths out of the tree, and what are not SHA-256."""
         for name, digest in files.items():
-            path = PurePosixPath(name)
-            # and not changed by the signature in clear, which ignores the spaces ending the lines
-            if (
-                path.is_absolute()
-                or ".." in path.parts
-                or not path.parts
-                or path.as_posix() != name
-                or name != name.strip()
-                or not name.isprintable()
-            ):
+            if not _in_tree(name):
                 msg = f"invalid tree path: {name}"
                 raise ValueError(msg)
-            if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):  # noqa: PLR2004
+            if not re.fullmatch("[0-9a-f]{64}", digest):
                 msg = f"invalid SHA-256: {name}"
                 raise ValueError(msg)
         return files
+
+
+def _in_tree(name: str) -> bool:
+    """Return whether `name` is a path in a tree, written as it is, and not changed by the signature in clear, which
+    ignores the spaces ending the lines.
+    """
+    path = PurePosixPath(name)
+    inside = path.parts and not path.is_absolute() and ".." not in path.parts
+    return bool(inside) and path.as_posix() == name == name.strip() and name.isprintable()
 
 
 def manifest_text(root: str, files: dict[str, str]) -> str:
@@ -352,10 +358,9 @@ def _forget(storage: Remote, paths: list[str]) -> None:
     for path in paths:
         if path.startswith(f"{KEYS}/"):
             _keys.pop((storage.url, path.removeprefix(f"{KEYS}/").removesuffix(".asc")), None)
-        elif path.endswith(f"/{MANIFEST}"):
-            prefix = path.rsplit("/", 1)[0]
-            for key in [k for k in _checked if k[:2] == (storage.url, prefix)]:
-                _checked.pop(key, None)
+    trees = {path.rsplit("/", 1)[0] for path in paths if path.endswith(f"/{MANIFEST}")}
+    for key in [k for k in _checked if k[0] == storage.url and k[1] in trees]:
+        del _checked[key]
 
 
 def _build_key(storage: Remote, fingerprint: str) -> str | None:
@@ -708,44 +713,52 @@ def _paged(directory: str) -> bool:
     return not directory.startswith(f"{CCACHE}/") or directory.count("/") <= CCACHE.count("/") + 3
 
 
+_Pages = dict[str, tuple[_Dirs, dict[str, _Entry]]]
+"""The subdirectories and files of the pages, by directory."""
+
+
+def _add_listing(pages: _Pages, prefix: str, files: dict[str, _Entry]) -> None:
+    """Add to `pages` the directories under `prefix` with the `files` below it, by path, and their own files."""
+    pages.setdefault(prefix, ({}, {}))
+    for path, (size, date) in files.items():
+        *parts, name = path.split("/")
+        for i, part in enumerate(parts):
+            if not _paged(directory := prefix + "".join(f"{p}/" for p in parts[:i])):
+                break
+            dirs = pages.setdefault(directory, ({}, {}))[0]
+            below, newest = dirs.get(part, (0, None))
+            dirs[part] = (below + size, max(filter(None, (newest, date))))
+        if _paged(directory := prefix + "".join(f"{p}/" for p in parts)):
+            pages.setdefault(directory, ({}, {}))[1][name] = (size, date)
+
+
+def _subtotal(s3: S3Client, bucket: str, pages: _Pages, directory: str) -> tuple[int, dt.datetime | None]:
+    """Return the size of all that is below `directory`, and the date of its newest file: from its page in `pages`, or
+    the one in the storage.
+    """
+    return _total(*pages[directory]) if directory in pages else _stored_total(s3, bucket, directory)
+
+
 def update_pages(project: Project, storage: Remote, prefixes: list[str]) -> int:
     """Write the pages of the directories under the directories `prefixes`, and of their parents; return how many.
 
     The directories are the prefixes ending with ``/``, and ``""`` is the root. Those without page, see _paged(), count
     in the size of the directory above.
     """
-    pages: dict[str, tuple[_Dirs, dict[str, _Entry]]] = {}
+    pages: _Pages = {}
     parents: set[str] = set()
     with _writing(storage, "make the directory pages") as s3:
         if _objects(s3, storage.bucket, f"{KEYS}/", below=True)[1]:
             prefixes = [*prefixes, f"{KEYS}/"]
         # those under another one are in its listing
         for prefix in sorted(p for p in set(prefixes) if not any(p != q and p.startswith(q) for q in prefixes)):
-            pages.setdefault(prefix, ({}, {}))
-            for path, (size, date) in _objects(s3, storage.bucket, prefix, below=True)[1].items():
-                *parts, name = path.split("/")
-                for i, part in enumerate(parts):
-                    if not _paged(directory := prefix + "".join(f"{p}/" for p in parts[:i])):
-                        break
-                    dirs = pages.setdefault(directory, ({}, {}))[0]
-                    below, newest = dirs.get(part, (0, None))
-                    dirs[part] = (below + size, max(filter(None, (newest, date))))
-                if _paged(directory := prefix + "".join(f"{p}/" for p in parts)):
-                    pages.setdefault(directory, ({}, {}))[1][name] = (size, date)
+            _add_listing(pages, prefix, _objects(s3, storage.bucket, prefix, below=True)[1])
             above = prefix.rstrip("/").split("/")[:-1] if prefix else []
             parents |= {"", *("".join(f"{p}/" for p in above[: i + 1]) for i in range(len(above)))}
         # the parents are only listed, the deepest first, with the totals of their subdirectories' pages
         for parent in sorted(parents - pages.keys(), key=lambda p: -p.count("/")):
             dirs, files = _objects(s3, storage.bucket, parent, below=False)
-            pages[parent] = (
-                {
-                    d: _total(*pages[f"{parent}{d}/"])
-                    if f"{parent}{d}/" in pages
-                    else _stored_total(s3, storage.bucket, f"{parent}{d}/")
-                    for d in dirs
-                },
-                files,
-            )
+            pages[parent] = ({d: _subtotal(s3, storage.bucket, pages, f"{parent}{d}/") for d in dirs}, files)
 
         def write(prefix: str) -> None:
             dirs, files = pages[prefix]
