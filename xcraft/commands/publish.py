@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Annotated
 
@@ -144,10 +145,11 @@ def _publish(  # noqa: C901, PLR0912
     project = load(locked=locked, arch=None if arch == "all" else arch)
     if stage is not None:
         try:
-            project.config.publish = Publish.model_validate(project.config.publish.model_dump() | {"stage": stage})
+            publish = Publish.model_validate(project.config.publish.model_dump() | {"stage": stage})
         except ValidationError as e:
             msg = "stage must start with a letter, digit or underscore and contain only letters, digits, _, - or ."
             raise typer.BadParameter(msg, param_hint="--stage") from e
+        project = replace(project, config=project.config.model_copy(update={"publish": publish}))
     platforms = project.all_platforms() if arch == "all" or (arch is None and not local) else [project]
     if arch is None and len(platforms) < len(others := project.all_platforms()):
         console.print(
