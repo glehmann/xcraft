@@ -13,6 +13,25 @@
   same word used for different kinds of values.
 - Keep the line length at 120 and the code formatted by ruff.
 
+# Naming and Layout
+
+- Name functions after what they return or do: a noun for what they return (`templates_hash`, `verified_image`), a
+  verb for an action (`copy_iso`, `assemble_iso`). Avoid vague words like `work`, `find`, `make` or `build` when the
+  name could say what exactly is found, made or built.
+- Tell related functions apart by what they start from or produce (`checkout_iso` and `snapshot_iso`), not by
+  synonyms like `build` and `make`, or by a leading underscore alone.
+- Use singular and plural for one item and all of them (`snapshot_iso` and `snapshot_isos`).
+- Don't use a verb like `verify` or `check` for a function that returns a value; `check_*` raises and returns nothing.
+- Add a suffix like `_dir` or `_hash` only when the name would be vague without it. Don't add one to names that are
+  already clear, like `root` or `state`.
+- Import the module rather than the function when the function's name is generic (`container.run`,
+  `resolution.prepare`) or would collide with a local name (`publish.snapshot` and a `snapshot` parameter).
+- Make helpers private when only their module uses them, and extract one only when that reduces complexity, not to
+  pair it with a similar function.
+- Order definitions in groups, with helpers before their callers: data models; fingerprints and keys; names and
+  paths; cache helpers; remote operations; assembly; entry points.
+- Start docstrings with what the function returns or does; put the exceptions and edge cases after.
+
 # Type Analysis
 
 - Run `uv run ty check <files>` before completing the task.
