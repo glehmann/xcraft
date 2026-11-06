@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import socket
 import subprocess
@@ -74,6 +75,26 @@ def options(
     """Build the XCP-ng distribution."""
     # --trace and --debug are handled in main(), they are declared here for --help
     remote.forget()  # what another command, in the same process like the tests, read
+
+
+def _reflowed(doc: str | None) -> str | None:
+    """Return the docstring `doc` with each paragraph on one line, for typer, which wraps them to the terminal, but
+    keeps their line breaks otherwise.
+    """
+    return doc and "\n\n".join(" ".join(p.split("\n")) for p in inspect.cleandoc(doc).split("\n\n"))
+
+
+def _reflow(typer_app: typer.Typer) -> None:
+    """Reflow the help of the commands of `typer_app`, at all depths, see _reflowed()."""
+    infos = [*typer_app.registered_commands, *filter(None, [typer_app.registered_callback])]
+    for info in infos:
+        info.help = info.help or _reflowed(getattr(info.callback, "__doc__", None))
+    for group in typer_app.registered_groups:
+        if group.typer_instance:
+            _reflow(group.typer_instance)
+
+
+_reflow(app)
 
 
 class _Handler(logging.Handler):
