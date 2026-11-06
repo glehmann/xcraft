@@ -13,7 +13,7 @@ from xcraft import publish as publisher
 from xcraft.build import update_build_ids
 from xcraft.commands import Key, To, choose_signer, complete_arch, prepared_project, remote_storage
 from xcraft.display import console
-from xcraft.iso import fetch_isos, push_isos, snapshot_isos
+from xcraft.iso import check_iso_config, fetch_isos, push_isos, snapshot_isos
 from xcraft.project import Destination, Project, Publish
 from xcraft.publish import ISO_DIR, REPO, snapshot
 from xcraft.upload import Uploader
@@ -61,6 +61,8 @@ def _iso_platforms(project: Project, platforms: list[Project], only: str | None)
     if not (found := [p for p in platforms if p.arch.startswith("x86_64")]) and only == "isos":
         msg = f"the ISOs are for x86_64, not {', '.join(p.arch for p in platforms)}"
         raise typer.BadParameter(msg)
+    for platform in found:  # before the snapshot
+        check_iso_config(platform)
     return found
 
 

@@ -132,6 +132,18 @@ def test_iso_lookup_before_preparation(project: Project, tmp_path: Path) -> None
         checkout_iso(project)
 
 
+def test_iso_config_checked_before_the_snapshot(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(publish, "snapshot", lambda *_, **__: pytest.fail("snapshot"))
+    with pytest.raises(RuntimeError, match="the ISO needs the installer's packages"):
+        checkout_iso(project)
+    (project.root / "xcraft.toml").write_text(f'{TOML}installer = ["bash"]\n')
+    with pytest.raises(RuntimeError, match="the ISOs are for x86_64, for their boot loaders, not aarch64"):
+        checkout_iso(Project.find("aarch64"))
+    (project.root / "iso/hook").chmod(0o644)
+    with pytest.raises(RuntimeError, match="the ISO needs the hook of the project"):
+        checkout_iso(Project.find("x86_64_v2"))
+
+
 def test_iso_not_cached_when_the_lock_changed_while_making_it(
     project: Project, monkeypatch: pytest.MonkeyPatch
 ) -> None:

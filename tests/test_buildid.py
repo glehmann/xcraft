@@ -213,6 +213,7 @@ def test_shown_inputs(root: Path) -> None:
 
 
 def test_build_ids_checked_by_all_the_builds(root: Path) -> None:
+    (root / "xcraft.toml").write_text(f'{TOML}installer = ["bash"]\n')  # for the ISO
     assert xcraft("build")[0] == 0  # the lock complete, with what the builds record
     edit(root, "changed")  # without its build ID
     code, output = xcraft("build", "--locked")

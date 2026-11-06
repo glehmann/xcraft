@@ -282,16 +282,29 @@ def _check_installed_tools(project: Project, recorded: Path) -> None:
         raise RuntimeError(msg)
 
 
+def check_iso_config(project: Project) -> None:
+    """Raise when the ISO of the platform cannot be made: on x86_64 only, for its boot loaders, with the installer's
+    packages, and the hook of the project, an executable iso/hook.
+    """
+    if not project.config.iso.installer:
+        msg = "the ISO needs the installer's packages: see [iso] in xcraft.toml"
+        raise RuntimeError(msg)
+    if not project.arch.startswith("x86_64"):
+        msg = f"the ISOs are for x86_64, for their boot loaders, not {project.arch}"
+        raise RuntimeError(msg)
+    if not os.access(project.root / "iso/hook", os.X_OK):
+        msg = "the ISO needs the hook of the project, an executable iso/hook: see xcraft/buildenv/iso.py"
+        raise RuntimeError(msg)
+
+
 def _assemble_iso(
     project: Project, snapshot: Path, *, netinstall: bool, volid: str | None, signer: Signer | None
 ) -> Path:
     """Make the ISO of `snapshot`, its binaries for the architecture, in .xcraft/tmp/, and return it."""
     iso = project.config.iso
+    check_iso_config(project)
     if error := resolution.resolve(project).tools_error:
         msg = f"the tools making the ISO cannot be installed: {error}"
-        raise RuntimeError(msg)
-    if not os.access(project.root / "iso/hook", os.X_OK):
-        msg = "the ISO needs the hook of the project, an executable iso/hook: see xcraft/buildenv/iso.py"
         raise RuntimeError(msg)
     with project.tmp_dir("iso") as work:
         if signer:
@@ -443,6 +456,7 @@ def checkout_iso(
                 found := _existing_iso(project, ci_key, output, netinstall=netinstall, signer=ci, dev=None)
             ):
                 return found
+        check_iso_config(project)  # before the snapshot
         resolution.prepare(project)
         dest = (project.state / "publish").absolute()
         _, _, checkout = publish.snapshot(
