@@ -438,6 +438,7 @@ class _Run:
                     replace=replace,
                     suffix=suffix,
                     nocheck=self.nocheck,
+                    fast=name in self.autorev,
                     log=project.log(name),
                     on_line=on_line,
                 )

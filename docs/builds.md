@@ -118,7 +118,9 @@ which `xcraft clean` keeps, so they are specific to the checkout. `--final` make
 `$XCRAFT_DEV`, but not with `--dev`. On the main branch, all the builds are final ones. The development builds are
 cached apart from the final builds, never pushed to the remote storage, nor taken from it; `xcraft status` shows them,
 `clean` keeps those last built, `shell` installs them, and `repo` makes a repository of them for the hosts, see below.
-`build --verbose` prints the paths of their RPMs.
+`build --verbose` prints the paths of their RPMs. Their binary packages are compressed with zstd at level 3, rather
+than at the level 19 of the final builds: their packaging takes a third of the time, for packages a third bigger,
+which stay on the machine and its test hosts.
 
 `xcraft repo <pkg>...` puts the development builds of the given packages alone in a repository, `repo-ID/` by default,
 with a `xcraft-ID.repo` file for the hosts, which keep their usual repositories for everything else. Their
