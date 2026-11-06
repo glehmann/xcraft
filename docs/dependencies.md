@@ -79,7 +79,8 @@ change of the spec; with `--locked`, for CI, it fails instead. See also [the des
 
 **Checked builds.** A build only gets the builds of its dependencies. It records what only a build can know: its
 dynamic `BuildRequires`, before installing them, and what rpm generated for its binary packages, which a build fetched
-from the remote storage records too. It then checks that dnf installed the build root resolved for it, with what it
+from the remote storage records too: each binary package as soon as its requirements resolve, those needing packages
+of ours not built yet once they are, so that the builds against the others get what they need. It then checks that dnf installed the build root resolved for it, with what it
 recorded, and that it made the binary packages parsed from its spec for the architecture, with the provides and
 requirements the spec declares. A build of a package needing one of ours it was not built after is planned again. With
 `--locked`, a build recording something fails.

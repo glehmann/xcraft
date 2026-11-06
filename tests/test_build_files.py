@@ -441,12 +441,13 @@ def test_record_rpm_deps(project: Project, monkeypatch: pytest.MonkeyPatch) -> N
     binary = Binary(name="foo", evr="1.0-1", arch="x86_64", provides=["foo = 1.0-1"], requires=[])
     project.config.platforms = [project.platform]  # the one of the specs given
     project.parsed = {"foo": Package(name="foo", binaries=[binary])}
-    # what cannot be recorded yet is not kept, to record it again next time
+    # what cannot be recorded yet is kept as unresolved, to record it again next time
     monkeypatch.setattr(
         "xcraft.checks.resolve_rpm_deps", lambda *_: Resolved(errors={"foo": "nothing provides libbar.so.1"})
     )
     assert not record_rpm_deps(project, ["foo"], {"foo": "key"})
-    assert not (build / "rpm-deps.json").exists()
+    kept = json.loads((build / "rpm-deps.json").read_text())
+    assert (kept["requires"], kept["provides"], kept["unresolved"]) == ({}, {}, ["foo"])
     generated = Resolved(requires={"foo": ["bar"]}, provides={"foo": ["foo = 1.0-1", "pkgconfig(foo) = 1.0"]})
     monkeypatch.setattr("xcraft.checks.resolve_rpm_deps", lambda *_: generated)
     assert record_rpm_deps(project, ["foo"], {"foo": "key"})

@@ -660,6 +660,40 @@ def test_recorded_once_what_they_require_is_built(root: Path) -> None:
     assert load_builds(Project.find()).requires.of(ARCH).get("trivial") is None  # what it requires, declared
 
 
+def test_recorded_as_soon_as_resolved(root: Path) -> None:
+    # trivial, whose script requires tcl, recorded at once, and trivial-extra, which requires what xtool, of ours,
+    # provides, once xtool is built: the builds against trivial get tcl before
+    (root / "base/xtool").mkdir()
+    (root / "base/xtool/xtool.spec").write_text(
+        "Name: xtool\nVersion: 1.0\nRelease: 1%{?dist}\nSummary: A tool\nLicense: MIT\nBuildArch: noarch\n"
+        "Provides: xtool-core\n%description\nA tool.\n%install\nmkdir -p %{buildroot}/usr/share/xtool\n"
+        "touch %{buildroot}/usr/share/xtool/core\n%files\n/usr/share/xtool\n"
+    )
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(
+        spec.read_text()
+        .replace('echo "hello" > hello.txt', 'printf "#!/usr/bin/tclsh\\nputs hello\\n" > hello.tcl')
+        .replace("cp %{name}-%{version}/hello.txt %{buildroot}/usr/share/%{name}/",
+                 "install -m 755 %{name}-%{version}/hello.tcl %{buildroot}/usr/share/%{name}/\n"
+                 "touch %{buildroot}/usr/share/%{name}/extra")
+        .replace("%files\n/usr/share/%{name}/hello.txt",
+                 "%package extra\nSummary: Extra\nRequires: xtool-core\n%description extra\nExtra.\n"
+                 "%files extra\n/usr/share/%{name}/extra\n\n%files\n/usr/share/%{name}/hello.tcl")
+    )  # fmt: skip
+    code, output = xcraft("build", "trivial")
+    assert code == 0, output
+    assert (
+        "warning: the dependencies rpm generated for trivial-extra are recorded once xtool, which it needs, is built"
+        in output
+    )
+    assert load_builds(Project.find()).requires.of(ARCH) == {"trivial": ["tcl"]}
+    assert "tcl" in resolution.resolve(Project.find()).buildroots["with-deps"]
+    code, output = xcraft("build", "trivial", "xtool", "with-deps")
+    assert code == 0, output
+    assert "recorded once" not in output
+    assert load_builds(Project.find()).requires.of(ARCH) == {"trivial": ["tcl"]}
+
+
 def test_recorded(root: Path) -> None:
     # a requirement rpm generates, of a script, and dynamic BuildRequires
     spec = root / "base/trivial/trivial.spec"
