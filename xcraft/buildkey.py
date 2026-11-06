@@ -22,30 +22,14 @@ if TYPE_CHECKING:
     from xcraft.lock import Lock
     from xcraft.project import Project
 
-FORMAT = 4
+FORMAT = 1
 """The version of how xcraft gives the builds what their keys cover, besides the scripts of the builds, like the build
-trees, see rpmbuild.prepare_tree(): changed with it, to build them all again. 2: the build trees of the files of the
-keys, from the same reads, with the same modes and times, the configuration of the image in an order of its own. 3:
-the pinned upstream packages only, checked against their SHA-256, see xcraft.pinned. 4: the directories of the build
-trees of the same modes, whatever the umask."""
+trees, see rpmbuild.prepare_tree(): changed with it, to build them all again."""
 SCRIPTS = ("build.sh", "offline.py", "record.py", "made.py", "rpmdeps.py")
 """The scripts of the builds, in xcraft/buildenv/: see The recipe."""
 RECIPE = hashlib.sha256("".join([REPO_FILE, *((BUILDENV / s).read_text() for s in SCRIPTS)]).encode()).hexdigest()
 """What makes the builds, besides the image and the packages: a change to it rebuilds them all, but see _SAME_BUILDS."""
-_SAME_BUILDS: dict[str, str] = {
-    # the replacements of packages of the image with the pinned packages they need, which failed without them
-    "7436941e7cc32e09edb1c1a1791e09a9af861bf1db5f3d226f7e4585ab53a3bf": (
-        "4b928b99728b60533308a1f147188072c2495311781bd54ff6441657aa19b2a5"
-    ),
-    # SIGPIPE and SIGXFSZ restored: a write to a closed pipe kills rather than fails with EPIPE, and an error
-    "b9b332f9df354013f4f94a02c6ad1e10f47e13a708a9e358ef80f188e015f54d": (
-        "4b928b99728b60533308a1f147188072c2495311781bd54ff6441657aa19b2a5"
-    ),
-    # pyright's comments on the imports of the build environment
-    "29c33cba085b64d826ac79e52005810ad38ef1db16ec3d0d747117564ebe8622": (
-        "4b928b99728b60533308a1f147188072c2495311781bd54ff6441657aa19b2a5"
-    ),
-}
+_SAME_BUILDS: dict[str, str] = {}
 """Recipes making the same packages as an earlier one, by their hash, with the earliest one: their builds keep its
 keys."""
 

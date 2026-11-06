@@ -40,19 +40,8 @@ class BuildId(BaseModel):
     accepts: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     """The build key a reused build is accepted for, the current one: an equivalence, chosen with xcraft reuse."""
 
-    @classmethod
-    def parse(cls, text: str) -> BuildId:
-        """Return the build ID of the content of its file in ``.buildid/``, before lock format 4."""
-        match text.split():
-            case [number, key]:
-                return cls(number=int(number), key=key)
-            case [number, key, "accepts", accepts]:
-                return cls(number=int(number), key=key, accepts=accepts)
-        msg = f"not a build ID: {text}"
-        raise ValueError(msg)
-
     def text(self) -> str:
-        """Return it on one line, like its file in ``.buildid/`` had it."""
+        """Return it on one line: ``<number> <key>``, and ``accepts <key>`` for a reused build."""
         return f"{self.number} {self.key}" + (f" accepts {self.accepts}" if self.accepts else "")
 
     def matches(self, key: str) -> bool:
@@ -236,23 +225,3 @@ def locked_packages(parsed: dict[str, Package], builds: Builds, arch: str) -> di
                 p.replace("%{evr}", b.evr).replace("%{version}", _version(b.evr)) for p in provides.get(b.name, [])
             )
     return packages
-
-
-def upgrade_builds(project: Project, records: dict[str, Recorded]) -> Builds:
-    """Return the lock of the builds of a project of lock format 3, with the build IDs of its ``.buildid/`` and the
-    `records` of its lock, but the provides the specs declare, and with the versions as %{evr}, or %{version}. The
-    architectures but the first one migrate their own entries only, not the shared ones they had.
-    """
-    ids = {
-        path.name: BuildId.parse(text)
-        for path in sorted((project.root / ".buildid").glob("*"))
-        if "<<<<<<<" not in (text := path.read_text())  # given again by update()
-    }
-    provides = Recorded()
-    for arch, parsed in sorted(_parsed(project).items(), key=lambda item: item[0] != project.first):
-        binaries = {b.name: b for package in parsed.values() for b in package.binaries}
-        old = records["provides"]
-        for name, values in (old.shared if arch == project.first else old.arches.get(arch, {})).items():
-            if name in binaries:
-                provides.record(arch, project.first, name, recordable(binaries[name], values))
-    return Builds(ids=ids, buildrequires=records["buildrequires"], requires=records["requires"], provides=provides)

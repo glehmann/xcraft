@@ -17,7 +17,6 @@ from xcraft.lock import (
     load_lock,
     lock_path,
     save_lock,
-    upgrade_lock,
 )
 from xcraft.project import Project
 
@@ -62,7 +61,7 @@ def test_save_and_load(tmp_path) -> None:  # noqa: ANN001
     assert '[roots]  # the upstream binary packages of the build roots, but the image\'s\n"qemu" = [\n' in text
     # the binary packages, pinned by architecture, in a format of its own
     assert text.startswith(
-        "# written by xcraft: the versions of the upstream packages, for all the architectures\n\nversion = 4\n"
+        "# written by xcraft: the versions of the upstream packages, for all the architectures\n\nversion = 1\n"
     )
     assert f'"glibc" = "2.39-145.el10_2 aarch64 {"ab" * 32} glibc"\n' in text
 
@@ -103,32 +102,10 @@ def test_lock_validation(tmp_path: Path) -> None:
     ):
         with pytest.raises(ValueError, match=problem):
             Lock.model_validate({"sources": {"glibc": "1-1"}, **invalid})
-    # a lock of an older xcraft, upgraded only on purpose
-    lock_path(project).write_text('[sources]\n"glibc" = "1-1"\n\n[image]\n"aarch64" = ["glibc"]\n')
-    with pytest.raises(LockFormatError, match="the lock has the format 1, not 4: xcraft lock --upgrade upgrades it"):
+    # a lock of another xcraft
+    lock_path(project).write_text('version = 2\n\n[sources]\n"glibc" = "1-1"\n')
+    with pytest.raises(LockFormatError, match="the lock has the format 2, not 1: of another xcraft"):
         load_lock(project)
-    assert upgrade_lock(project)[0] == Lock(sources={"glibc": "1-1"})
-    # of format 2, with the published packages and the tools making the ISO without pins, but the others kept
-    lock_path(project).write_text(
-        f'version = 2\n\n[sources]\n"glibc" = "1-1"\n\n[binaries.aarch64]\n"glibc" = "{pin.text()}"\n\n'
-        '[image]\n"aarch64" = ["glibc"]\n\n[runtime]\n"aarch64" = ["bash"]\n\n[iso]\n"aarch64" = ["xorriso"]\n'
-    )
-    with pytest.raises(LockFormatError, match="the lock has the format 2, not 4"):
-        load_lock(project)
-    expected = Lock(sources={"glibc": "1-1"}, binaries={"aarch64": {"glibc": pin}}, image={"aarch64": ["glibc"]})
-    assert upgrade_lock(project)[0] == expected
-    # of format 3, with what the builds recorded, which the lock of the builds has since
-    lock_path(project).write_text(
-        f'version = 3\n\n[sources]\n"glibc" = "1-1"\n\n[binaries.aarch64]\n"glibc" = "{pin.text()}"\n\n'
-        '[requires]\n"qemu" = ["glibc"]\n\n[requires.aarch64]\n"qemu" = []\n\n[buildrequires]\n"qemu" = ["meson"]\n'
-    )
-    lock, records = upgrade_lock(project)
-    assert lock == Lock(sources={"glibc": "1-1"}, binaries={"aarch64": {"glibc": pin}})
-    assert records == {
-        "requires": Recorded(shared={"qemu": ["glibc"]}, arches={"aarch64": {"qemu": []}}),
-        "provides": Recorded(),
-        "buildrequires": Recorded(shared={"qemu": ["meson"]}),
-    }
 
 
 def test_record() -> None:

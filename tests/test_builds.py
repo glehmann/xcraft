@@ -1,4 +1,4 @@
-"""The lock of the builds: xcraft.builds, its format, and its migration from .buildid/ and the lock."""
+"""The lock of the builds: xcraft.builds, its format."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ from xcraft.builds import (
     parse_builds,
     recordable,
     save_builds,
-    upgrade_builds,
 )
 from xcraft.lock import Recorded
 from xcraft.packages import Binary, Package
@@ -112,27 +111,6 @@ def test_recordable() -> None:
     # an epoch 0 the same as none, which rpm leaves out of what it generates
     qemu = binary("qemu", evr="0:10.1-1")
     assert recordable(qemu, ["qemu = 10.1-1", "qemu-img = 10.1-1"]) == ["qemu-img = %{evr}"]
-
-
-def test_upgrade(project: Project) -> None:
-    key = "ab" * 32
-    (project.root / ".buildid").mkdir()
-    (project.root / ".buildid/xen").write_text(f"3 {key}\n")
-    (project.root / ".buildid/lib.c++").write_text(f"1 {key} accepts {key}\n")
-    records = {
-        "requires": Recorded(shared={"xen-dom0-libs": ["lzo"]}),
-        "provides": Recorded(
-            shared={"xen-devel": ["xen-devel = 1:4.2-3.xcpng", "pkgconfig(xenctrl) = 4.2"]},
-            arches={"aarch64": {"xen-devel": ["xen-devel(aarch-64) = 1:4.2-3.xcpng"]}},
-        ),
-        "buildrequires": Recorded(shared={"xen": ["meson"]}),
-    }
-    assert upgrade_builds(project, records) == Builds(
-        ids={"lib.c++": BuildId(number=1, key=key, accepts=key), "xen": BuildId(number=3, key=key)},
-        requires=records["requires"],
-        provides=Recorded(shared={"xen-devel": ["pkgconfig(xenctrl) = %{version}"]}),
-        buildrequires=records["buildrequires"],
-    )
 
 
 def git(root: Path, *args: str) -> str:

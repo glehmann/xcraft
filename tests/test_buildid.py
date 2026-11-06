@@ -96,15 +96,14 @@ def built(*args: str) -> list[str]:
     return sorted(p.name for p in _development_rpms() - before)
 
 
-def test_build_id_files() -> None:
+def test_build_id_validation() -> None:
     key = "ab" * 32
-    assert BuildId.parse(f"1 {key} accepts {key}\n") == BuildId(number=1, key=key, accepts=key)
     # keys of 64 hexadecimal digits only, which the release suffixes follow in the caches
-    for text in ("1 abc", f"1 {key}0", f"1 {key} accepts {key[1:]}"):
+    for invalid in ({"key": "abc"}, {"key": f"{key}0"}, {"accepts": key[1:]}):
         with pytest.raises(ValueError, match=r"key|accepts"):
-            BuildId.parse(text)
+            BuildId.model_validate({"number": 1, "key": key} | invalid)
     with pytest.raises(ValueError, match="number"):
-        BuildId.parse(f"0 {key}")  # the release suffix +b0, before the first build
+        BuildId(number=0, key=key)  # the release suffix +b0, before the first build
 
 
 def test_build_ids_of_conflicts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

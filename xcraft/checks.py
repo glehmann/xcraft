@@ -124,10 +124,9 @@ def _rpms(build: Path) -> list[Path]:
     return [p for p in (build / "RPMS").rglob("*.rpm") if not is_debug(p.name.rsplit("-", 2)[0])]
 
 
-RECORDING = 4
+RECORDING = 1
 """The version of how xcraft records what rpm generated for a build, in its rpm-deps.json: changed with it, so that
-the builds recorded before are recorded again. 2: the binary packages named with their releases, recorded. 3: the
-packages of ours they need, by their names in the specs. 4: those of the image too."""
+the builds recorded before are recorded again."""
 
 
 def _enumerate(names: list[str]) -> str:

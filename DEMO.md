@@ -34,19 +34,19 @@ One tool, xcraft, and one repository, xcp-ng-dist, to build the whole XCP-ng dis
   package is used by those built against it.
 - **Builds are cached by content**: the key covers the package, the keys of the packages it needs, the locked upstream
   packages and the build environment. Nothing is rebuilt for nothing, and a build of CI is reused as is everywhere.
-- **Build numbers are committed**: each package has a build ID in `.buildid/<pkg>`, a number and the key it was given
+- **Build numbers are committed**: each package has a build ID in `xcraft.builds`, a number and the key it was given
   to, in its release as `+b<n>`. A new key gets a new number, so that no number is given to two different builds.
 
 ```
 xcraft --help                    # the commands, by what they are about
 xcraft doctor                    # what xcraft needs on the host, and how to get what it misses
-ls -a                            # xcraft.toml, next to the lock and .buildid/
+ls -a                            # xcraft.toml, next to the lock and xcraft.builds
 ls base/ && ls base/xen/         # the packages, by the repository they are published in
 cat base/xen/sources             # archives listed by sha256, not stored in git
 cat xcraft.toml                  # the settings: the build environment, the remote storage...
 grep '^"pciutils" = ' xcraft.lock  # an upstream source package, in one version for the whole tree
-grep -m1 -A2 '^"biosdevname" = ' xcraft.lock  # what rpm generated for it: it links against pciutils-libs
-cat .buildid/xen                 # its number, 1, and its key
+grep -A3 '^# biosdevname$' xcraft.builds  # its build ID, and what rpm generated for it: it links against pciutils-libs
+grep -A2 '^# xen$' xcraft.builds  # its number and its key
 xcraft build -n --arch aarch64   # the keys of aarch64, resolved here, without emulation: most built by CI
 ```
 
@@ -99,9 +99,9 @@ xcraft build xcp-ng-release                 # again: everything cached
 xcraft bump xcp-python-libs -m "just a demo"
 xcraft build --dry-run                      # xcp-python-libs and host-installer, built against it
 xcraft build host-installer                 # ~10s, development builds: +b2~1.dev
-git diff .buildid                           # their new build IDs: number 2, for their new keys
+git diff xcraft.builds                      # their new build IDs: the next numbers, for their new keys
 xcraft status xcp-python-libs host-installer
-git restore base/xcp-python-libs .buildid xcraft.lock   # back to the builds of CI
+git restore base/xcp-python-libs xcraft.builds xcraft.lock   # back to the builds of CI
 ```
 
 A build of modified code is a development build by default, `+b<n>~<counter>.dev`: it upgrades the previous ones,
@@ -148,7 +148,7 @@ xcraft log xcp-python-libs --grep 'error:|warning:'     # the same, in its whole
 xcraft log xcp-python-libs --step build     # only a step of rpmbuild
 xcraft shell xcp-python-libs     # in its build tree, which is .xcraft/build/xcp-python-libs/ on the host
 rpmbuild -ba SPECS/xcp-python-libs.spec     # in the shell, as it shows: built like by xcraft, without the network
-git restore base/xcp-python-libs .buildid xcraft.lock
+git restore base/xcp-python-libs xcraft.builds xcraft.lock
 ```
 
 The builds run without the network, like koji and mock: only the loopback interface, for the test suites. A build only
@@ -161,7 +161,7 @@ xcraft bump python-bitarray -m "just a demo"
 xcraft build python-bitarray --dev demo     # ~8s: 2.8.5-13+b2~1.demo, above the CI's builds of 2.8.5-12
 xcraft status python-bitarray --dev demo
 xcraft repo python-bitarray --dev demo      # repo-demo/, with a .repo file for the test hosts
-git restore base/python-bitarray .buildid xcraft.lock && rm -r repo-demo
+git restore base/python-bitarray xcraft.builds xcraft.lock && rm -r repo-demo
 ```
 
 With a test host: `--host root@testhost --upgrade`.
@@ -175,8 +175,8 @@ xcraft lock --update sg3_utils              # an AlmaLinux update, of a package 
 xcraft build --dry-run                      # xapi and xcp-featured: their build IDs changed
 xcraft reuse --dep sg3_utils                # an ABI compatible fix: xapi reuses its build, accepting the change
 xcraft build --dry-run                      # nothing to build
-git diff .buildid/xapi                      # accepts <key>: say why in the commit
-git restore .buildid xcraft.lock            # back to the builds of CI
+git diff xcraft.builds                      # xapi.accepts: say why in the commit
+git restore xcraft.builds xcraft.lock       # back to the builds of CI
 ```
 
 A new upstream version, with the archive downloaded from the `Source0` of the spec:
@@ -186,7 +186,7 @@ xcraft bump xcp-ng-xapi-plugins --version 1.17.0       # changelog entry: Update
 git diff base/xcp-ng-xapi-plugins           # Version, Release, changelog, and the new archive in sources
 xcraft build xcp-ng-xapi-plugins            # ~5s, with its patches on the new version
 xcraft push sources xcp-ng-xapi-plugins     # the archive, which a developer shares with their change
-git restore base/xcp-ng-xapi-plugins .buildid xcraft.lock
+git restore base/xcp-ng-xapi-plugins xcraft.builds xcraft.lock
 ```
 
 `kernel` and `kernel-headers` are of the same archive: `same_version` in `xcraft.toml` updates them together.
