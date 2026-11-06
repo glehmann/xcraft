@@ -263,6 +263,13 @@ def test_main_branch_setting(root: Path) -> None:
     assert update() == {"trivial": 2, "with-deps": 2}
 
 
+def compression(root: Path, rpm: str) -> str:
+    """Return the zstd level of the payload of the cached `rpm`, with T when compressed by several threads."""
+    (path,) = root.glob(f".xcraft/cache/builds/*/*/*/RPMS/*/{rpm}")
+    query = ["rpm", "-qp", "--qf", "%{PAYLOADFLAGS}", path]
+    return subprocess.run(query, capture_output=True, text=True, check=True).stdout
+
+
 def test_development_builds(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # a main branch with what the builds record in its lock, like those CI checks
     assert xcraft("build")[0] == 0
@@ -274,6 +281,8 @@ def test_development_builds(root: Path, monkeypatch: pytest.MonkeyPatch) -> None
     edit(root, "changed", name="with-deps")
     # only the changed package, trivial is the main branch's build
     assert built() == ["with-deps-1.0-1+b2~1.dev.xcpng8.99.noarch.rpm"]
+    # compressed faster than the final builds, which may be pushed
+    assert compression(root, "with-deps-1.0-1+b2~1.dev.xcpng8.99.noarch.rpm") == "3T"
     assert built() == []  # the same inputs: cached
     assert re.search(r"^with-deps +1\.0-1\+b2~1\.dev\.xcpng8\.99 +built", xcraft("status")[1], re.MULTILINE)
     assert re.search(r"^trivial +1\.0-1\+b1\.xcpng8\.99 +built", xcraft("status")[1], re.MULTILINE)
@@ -289,6 +298,7 @@ def test_development_builds(root: Path, monkeypatch: pytest.MonkeyPatch) -> None
     assert "with-deps-1.0-1+b2.xcpng8.99.noarch.rpm" in {
         p.name for p in root.glob(".xcraft/cache/builds/*/with-deps/*/RPMS/*/*.rpm")
     }
+    assert compression(root, "with-deps-1.0-1+b2.xcpng8.99.noarch.rpm") == "19"
     code, output = xcraft("build", "--final", "--dev", "x")
     assert code == 2
     assert "--final and --dev cannot be used together" in output

@@ -92,6 +92,7 @@ def run_build(
     replace: list[str],
     suffix: str = "",
     nocheck: bool = False,
+    fast: bool = False,
     after: str = "",
     log: Path | None = None,
     on_line: Callable[[str], None] | None = None,
@@ -100,8 +101,9 @@ def run_build(
 
     The upstream packages of the image named in `replace` are replaced first by
     ours. `suffix` is the release suffix of the build, %autorev: its number, and its development build suffix, if
-    any. With `nocheck`, rpmbuild skips %check. The output goes to
-    `log`, or to an interactive terminal without log.
+    any. With `nocheck`, rpmbuild skips %check. With `fast`, for the development builds, the binary packages are
+    compressed with zstd at level 3 rather than 19: their packaging takes a third of the time, for packages a third
+    bigger. The output goes to `log`, or to an interactive terminal without log.
     """
     parameters = {
         "spec": main_spec(project.package_dirs[name]).name,
@@ -113,6 +115,9 @@ def run_build(
         "nocheck": "--nocheck" if nocheck else "",
     }
     script = "".join(f"{p}={shlex.quote(value)}\n" for p, value in parameters.items()) + f". /xcraft/build.sh\n{after}"
+    if fast:
+        # not in the recipe of the builds: the packages have the same contents, and development builds stay local
+        script = f"echo '%_binary_payload w3T.zstdio' >> ~/.rpmmacros\n{script}"
     if size := project.config.ccache_size.get(name):
         # not in the recipe of the builds: it does not change them
         script = f"export CCACHE_MAXSIZE={shlex.quote(size)}\n{script}"
