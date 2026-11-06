@@ -170,6 +170,11 @@ def _make_repository(project: Project, pinned: dict[str, Pin], store: Path, iden
         shutil.rmtree(store / part)  # made meanwhile, by another command
 
 
+def ident(pinned: dict[str, Pin]) -> str:
+    """Return the name of the repository of the `pinned` packages in the store."""
+    return hashlib.sha256(json.dumps({n: p.text() for n, p in sorted(pinned.items())}).encode()).hexdigest()
+
+
 def repository(project: Project, names: Iterable[str] | None = None) -> Path:
     """Return the repository of the pinned binary packages `names` of the architecture of `project`, all of them by
     default, made if needed, with RPMs of the SHA-256 of their pins: those missing, or of other contents, in the store
@@ -179,18 +184,18 @@ def repository(project: Project, names: Iterable[str] | None = None) -> Path:
     pinned = pins(project)
     if names is not None:
         pinned = {name: pinned[name] for name in names}
-    ident = hashlib.sha256(json.dumps({n: p.text() for n, p in sorted(pinned.items())}).encode()).hexdigest()
     store = _store()
-    repo = store / "repos" / ident
+    repo = store / "repos" / ident(pinned)
     if repo in _checked:
         return repo
     with (store / ".lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)  # of the projects of the machine, which share it
         for _ in (1, 2):
             if not (repo / "repodata/repomd.xml").exists():
-                _make_repository(project, pinned, store, ident)
+                _make_repository(project, pinned, store, repo.name)
             if not (damaged := {n: p for n, p in pinned.items() if not _intact(repo / file_name(n, p), p)}):
                 _checked.add(repo)
+                os.utime(repo)  # used, see remove_repositories()
                 return repo
             for name, pin in damaged.items():  # in the store, which the repository has them hard-linked from
                 (store / "rpms" / pin.sha256 / file_name(name, pin)).unlink(missing_ok=True)
@@ -200,6 +205,25 @@ def repository(project: Project, names: Iterable[str] | None = None) -> Path:
         f"in the store {store}: only xcraft writes there"
     )
     raise PinnedError(msg)
+
+
+def remove_repositories(kept: set[str], used_since: float) -> list[str]:
+    """Remove the repositories of the store but those of `kept`, and those used since the time `used_since`, then the
+    RPMs none has, and return the repositories removed.
+    """
+    store = _store()
+    with (store / ".lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        # those made by interrupted commands too, .<ident>.<pid>
+        removed = [r for r in (store / "repos").glob("*") if r.name not in kept and r.stat().st_mtime < used_since]
+        for repo in removed:
+            shutil.rmtree(repo)
+        for rpm in (store / "rpms").glob("*/*"):  # and the parts of interrupted downloads
+            if rpm.stat().st_nlink == 1:  # of no repository
+                rpm.unlink()
+                if not any(rpm.parent.iterdir()):
+                    rpm.parent.rmdir()
+    return [repo.name for repo in removed]
 
 
 def stored(name: str, pin: Pin) -> Path | None:

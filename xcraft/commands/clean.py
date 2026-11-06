@@ -10,9 +10,10 @@ from typing import Annotated
 import typer
 
 from xcraft import clean as cleaner
+from xcraft import pinned
 from xcraft.cache import build_keys
 from xcraft.commands import Arch, Packages, prepared_project
-from xcraft.container import checkout_images
+from xcraft.container import checkout_images, checkout_repositories
 from xcraft.devbuilds import built_dev_suffixes
 from xcraft.display import activity, console
 from xcraft.iso import checkout_iso_keys
@@ -40,7 +41,9 @@ def clean(
         typer.Option(
             "--shared",
             help="Also remove what the checkouts of the machine share, but what this one uses: the images of the build "
-            "environment, those built before the last DAYS days of --unused.",
+            "environment, those built before the last DAYS days of --unused, and the repositories of pinned packages, "
+            "those unused for DAYS days, with the packages none has. The commands of the other checkouts running "
+            "then may fail.",
         ),
     ] = False,
     unused: Annotated[
@@ -86,9 +89,10 @@ def clean(
         )
     console.print(f"freed {_size(freed)}")
     if shared:
-        with activity("removing the images"):
-            removed = cleaner.remove_images(checkout_images(project), used_since)
-        console.print(f"removed {len(removed)} images of the build environment")
+        with activity("removing the images and the repositories of pinned packages"):
+            images = cleaner.remove_images(checkout_images(project), used_since)
+            repos = pinned.remove_repositories(checkout_repositories(project), used_since)
+        console.print(f"removed {len(images)} images, and {len(repos)} repositories of pinned packages")
     # the repositories xcraft repo made, which clean leaves alone, keep the files of builds
     if kept := cleaner.repos_disk_usage(project):
         console.print(f"{_size(kept)} more would be freed without the repositories of xcraft repo, in repo*/")

@@ -145,6 +145,13 @@ def checkout_images(project: Project) -> set[str]:
     return tags | {_signing_tag(tag) for tag in tags}
 
 
+def checkout_repositories(project: Project) -> set[str]:
+    """Return the repositories of pinned packages of the checkout, see pinned.repository(): of all the pinned packages
+    of its platforms, and of those of their images.
+    """
+    return {pinned.ident(pins) for p in project.all_platforms() for pins in (pinned.pins(p), _image_pins(p))}
+
+
 _existing: set[str] = set()
 
 

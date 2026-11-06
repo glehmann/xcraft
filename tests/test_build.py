@@ -1121,6 +1121,32 @@ def test_pinned_store_checked(root: Path, monkeypatch: pytest.MonkeyPatch) -> No
         subprocess.run(["podman", "volume", "rm", "-f", volume], check=False, capture_output=True)
 
 
+def test_clean_removes_the_other_repositories_of_pinned_packages(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project = Project.find()
+    used = {pinned.repository(project), pinned.repository(project, container._image_pins(project))}
+    assert {repo.name for repo in used} <= container.checkout_repositories(project)
+    # a store of its own
+    monkeypatch.setattr(pinned, "VOLUME", volume := f"xcraft-pinned-test-{os.getpid()}-{time.monotonic_ns()}")
+    try:
+        store = pinned._store()
+        for repo, rpms in {"current": ["a", "b"], "old": ["b", "c"], "used": ["d"], ".partial.1": ["e"]}.items():
+            (store / "repos" / repo).mkdir(parents=True)
+            for rpm in rpms:
+                (store / "rpms" / rpm).mkdir(parents=True, exist_ok=True)
+                (store / "rpms" / rpm / f"{rpm}.rpm").touch()
+                (store / "repos" / repo / f"{rpm}.rpm").hardlink_to(store / "rpms" / rpm / f"{rpm}.rpm")
+        (store / "rpms/f").mkdir()
+        (store / "rpms/f/f.rpm").touch()  # of no repository, like the part of a download
+        since = time.time() - 3600
+        for repo in ("current", "old", ".partial.1"):
+            os.utime(store / "repos" / repo, (since - 1, since - 1))
+        assert sorted(pinned.remove_repositories({"current"}, since)) == [".partial.1", "old"]
+        assert sorted(p.name for p in (store / "repos").iterdir()) == ["current", "used"]
+        assert sorted(p.name for p in (store / "rpms").iterdir()) == ["a", "b", "d"]
+    finally:
+        subprocess.run(["podman", "volume", "rm", "-f", volume], check=False, capture_output=True)
+
+
 def test_signatures_of_the_keys_of_the_repositories(root: Path, tmp_path: Path) -> None:
     # signed with the key of AlmaLinux's EPEL, of a URL, which the build image does not have, as it installs the pinned
     # packages without the keys
