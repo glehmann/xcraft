@@ -24,6 +24,14 @@ def clean(
     builds: Annotated[bool, typer.Option("--builds", help="Also remove the builds of the current packages.")] = False,
     ccache: Annotated[bool, typer.Option("--ccache", help="Also remove the compiler caches.")] = False,
     dune_cache: Annotated[bool, typer.Option("--dune-cache", help="Also remove the caches of dune.")] = False,
+    sources: Annotated[
+        bool,
+        typer.Option(
+            "--sources",
+            help="Also remove the source archives no package of the checkout has, like those of other branches: push "
+            "them first, see xcraft push sources, unless the remote storage or the URLs of their specs have them.",
+        ),
+    ] = False,
     arch: Arch = None,
 ) -> None:
     """Remove the build trees and outdated builds, signed or not, of the given packages only, or of all with what they
@@ -33,8 +41,11 @@ def clean(
     The current builds are kept: the final ones, and the development ones, as last built. So are the ISOs of the
     checkout, see xcraft iso, but the others, from the remote storage or made again when needed.
 
-    The source archives are always kept.
+    The source archives are kept, but those no package has with --sources.
     """
+    if sources and packages:
+        msg = "--sources removes the archives of no package: without packages"
+        raise typer.BadParameter(msg)
     project = prepared_project(packages, arch=arch)
     keys = build_keys(project)
     developed = build_keys(project, built_dev_suffixes(project))  # as last built
@@ -47,6 +58,7 @@ def clean(
             all_builds=builds,
             ccache=ccache,
             dune_cache=dune_cache,
+            sources=sources,
             isos=isos,
         )
     console.print(f"freed {_size(freed)}")

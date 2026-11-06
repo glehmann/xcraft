@@ -276,6 +276,13 @@ def test_clean_keeps_sources_and_current_builds(project: Project, monkeypatch: p
     assert files(state) == sorted([*kept, *current, "ccache/foo/data"])
     clean(project, [keys], all_builds=True, ccache=True)
     assert files(state) == kept
+    # but those of the packages of the checkout with sources
+    write_manifest(project.root / "base/foo/sources", {"foo-2.tar.gz": "0" * 64})
+    (state / "cache/sources" / ("0" * 64)).mkdir()
+    (state / "cache/sources" / ("0" * 64) / "foo-2.tar.gz").write_text("foo")
+    clean(project, [keys], sources=True)
+    kept.remove("cache/sources/abc/foo.tar.gz")
+    assert files(state) == sorted([*kept, f"cache/sources/{'0' * 64}/foo-2.tar.gz"])
 
 
 def test_previous_duration(project: Project) -> None:
