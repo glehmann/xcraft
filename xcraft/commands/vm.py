@@ -100,7 +100,7 @@ def start(
         ssh_port = session.ssh_port if not session.ssh_port or vm.port_free(session.ssh_port) else vm.free_port()
     cmd = vm.qemu_command(root, launch, disk=session.disk, iso=None, ssh_port=ssh_port, headless=headless or background)
     session = session.model_copy(update={"iso": None, "ssh_port": ssh_port, "command": cmd, "launch": launch})
-    proc = vm.launch(root, session)
+    proc, _ = vm.launch(root, session)
     show(root, session)
     if not background:
         vm.wait(proc, root)

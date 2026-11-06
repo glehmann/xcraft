@@ -1,5 +1,5 @@
 # the installer of the tests: shows the distribution it installs, with the kernel arguments, then reboots, which stops
-# the VM of xcraft boot
+# the VM of xcraft boot, or powers off with xcraft.poweroff
 [Unit]
 Description=Toy installer
 After=basic.target
@@ -7,7 +7,7 @@ After=basic.target
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/sh -c 'echo "toy installer of $(cat /etc/toy-installer): $(cat /proc/cmdline)" > /dev/ttyS0'
-ExecStartPost=/usr/bin/systemctl --no-block reboot
+ExecStartPost=/usr/bin/sh -c 'systemctl --no-block "$(grep -qw xcraft.poweroff /proc/cmdline && echo poweroff || echo reboot)"'
 
 [Install]
 WantedBy=multi-user.target

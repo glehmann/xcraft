@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import Annotated
 
@@ -33,6 +34,29 @@ def _kernel_args(project: Project, kernel_args: str | None, *, unattended: bool)
         msg = "no unattended kernel arguments in [iso] of xcraft.toml"
         raise typer.BadParameter(msg, param_hint="--unattended")
     return " ".join(filter(None, [project.config.iso.unattended if unattended else "", kernel_args])) or None
+
+
+_STOPS = {
+    "guest-shutdown": "the guest powered off",
+    "guest-panic": "the guest kernel panicked",
+    "host-qmp-quit": "QEMU was told to quit, like by xcraft vm stop",
+    "host-signal": "QEMU was stopped by a signal",
+}
+"""What stopped the VM, by the reason of the SHUTDOWN event of QEMU, but the installer asking to reboot."""
+
+
+def _show_end(reason: str | None, vm_dir: Path) -> None:
+    """Show how the VM ended, by the `reason` QEMU gave, and fail unless the installer asked to reboot, which it does
+    once it has installed the system.
+    """
+    if reason == "guest-reset":
+        console.print(
+            "[bold green]✓[/] the installer finished and asked to reboot: xcraft vm start boots the installed system"
+        )
+        return
+    why = _STOPS.get(reason or "", f"QEMU stopped: {reason}" if reason else "QEMU stopped without telling why")
+    console.print(f"[bold red]✗[/] {why}, rather than the installer asking to reboot: see {vm_dir / 'serial.log'}")
+    raise typer.Exit(1)
 
 
 def boot(
@@ -95,8 +119,9 @@ def boot(
     """Build the installation ISO, create a virtual disk if missing, and boot it with QEMU: with the development builds
     of the packages whose build ID is not the main branch's, like xcraft build, unless --final.
 
-    The disk persists between runs. The installer VM exits when it requests a reboot: xcraft vm start then boots the
-    installed disk, without the ISO. Use xcraft vm to inspect or stop it.
+    The disk persists between runs. The installer VM exits when it requests a reboot, which tells it finished: xcraft
+    vm start then boots the installed disk, without the ISO. Use xcraft vm to inspect or stop it. In the foreground,
+    it fails when the VM stops otherwise, like powered off, or by a kernel panic with the guest's pvpanic driver.
     """
     if bios and (kernel_args or unattended):
         msg = "--kernel-args and --unattended edit the GRUB menu of the ISO: not with --bios"
@@ -129,14 +154,25 @@ def boot(
             disk.parent.mkdir(parents=True, exist_ok=True)
             process.run(["qemu-img", "create", "-f", "qcow2", str(disk), disk_size])
         launch = vm.Launch(name=project.id, memory=memory, cpus=cpus, accel=accel, ovmf=ovmf, qemu_args=qemu_arg or [])
-        cmd = vm.qemu_command(vm_dir, launch, disk=disk, iso=iso, ssh_port=ssh_port, headless=headless or background)
+        cmd = vm.qemu_command(
+            vm_dir,
+            launch,
+            disk=disk,
+            iso=iso,
+            ssh_port=ssh_port,
+            headless=headless or background,
+            events=not background,
+        )
         session = vm.Session(
             pid=0, arch=project.arch, disk=disk, iso=iso.absolute(), ssh_port=ssh_port, command=cmd, launch=launch
         )
-        proc = vm.launch(vm_dir, session)
-    show(vm_dir, session)
-    if kernel_args:
-        vm.edit_default_entry(vm_dir, kernel_args)
-        console.print(f"booted the default entry with {kernel_args}", markup=False)
-    if not background:
-        vm.wait(proc, vm_dir)
+        proc, events = vm.launch(vm_dir, session)
+    with contextlib.ExitStack() as stack:
+        if events:
+            stack.enter_context(events)
+        show(vm_dir, session)
+        if kernel_args:
+            vm.edit_default_entry(vm_dir, kernel_args)
+            console.print(f"booted the default entry with {kernel_args}", markup=False)
+        if events:
+            _show_end(vm.wait(proc, vm_dir, events), vm_dir)
