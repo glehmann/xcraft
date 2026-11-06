@@ -85,6 +85,11 @@ def repo_file(project: Project) -> str:
     )
 
 
+def _with_host(project: Project) -> list[Project]:
+    """Return the platforms of the project, and the host's, whose image parses the specs, when it is none of them."""
+    return [*project.all_platforms(), project.on_host()]
+
+
 def _local_repos(project: Project) -> list[str]:
     """Return the volumes of the repositories on this machine, and of their sources, of file:// URLs, at their paths
     in the containers, of all the platforms, and of the host's, whose image parses the specs.
@@ -92,7 +97,7 @@ def _local_repos(project: Project) -> list[str]:
     return sorted(
         {
             f"{path}:{path}:ro"
-            for platform in [*project.all_platforms(), project.on_host()]
+            for platform in _with_host(project)
             for repo in platform.repos.values()
             for url in (repo.baseurl.format(arch=platform.arch), repo.source_baseurl)
             if url.startswith("file:///")
@@ -138,18 +143,18 @@ def image_tag(project: Project) -> str:
 
 
 def checkout_images(project: Project) -> set[str]:
-    """Return the tags of the images of the checkout, built or not: the build environment images of its platforms, and
-    their signing images.
+    """Return the tags of the images of the checkout, built or not: the build environment images of its platforms and
+    of the host, and their signing images.
     """
-    tags = {image_tag(p) for p in project.all_platforms()}
+    tags = {image_tag(p) for p in _with_host(project)}
     return tags | {_signing_tag(tag) for tag in tags}
 
 
 def checkout_repositories(project: Project) -> set[str]:
     """Return the repositories of pinned packages of the checkout, see pinned.repository(): of all the pinned packages
-    of its platforms, and of those of their images.
+    of its platforms and of the host, and of those of their images.
     """
-    return {pinned.ident(pins) for p in project.all_platforms() for pins in (pinned.pins(p), _image_pins(p))}
+    return {pinned.ident(pins) for p in _with_host(project) for pins in (pinned.pins(p), _image_pins(p))}
 
 
 _existing: set[str] = set()

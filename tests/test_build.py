@@ -888,6 +888,9 @@ def test_image_of_the_host_pinned_for_a_project_of_other_architectures(root: Pat
     assert lock.image[native.arch]
     assert lock.binaries[native.arch].keys() == {*lock.image[native.arch]}
     assert container._image_pins(native)
+    # kept by xcraft clean --shared
+    assert container.image_tag(native) in container.checkout_images(project)
+    assert pinned.ident(container._image_pins(native)) in container.checkout_repositories(project)
 
 
 def test_build_roots_resolved_again_for_versions_of_rich_dependencies(
