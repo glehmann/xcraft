@@ -84,7 +84,8 @@ def iso_key(
     """Return the key of the ISO of the checkout, with the development builds `dev`, if any, and with the builds
     without the tests of their specs with `nocheck`: what it is made of.
 
-    Read without containers, nor the secret key of `signer`.
+    Read without the secret key of `signer`, and without containers but for the development builds, whose suffixes
+    need the lock prepared, see dev_suffixes().
     """
     lock, builds = load_lock(project), load_builds(project)
     config = project.config.model_dump(
