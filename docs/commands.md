@@ -20,6 +20,7 @@
 | `xcraft boot [--iso f] [--disk f] [--headless] [--unsigned] [--dev ID \| --final] [--nocheck]` | Build the ISO and boot its installer in a local QEMU VM, creating a virtual disk if missing |
 | `xcraft vm start [--background]` | Start the VM again from its installed disk, without the ISO, with the options of `xcraft boot` |
 | `xcraft vm <command>` | Inspect a VM, read its console, send input, save diagnostics, or stop it |
+| `xcraft vm destroy [--yes]` | Stop the VM and delete its session, with its disk, for a new installation |
 | `xcraft vm ssh [<command>...]` / `xcraft vm ssh-copy-id` | Log in as root in the VM, or run a command in it; install your SSH key there |
 | `xcraft key create` / `xcraft key show [--export]` | The developer's key, which signs the development builds |
 | `xcraft push` | Upload everything the remote storage misses: the source archives and the builds of all packages, with the `index.html` pages of their directories, and the resolutions |
