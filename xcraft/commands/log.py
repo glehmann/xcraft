@@ -50,7 +50,7 @@ def log(
     ] = False,
 ) -> None:
     """Show the log of the last build of a package."""
-    project = Project.find()
+    project = Project.find(use=False)  # following a build, during xcraft clean
     path = project.log(package)
     if not path.exists() and not follow:
         msg = f"{package} has no build log"

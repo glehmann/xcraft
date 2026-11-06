@@ -30,7 +30,9 @@ over the other repositories, so a package built locally always wins. A build res
 like a test suite looping forever, is stopped.
 
 **Locking.** The commands changing the project (`build`, `repo`, `shell`, `import`, `bump`, `clean`) cannot run at the
-same time; the others, like `log -f` or `status`, can run during a build.
+same time; the others, like `log -f` or `status`, can run during a build. `clean`, which removes what the commands
+read, like `.xcraft/tmp/` and the caches, runs alone: it fails when another command runs, and the commands started
+during it wait for it, but `log`.
 
 **Releases.** `xcraft bump` increments the last number of the `Release` outside of macros, which is the XCP-ng part
 of releases like `1%{?xsrel}.3%{?dist}`, and adds a changelog entry for the resulting version, as rpm evaluates it.

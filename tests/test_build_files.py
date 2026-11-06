@@ -299,6 +299,20 @@ def test_lock(project: Project) -> None:
         pass
 
 
+def test_sole_use(project: Project) -> None:
+    with project.sole_use(), project.sole_use():  # also when this process uses it already
+        pass
+    fd = os.open(project.root, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH)  # as another command does
+        with pytest.raises(ProjectLockedError, match="other xcraft commands use this project"), project.sole_use():
+            pass
+    finally:
+        os.close(fd)
+    with project.sole_use():  # released
+        pass
+
+
 def test_fresh_dir_only_empties_what_xcraft_made(project: Project, tmp_path: Path) -> None:
     mine = tmp_path / "mine"
     mine.mkdir()

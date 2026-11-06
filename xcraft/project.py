@@ -253,6 +253,8 @@ class Config(BaseModel):
 
 _held: set[Path] = set()
 """The roots of the projects whose lock this process holds."""
+_users: dict[Path, int] = {}
+"""The descriptors of the roots of the projects this process uses, with their shared lock, see Project.use()."""
 
 
 @dataclass
@@ -270,11 +272,12 @@ class Project:
     all_platforms() and on_host(), so that a command parses them once by platform."""
 
     @classmethod
-    def find(cls, arch: str | None = None) -> Project:
+    def find(cls, arch: str | None = None, *, use: bool = True) -> Project:
         """Find $XCRAFT_PROJECT, or search upward from the current directory, then the xcraft executable.
 
         It works on the platform of the RPM architecture `arch`, $XCRAFT_ARCH, or the host's, like x86_64 for
-        x86_64_v2, or else on the first one of the configuration.
+        x86_64_v2, or else on the first one of the configuration. This process uses it, see use(), unless not `use`,
+        for the commands reading only the logs, which xcraft clean keeps.
         """
         # resolved: the containers mount it, and links are resolved against it
         candidates = (
@@ -294,8 +297,14 @@ class Project:
             if arch not in platforms:
                 msg = f"{arch} is not an architecture of the project: {', '.join(platforms)}"
                 raise RuntimeError(msg)
-            return cls(root, config, platforms[arch])
-        return next((p for p in cls(root, config).all_platforms() if p.native), cls(root, config, config.platforms[0]))
+            project = cls(root, config, platforms[arch])
+        else:
+            project = next(
+                (p for p in cls(root, config).all_platforms() if p.native), cls(root, config, config.platforms[0])
+            )
+        if use:
+            project.use()
+        return project
 
     @property
     def arch(self) -> str:
@@ -419,6 +428,37 @@ class Project:
         tmp.mkdir(parents=True)
         yield tmp
         shutil.rmtree(tmp)
+
+    def use(self) -> None:
+        """Hold the shared lock of the project until this process exits, as the commands do, see Project.find(): xcraft
+        clean, which removes what they may read, runs without another command, see sole_use().
+        """
+        if self.root in _users:
+            return
+        # of the root, which a command failing early, before making .xcraft/, has
+        f = _users[self.root] = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            fcntl.flock(f, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            from xcraft.display import activity  # noqa: PLC0415
+
+            with activity("waiting for xcraft clean"):
+                fcntl.flock(f, fcntl.LOCK_SH)
+
+    @contextmanager
+    def sole_use(self) -> Generator[None]:
+        """Hold the lock of the project, while no other xcraft command uses it, see use()."""
+        self.use()
+        with self.lock():
+            try:
+                fcntl.flock(_users[self.root], fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                msg = "other xcraft commands use this project"
+                raise ProjectLockedError(msg) from None
+            try:
+                yield
+            finally:
+                fcntl.flock(_users[self.root], fcntl.LOCK_SH)
 
     @contextmanager
     def lock(self) -> Generator[None]:

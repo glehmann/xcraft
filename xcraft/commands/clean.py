@@ -38,7 +38,7 @@ def clean(
     keys = build_keys(project)
     developed = build_keys(project, built_dev_suffixes(project))  # as last built
     isos = checkout_iso_keys(project, os.environ.get("XCRAFT_DEV") or "dev")
-    with project.lock(), activity("cleaning"):
+    with project.sole_use(), activity("cleaning"):
         freed = cleaner.clean(
             project,
             [keys, developed],
