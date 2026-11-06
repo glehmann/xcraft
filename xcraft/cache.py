@@ -127,8 +127,10 @@ def build_path(project: Project, name: str, key: str) -> str:
     return f"{INTERNAL}/builds/{project.arch}/{name}/{key}"
 
 
-BUILD_FILES = ["RPMS", "SRPMS", "build.log"]
-"""What a build is made of, in the cache and in the remote storage."""
+BUILD_FILES = ["RPMS", "SRPMS", "build.log", "rpm-deps.json"]
+"""What a build is made of, in the cache and in the remote storage: what rpm generated for its binary packages too, see
+checks.record_rpm_deps(), which a machine with the same builds of ours there does not resolve again. The builds pushed
+before it was have none."""
 
 
 def previous_duration(project: Project, name: str) -> float | None:
