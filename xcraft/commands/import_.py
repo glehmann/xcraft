@@ -10,7 +10,7 @@ import typer
 
 from xcraft import process, resolution
 from xcraft.commands import All, complete_package
-from xcraft.display import activity, console, download_progress
+from xcraft.display import COMMAND, activity, console, download_progress
 from xcraft.importer import DEFAULT_URL, import_history, import_srpm
 from xcraft.process import git
 from xcraft.project import Project
@@ -103,4 +103,4 @@ def import_(
                     )
             for head, commit in heads.items():
                 console.print(f"[bold]{name}[/]: import/{name}/{head} at {commit[:12]}")
-    console.print("merge them into the project with [bold]git merge import/<pkg>/<branch>[/]")
+    console.print(f"merge them into the project with [{COMMAND}]git merge import/<pkg>/<branch>[/]")

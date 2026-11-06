@@ -6,7 +6,7 @@ import logging
 import socket
 import subprocess
 import sys
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 from typer import rich_utils
@@ -35,7 +35,10 @@ from xcraft.commands import (
     status,
     vm,
 )
-from xcraft.display import console
+from xcraft.display import console, known_commands
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 # Typer's Rich help does not use Click's max_content_width.
 rich_utils.MAX_WIDTH = min(120, console.width, rich_utils.MAX_WIDTH or 120)
@@ -78,6 +81,16 @@ class _Handler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         console.print(self.format(record), markup=False)
+
+
+def _names(command: object) -> Iterator[str]:
+    """Return the names of the subcommands of `command`, at all depths."""
+    for name, sub in getattr(command, "commands", {}).items():
+        yield name
+        yield from _names(sub)
+
+
+known_commands(_names(typer.main.get_command(app)))
 
 
 def main() -> None:

@@ -292,7 +292,8 @@ def qemu_command(
         "-cpu", "host" if accel == "kvm" else "max", "-smp", str(launch.cpus), "-m", str(launch.memory),
         "-vga", "std", "-global", "VGA.xres=1024", "-global", "VGA.yres=768",
         "-global", "VGA.vgamem_mb=4",
-        "-drive", f"file={str(disk).replace(',', ',,')},format=qcow2,if=ide", "-nic", network,
+        "-drive", f"file={str(disk).replace(',', ',,')},format=qcow2,if=none,id=disk",
+        "-device", f"ide-hd,drive=disk,bus=ide.0,bootindex={1 if iso else 0}", "-nic", network,
         # QEMU's monitors take one connection at a time: the events have their own, see launch()
         *(["-qmp", _EVENTS] if events else []), "-qmp", "unix:qmp.sock,server=on,wait=off", "-monitor", "none",
         # a panic of a guest kernel with the driver of pvpanic stops it, rather than leaving it hung
@@ -311,9 +312,14 @@ def qemu_command(
             "if=pflash,format=raw,file=OVMF_VARS.fd",
         ]
     if iso:
-        cmd += ["-cdrom", str(iso.absolute()), "-boot", "order=d,menu=on", "-no-reboot"]
-    else:
-        cmd += ["-boot", "order=c,menu=on"]
+        # first in the boot order, which UEFI follows too, rather than the boot entry an installation adds to the
+        # firmware variables, where -boot order=d is only for the BIOS
+        cmd += [
+            "-drive",
+            f"file={str(iso.absolute()).replace(',', ',,')},format=raw,media=cdrom,readonly=on,if=none,id=cdrom",
+            "-device", "ide-cd,drive=cdrom,bus=ide.2,bootindex=0", "-no-reboot",
+        ]  # fmt: skip
+    cmd += ["-boot", "menu=on"]
     return [*cmd, *launch.qemu_args]
 
 

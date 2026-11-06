@@ -14,6 +14,7 @@ import time
 from typing import TYPE_CHECKING
 
 from rich.console import Console
+from rich.highlighter import Highlighter
 from rich.progress import Progress, ProgressColumn, SpinnerColumn, Task, TextColumn
 from rich.progress_bar import ProgressBar
 from rich.table import Column
@@ -25,9 +26,32 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable, Iterator
     from pathlib import Path
 
+COMMAND = "cyan"
+"""The style of the xcraft commands in the output, which the messages tell to run, see known_commands()."""
+
+
+class _Commands(Highlighter):
+    """The xcraft commands in the output: xcraft, then its subcommands and options, as the command line has them."""
+
+    pattern: re.Pattern[str] | None = None
+
+    def highlight(self, text: Text) -> None:
+        if self.pattern:
+            text.highlight_regex(self.pattern, COMMAND)
+
+
+_commands = _Commands()
+
+
+def known_commands(names: Iterable[str]) -> None:
+    """Highlight the xcraft commands in the output, those of the subcommands `names`, with their options."""
+    alternatives = "|".join(re.escape(n) for n in sorted(set(names), key=len, reverse=True))
+    _commands.pattern = re.compile(rf"\bxcraft(?: (?:{alternatives}|--?[a-z][\w-]*)\b)+")
+
+
 # no wrapping, for logs and pipes; the progress and the pager on a terminal only, even when FORCE_COLOR makes the
 # output of CI coloured, like a terminal's: its logs would have each frame of the progress, with cursor movements
-console = Console(highlight=False, soft_wrap=True, force_interactive=None if sys.stdout.isatty() else False)
+console = Console(highlighter=_commands, soft_wrap=True, force_interactive=None if sys.stdout.isatty() else False)
 _LOG_INTERVAL = 30
 _STILL_INTERVAL = 60
 

@@ -11,12 +11,13 @@ from typing import TYPE_CHECKING, Annotated
 from urllib.parse import urlsplit
 
 import typer
+from rich.text import Text
 
 from xcraft import build as builder
 from xcraft import process, vm
 from xcraft.cache import release_suffix
 from xcraft.commands import Arch, Dev, Final, NoCheck, Packages, dev_ident, prepared_project
-from xcraft.display import activity, console
+from xcraft.display import COMMAND, activity, console
 from xcraft.graph import dependents
 from xcraft.packages import is_debug
 from xcraft.project import Project
@@ -240,6 +241,8 @@ def repo(  # noqa: C901
         if not targets:
             console.print(f"on the hosts, with this directory at {url}:", markup=False)
             console.print(
-                f"  copy {repo_file.name} to /etc/yum.repos.d/, then: dnf upgrade --refresh {' '.join(binaries)}",
-                markup=False,
+                Text.assemble(
+                    f"  copy {repo_file.name} to /etc/yum.repos.d/, then: ",
+                    (f"dnf upgrade --refresh {' '.join(binaries)}", COMMAND),
+                )
             )
