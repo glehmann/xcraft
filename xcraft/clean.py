@@ -57,8 +57,8 @@ def clean(
     That is the build trees, the outdated builds of the platform, those of none
     of the `keys`, all of them with `all_builds`, the compiler caches with `ccache`, and those of dune with
     `dune_cache`, of the packages
-    `names`, or of all of them with what they share: the metadata of the specs and the resolutions but those this
-    process read, the results of the checks, the requirements of the upstream packages, and the
+    `names`, or of all of them with what they share: the metadata of the specs and the resolutions of the platform but
+    those this process read, the results of the checks, the requirements of the upstream packages, and the
     upstream packages downloaded, and the ISOs of the platform but those of the keys `isos`, if given: those in
     .xcraft/iso/ too, the hard links to their cache, and the copies, see xcraft.iso. The source cache is kept, and so
     are the signed builds, which signing again would make other files.
@@ -75,7 +75,12 @@ def clean(
         paths += [state / "build", state / "tmp", state / "cache/extra"]
         # but those of the specs and resolutions this process read: the current ones, once the project is prepared
         current = specs_read() | resolutions_read()
-        paths += [p for d in ("specs", "resolved") for p in (state / "cache" / d).rglob("*.json") if p not in current]
+        paths += [
+            p
+            for d in ("specs", "resolved")
+            for p in (state / "cache" / d / project.arch).glob("*.json")
+            if p not in current
+        ]
         paths += [state / "cache" / cache for cache in ("checks", "upstream", "rpms", "srpms")]
         paths += _other_isos(project, isos) if isos is not None else []
         packages = list(builds.glob("*"))
