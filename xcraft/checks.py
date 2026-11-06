@@ -151,8 +151,8 @@ def _record_new_rpm_deps(
     project: Project, builds: dict[str, Path], supplied: dict[str, str], context: str, *, quiet: bool
 ) -> None:
     """Keep with the `builds` what rpm generated for their binary packages, in `context`, resolved with the builds of
-    ours `supplied`, by package and cache key, but for those which cannot be recorded yet, shown unless `quiet`: they
-    are recorded again next time, once what they need is there.
+    ours `supplied`, by package and cache key, as soon as each one can be resolved: those which cannot yet, shown unless
+    `quiet`, are kept as unresolved, to resolve again next time, once what they need is there.
     """
     current = [rpm for n, k in supplied.items() for rpm in _rpms(cached_build(project, n, k))]
     # the binary packages of the builds, by their names as built, with the release suffix, to their names in the specs
@@ -173,28 +173,29 @@ def _record_new_rpm_deps(
     }
     result = resolve_rpm_deps(project, {b: names[n][b] for n, bs in binaries.items() for b in bs}, current)
     unbuilt = _unbuilt_providers(project, supplied)
-    pending: dict[str, set[str]] = {}  # the packages waiting for builds of ours, with those they wait for
+    pending: dict[str, set[str]] = {}  # the binary packages waiting for builds of ours, with those they wait for
     for name, build in builds.items():
-        if failed := sorted(set(binaries[name]) & result.errors.keys()):
-            for binary in [] if quiet else failed:
-                missing = re.findall(r"nothing provides (\S+) needed by", result.errors[binary])
-                if missing and all(m in unbuilt for m in missing):
-                    pending.setdefault(name, set()).update(unbuilt[m] for m in missing)
-                else:
-                    console.print(
-                        f"[yellow]cannot record what rpm generated for {binary}[/]: {escape(result.errors[binary])}"
-                    )
-            continue
+        failed = sorted(set(binaries[name]) & result.errors.keys())
+        for binary in [] if quiet else failed:
+            missing = re.findall(r"nothing provides (\S+) needed by", result.errors[binary])
+            if missing and all(m in unbuilt for m in missing):
+                pending.setdefault(names[name][binary], set()).update(unbuilt[m] for m in missing)
+            else:
+                console.print(
+                    f"[yellow]cannot record what rpm generated for {binary}[/]: {escape(result.errors[binary])}"
+                )
+        resolved = [b for b in binaries[name] if b not in failed]
         recorded = {
             "version": RECORDING,
             "context": context,
             # the packages of ours they need by their names in the specs too, whatever their builds
             "requires": {
                 names[name][b]: [in_specs.get(r, r) for r in result.requires[b]]
-                for b in binaries[name]
+                for b in resolved
                 if b in result.requires
             },
-            "provides": {names[name][b]: result.provides[b] for b in binaries[name] if b in result.provides},
+            "provides": {names[name][b]: result.provides[b] for b in resolved if b in result.provides},
+            "unresolved": failed,
         }
         write_atomically(build / "rpm-deps.json", json.dumps(recorded))
     if pending:
@@ -221,8 +222,8 @@ def record_rpm_deps(project: Project, names: list[str], keys: dict[str, str], *,
     `keys`, without their release suffixes, nor the provides their specs declare, and return whether it changed.
 
     What a build generated is kept with it, for the same version of the recording, RECORDING, and what its requirements
-    are resolved with, the builds of ours included: see rpm_deps_context(). What cannot be recorded yet is shown,
-    unless `quiet`.
+    are resolved with, the builds of ours included: see rpm_deps_context(). The binary packages which cannot be
+    resolved yet are shown, unless `quiet`, and resolved again each time, while the others are recorded.
     """
     # the builds the requirements may resolve to
     supplied = {n: k for n, k in keys.items() if cached_build(project, n, k).exists()}
@@ -234,7 +235,7 @@ def record_rpm_deps(project: Project, names: list[str], keys: dict[str, str], *,
         recorded = json.loads(path.read_text()) if (path := build / "rpm-deps.json").exists() else {}
         return recorded if (recorded.get("version"), recorded.get("context")) == (RECORDING, context) else None
 
-    if new := {name: build for name, build in builds.items() if not found(build)}:
+    if new := {name: build for name, build in builds.items() if not (kept := found(build)) or kept.get("unresolved")}:
         _record_new_rpm_deps(project, new, supplied, context, quiet=quiet)
     # what dry runs do too, without the lock of the project otherwise
     with project.lock():
