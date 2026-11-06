@@ -6,6 +6,10 @@ import math
 import shutil
 from typing import TYPE_CHECKING
 
+from pydantic import BaseModel, Field, TypeAdapter
+
+from xcraft import process
+from xcraft.container import BUILD_IMAGE, SIGN_IMAGE
 from xcraft.localrepo import OUTPUT_MARKER
 from xcraft.resolution import resolutions_read
 from xcraft.sources import read_manifest
@@ -67,6 +71,30 @@ def _shared(project: Project, isos: set[str] | None, *, sources: bool, used_sinc
         had = {digest for manifest in manifests for digest in read_manifest(manifest).values()}
         paths += [d for d in project.source_cache.glob("*") if d.name not in had and d.stat().st_mtime < used_since]
     return paths
+
+
+class _Image(BaseModel):
+    names: list[str] = Field([], alias="Names")
+    created: float = Field(alias="Created")
+
+
+def remove_images(kept: set[str], used_since: float = math.inf) -> list[str]:
+    """Remove the build environment and signing images of the machine, but the tags `kept` and those built since the
+    time `used_since`, and return the tags removed. Those of running containers stay.
+    """
+    listed = process.run(
+        ["podman", "images", "--format", "json", "--filter", f"reference={BUILD_IMAGE}", "--filter",
+         f"reference={SIGN_IMAGE}"],
+        capture=True,
+    ).stdout  # fmt: skip
+    tags = [
+        tag
+        for image in TypeAdapter(list[_Image]).validate_json(listed)
+        if image.created < used_since
+        for tag in image.names
+        if tag.startswith((f"{BUILD_IMAGE}:", f"{SIGN_IMAGE}:")) and tag not in kept
+    ]
+    return [tag for tag in tags if not process.run(["podman", "rmi", tag], check=False, capture=True).returncode]
 
 
 def clean(

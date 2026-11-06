@@ -12,6 +12,7 @@ import typer
 from xcraft import clean as cleaner
 from xcraft.cache import build_keys
 from xcraft.commands import Arch, Packages, prepared_project
+from xcraft.container import checkout_images
 from xcraft.devbuilds import built_dev_suffixes
 from xcraft.display import activity, console
 from xcraft.iso import checkout_iso_keys
@@ -32,6 +33,14 @@ def clean(
             "--sources",
             help="Also remove the source archives no package of the checkout has, like those of other branches: push "
             "them first, see xcraft push sources, unless the remote storage or the URLs of their specs have them.",
+        ),
+    ] = False,
+    shared: Annotated[
+        bool,
+        typer.Option(
+            "--shared",
+            help="Also remove what the checkouts of the machine share, but what this one uses: the images of the build "
+            "environment, those built before the last DAYS days of --unused.",
         ),
     ] = False,
     unused: Annotated[
@@ -62,6 +71,7 @@ def clean(
     keys = build_keys(project)
     developed = build_keys(project, built_dev_suffixes(project))  # as last built
     isos = checkout_iso_keys(project, os.environ.get("XCRAFT_DEV") or "dev")
+    used_since = math.inf if unused is None else time.time() - unused * 86400
     with project.sole_use(), activity("cleaning"):
         freed = cleaner.clean(
             project,
@@ -71,10 +81,14 @@ def clean(
             ccache=ccache,
             dune_cache=dune_cache,
             sources=sources,
-            used_since=math.inf if unused is None else time.time() - unused * 86400,
+            used_since=used_since,
             isos=isos,
         )
     console.print(f"freed {_size(freed)}")
+    if shared:
+        with activity("removing the images"):
+            removed = cleaner.remove_images(checkout_images(project), used_since)
+        console.print(f"removed {len(removed)} images of the build environment")
     # the repositories xcraft repo made, which clean leaves alone, keep the files of builds
     if kept := cleaner.repos_disk_usage(project):
         console.print(f"{_size(kept)} more would be freed without the repositories of xcraft repo, in repo*/")

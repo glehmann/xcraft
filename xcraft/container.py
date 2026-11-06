@@ -42,6 +42,9 @@ _LINE = 2**16
 BUILDENV = Path(__file__).parent / "buildenv"
 """The Containerfile of the image, and the scripts run in the containers, which have them in /xcraft."""
 
+BUILD_IMAGE, SIGN_IMAGE = "localhost/xcraft-build", "localhost/xcraft-sign"
+"""The names of the build environment images and of the signing images, tagged by what they are made of."""
+
 
 def buildenv_hash() -> str:
     """Return a hash of the files of BUILDENV, but the bytecode Python leaves there, which differs by checkout."""
@@ -126,12 +129,20 @@ def _image_definition(project: Project) -> tuple[str, dict[str, str], dict[str, 
     args = {"BASE_IMAGE": config.base_image, "PACKAGES": " ".join(sorted({*config.packages, *PACKAGES}))}
     files = _image_files(project)
     digest = hashlib.sha256(json.dumps([project.platform, args, files], sort_keys=True).encode()).hexdigest()
-    return f"localhost/xcraft-build:{digest}", args, files
+    return f"{BUILD_IMAGE}:{digest}", args, files
 
 
 def image_tag(project: Project) -> str:
     """Return the tag of the build environment image, built or not."""
     return _image_definition(project)[0]
+
+
+def checkout_images(project: Project) -> set[str]:
+    """Return the tags of the images of the checkout, built or not: the build environment images of its platforms, and
+    their signing images.
+    """
+    tags = {image_tag(p) for p in project.all_platforms()}
+    return tags | {_signing_tag(tag) for tag in tags}
 
 
 _existing: set[str] = set()
@@ -467,13 +478,18 @@ def run_natively(
 _SIGN_PACKAGES = ["rpm-sign", "gnupg2"]
 
 
+def _signing_tag(base: str) -> str:
+    """Return the tag of the signing image of the build environment image `base`."""
+    return f"{SIGN_IMAGE}:{hashlib.sha256(json.dumps([base, _SIGN_PACKAGES]).encode()).hexdigest()[:16]}"
+
+
 def signing_image(project: Project) -> str:
     """Return the tag of the signing image, the build environment's with rpmsign and gpg, building it if needed.
 
     It is apart from the build environment image, so as not to change it, and the cache keys with it.
     """
     base = built_image(project)
-    tag = f"localhost/xcraft-sign:{hashlib.sha256(json.dumps([base, _SIGN_PACKAGES]).encode()).hexdigest()[:16]}"
+    tag = _signing_tag(base)
     if not _exists(tag):
         # the versions of rpm-sign follow rpm's, which the lock may not have anymore
         containerfile = (

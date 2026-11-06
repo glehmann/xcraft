@@ -20,7 +20,7 @@ from typer.testing import CliRunner
 
 from tests import ARCH, TOML, TOYS, copy_project
 from xcraft import build as builder
-from xcraft import buildid, checks, container, localrepo, pinned, process, resolution
+from xcraft import buildid, checks, clean, container, localrepo, pinned, process, resolution
 from xcraft.__main__ import app
 from xcraft.builds import builds_path, load_builds, save_builds
 from xcraft.cache import BuildError
@@ -984,6 +984,18 @@ def test_failed_step_shows_its_log(root: Path) -> None:
     # like in CI, where the log is out of reach
     with pytest.raises(container.ContainerError, match=r"_failing\.log, which ends with:\n  first\n  boom$"):
         container.run(Project.find(), "failing", "echo first; echo boom; false")
+
+
+def test_clean_removes_the_other_images(root: Path) -> None:
+    project, since = Project.find(), time.time()
+    image = container.built_image(project)
+    other = f"{container.BUILD_IMAGE}:other-{os.getpid()}"
+    process.run(["podman", "tag", image, other])
+    # but those of the machine, of other checkouts, and those the other tests build since
+    listed = ["podman", "images", "--format", "{{.Repository}}:{{.Tag}}"]
+    machine = {tag for tag in process.run(listed, capture=True).stdout.split() if tag != other}
+    assert clean.remove_images(machine | container.checkout_images(project), since) == [other]
+    assert process.run(["podman", "image", "exists", image], check=False).returncode == 0
 
 
 def test_pinned_packages(root: Path) -> None:
