@@ -7,6 +7,7 @@ import functools
 import hashlib
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -50,6 +51,29 @@ def make_toys(root: Path) -> None:
     for old in TOYS.parent.glob("[!.]*"):  # of older specs
         if old != TOYS:
             shutil.rmtree(old)
+
+
+def _running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # of another user
+        pass
+    return True
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Remove the volumes of the tests, xcraft-<name>-test-<pid>[-<id>], of the processes not running anymore, which
+    ended without removing them, like killed ones.
+    """
+    if not shutil.which("podman"):
+        return
+    volumes = process.run(["podman", "volume", "ls", "--quiet"], capture=True).stdout.split()
+    if ended := [
+        v for v in volumes if (m := re.fullmatch(r"xcraft-.+-test-(\d+)(-.+)?", v)) and not _running(int(m[1]))
+    ]:
+        process.run(["podman", "volume", "rm", "--force", *ended], check=False, capture=True)
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
