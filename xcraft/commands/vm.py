@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import codecs
 import json
+import shutil
 import time
 from pathlib import Path
 from typing import Annotated
@@ -160,11 +161,38 @@ def status(ctx: typer.Context) -> None:
 @app.command()
 def stop(ctx: typer.Context) -> None:
     """Stop QEMU immediately, retaining its disk, firmware variables, and logs."""
-    root = directory(ctx)
+    _stopped(directory(ctx))
+    typer.echo("stopped")
+
+
+def _stopped(root: Path) -> None:
+    """Stop the QEMU of the session `root`, if it runs, and wait for it to exit."""
     if vm.running(root):
         with vm.Monitor(root) as monitor:
             monitor.execute("quit")
-    typer.echo("stopped")
+    for _ in range(100):
+        if not vm.running(root):
+            return
+        time.sleep(0.1)
+    msg = f"QEMU did not stop: see {root / 'qemu.log'}"
+    raise RuntimeError(msg)
+
+
+@app.command()
+def destroy(
+    ctx: typer.Context,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Without asking for confirmation.")] = False,
+) -> None:
+    """Stop the VM, and delete its session directory, with its disk, firmware variables, and logs: the next xcraft boot
+    installs on a new disk. A disk given with --disk, out of the directory, is kept.
+    """
+    root = directory(ctx)
+    disk = vm.Session.model_validate_json((root / "session.json").read_text()).disk
+    if not yes:
+        typer.confirm(f"Delete the VM of {root}{', with its disk' if disk.is_relative_to(root) else ''}?", abort=True)
+    _stopped(root)
+    shutil.rmtree(root)
+    typer.echo(f"destroyed{'' if disk.is_relative_to(root) else f', keeping the disk {disk}'}")
 
 
 @app.command()

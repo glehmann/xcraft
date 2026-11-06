@@ -124,6 +124,7 @@ xcraft vm stop
 xcraft vm start --background           # the installed disk, without the ISO
 xcraft vm ssh-copy-id                  # your SSH key for root, asking its password once
 xcraft vm ssh                          # a login shell in the VM, or: xcraft vm ssh rpm -qa --last
+xcraft vm destroy                      # stopped, and its session deleted, with its disk: asks first, but --yes
 ```
 
 `ssh` and `ssh-copy-id` reach root on the SSH port of the VM, on localhost, without checking its host key, which each

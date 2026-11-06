@@ -319,6 +319,36 @@ def test_detached_vm_controls_and_logs(root: Path, tmp_path: Path, echo_disk: Pa
     assert (bundle / "serial.log").exists()
 
 
+@pytest.mark.skipif(not (shutil.which("qemu-system-x86_64") and shutil.which("qemu-img")), reason="needs QEMU")
+def test_vm_destroy(root: Path, tmp_path: Path, echo_disk: Path) -> None:
+    directory = root / "vm"
+    iso = tmp_path / "installer.iso"
+    iso.write_bytes(bytes(2048))
+    boot = [
+        sys.executable, "-m", "xcraft", "boot", "--iso", str(iso), "--bios", "--background", "--accel", "tcg",
+        "--memory", "512", "--cpus", "1", "--ssh-port", "0", "--disk", str(echo_disk), "--vm-dir", str(directory),
+    ]  # fmt: skip
+    started = subprocess.run(boot, capture_output=True, text=True, check=False, timeout=20)
+    assert started.returncode == 0, started.stdout + started.stderr
+    destroy = [sys.executable, "-m", "xcraft", "vm", "--vm-dir", str(directory), "destroy"]
+    try:
+        # asked first: nothing changes without a yes
+        kept = subprocess.run(destroy, input="n\n", capture_output=True, text=True, check=False, timeout=20)
+        assert kept.returncode == 1, kept.stdout + kept.stderr
+        assert vm.running(directory)
+        destroyed = subprocess.run([*destroy, "--yes"], capture_output=True, text=True, check=False, timeout=20)
+        assert destroyed.returncode == 0, destroyed.stdout + destroyed.stderr
+        assert destroyed.stdout == f"destroyed, keeping the disk {echo_disk}\n"
+    finally:
+        if directory.exists() and vm.running(directory):
+            stop_vm(directory)
+    assert not directory.exists()
+    assert echo_disk.exists()  # given with --disk, out of the directory
+    code, output = xcraft("vm", "--vm-dir", str(directory), "destroy", "--yes")
+    assert code == 1
+    assert "no VM session" in output
+
+
 def test_ssh_port_in_use(root: Path, tmp_path: Path) -> None:
     with socket.socket() as taken:
         taken.bind(("127.0.0.1", 0))
