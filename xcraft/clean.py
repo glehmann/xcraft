@@ -32,6 +32,16 @@ def _disk_usage(path: Path) -> int:
     return sum(blocks * 512 for _, blocks in inodes)
 
 
+def _other_isos(project: Project, isos: set[str]) -> list[Path]:
+    """Return the ISOs of the platform but those of the keys `isos`: their cache, and those in .xcraft/iso/, but the
+    hard links to the ISOs kept.
+    """
+    trees = list((project.state / "cache/isos" / project.arch).glob("*"))
+    kept = {(t / "image.iso").stat().st_ino for t in trees if t.name in isos and (t / "image.iso").exists()}
+    named = [iso for iso in (project.state / "iso").glob("*.iso") if iso.stat().st_ino not in kept]
+    return [*(t for t in trees if t.name not in isos), *named]
+
+
 def clean(
     project: Project,
     keys: list[dict[str, str]],
@@ -40,6 +50,7 @@ def clean(
     all_builds: bool = False,
     ccache: bool = False,
     dune_cache: bool = False,
+    isos: set[str] | None = None,
 ) -> int:
     """Remove what xcraft can regenerate, and return how many bytes that freed.
 
@@ -48,8 +59,9 @@ def clean(
     `dune_cache`, of the packages
     `names`, or of all of them with what they share: the metadata of the specs and the resolutions but those this
     process read, the results of the checks, the requirements of the upstream packages, and the
-    upstream packages downloaded. The source cache is kept, and so are the signed builds, which signing again would
-    make other files, and the ISOs.
+    upstream packages downloaded, and the ISOs of the platform but those of the keys `isos`, if given: those in
+    .xcraft/iso/ too, the hard links to their cache, and the copies, see xcraft.iso. The source cache is kept, and so
+    are the signed builds, which signing again would make other files.
 
     The local repository and snapshot, made again when needed, are removed in
     both cases: they have hard links to the files of the builds, which would
@@ -65,6 +77,7 @@ def clean(
         current = specs_read() | resolutions_read()
         paths += [p for d in ("specs", "resolved") for p in (state / "cache" / d).rglob("*.json") if p not in current]
         paths += [state / "cache" / cache for cache in ("checks", "upstream", "rpms", "srpms")]
+        paths += _other_isos(project, isos) if isos is not None else []
         packages = list(builds.glob("*"))
     else:
         paths += [state / "build" / name for name in names]

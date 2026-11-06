@@ -29,7 +29,9 @@ for them in the lock, in `iso`, resolved with the build roots. The ISO is `.xcra
 `<arch>` is the RPM architecture, like `x86_64_v2`, and `<id>`, like `4772c1`, identifies what the ISOs are made of,
 the same for the full and netinstall ones of all the architectures: the beginning of a hash of their keys, which
 cover the packages, the lock and the ISO's configuration.
-Images are cached in `.xcraft/cache/isos/<arch>/<key>/`. Both `xcraft iso` and `xcraft boot` reuse the matching local
+Images are cached in `.xcraft/cache/isos/<arch>/<key>/`, which those of `.xcraft/iso/` are hard links to, rather than
+copies; `xcraft clean` removes them but those of the checkout: full and netinstall, signed with the default key, with
+those of the builds of the storage, or unsigned, of final builds or of the development ones. Both `xcraft iso` and `xcraft boot` reuse the matching local
 image, then try the trusted remote storage, and only assemble a snapshot and build an ISO on a cache miss. A cache
 hit needs no build containers or signing secrets. The key covers package inputs and the whole of both locks, on all
 the architectures, as the build keys do, read before the build IDs are computed again, ISO templates and

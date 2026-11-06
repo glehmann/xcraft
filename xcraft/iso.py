@@ -183,17 +183,24 @@ def _verified_image(tree: Path) -> Image:
 def _copy_iso(
     project: Project, tree: Path, output: Path | None, *, netinstall: bool, signer: Signer | None, dev: str | None
 ) -> Path:
-    """Copy the cached ISO in `tree` to `output`, or with its name in .xcraft/iso/ by default, and return it."""
+    """Give the cached ISO in `tree` as `output`, or with its name in .xcraft/iso/ by default, and return it: a hard
+    link to it, not a copy, on the same file system, like in .xcraft/: read-only, not to change the cache through it.
+    """
     image = _verified_image(tree)
     output = (
         output or project.state / "iso" / iso_name(project, netinstall=netinstall, signer=signer, dev=dev)
     ).absolute()
     output.parent.mkdir(parents=True, exist_ok=True)
-    if not output.exists() or sha256_of(output) != image.sha256:
-        with tempfile.TemporaryDirectory(dir=output.parent, prefix=".iso-") as tmp:
-            part = Path(tmp) / "image.iso"
+    if output.exists() and (output.samefile(tree / "image.iso") or sha256_of(output) == image.sha256):
+        return output
+    with tempfile.TemporaryDirectory(dir=output.parent, prefix=".iso-") as tmp:
+        part = Path(tmp) / "image.iso"
+        try:
+            (tree / "image.iso").chmod(0o444)
+            os.link(tree / "image.iso", part)
+        except OSError:  # another file system
             shutil.copy2(tree / "image.iso", part)
-            part.replace(output)
+        part.replace(output)
     return output
 
 
@@ -387,6 +394,21 @@ def _build_signers(project: Project) -> list[Signer]:
     return [
         Signer(key) for key in sorted({k for storage in project.config.remote.values() for k in storage.build_keys})
     ]
+
+
+def checkout_iso_keys(project: Project, dev: str) -> set[str]:
+    """Return the keys of the ISOs of the checkout, which xcraft clean keeps: the full and netinstall ones, signed with
+    the default key, with those of the builds of the storage, like CI's, or unsigned, of final builds, or of the
+    development builds `dev`, but those of another volume id or without the tests of the specs, made again if needed.
+    """
+    signers = [key_signer(project), *_build_signers(project), None]
+    idents = [None, dev] if dev_suffixes(project, dev) else [None]
+    return {
+        iso_key(project, netinstall=netinstall, volid=None, signer=signer, dev=ident)
+        for netinstall in (False, True)
+        for signer in signers
+        for ident in idents
+    }
 
 
 def checkout_iso(

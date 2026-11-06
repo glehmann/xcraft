@@ -204,6 +204,20 @@ def test_main_spec(tmp_path: Path) -> None:
         main_spec(tmp_path / "grub")
 
 
+def test_clean_keeps_the_isos_of_the_checkout(project: Project) -> None:
+    isos, cache = project.state / "iso", project.state / "cache/isos" / project.arch
+    isos.mkdir(parents=True)
+    for key in ("current", "old"):
+        (cache / key).mkdir(parents=True)
+        (cache / key / "image.iso").write_bytes(key.encode() * 4096)
+        (isos / f"{key}.iso").hardlink_to(cache / key / "image.iso")
+    (isos / "copied.iso").write_bytes(b"current" * 4096)  # copied, by an xcraft of before, or elsewhere
+    assert clean(project, [{}], isos=None) == 0  # without the keys of the checkout: kept
+    assert clean(project, [{}], isos={"current"}) > 0
+    assert sorted(p.name for p in cache.iterdir()) == ["current"]
+    assert sorted(p.name for p in isos.iterdir()) == ["current.iso"]
+
+
 def test_clean_keeps_sources_and_current_builds(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     state = project.state
     for path in ("cache/sources/abc/foo.tar.gz", "cache/builds/x86_64_v2/foo/current/RPMS/foo.rpm",

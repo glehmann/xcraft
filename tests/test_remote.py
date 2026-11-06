@@ -41,7 +41,7 @@ from xcraft import (
     upstream_copy,
 )
 from xcraft import publish as publisher
-from xcraft.iso import checkout_iso, fetch_isos, iso_key, iso_name, iso_path, push_isos
+from xcraft.iso import cached_iso, checkout_iso, fetch_isos, iso_key, iso_name, iso_path, push_isos
 from xcraft.lock import load_lock
 from xcraft.project import Project, Remote
 from xcraft.resolution import resolve_image
@@ -188,8 +188,11 @@ def test_iso_published_by_ci(root: Path, tmp_path: Path) -> None:
     # a checkout signing with another key, like the developer's: CI's ISO rather than making it
     project.frozen = True
     developer = Signer("0" * 40)
-    assert checkout_iso(project, signer=developer, published=True).read_bytes() == image.read_bytes()
+    iso = checkout_iso(project, signer=developer, published=True)
+    assert iso.read_bytes() == image.read_bytes()
     assert not (project.state / "publish").exists()
+    # in .xcraft/iso/, the file of its cache, rather than a copy
+    assert iso.samefile(cached_iso(project, iso_key(project, netinstall=False, volid=None, signer=ci)) / "image.iso")
 
 
 def test_iso_cache(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:

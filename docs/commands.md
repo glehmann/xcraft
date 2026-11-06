@@ -46,7 +46,7 @@
 | `xcraft status [<pkg>...]`, or `st` | Show the version of each package, or of the given ones, with its build number and development build suffix, and whether it is built, or queued by a running build |
 | `xcraft bump <pkg>... [-m message]` | Bump the release of packages, with a changelog entry, empty to fill in without `-m` |
 | `xcraft bump <pkg> --version v [-m message]` | Update a package to a new version, with the archive of its `Source0`, and the packages of the same version; the changelog entry is `Update to <v>` by default |
-| `xcraft clean [<pkg>...] [--builds] [--ccache] [--dune-cache]` | Remove the build trees and outdated builds, and optionally all builds, compiler caches and caches of dune, of the given packages or all; the source archives are kept |
+| `xcraft clean [<pkg>...] [--builds] [--ccache] [--dune-cache]` | Remove the build trees and outdated builds, and optionally all builds, compiler caches and caches of dune, of the given packages or all, and the ISOs but those of the checkout; the source archives are kept |
 | `xcraft history <pkg>` | Show the commits changing a package, with `git log`: its directory, and its lines in `xcraft.builds` |
 | `xcraft patchset [repo] [--package p] [--base ref] [--first n]` | Update the patches of a package with the commits of the current git branch, from the developer's repository |
 | `xcraft import <pkg or srpm>... [--branch b] [--url u] [--repo r]` | Import the history of packages from their packaging repositories, or source RPMs, as the git branches `import/<pkg>/<branch>` to merge, new packages into `base/`, or `<r>/` |

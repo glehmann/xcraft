@@ -116,11 +116,16 @@ def test_iso_lookup_before_preparation(project: Project, tmp_path: Path) -> None
     assert xcraft("iso", "--locked", "--unsigned")[0] == 0
     output = project.state / "iso" / iso_name(project, netinstall=False, signer=None)
     assert output.read_bytes() == image.read_bytes()
+    # the file of the cache, read-only: replaced, rather than changed
+    with pytest.raises(PermissionError):
+        output.write_bytes(b"changed output")
+    output.unlink()
     output.write_bytes(b"changed output")
     assert checkout_iso(project) == output
     assert output.read_bytes() == image.read_bytes()
     assert checkout_iso(project, tmp_path / "other.iso").read_bytes() == image.read_bytes()
     assert (tree / "image.iso").read_bytes() == image.read_bytes()
+    (tree / "image.iso").chmod(0o644)
     (tree / "image.iso").write_bytes(b"corrupted cache")
     with pytest.raises(RuntimeError, match="does not match its SHA-256"):
         checkout_iso(project)
