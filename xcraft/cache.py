@@ -90,7 +90,8 @@ NOCHECK = "nocheck"
 
 def untested(project: Project, name: str, key: str) -> bool:
     """Return whether the cached build of `name` with `key` was made without the tests of its spec, %check, which the
-    builds with them make again, and which is never pushed.
+    builds with them make again, and which is never pushed: a development build, or a final one cached by an xcraft
+    giving --nocheck to the final builds too.
     """
     return (cached_build(project, name, key) / NOCHECK).exists()
 

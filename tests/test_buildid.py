@@ -263,6 +263,34 @@ def test_main_branch_setting(root: Path) -> None:
     assert update() == {"trivial": 2, "with-deps": 2}
 
 
+def test_development_builds_without_the_tests_of_the_specs(root: Path) -> None:
+    trivial, with_deps = (root / f"base/{n}/{n}.spec" for n in ("trivial", "with-deps"))
+    trivial.write_text(trivial.read_text().replace("%files\n", "%check\necho trivial-checked\n\n%files\n"))
+    assert xcraft("build")[0] == 0
+    commit_base(root)
+    shutil.rmtree(root / ".xcraft/cache/builds")
+    git(root, "checkout", "-qb", "feature")
+    with_deps.write_text(with_deps.read_text().replace("%files\n", "%check\nexit 1\n\n%files\n"))
+    code, output = xcraft("build", "with-deps", "--nocheck")
+    assert code == 0, output
+    # the final build of trivial, which the remote storage misses, with its tests, unlike the development one
+    (final,) = root.glob(f".xcraft/cache/builds/{ARCH}/trivial/*")
+    assert not (final / "nocheck").exists()
+    assert "trivial-checked" in (final / "build.log").read_text()
+    (development,) = root.glob(f".xcraft/cache/builds/{ARCH}/with-deps/*")
+    assert "~1.dev" in development.name
+    assert (development / "nocheck").exists()
+    assert xcraft("build", "with-deps", "--nocheck") == (0, "2 cached\n")
+    # the builds with the tests make it again, which fails
+    code, output = xcraft("build", "with-deps")
+    assert code == 1
+    assert "✗ with-deps" in output, output
+    assert not list(root.glob(f".xcraft/cache/builds/{ARCH}/*/*/nocheck"))
+    code, output = xcraft("build", "--nocheck", "--final")
+    assert code == 2
+    assert "--final and --nocheck cannot be used together" in " ".join(output.replace("│", "").split())
+
+
 def compression(root: Path, rpm: str) -> str:
     """Return the zstd level of the payload of the cached `rpm`, with T when compressed by several threads."""
     (path,) = root.glob(f".xcraft/cache/builds/*/*/*/RPMS/*/{rpm}")

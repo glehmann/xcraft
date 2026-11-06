@@ -110,8 +110,9 @@ NoCheck = Annotated[
     bool,
     typer.Option(
         "--nocheck",
-        help="Without running the tests of the specs, their %check, for faster development iterations. The builds "
-        "without --nocheck make those builds again, with their tests, and xcraft push never pushes them.",
+        help="Without running the tests of the specs, their %check, in the development builds, for faster development "
+        "iterations: the final builds, like those of dependencies the remote storage misses, run them. The builds "
+        "without --nocheck make those builds again, with their tests.",
     ),
 ]
 

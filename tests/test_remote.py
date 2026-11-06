@@ -1013,7 +1013,10 @@ def test_push_without_the_builds_without_their_tests(root: Path) -> None:
     # not the build the other tests pushed: the same key everywhere
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace('echo "hello"', 'echo "without its tests"'))
-    assert xcraft("build", "trivial", "--nocheck")[0] == 0
+    assert xcraft("build", "trivial")[0] == 0
+    # like the final builds an earlier xcraft made with --nocheck: the final builds run the tests now
+    (build,) = root.glob(f".xcraft/cache/builds/{ARCH}/trivial/*")
+    (build / "nocheck").touch()
     code, output = xcraft("push", "builds", "trivial", "--to", "main")
     assert code == 1
     assert "built without their tests, with --nocheck, not pushed: trivial\n" in output

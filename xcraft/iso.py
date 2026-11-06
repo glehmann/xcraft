@@ -433,10 +433,11 @@ def checkout_iso(
     """
     with project.lock():
         dev = dev if dev_suffixes(project, dev) else None  # of final builds only otherwise, like the remote storage's
+        nocheck = nocheck and dev is not None  # which the final builds ignore
         key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck)
         if found := _existing_iso(project, key, output, netinstall=netinstall, signer=signer, dev=dev):
             return found
-        for ci in [] if dev or nocheck or not published else _build_signers(project):
+        for ci in [] if dev or not published else _build_signers(project):
             ci_key = iso_key(project, netinstall=netinstall, volid=volid, signer=ci)
             if ci.key != (signer and signer.key) and (
                 found := _existing_iso(project, ci_key, output, netinstall=netinstall, signer=ci, dev=None)

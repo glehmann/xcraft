@@ -315,6 +315,12 @@ class _Run:
             keep_built(self.project, self.dev, self.autorev, [name], self.hashes)
         return result
 
+    def _nocheck(self, name: str) -> bool:
+        """Return whether `name` is built without the tests of its spec: a development build with `nocheck`, while
+        the final builds, which may be pushed and published, always run them.
+        """
+        return self.nocheck and name in self.autorev
+
     def _refresh(self) -> None:
         """Compute the `keys` and the suffixes `autorev` again when the builds changed the lock: not with the packages,
         as they were at the start.
@@ -337,7 +343,7 @@ class _Run:
             _show_failure(project, name, error, verbose=self.verbose)
             return Result(name, "failed")
         build = cached_build(project, name, self.keys[name])
-        if not self.nocheck and build.exists() and untested(project, name, self.keys[name]):
+        if not self._nocheck(name) and build.exists() and untested(project, name, self.keys[name]):
             shutil.rmtree(build)  # made again, with the tests of its spec
         if build.exists():  # nothing to show: only the counts
             return Result(name, "cached")
@@ -455,7 +461,7 @@ class _Run:
                     "a",
                     replace=replace,
                     suffix=suffix,
-                    nocheck=self.nocheck,
+                    nocheck=self._nocheck(name),
                     fast=name in self.autorev,
                     log=project.log(name),
                     on_line=on_line,
@@ -506,7 +512,7 @@ class _Run:
         if name in self.autorev:
             # the suffixes of all the development builds of the run, its own and those of the dependencies built with it
             (new / "autorev").write_text(json.dumps(self.autorev, sort_keys=True))
-        if self.nocheck:
+        if self._nocheck(name):
             (new / NOCHECK).touch()
         shutil.copy2(project.log(name), new / "build.log")
         if build_dir.exists():  # an earlier build of the same inputs
@@ -552,16 +558,14 @@ def build(
     it went, with the keys of all the packages, those of their builds, and the suffixes of the development builds.
 
     `dev` is the identifier of the development builds, see xcraft.devbuilds, none for final builds. With `nocheck`,
-    the packages built skip the tests of their specs, see xcraft.cache.untested(): those cached without them are
-    built again otherwise. What is
-    not cached locally is fetched from the remote storage when it has it, but
-    only the builds of the dependencies of the packages to build with `fetch`
-    needed, or nothing with none: it is built then. Without `build_missing`,
-    what is neither cached nor in the remote
-    storage fails, rather than being built. When builds find what changes the
-    build roots of others, the builds are planned again, once. A package whose
-    directory, or one of its dependencies', changed since the start fails: the
-    builds work on the packages as they were then.
+    the development builds skip the tests of their specs, see xcraft.cache.untested(): those cached without them are
+    built again otherwise; the final builds, like those of the dependencies the remote storage misses, run them.
+
+    What is not cached locally is fetched from the remote storage when it has it, but only the builds of the
+    dependencies of the packages to build with `fetch` needed, or nothing with none: it is built then. Without
+    `build_missing`, what is neither cached nor in the remote storage fails, rather than being built. When builds find
+    what changes the build roots of others, the builds are planned again, once. A package whose directory, or one of
+    its dependencies', changed since the start fails: the builds work on the packages as they were then.
 
     The build IDs are updated before the builds, and after, with what they found, or checked with --locked: all the
     builds are numbered by them. The lock must be prepared: see resolution.prepare().

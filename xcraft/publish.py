@@ -285,7 +285,7 @@ def _check_installable(project: Project, repos: list[Path]) -> None:
 
 def _built(project: Project, *, fetch: Fetch, dev: str | None, nocheck: bool) -> dict[str, str]:
     """Build or fetch our packages, but only fetch them on the platforms the host emulates, and return their keys: with
-    the development builds of the identifier `dev`, if any, without the tests of the specs with `nocheck`.
+    the development builds of the identifier `dev`, if any, without the tests of their specs with `nocheck`.
     """
     resolution.prepare(project)
     results, keys, _ = builder.build(
@@ -561,7 +561,7 @@ def snapshot(
     those of the others, built from the same sources, differ by their build times. With a `signer`, our packages and
     the metadata of the repositories are signed, and the public key is in `dest`. With `dev`, the identifier of the
     development builds, those of the packages whose build ID is not the main branch's are, for local snapshots, without
-    `storage`, and with `nocheck`, those built skip the tests of their specs.
+    `storage`, and with `nocheck`, those built skip the tests of their specs, unlike the final builds.
     """
     project = platforms[0]
     fresh_dir(project, dest)
