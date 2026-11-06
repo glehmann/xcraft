@@ -246,6 +246,29 @@ def test_image_packages_replaced_by_ours(root: Path) -> None:
     assert re.search(r"^ toyrun .* xcraft-pinned ", log, re.MULTILINE), log
 
 
+def test_build_ids_without_building(root: Path) -> None:
+    code, output = xcraft("build", "--ids")
+    assert code == 0, output
+    assert set(load_builds(Project.find()).ids) == {"trivial", "with-deps"}
+    assert "build IDs: trivial 1, with-deps 1" in output
+    assert xcraft("build", "--ids")[1].endswith("the build IDs are up to date\n")
+    # a change, which --locked refuses, then updates the IDs of trivial and of with-deps, built against it
+    key = load_builds(Project.find()).ids["trivial"].key
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(spec.read_text().replace('echo "hello"', 'echo "hello again"'))
+    code, output = xcraft("build", "--ids", "--locked")
+    assert code == 1
+    assert "the build IDs would change, which --locked forbids: trivial, with-deps" in output
+    code, output = xcraft("build", "--ids")
+    assert code == 0, output
+    assert "build IDs: trivial 1, with-deps 1" in output
+    assert load_builds(Project.find()).ids["trivial"].key != key
+    assert not (root / ".xcraft/cache/builds").exists()  # nothing built
+    code, output = xcraft("build", "trivial", "--ids")
+    assert code == 2
+    assert "--ids updates the build IDs of all the packages" in " ".join(output.replace("│", "").split())
+
+
 def test_repo_host_options(root: Path) -> None:
     for args, error in [
         (["--host", "h", "--final"], "--host, --vm and --upgrade are for the development builds of the given packages"),

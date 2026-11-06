@@ -14,6 +14,17 @@ from xcraft.display import console
 from xcraft.graph import dependents
 
 
+def _update_ids(packages: list[str] | None, *, dry_run: bool, locked: bool, arch: str | None) -> None:
+    """Update the build IDs of all the packages, for xcraft build --ids, or check them with `locked`."""
+    if packages or dry_run:
+        msg = "--ids updates the build IDs of all the packages: without packages, nor --dry-run"
+        raise typer.BadParameter(msg)
+    project = prepared_project(locked=locked, arch=arch)
+    with project.lock():
+        if not builder.update_build_ids(project):
+            console.print("the build IDs are up to date")
+
+
 def build(
     ctx: typer.Context,
     packages: Packages = None,
@@ -22,6 +33,14 @@ def build(
         bool, typer.Option("--dependents", help="Also build the packages built against these ones.")
     ] = False,
     dry_run: Annotated[bool, typer.Option("--dry-run", "-n", help="Only show what would be built.")] = False,
+    ids: Annotated[
+        bool,
+        typer.Option(
+            "--ids",
+            help="Only update the build IDs of all the packages in xcraft.builds, as the builds would, without "
+            "building: or check them with --locked.",
+        ),
+    ] = False,
     fetch: Annotated[
         builder.Fetch,
         typer.Option(
@@ -43,6 +62,9 @@ def build(
     The packages whose build ID is not the main branch's get development builds, unless --final, see --dev.
     """
     ident = dev_ident(ctx, dev, final=final, nocheck=nocheck)
+    if ids:
+        _update_ids(packages, dry_run=dry_run, locked=locked, arch=arch)
+        return
     project = prepared_project(packages, locked=locked, arch=arch)
     names = list(packages or sorted(project.packages))
     if with_dependents:
