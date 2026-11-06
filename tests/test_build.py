@@ -477,6 +477,15 @@ def test_lock(root: Path) -> None:
     assert xcraft("lock", "--outdated", "lzo") == (0, f"{UP_TO_DATE}\n")
 
 
+def test_upstream_package_of_several_architectures_not_pinned(root: Path) -> None:
+    # toymulti, for x86_64 and i686 in the repositories of x86_64: one architecture would be pinned by chance
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(spec.read_text().replace("BuildArch: noarch", "BuildArch: noarch\nBuildRequires: toymulti"))
+    code, output = xcraft("build", "trivial", "--dry-run")
+    assert code == 1
+    assert "upstream packages of several architectures, which the lock cannot pin: toymulti" in output, output
+
+
 def test_lock_versions_of_all_the_architectures(root: Path) -> None:
     # toyarch 2 is only for x86_64: toyarch is locked in the version all the architectures have
     spec = root / "base/trivial/trivial.spec"

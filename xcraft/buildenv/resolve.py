@@ -167,10 +167,15 @@ class Resolver:
                 excluded.append(p)
         base.sack.add_excludes(excluded)
         # the latest of each name, of all its architectures
+        latest = base.sack.query().available().filter(reponame__neq=OURS).latest()
         self.binaries: dict[str, dnf.package.Package] = {}
-        for p in base.sack.query().available().filter(reponame__neq=OURS).latest():
+        for p in latest:
             if (other := self.binaries.get(p.name)) is None or p.evr_cmp(other) >= 0:
                 self.binaries[p.name] = p
+        # those of several architectures in that version, like the multilib packages: the lock pins one by name
+        self.multiarch = {
+            p.name for p in latest if p.arch != self.binaries[p.name].arch and p.evr_cmp(self.binaries[p.name]) == 0
+        }
         self.ours = {p.name: p for p in base.sack.query().available().filter(reponame="xcraft-ours")}
         self.needed: set[str] = set()
         """The upstream source packages of what was resolved."""
@@ -419,6 +424,8 @@ def main() -> None:
         for name, p in resolver.binaries.items()
         if (source := resolver.canonical(p.sourcerpm)[0]) in locked
     }
+    if multiarch := sorted(resolver.multiarch & result["packages"].keys()):
+        sys.exit(f"upstream packages of several architectures, which the lock cannot pin: {', '.join(multiarch)}")
     result["unlocked"] = sorted(resolver.needed - locked.keys())
     if "builds" in data:  # see xcraft.resolution._unversioned()
         result["versioned"] = resolver.versioned()
