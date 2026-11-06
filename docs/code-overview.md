@@ -86,5 +86,5 @@ scripts, `buildkey._SAME_BUILDS` can explicitly preserve the earlier script hash
 Tests use `tests/project/` and toy upstream packages, built once from the specs of `tests/upstream/` into
 `tests/upstream/repos/`. The checked-in project has no prepared lock;
 `tests/conftest.py::build_environment` prepares a template with containers. Extend the matching `tests/test_*.py`
-using real packages where possible. See [Development](../README.md#development) for checks and test commands, and
+using real packages where possible. See [Development](development.md) for checks and test commands, and
 follow `AGENTS.md` for formatting, typing, and test constraints.
