@@ -155,12 +155,10 @@ class Resolver:
         repo._repo.expire()  # noqa: SLF001, like dnf expire-cache
         base.fill_sack(load_system_repo=False)
         self.built = {p.name: p for p in base.add_remote_rpms(data["rpms"])}
-        self.names: set[str] = set()
         self.versions: dict[str, set[str]] = {}
         sources: dict[str, tuple[str, str]] = {}  # by source RPM, which many binaries share
         excluded = []
         for p in base.sack.query().available().filter(reponame__neq=OURS):
-            self.names.add(p.name)
             if (sourcerpm := p.sourcerpm) not in sources:
                 sources[sourcerpm] = self.canonical(sourcerpm)
             source, vr = sources[sourcerpm]
@@ -241,8 +239,8 @@ class Resolver:
         """
         ours = self.base.sack.query().filter(reponame=OURS)
         self.base.sack.add_excludes(ours)
-        # those of the base image the repositories do not have stay as they are
-        wanted = [*self.data["image"], *(n for n in self.data["base"] if n in self.names)]
+        # all those of the base image too: the checks of the image and of the build roots allow pinned packages only
+        wanted = [*self.data["image"], *self.data["base"]]
         try:
             if missing := sorted({n for n in wanted if n not in self.binaries}):
                 errors["image"] = f"not in the repositories, in the locked version: {', '.join(missing)}"

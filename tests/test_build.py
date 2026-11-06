@@ -877,6 +877,23 @@ def test_build_roots_resolved_again_for_versions_of_build_requirements(
     assert "with-deps" not in resolved.errors
 
 
+def test_image_needs_the_packages_of_the_base_image_in_the_repositories(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # like a base image with a package of a repository not configured: the checks of the image would reject it, unpinned
+    project = Project.find()
+    base = resolution.base_packages(project)
+    monkeypatch.setattr(resolution, "base_packages", lambda _: [*base, "not-in-the-repositories"])
+    # resolved again: the base image is in the keys of the resolutions by reference, and of those the tests share
+    shutil.rmtree(project.state / "cache/resolved", ignore_errors=True)
+    monkeypatch.setattr(resolution, "_resolved", {})
+    monkeypatch.setattr(resolution, "_run", getattr(resolution._run, "__wrapped__", resolution._run))
+    with pytest.raises(
+        ResolutionError, match="not in the repositories, in the locked version: not-in-the-repositories"
+    ):
+        resolution.resolve_image(project)
+
+
 def test_image_of_the_host_pinned_for_a_project_of_other_architectures(root: Path) -> None:
     # the image of the host parses the specs, and indexes the repositories, natively
     foreign = "linux/arm64" if ARCH == "x86_64_v2" else "linux/amd64/v2"
