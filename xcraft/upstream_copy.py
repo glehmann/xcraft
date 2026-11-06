@@ -38,16 +38,25 @@ class UpstreamError(RuntimeError):
     """Raised when the copy cannot be read."""
 
 
+def _copied(storage: Remote, arch: str) -> bool:
+    """Return whether `storage` has a copy for `arch`: not when it cannot be reached, like offline."""
+    try:
+        return remote.exists(storage, f"{PREFIX}/{arch}/repodata/repomd.xml")
+    except remote.RemoteError:
+        return False
+
+
 def repo_file(project: Project) -> str:
-    """Return the definition of the copies of the storages, for the architecture of `project`: skipped when they cannot
-    be reached, like offline. The pins are checked against their SHA-256, and the resolution installs nothing.
+    """Return the definition of the copies of the storages, for the architecture of `project`, those they have, which
+    dnf would ignore otherwise, saying so: skipped still when they cannot be reached then. The pins are checked against
+    their SHA-256, and the resolution installs nothing.
     """
     return "".join(
         f"[xcraft-upstream-{name}]\nname=xcraft upstream copy of {name}\n"
         f"baseurl={storage.url.rstrip('/')}/{PREFIX}/{project.arch}/\n"
         "gpgcheck=0\nskip_if_unavailable=1\nmetadata_expire=0\n"
         for name in ("main", "dev")
-        if (storage := project.config.remote.get(name))
+        if (storage := project.config.remote.get(name)) and _copied(storage, project.arch)
     )
 
 
