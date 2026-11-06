@@ -73,7 +73,11 @@ the merge is in progress. The packages built against it get new numbers too. The
 the same commit: a change of the package, of the lock, or of another build ID; or a reuse, see
 [Reusing builds](#reusing-builds). Out of a git repository, or without the
 main branch, there is nothing to number against: the numbers stay those of the working tree, 1 for new packages. The
-packages in a merge conflict of `xcraft.builds`, git's or jj's, get their lines written again.
+packages in a merge conflict of `xcraft.builds`, git's or jj's, get their lines written again; with git, `git add
+xcraft.builds` then marks the conflict resolved.
+
+The builds update the build IDs first; `xcraft build --ids` only updates them, without building, like after changing a
+package or resolving a merge conflict, to commit them; `xcraft status` shows them without writing them.
 
 With `--locked`, the builds fail instead of changing the build IDs; on the main branch, they also fail when a package
 gets the number of the previous commit, its first parent, for another key, like when a merge conflict is resolved by

@@ -194,11 +194,14 @@ def _show_plan(project: Project, plan: list[str], keys: dict[str, str], *, fetch
     console.print(", ".join(summary + [f"{n} {what}" for what, n in counts.items() if n]))
 
 
-def update_build_ids(project: Project) -> None:
-    """Update the build IDs of the packages, showing the changed ones, or fail with --locked, see xcraft.buildid."""
+def update_build_ids(project: Project) -> list[str]:
+    """Update the build IDs of the packages, showing the changed ones, and return them, or fail with --locked, see
+    xcraft.buildid.
+    """
     if changed := buildid.update(project):
         ids = buildid.read(project)
         console.print("build IDs: " + ", ".join(f"{name} {ids[name].number}" for name in changed if name in ids))
+    return changed
 
 
 def _record_cached(project: Project, dev: str | None) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
