@@ -10,7 +10,7 @@ import pytest
 
 from tests import PROJECT, TOML
 from tests.test_build import xcraft
-from xcraft import buildkey
+from xcraft import buildkey, iso
 from xcraft.builds import BuildId, load_builds, save_builds
 from xcraft.container import BUILDENV
 from xcraft.iso import Image, cached_iso, checkout_iso, iso_id, iso_key, iso_name
@@ -129,6 +129,27 @@ def test_iso_lookup_before_preparation(project: Project, tmp_path: Path) -> None
     (tree / "image.iso").write_bytes(b"corrupted cache")
     with pytest.raises(RuntimeError, match="does not match its SHA-256"):
         checkout_iso(project)
+
+
+def test_iso_not_cached_when_the_lock_changed_while_making_it(
+    project: Project, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # like a checkout of another lock, while the ISO of the one before is assembled
+    key = iso_key(project, netinstall=False, volid=None, signer=None)
+
+    def assembled(project: Project, *_: object, **__: object) -> Path:
+        lock = load_lock(project)
+        lock.sources["kernel"] = "1-1"
+        save_lock(project, lock)
+        (made := project.state / "tmp/made.iso").parent.mkdir(parents=True, exist_ok=True)
+        made.write_bytes(b"ISO of the lock before")
+        return made
+
+    monkeypatch.setattr(iso, "_assemble_iso", assembled)
+    with pytest.raises(RuntimeError, match="ISO inputs changed while making the image"):
+        iso._snapshot_iso(project, project.root, None, netinstall=False, volid=None, signer=None)
+    assert not cached_iso(project, key).exists()
+    assert not cached_iso(project, iso_key(project, netinstall=False, volid=None, signer=None)).exists()
 
 
 def test_iso_masked_units_invalidate_cache(project: Project) -> None:

@@ -45,8 +45,9 @@ class Image(BaseModel):
 
 
 def _templates_hash(project: Project) -> str:
-    """Return the hash of the templates of the ISO: their files, and the targets of their links, like the units
-    masked by links to /dev/null.
+    """Return the hash of the templates of the ISO: their files, with whether they are executable, which gives their
+    modes in the ISO, see copy_templates() in buildenv/iso.py, and the targets of their links, like the units masked
+    by links to /dev/null.
     """
     root = project.root / "iso"
     digest = hashlib.sha256()
@@ -351,17 +352,18 @@ def _snapshot_iso(
 ) -> Path:
     """Return the ISO of `snapshot`, with the development builds `dev`, if any, and those without the tests of their
     specs with `nocheck`: cached, fetched, or assembled and cached by the key of the checkout.
+
+    Raise when the key changed while assembling it, like the lock by a checkout: the ISO is of the one before.
     """
     with project.lock():
         key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck)
         if found := _existing_iso(project, key, output, netinstall=netinstall, signer=signer, dev=dev):
             return found
-        checkout = _checkout_inputs(project)
         made = _assemble_iso(project, snapshot, netinstall=netinstall, volid=volid, signer=signer)
-        if checkout != _checkout_inputs(project):
+        if key != iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck):
+            made.unlink()
             msg = "ISO inputs changed while making the image: run again"
             raise RuntimeError(msg)
-        key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck)
         tree = cached_iso(project, key)
         with project.tmp_dir("cache-iso") as work:
             staged = work / "tree"
@@ -369,7 +371,7 @@ def _snapshot_iso(
             shutil.move(made, staged / "image.iso")
             (staged / "image.json").write_text(Image(sha256=sha256_of(staged / "image.iso")).model_dump_json())
             tree.parent.mkdir(parents=True, exist_ok=True)
-            if not tree.exists():  # of the same inputs, kept from before the lock went back to them
+            if not tree.exists():
                 staged.rename(tree)
         return _copy_iso(project, tree, output, netinstall=netinstall, signer=signer, dev=dev)
 

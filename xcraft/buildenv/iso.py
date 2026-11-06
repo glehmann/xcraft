@@ -82,6 +82,16 @@ def hook(stage: str, directory: Path) -> None:
     sh(templates / "hook", stage, directory, tree.parent / "hook.json")
 
 
+def copy_templates(src: Path, dest: Path, *, symlinks: bool) -> None:
+    """Copy the templates `src` into `dest` with the modes git keeps, which their key has: 0755 for the directories
+    and the executable files, 0644 for the others, whatever the umask of the checkout.
+    """
+    shutil.copytree(src, dest, symlinks=symlinks, dirs_exist_ok=True)
+    for path in src.rglob("*"):
+        if not path.is_symlink():
+            (dest / path.relative_to(src)).chmod(0o755 if path.is_dir() or path.stat().st_mode & 0o111 else 0o644)
+
+
 def prune_firmware(root: Path) -> None:
     """Remove the firmware files no driver names: the root filesystem would get too large to boot."""
     modules = [str(m) for m in (root / "usr/lib/modules").rglob("*.ko*") if m.is_file()]
@@ -142,7 +152,7 @@ def install_img(dest: Path) -> None:
         f.unlink()
     prune_firmware(root)
     (root / "init").symlink_to("/sbin/init")
-    shutil.copytree(templates / "installimg", root, symlinks=True, dirs_exist_ok=True)
+    copy_templates(templates / "installimg", root, symlinks=True)
     hook("installimg", root)
     for version in (root / "usr/lib/modules").iterdir():
         sh("depmod", "-a", "-b", root, version.name)
@@ -181,7 +191,7 @@ if __name__ == "__main__":
     (tree.parent / "hook.json").write_text(json.dumps({**config, "rpms": rpms}))
     atexit.register(give_back)
     shutil.rmtree(tree, ignore_errors=True)
-    shutil.copytree(templates / "tree", tree)
+    copy_templates(templates / "tree", tree, symlinks=False)
     boot = tree / "boot"
     boot.mkdir(exist_ok=True)
     install_img(tree / "install.img")

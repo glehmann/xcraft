@@ -432,16 +432,24 @@ def _pins(
     return pins
 
 
+def _record_image(platform: Project, lock: Lock) -> Resolved:
+    """Record in the `lock` the upstream binary packages of the image of the `platform`, and return its resolution,
+    to pin them from.
+    """
+    image = _locked(_image(platform))
+    if error := image.errors.get("image"):
+        msg = f"the build environment image cannot be resolved for {platform.arch}: {error}"
+        raise ResolutionError(msg)
+    lock.image[platform.arch] = sorted(image.image)
+    return image
+
+
 def _record_images(platforms: list[Project], recorded: Lock, lock: Lock, repin: frozenset[str]) -> None:
     """Record in the `lock` the upstream binary packages of the images of the `platforms`, pinned, see _pins(), with
     those the `recorded` lock pins for the build roots.
     """
     for platform in platforms:
-        image = _locked(_image(platform))
-        if error := image.errors.get("image"):
-            msg = f"the build environment image cannot be resolved for {platform.arch}: {error}"
-            raise ResolutionError(msg)
-        lock.image[platform.arch] = sorted(image.image)
+        image = _record_image(platform, lock)
         pinned = _pins(platform.arch, recorded, [image], set(image.image), repin)
         lock.binaries[platform.arch] = {**recorded.binaries.get(platform.arch, {}), **pinned}
 
@@ -460,9 +468,9 @@ def _record_published(recorded: Lock, lock: Lock, arch: str, roots: Resolved) ->
 
 def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
     """Record in the lock the upstream binary packages of the images, of the build roots, of the published
-    repositories and of the tools making the ISO, of all the architectures, pinned, see _pins(), with the versions of
-    their source packages only, and keep in the lock of the builds what the builds found for the packages of the
-    project only.
+    repositories and of the tools making the ISO, of all the architectures, with the image of the host, pinned, see
+    _pins(), with the versions of their source packages only, and keep in the lock of the builds what the builds
+    found for the packages of the project only.
     """
     platforms = project.all_platforms()
     drop_gone(project)
@@ -472,11 +480,7 @@ def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
         lock.roots.keep({*project.package_dirs})
         lock.roots.arches = {}
         for platform in platforms:
-            image, roots = _locked(_image(platform)), _locked(_roots(platform))
-            if error := image.errors.get("image"):
-                msg = f"the build environment image cannot be resolved for {platform.arch}: {error}"
-                raise ResolutionError(msg)
-            lock.image[platform.arch] = sorted(image.image)
+            image, roots = _record_image(platform, lock), _locked(_roots(platform))
             for name in sorted(project.package_dirs):
                 # what the lock has for those that cannot be resolved, until they can
                 values = (
@@ -491,6 +495,9 @@ def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
                 *lock.runtime.get(platform.arch, []), *lock.iso.get(platform.arch, []),
             }  # fmt: skip
             lock.binaries[platform.arch] = _pins(platform.arch, recorded, [image, roots], names, repin)
+        if (native := project.on_host()).arch not in lock.image:  # the image parsing the specs, see prepare()
+            image = _record_image(native, lock)
+            lock.binaries[native.arch] = _pins(native.arch, recorded, [image], set(image.image), repin)
         # those of no pin left, like those of a package published no more, in their latest version when needed again
         used = {pin.source for pins in lock.binaries.values() for pin in pins.values()}
         lock.sources = {source: version for source, version in lock.sources.items() if source in used}

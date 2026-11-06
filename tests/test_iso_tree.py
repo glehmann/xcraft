@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from xcraft.buildenv.iso import prune_firmware
+from xcraft.buildenv.iso import copy_templates, prune_firmware
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -36,3 +36,18 @@ def test_prune_firmware(tmp_path: Path) -> None:
         "v/driver.bin",
         "v/revision.bin",
     ]
+
+
+def test_copy_templates_with_the_modes_git_keeps(tmp_path: Path) -> None:
+    src, dest = tmp_path / "src", tmp_path / "dest"
+    (src / "etc").mkdir(parents=True)
+    (src / "etc").chmod(0o700)
+    (src / "etc/config").write_text("")
+    (src / "etc/config").chmod(0o600)
+    (src / "etc/script").write_text("")
+    (src / "etc/script").chmod(0o750)
+    (src / "etc/link").symlink_to("/dev/null")
+    copy_templates(src, dest, symlinks=True)
+    modes = {p.relative_to(dest).as_posix(): p.lstat().st_mode & 0o7777 for p in dest.rglob("*") if not p.is_symlink()}
+    assert modes == {"etc": 0o755, "etc/config": 0o644, "etc/script": 0o755}
+    assert (dest / "etc/link").readlink().as_posix() == "/dev/null"

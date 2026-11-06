@@ -880,6 +880,19 @@ def test_build_roots_resolved_again_for_versions_of_build_requirements(
     assert "with-deps" not in resolved.errors
 
 
+def test_image_of_the_host_pinned_for_a_project_of_other_architectures(root: Path) -> None:
+    # the image of the host parses the specs, and indexes the repositories, natively
+    foreign = "linux/arm64" if ARCH == "x86_64_v2" else "linux/amd64/v2"
+    (root / "xcraft.toml").write_text(TOML.replace('["linux/amd64/v2", "linux/arm64"]', f'["{foreign}"]'))
+    resolution.prepare(project := Project.find())
+    native = project.on_host()
+    lock = load_lock(project)
+    assert native.arch not in {p.arch for p in project.all_platforms()}
+    assert lock.image[native.arch]
+    assert lock.binaries[native.arch].keys() == {*lock.image[native.arch]}
+    assert container._image_pins(native)
+
+
 def test_build_roots_resolved_again_for_versions_of_rich_dependencies(
     root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
