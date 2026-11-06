@@ -42,10 +42,10 @@ except ImportError:  # out of the build environment, for the tests of the helper
 
 OPS = {"<": "LT", "<=": "LE", "=": "EQ", ">=": "GE", ">": "GT"}
 OURS = ["xcraft-ours", "@commandline"]
+"""The repositories of our packages: written from the specs, and built."""
 CCACHE_COMPILERS = ["gcc", "clang"]
 """The compilers ccache wraps, which the build roots having them get ccache with, see build.sh: g++ needs gcc, and
 clang++ is clang's."""
-"""The repositories of our packages: written from the specs, and built."""
 
 
 def canonical(sourcerpm: str, suffixes: list[str]) -> tuple[str, str]:
@@ -279,7 +279,7 @@ class Resolver:
             try:
                 root = self._buildroot(more, deps, installed, allowed | new, unmet_weak)
             except dnf.exceptions.Error:
-                # those ours cannot replace yet, like for a file they are not known to have: see checks.check_resolved()
+                # those ours cannot replace yet, like for a file they are not known to have: see checks.resolved_root()
                 kept |= new
                 continue
             allowed, swapped, packages = allowed | new, swapped | new, more
