@@ -1282,9 +1282,12 @@ def test_upstream_copy(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixt
 
     clean()
     try:
+        # dnf only gets the copies the storages have: rather than ignoring them, with a message
+        assert "[xcraft-upstream-dev]" not in upstream_copy.repo_file(Project.find())
         assert xcraft("build", "--dry-run")[0] == 0  # the lock, with bc
         code, output = xcraft("push", "upstream", "--to", "dev")
         assert code == 0, output
+        assert "[xcraft-upstream-dev]" in upstream_copy.repo_file(Project.find())
         pins = pinned.pins(Project.find())
         assert _copied(storage, ARCH, tmp_path / "1") == {p.sha256: pinned.file_name(n, p) for n, p in pins.items()}
         assert set(remote.listing(storage, f"{prefix}/{ARCH}/")) >= {pinned.file_name(n, p) for n, p in pins.items()}
