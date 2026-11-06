@@ -112,7 +112,7 @@ def builds_repo(project: Project, keys: dict[str, str], names: Iterable[str] | N
     repo.reset()
     for name in keys if names is None else names:
         if (build := cached_build(project, name, keys[name])).exists():
-            os.utime(build)  # used, see xcraft clean --unused
+            os.utime(build)  # used, see xcraft clean --keep-days
             repo.add(build)
     return repo
 

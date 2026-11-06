@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import os
 import time
+from contextlib import nullcontext
 from typing import Annotated
 
 import typer
@@ -17,82 +18,105 @@ from xcraft.container import checkout_images, checkout_repositories
 from xcraft.devbuilds import built_dev_suffixes
 from xcraft.display import activity, console
 from xcraft.iso import checkout_iso_keys
+from xcraft.project import Project
+
+_ALSO, _RETENTION = "Additional cleanup", "Retention"
 
 
 def _size(size: int) -> str:
     return f"{size / 2**30:.1f} GiB" if size >= 2**30 else f"{size / 2**20:.0f} MiB"
 
 
+def _shared(project: Project, used_since: float, *, dry_run: bool) -> dict[str, list[str]]:
+    """Return the images and the repositories of pinned packages of the machine to remove, removed unless `dry_run`."""
+    images = cleaner.other_images(checkout_images(project), used_since)
+    repos = pinned.other_repositories(checkout_repositories(project), used_since)
+    if not dry_run:
+        images = cleaner.remove_images(images)
+        pinned.remove_repositories(repos)
+    return {what: names for what, names in {"image tags": images, "pinned repositories": repos}.items() if names}
+
+
 def clean(
     packages: Packages = None,
-    builds: Annotated[bool, typer.Option("--builds", help="Also remove the builds of the current packages.")] = False,
-    ccache: Annotated[bool, typer.Option("--ccache", help="Also remove the compiler caches.")] = False,
-    dune_cache: Annotated[bool, typer.Option("--dune-cache", help="Also remove the caches of dune.")] = False,
-    sources: Annotated[
+    current_builds: Annotated[
         bool,
         typer.Option(
-            "--sources",
-            help="Also remove the source archives no package of the checkout has, like those of other branches: push "
-            "them first, see xcraft push sources, unless the remote storage or the URLs of their specs have them.",
+            "--current-builds",
+            help="Also remove the current builds. --keep-days still keeps the outdated ones used recently.",
+            rich_help_panel=_ALSO,
+        ),
+    ] = False,
+    ccache: Annotated[
+        bool, typer.Option("--ccache", help="Also remove the compiler caches.", rich_help_panel=_ALSO)
+    ] = False,
+    dune_cache: Annotated[
+        bool, typer.Option("--dune-cache", help="Also remove the caches of dune.", rich_help_panel=_ALSO)
+    ] = False,
+    unused_sources: Annotated[
+        bool,
+        typer.Option(
+            "--unused-sources",
+            help="Also remove the source archives no package of this checkout references. Applies to the whole "
+            "checkout, even when packages are given. Archives of other branches may exist only here: push them first, "
+            "see xcraft push sources.",
+            rich_help_panel=_ALSO,
         ),
     ] = False,
     shared: Annotated[
         bool,
         typer.Option(
             "--shared",
-            help="Also remove what the checkouts of the machine share, but what this one uses: the images of the build "
-            "environment, those built before the last DAYS days of --unused, and the repositories of pinned packages, "
-            "those unused for DAYS days, with the packages none has. The commands of the other checkouts running "
-            "then may fail.",
+            help="Also remove the machine-wide build environment images and pinned-package repositories this checkout "
+            "does not need. Other checkouts make theirs again when needed, and their running commands may fail.",
+            rich_help_panel=_ALSO,
         ),
     ] = False,
-    unused: Annotated[
+    keep_days: Annotated[
         float | None,
         typer.Option(
-            "--unused",
+            "--keep-days",
             metavar="DAYS",
-            help="Keep the outdated builds, ISOs, specs, resolutions and source archives used in the last DAYS days, "
-            "like those of other branches.",
+            min=0,
+            help="Keep the outdated builds, ISOs, metadata and source archives used in the last DAYS days, like those "
+            "of other branches. With --shared, also keep the images built, and the pinned-package repositories used, "
+            "in the last DAYS days. The rest is removed whatever its age.",
             show_default=False,
+            rich_help_panel=_RETENTION,
         ),
     ] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", "-n", help="Only show what would be removed.")] = False,
     arch: Arch = None,
 ) -> None:
-    """Remove the build trees and outdated builds, signed or not, of the given packages only, or of all with what they
-    share: the outdated caches of the specs, the resolutions and the checks, the upstream packages downloaded, and the
-    logs of the packages removed from the project. What is of an architecture is of the one of --arch only.
+    """Remove build trees and outdated cached data.
 
-    The current builds are kept: the final ones, and the development ones, as last built. So are the ISOs of the
-    checkout, see xcraft iso, but the others, from the remote storage or made again when needed.
+    Package names limit the cleanup to their build trees and outdated builds. Without package names, also clean the
+    temporary files, outdated ISOs and metadata, results of checks, downloaded upstream packages, and logs of removed
+    packages. Builds, ISOs and metadata are those of the --arch architecture only.
 
-    The source archives are kept, but those no package has with --sources.
+    Keep the current final and last-built development builds, the ISOs of the checkout, the source archives and the
+    compiler caches, unless additional cleanup is requested.
     """
-    if sources and packages:
-        msg = "--sources removes the archives of no package: without packages"
-        raise typer.BadParameter(msg)
     project = prepared_project(packages, arch=arch)
-    keys = build_keys(project)
-    developed = build_keys(project, built_dev_suffixes(project))  # as last built
+    names = packages or None
+    keys = [build_keys(project), build_keys(project, built_dev_suffixes(project))]  # the development ones as last built
     isos = checkout_iso_keys(project, os.environ.get("XCRAFT_DEV") or "dev")
-    used_since = math.inf if unused is None else time.time() - unused * 86400
-    with project.sole_use(), activity("cleaning"):
-        freed = cleaner.clean(
-            project,
-            [keys, developed],
-            packages or None,
-            all_builds=builds,
-            ccache=ccache,
-            dune_cache=dune_cache,
-            sources=sources,
-            used_since=used_since,
-            isos=isos,
+    used_since = math.inf if keep_days is None else time.time() - keep_days * 86400
+    with nullcontext() if dry_run else project.sole_use(), activity("cleaning"):
+        removal = cleaner.routine_removal(
+            project, keys, names, isos=isos, current=current_builds, used_since=used_since
         )
-    console.print(f"freed {_size(freed)}")
-    if shared:
-        with activity("removing the images and the repositories of pinned packages"):
-            images = cleaner.remove_images(checkout_images(project), used_since)
-            repos = pinned.remove_repositories(checkout_repositories(project), used_since)
-        console.print(f"removed {len(images)} images, and {len(repos)} repositories of pinned packages")
+        for cache, wanted in (("ccache", ccache), ("dune-cache", dune_cache)):
+            removal |= cleaner.caches_removal(project, cache, names) if wanted else {}
+        removal |= cleaner.sources_removal(project, used_since) if unused_sources else {}
+        size = cleaner.freed([p for paths in removal.values() for p in paths])
+        if not dry_run:
+            cleaner.remove(project, removal)
+        removed = {**removal, **(_shared(project, used_since, dry_run=dry_run) if shared else {})}
+    width = max((len(what) for what in removed), default=0)
+    for what, items in removed.items():
+        console.print(f"{what:<{width}} {len(items):>6} {'to remove' if dry_run else 'removed'}")
+    console.print(f"{'would free' if dry_run else 'freed'} {_size(size)} in .xcraft/")
     # the repositories xcraft repo made, which clean leaves alone, keep the files of builds
     if kept := cleaner.repos_disk_usage(project):
         console.print(f"{_size(kept)} more would be freed without the repositories of xcraft repo, in repo*/")

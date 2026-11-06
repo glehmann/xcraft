@@ -23,7 +23,7 @@ from xcraft.build import queued
 from xcraft.builds import load_builds, save_builds
 from xcraft.cache import BuildError, build_keys, previous_duration
 from xcraft.checks import _check_made, record_rpm_deps
-from xcraft.clean import clean, repos_disk_usage
+from xcraft.clean import caches_removal, freed, remove, repos_disk_usage, routine_removal, sources_removal
 from xcraft.commands import complete_arch, prepared_project
 from xcraft.commands.repo import _connected, _Host, _host, _kept
 from xcraft.commands.shell import package_of
@@ -204,6 +204,13 @@ def test_main_spec(tmp_path: Path) -> None:
         main_spec(tmp_path / "grub")
 
 
+def removed(project: Project, removal: dict[str, list[Path]]) -> int:
+    """Remove what `removal` has, as xcraft clean does, and return how many bytes that freed."""
+    size = freed([p for paths in removal.values() for p in paths])
+    remove(project, removal)
+    return size
+
+
 def test_clean_keeps_the_isos_of_the_checkout(project: Project) -> None:
     isos, cache = project.state / "iso", project.state / "cache/isos" / project.arch
     isos.mkdir(parents=True)
@@ -212,8 +219,9 @@ def test_clean_keeps_the_isos_of_the_checkout(project: Project) -> None:
         (cache / key / "image.iso").write_bytes(key.encode() * 4096)
         (isos / f"{key}.iso").hardlink_to(cache / key / "image.iso")
     (isos / "copied.iso").write_bytes(b"current" * 4096)  # copied, by an xcraft of before, or elsewhere
-    assert clean(project, [{}], isos=None) == 0  # without the keys of the checkout: kept
-    assert clean(project, [{}], isos={"current"}) > 0
+    removal = routine_removal(project, [{}], isos={"current"})
+    assert set(removal) == {"outdated ISOs", "ISOs in .xcraft/iso"}
+    assert removed(project, removal) > 0
     assert sorted(p.name for p in cache.iterdir()) == ["current"]
     assert sorted(p.name for p in isos.iterdir()) == ["current.iso"]
 
@@ -245,7 +253,12 @@ def test_clean_keeps_sources_and_current_builds(project: Project, monkeypatch: p
                  "build/bar/SPECS/bar.spec", "ccache/bar/data"):  # fmt: skip
         (state / path).parent.mkdir(parents=True, exist_ok=True)
         (state / path).write_bytes(b"x" * 8192)
-    assert clean(project, [keys], ["bar"], ccache=True) > 0
+    assert (
+        removed(
+            project, routine_removal(project, [keys], ["bar"], isos=set()) | caches_removal(project, "ccache", ["bar"])
+        )
+        > 0
+    )
     assert "cache/builds/x86_64_v2/bar/current/RPMS/bar.rpm" in files(state)
     assert not [f for f in files(state) if f.startswith(("cache/builds/x86_64_v2/bar/old", "build/bar", "ccache/bar"))]
     assert {"build/foo/SPECS/foo.spec", "cache/builds/x86_64_v2/foo/old/RPMS/foo.rpm"} <= set(files(state))
@@ -255,13 +268,14 @@ def test_clean_keeps_sources_and_current_builds(project: Project, monkeypatch: p
         linked.parent.mkdir(parents=True, exist_ok=True)
         linked.hardlink_to(rpm)
     assert repos_disk_usage(project) == 0
-    assert clean(project, [keys], ["bar"], all_builds=True) == 8192
+    # still in repo/, of xcraft repo
+    assert removed(project, routine_removal(project, [keys], ["bar"], isos=set(), current=True)) == 0
     assert not [f for f in files(state) if "bar" in f]
     assert repos_disk_usage(project) == 0  # of a directory xcraft repo did not make
     (project.root / "repo" / OUTPUT_MARKER).touch()
     assert repos_disk_usage(project) == 8192  # only repo/ has it now
 
-    assert clean(project, [keys]) > 0
+    assert removed(project, routine_removal(project, [keys], isos=set())) > 0
     kept = [
         "cache/resolved/aarch64/old.json",
         "cache/resolved/x86_64_v2/current.json",
@@ -274,13 +288,13 @@ def test_clean_keeps_sources_and_current_builds(project: Project, monkeypatch: p
     ]
     current = ["cache/builds/x86_64_v2/foo/current/RPMS/foo.rpm", "cache/signed/key/x86_64_v2/foo/current/RPMS/foo.rpm"]
     assert files(state) == sorted([*kept, *current, "ccache/foo/data"])
-    clean(project, [keys], all_builds=True, ccache=True)
+    removed(project, routine_removal(project, [keys], isos=set(), current=True) | caches_removal(project, "ccache"))
     assert files(state) == kept
     # but those of the packages of the checkout with sources
     write_manifest(project.root / "base/foo/sources", {"foo-2.tar.gz": "0" * 64})
     (state / "cache/sources" / ("0" * 64)).mkdir()
     (state / "cache/sources" / ("0" * 64) / "foo-2.tar.gz").write_text("foo")
-    clean(project, [keys], sources=True)
+    removed(project, routine_removal(project, [keys], isos=set()) | sources_removal(project))
     kept.remove("cache/sources/abc/foo.tar.gz")
     assert files(state) == sorted([*kept, f"cache/sources/{'0' * 64}/foo-2.tar.gz"])
 
@@ -288,6 +302,7 @@ def test_clean_keeps_sources_and_current_builds(project: Project, monkeypatch: p
 def test_clean_keeps_what_was_used(project: Project) -> None:
     state, now = project.state, time.time()
     for path in ("cache/builds/x86_64_v2/foo/old", "cache/builds/x86_64_v2/foo/used",
+                 "cache/builds/x86_64_v2/foo/current",
                  "cache/signed/key/x86_64_v2/foo/old", "cache/signed/key/x86_64_v2/foo/used",
                  "cache/isos/x86_64_v2/old", "cache/isos/x86_64_v2/used",
                  "cache/sources/old", "cache/sources/used"):  # fmt: skip
@@ -298,7 +313,11 @@ def test_clean_keeps_what_was_used(project: Project) -> None:
         (state / path).write_text("{}")
     for path in state.rglob("old*"):
         os.utime(path, (now - 86400, now - 86400))
-    assert clean(project, [{}], sources=True, isos=set(), used_since=now - 3600) > 0
+    # the current builds too, but the outdated ones used
+    removal = routine_removal(project, [{"foo": "current"}], isos=set(), current=True, used_since=now - 3600)
+    removal |= sources_removal(project, now - 3600)
+    assert removal["current builds"] == [state / "cache/builds/x86_64_v2/foo/current"]
+    assert removed(project, removal) > 0
     assert sorted(p.relative_to(state).as_posix() for p in state.rglob("*") if p.parent.name != "used") == [
         "cache", "cache/builds", "cache/builds/x86_64_v2", "cache/builds/x86_64_v2/foo",
         "cache/builds/x86_64_v2/foo/used", "cache/isos", "cache/isos/x86_64_v2", "cache/isos/x86_64_v2/used",

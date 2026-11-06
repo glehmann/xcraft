@@ -104,7 +104,7 @@ def parse(project: Project, dirs: list[Path]) -> dict[str, Package]:
             cache.parent.mkdir(parents=True, exist_ok=True)
             (work / "specs.json").rename(cache)
     _read.add(cache)
-    os.utime(cache)  # used, see xcraft clean --unused
+    os.utime(cache)  # used, see xcraft clean --keep-days
     packages = _Packages.validate_json(cache.read_bytes())
     for name, package in packages.items():
         package.name = name

@@ -367,8 +367,15 @@ def test_repo_checks_dependencies(root: Path) -> None:
     assert f"repository in {root / 'repo'}, with all dependencies satisfied" in output
     assert sorted(p.name.split("-1.0")[0] for p in (root / "repo").glob("*.rpm")) == ["trivial", "with-deps"]
     assert (root / "repo/repodata/repomd.xml").exists()
-    # with the cached metadata and builds, after clean removed .xcraft/tmp
-    assert xcraft("clean")[0] == 0
+    # with the cached metadata and builds, after clean removed .xcraft/tmp, what a dry run shows only
+    code, output = xcraft("clean", "-n")
+    assert code == 0, output
+    assert re.search(r"^local repositories +1 to remove$", output, re.MULTILINE), output
+    assert (root / ".xcraft/repo").exists()
+    code, output = xcraft("clean")
+    assert code == 0, output
+    assert re.search(r"^local repositories +1 removed$", output, re.MULTILINE), output
+    assert not (root / ".xcraft/repo").exists()
     code, output = xcraft("repo", "with-deps")
     assert code == 0, output
 
@@ -994,7 +1001,8 @@ def test_clean_removes_the_other_images(root: Path) -> None:
     # but those of the machine, of other checkouts, and those the other tests build since
     listed = ["podman", "images", "--format", "{{.Repository}}:{{.Tag}}"]
     machine = {tag for tag in process.run(listed, capture=True).stdout.split() if tag != other}
-    assert clean.remove_images(machine | container.checkout_images(project), since) == [other]
+    assert clean.other_images(machine | container.checkout_images(project), since) == [other]
+    assert clean.remove_images([other]) == [other]
     assert process.run(["podman", "image", "exists", image], check=False).returncode == 0
 
 
@@ -1140,7 +1148,9 @@ def test_clean_removes_the_other_repositories_of_pinned_packages(root: Path, mon
         since = time.time() - 3600
         for repo in ("current", "old", ".partial.1"):
             os.utime(store / "repos" / repo, (since - 1, since - 1))
-        assert sorted(pinned.remove_repositories({"current"}, since)) == [".partial.1", "old"]
+        others = pinned.other_repositories({"current"}, since)
+        assert sorted(others) == [".partial.1", "old"]
+        pinned.remove_repositories(others)
         assert sorted(p.name for p in (store / "repos").iterdir()) == ["current", "used"]
         assert sorted(p.name for p in (store / "rpms").iterdir()) == ["a", "b", "d"]
     finally:

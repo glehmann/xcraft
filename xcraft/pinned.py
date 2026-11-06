@@ -17,6 +17,7 @@ import fcntl
 import functools
 import hashlib
 import json
+import math
 import os
 import shutil
 import tempfile
@@ -195,7 +196,7 @@ def repository(project: Project, names: Iterable[str] | None = None) -> Path:
                 _make_repository(project, pinned, store, repo.name)
             if not (damaged := {n: p for n, p in pinned.items() if not _intact(repo / file_name(n, p), p)}):
                 _checked.add(repo)
-                os.utime(repo)  # used, see remove_repositories()
+                os.utime(repo)  # used, see other_repositories()
                 return repo
             for name, pin in damaged.items():  # in the store, which the repository has them hard-linked from
                 (store / "rpms" / pin.sha256 / file_name(name, pin)).unlink(missing_ok=True)
@@ -207,23 +208,26 @@ def repository(project: Project, names: Iterable[str] | None = None) -> Path:
     raise PinnedError(msg)
 
 
-def remove_repositories(kept: set[str], used_since: float) -> list[str]:
-    """Remove the repositories of the store but those of `kept`, and those used since the time `used_since`, then the
-    RPMs none has, and return the repositories removed.
+def other_repositories(kept: set[str], used_since: float = math.inf) -> list[str]:
+    """Return the repositories of the store but those of `kept`, and those used since the time `used_since`, with those
+    interrupted commands made in part, .<ident>.<pid>.
     """
+    repos = (_store() / "repos").glob("*")
+    return [repo.name for repo in repos if repo.name not in kept and repo.stat().st_mtime < used_since]
+
+
+def remove_repositories(names: list[str]) -> None:
+    """Remove the repositories `names` of the store, then the RPMs none has."""
     store = _store()
     with (store / ".lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        # those made by interrupted commands too, .<ident>.<pid>
-        removed = [r for r in (store / "repos").glob("*") if r.name not in kept and r.stat().st_mtime < used_since]
-        for repo in removed:
-            shutil.rmtree(repo)
+        for name in names:
+            shutil.rmtree(store / "repos" / name, ignore_errors=True)  # or by another command meanwhile
         for rpm in (store / "rpms").glob("*/*"):  # and the parts of interrupted downloads
             if rpm.stat().st_nlink == 1:  # of no repository
                 rpm.unlink()
                 if not any(rpm.parent.iterdir()):
                     rpm.parent.rmdir()
-    return [repo.name for repo in removed]
 
 
 def stored(name: str, pin: Pin) -> Path | None:

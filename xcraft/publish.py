@@ -234,7 +234,7 @@ def _signed_build(project: Project, signer: Signer, name: str, key: str, *, stor
         work.rename(signed)
     if storage and not remote.tree_exists(storage, path, trusted=signer):
         remote.upload_tree(storage, path, signed, ["RPMS", "SRPMS"], signer=signer)
-    os.utime(signed)  # used, see xcraft clean --unused
+    os.utime(signed)  # used, see xcraft clean --keep-days
     return signed
 
 

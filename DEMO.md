@@ -87,7 +87,7 @@ xcraft graph xen --upstream --flat
 ## 5. Builds and their cache
 
 ```
-xcraft clean branding-xcp-ng xcp-ng-release --builds
+xcraft clean branding-xcp-ng xcp-ng-release --current-builds
 xcraft build xcp-ng-release --dry-run       # fetched from the storage, rather than built
 xcraft build xcp-ng-release --fetch=none    # built: branding-xcp-ng (~3s), then xcp-ng-release (~5s)
 xcraft build xcp-ng-release                 # again: everything cached
@@ -115,10 +115,10 @@ What CI built is not built again anywhere: a fresh checkout, a developer or anot
 its signature.
 
 ```
-xcraft clean python-bitarray --builds       # like a fresh checkout
+xcraft clean python-bitarray --current-builds       # like a fresh checkout
 xcraft build python-bitarray --dry-run      # fetch python-bitarray: CI built it
 xcraft build python-bitarray                # fetched in a second, not built
-xcraft clean python-bitarray --builds
+xcraft clean python-bitarray --current-builds
 xcraft --debug fetch builds python-bitarray     # its signed manifest checked with the key of CI, then its files
 ```
 
@@ -200,7 +200,7 @@ shares them through the storage; another architecture builds here under emulatio
 ```
 xcraft build python-bitarray --arch aarch64     # fetched, with kernel-headers: built by CI on an arm runner
 rpm -qp --qf '%{name} %{arch}\n' .xcraft/cache/builds/aarch64/python-bitarray/*/RPMS/aarch64/*.rpm
-xcraft clean python-bitarray --builds --arch aarch64
+xcraft clean python-bitarray --current-builds --arch aarch64
 xcraft build python-bitarray --arch aarch64 --fetch=none    # ~7min, emulated, with the network: qemu-user cannot
                                                             # isolate it
 ```

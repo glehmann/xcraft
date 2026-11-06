@@ -198,7 +198,7 @@ def _cached(project: Project, data: dict, *, show: str, quiet: bool = False, key
     if not found or not _holds(Resolved.model_validate_json(cache.read_text()), data):
         write_atomically(cache, _run(project, data, show=show, quiet=quiet).model_dump_json())  # for the commands too
     _resolved[cache] = Resolved.model_validate_json(cache.read_text())
-    os.utime(cache)  # used, see xcraft clean --unused
+    os.utime(cache)  # used, see xcraft clean --keep-days
     return _resolved[cache]
 
 
