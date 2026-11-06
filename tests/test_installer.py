@@ -49,8 +49,8 @@ def packages(iso: Path) -> list[str]:
     return sorted(f.removeprefix("Packages/") for f in listing if f.startswith("Packages/") and f.endswith(".rpm"))
 
 
-def installer_line(root: Path, *args: str) -> str:
-    """Boot the ISO of the checkout with xcraft boot, and return what its installer showed."""
+def booted(root: Path, *args: str) -> tuple[int, str, str]:
+    """Boot the ISO of the checkout with xcraft boot, and return its exit code, its output, and the serial console."""
     accel = "kvm" if os.access("/dev/kvm", os.R_OK | os.W_OK) else "tcg"
     vm_dir = root / "vm"
     shutil.rmtree(vm_dir, ignore_errors=True)
@@ -58,8 +58,16 @@ def installer_line(root: Path, *args: str) -> str:
         "boot", "--unsigned", "--headless", "--accel", accel, "--memory", "2048", "--cpus", "2", "--ssh-port", "0",
         "--disk-size", "1G", "--vm-dir", str(vm_dir), *args,
     )  # fmt: skip
+    return code, output, (vm_dir / "serial.log").read_bytes().decode(errors="replace")
+
+
+def installer_line(root: Path, *args: str) -> str:
+    """Boot the ISO of the checkout with xcraft boot, and return what its installer showed, before asking to reboot."""
+    code, output, log = booted(root, *args)
     assert code == 0, output
-    log = (vm_dir / "serial.log").read_bytes().decode(errors="replace")
+    assert "✓ the installer finished and asked to reboot: xcraft vm start boots the installed system" in " ".join(
+        output.split()
+    )
     found = re.search(r"^toy installer of .*?\r?$", log, re.MULTILINE)
     assert found, log
     return found[0].rstrip("\r")
@@ -82,6 +90,10 @@ def test_iso_boots(root: Path) -> None:
     assert installer_line(root, "--bios") == (
         "toy installer of toy 1.0: BOOT_IMAGE=/boot/vmlinuz initrd=/install.img console=ttyS0"
     )
+    # an installer which powers off rather than asking to reboot fails
+    code, output, _ = booted(root, "--kernel-args", "xcraft.poweroff")
+    assert code == 1
+    assert "✗ the guest powered off, rather than the installer asking to reboot: see" in " ".join(output.split())
 
 
 def test_iso_of_changed_packages(root: Path) -> None:

@@ -68,7 +68,9 @@ xcraft boot --iso /path/to/image.iso   # boot an existing ISO
 
 The disk persists between runs and is never resized or recreated automatically. Use `--disk /path/to/new.qcow2`
 for a fresh installation, with `--disk-size 100G` to change the size of a new disk. The installer VM exits when it
-requests a reboot; `xcraft vm start` then boots its disk, with the options of `xcraft boot`, its firmware variables
+requests a reboot, which tells the installation finished: `xcraft boot` ends then with a ✓, and fails when the VM
+stops otherwise, from the reason QEMU gives, like a power-off, or a kernel panic with the pvpanic driver of the
+guest. `xcraft vm start` then boots its disk, with the options of `xcraft boot`, its firmware variables
 and its SSH port, if still free; `--memory`, `--cpus` and `--ssh-port` change them. The project lock covers startup, then is released so packages
 can be edited and rebuilt while the VM runs.
 

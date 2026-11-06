@@ -61,11 +61,13 @@ def connect(path: Path) -> socket.socket:
 
 
 class Monitor:
-    """A short-lived QMP connection, independent of the launching process."""
+    """A short-lived QMP connection, independent of the launching process: to the monitor of the commands, `qmp.sock`,
+    or to the one of the events, `events.sock`, see launch() and stop_reason().
+    """
 
-    def __init__(self, directory: Path) -> None:
+    def __init__(self, directory: Path, name: str = "qmp.sock") -> None:
         """Connect and negotiate QMP capabilities."""
-        self.client = connect(directory / "qmp.sock")
+        self.client = connect(directory / name)
         self.stream = self.client.makefile("rw", encoding="utf-8")
         try:
             greeting = json.loads(self.stream.readline())
@@ -118,9 +120,13 @@ def _failure(directory: Path) -> str:
     return f": {lines[-1]}" if lines else f": see {directory / 'qemu.log'}"
 
 
-def launch(directory: Path, session: Session) -> subprocess.Popen[bytes]:
-    """Launch QEMU, preserving previous transcripts and waiting for its monitor."""
-    (directory / "qmp.sock").unlink(missing_ok=True)
+def launch(directory: Path, session: Session) -> tuple[subprocess.Popen[bytes], Monitor | None]:
+    """Launch QEMU, preserving previous transcripts and waiting for its monitor, and return it with the connection to
+    its monitor of the events, when its command has one, see qemu_command(): QEMU waits for it before starting the
+    guest, so that no event is missed.
+    """
+    for name in ("qmp.sock", "events.sock"):
+        (directory / name).unlink(missing_ok=True)
     fifo = directory / "serial.in"
     fifo.unlink(missing_ok=True)
     os.mkfifo(fifo, 0o600)
@@ -145,20 +151,35 @@ def launch(directory: Path, session: Session) -> subprocess.Popen[bytes]:
     session.pid = proc.pid
     write_atomically(directory / "session.json", session.model_dump_json(indent=2) + "\n")
     try:
+        return proc, _started(proc, directory, events=_EVENTS in session.command)
+    except BaseException:
+        proc.terminate()
+        proc.wait(timeout=10)
+        raise
+
+
+def _started(proc: subprocess.Popen[bytes], directory: Path, *, events: bool) -> Monitor | None:
+    """Wait for the monitor of QEMU running `proc` in `directory`, and return the connection to its monitor of the
+    events with `events`, which it waits for first.
+    """
+    monitor = None
+    try:
         for _ in range(200):
             if proc.poll() is not None:
                 if proc.returncode == 0:
-                    return proc
+                    return monitor
                 msg = f"QEMU exited with {proc.returncode}{_failure(directory)}"
                 raise RuntimeError(msg)  # noqa: TRY301
-            if running(directory):
-                return proc
+            if events and not monitor and (directory / "events.sock").exists():
+                monitor = Monitor(directory, "events.sock")
+            if (monitor or not events) and running(directory):
+                return monitor
             time.sleep(0.05)
         msg = f"QEMU did not open its monitor: see {directory / 'qemu.log'}"
         raise RuntimeError(msg)  # noqa: TRY301
     except BaseException:
-        proc.terminate()
-        proc.wait(timeout=10)
+        if monitor:
+            monitor.__exit__(None, None, None)
         raise
 
 
@@ -215,10 +236,23 @@ def check_stopped(directory: Path) -> None:
         raise RuntimeError(msg)
 
 
+_EVENTS = "unix:events.sock,server=on,wait=on"
+"""The monitor of the events of QEMU, which waits for its connection before starting the guest, see launch()."""
+
+
 def qemu_command(
-    directory: Path, launch: Launch, *, disk: Path, iso: Path | None, ssh_port: int, headless: bool
+    directory: Path,
+    launch: Launch,
+    *,
+    disk: Path,
+    iso: Path | None,
+    ssh_port: int,
+    headless: bool,
+    events: bool = False,
 ) -> list[str]:
-    """Return the QEMU command of the VM, copying the template of the firmware variables it writes, once."""
+    """Return the QEMU command of the VM, copying the template of the firmware variables it writes, once, with a
+    monitor of the events with `events`, which launch() connects to.
+    """
     accel, ovmf = launch.accel, launch.ovmf
     network = "user,model=e1000" + (f",hostfwd=tcp:127.0.0.1:{ssh_port}-:22" if ssh_port else "")
     # OVMF exposes modes that fit in VRAM; limit it so the installer cannot select a huge framebuffer.
@@ -228,7 +262,10 @@ def qemu_command(
         "-vga", "std", "-global", "VGA.xres=1024", "-global", "VGA.yres=768",
         "-global", "VGA.vgamem_mb=4",
         "-drive", f"file={str(disk).replace(',', ',,')},format=qcow2,if=ide", "-nic", network,
-        "-qmp", "unix:qmp.sock,server=on,wait=off", "-monitor", "none",
+        # QEMU's monitors take one connection at a time: the events have their own, see launch()
+        *(["-qmp", _EVENTS] if events else []), "-qmp", "unix:qmp.sock,server=on,wait=off", "-monitor", "none",
+        # a panic of a guest kernel with the driver of pvpanic stops it, rather than leaving it hung
+        "-device", "pvpanic", "-action", "panic=shutdown",
         "-chardev", "stdio,id=serial,signal=off",
         "-serial", "chardev:serial", *(["-display", "none"] if headless else []),
     ]  # fmt: skip
@@ -267,9 +304,14 @@ def free_port(start: int = 2222) -> int:
     raise RuntimeError(msg)
 
 
-def wait(proc: subprocess.Popen[bytes], directory: Path) -> None:
-    """Wait for a foreground VM, stopping it on Ctrl-C."""
+def wait(proc: subprocess.Popen[bytes], directory: Path, events: Monitor | None = None) -> str | None:
+    """Wait for a foreground VM, stopping it on Ctrl-C, and return why it stopped, from the `events` of QEMU, if given:
+    see stop_reason().
+    """
+    reason = None
     try:
+        if events:
+            reason = stop_reason(events)
         if code := proc.wait():
             raise subprocess.CalledProcessError(code, proc.args)
     except KeyboardInterrupt:
@@ -278,6 +320,19 @@ def wait(proc: subprocess.Popen[bytes], directory: Path) -> None:
                 monitor.execute("quit")
         proc.wait(timeout=10)
         raise
+    return reason
+
+
+def stop_reason(events: Monitor) -> str | None:
+    """Return why the guest stopped, from the events of QEMU until it exits: the reason of its SHUTDOWN event, like
+    guest-reset, which -no-reboot turns into a stop, guest-shutdown, guest-panic or host-qmp-quit; None without one.
+    """
+    events.client.settimeout(None)  # as long as the guest runs
+    reason = None
+    while line := events.stream.readline():
+        if (event := json.loads(line)).get("event") == "SHUTDOWN":
+            reason = event["data"]["reason"]
+    return reason
 
 
 def press(monitor: Monitor, keys: list[str]) -> None:

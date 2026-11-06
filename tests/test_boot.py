@@ -50,17 +50,19 @@ class Block(BaseModel):
 
 
 def boot_vm(socket_path: Path, *args: str) -> list[Image]:
-    """Boot with the real CLI and QEMU, inspect the attached media through QMP, and quit."""
+    """Boot with the real CLI and QEMU, inspect the attached media through QMP, and quit, which fails the boot: the
+    installer did not ask to reboot.
+    """
     return attached(socket_path, [
         "boot", "--accel", "tcg", "--headless", "--memory", "512", "--cpus", "1", "--ssh-port", "0",
         "--arch", "x86_64_v2", "--qemu-arg=-S", "--qemu-arg=-qmp", f"--qemu-arg=unix:{socket_path},server=on,wait=off",
         *args,
-    ])  # fmt: skip
+    ], failure="QEMU was told to quit, like by xcraft vm stop, rather than the installer asking to reboot")  # fmt: skip
 
 
-def attached(socket_path: Path, args: list[str]) -> list[Image]:
+def attached(socket_path: Path, args: list[str], failure: str | None = None) -> list[Image]:
     """Run the real CLI with `args`, which launch QEMU with its QMP at `socket_path`, inspect the attached media through
-    it, and quit.
+    it, and quit, which succeeds, or fails with the message `failure`.
     """
     socket_path.unlink(missing_ok=True)
     cmd = [sys.executable, "-m", "xcraft", *args]
@@ -97,7 +99,8 @@ def attached(socket_path: Path, args: list[str]) -> list[Image]:
                     blocks = TypeAdapter(list[Block]).validate_python(execute("query-block"))
                     execute("quit")
             output = vm.communicate(timeout=10)[0]
-            assert vm.returncode == 0, output
+            assert vm.returncode == (1 if failure else 0), output
+            assert failure is None or failure in " ".join(output.split()), output
             return [block.inserted.image for block in blocks if block.inserted]
         finally:
             if vm.poll() is None:
