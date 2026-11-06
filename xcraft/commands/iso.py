@@ -7,7 +7,7 @@ from typing import Annotated
 
 import typer
 
-from xcraft.commands import Arch, Dev, Final, Key, choose_signer, dev_ident
+from xcraft.commands import Arch, Dev, Final, Key, NoCheck, choose_signer, dev_ident
 from xcraft.display import console
 from xcraft.iso import checkout_iso
 from xcraft.project import Project
@@ -37,6 +37,7 @@ def iso(
     key: Key = None,
     dev: Dev = None,
     final: Final = False,
+    nocheck: NoCheck = False,
 ) -> None:
     """Make the installation ISO, from a local snapshot of the distribution, as xcraft publish --local makes it.
 
@@ -45,9 +46,9 @@ def iso(
     particular to the distribution. Like xcraft build, it has the development builds of the
     packages whose build ID is not the main branch's, unless --final.
     """
-    ident = dev_ident(ctx, dev, final=final)
+    ident = dev_ident(ctx, dev, final=final, nocheck=nocheck)
     project = Project.find(arch)
     project.frozen = locked
     signer = choose_signer(project, local=True, unsigned=unsigned, dev_key=False, key=key)
-    path = checkout_iso(project, output, netinstall=netinstall, volid=volid, signer=signer, dev=ident)
+    path = checkout_iso(project, output, netinstall=netinstall, volid=volid, signer=signer, dev=ident, nocheck=nocheck)
     console.print(f"[bold green]✓[/] {path}")

@@ -22,6 +22,7 @@ from rich.text import Text
 from xcraft import buildid, buildkey, ccache, remote, resolution
 from xcraft.builds import load_builds
 from xcraft.cache import (
+    NOCHECK,
     BuildError,
     build_keys,
     build_path,
@@ -30,6 +31,7 @@ from xcraft.cache import (
     deps_repo,
     previous_duration,
     release_suffix,
+    untested,
 )
 from xcraft.checks import BuildRootChangedError, record_build, record_dynamic, record_rpm_deps, resolved_root
 from xcraft.container import ContainerError, built_image, run_dnf
@@ -261,6 +263,7 @@ class _Run:
     keys: dict[str, str]
     autorev: dict[str, str]
     dev: str | None = None
+    nocheck: bool = False
     verbose: bool = False
     fetch: Fetch = "all"
     build_missing: bool = True
@@ -323,7 +326,10 @@ class _Run:
             error = BuildError(f"{', '.join(edited)} changed since the builds started: build again")
             _show_failure(project, name, error, verbose=self.verbose)
             return Result(name, "failed")
-        if cached_build(project, name, self.keys[name]).exists():  # nothing to show: only the counts
+        build = cached_build(project, name, self.keys[name])
+        if not self.nocheck and build.exists() and untested(project, name, self.keys[name]):
+            shutil.rmtree(build)  # made again, with the tests of its spec
+        if build.exists():  # nothing to show: only the counts
             return Result(name, "cached")
         return None
 
@@ -422,7 +428,15 @@ class _Run:
         try:
             with _shown(project, name, status) as on_line:
                 run_build(
-                    project, name, repo, "a", replace=replace, suffix=suffix, log=project.log(name), on_line=on_line
+                    project,
+                    name,
+                    repo,
+                    "a",
+                    replace=replace,
+                    suffix=suffix,
+                    nocheck=self.nocheck,
+                    log=project.log(name),
+                    on_line=on_line,
                 )
         except ContainerError as e:
             # those it asked for before failing, maybe for one of ours not among its dependencies
@@ -470,6 +484,8 @@ class _Run:
         if name in self.autorev:
             # the suffixes of all the development builds of the run, its own and those of the dependencies built with it
             (new / "autorev").write_text(json.dumps(self.autorev, sort_keys=True))
+        if self.nocheck:
+            (new / NOCHECK).touch()
         shutil.copy2(project.log(name), new / "build.log")
         if build_dir.exists():  # an earlier build of the same inputs
             shutil.rmtree(new)
@@ -505,13 +521,16 @@ def build(
     dry_run: bool = False,
     verbose: bool = False,
     dev: str | None = None,
+    nocheck: bool = False,
     fetch: Fetch = "all",
     build_missing: bool = True,
 ) -> tuple[list[Result], dict[str, str], dict[str, str]]:
     """Build `targets` and, unless `with_deps` is false, what they need, skipping what is cached, and return how
     it went, with the keys of all the packages, those of their builds, and the suffixes of the development builds.
 
-    `dev` is the identifier of the development builds, see xcraft.devbuilds, none for final builds. What is
+    `dev` is the identifier of the development builds, see xcraft.devbuilds, none for final builds. With `nocheck`,
+    the packages built skip the tests of their specs, see xcraft.cache.untested(): those cached without them are
+    built again otherwise. What is
     not cached locally is fetched from the remote storage when it has it, but
     only the builds of the dependencies of the packages to build with `fetch`
     needed, or nothing with none: it is built then. Without `build_missing`,
@@ -533,7 +552,17 @@ def build(
             _show_plan(project, plan, keys, fetch=fetch)
             return [], keys, autorev
         _queue_file(project).parent.mkdir(parents=True, exist_ok=True)
-        run = _Run(project, hashes, keys, autorev, dev=dev, verbose=verbose, fetch=fetch, build_missing=build_missing)
+        run = _Run(
+            project,
+            hashes,
+            keys,
+            autorev,
+            dev=dev,
+            nocheck=nocheck,
+            verbose=verbose,
+            fetch=fetch,
+            build_missing=build_missing,
+        )
         try:
             results = run.build(plan)
         finally:

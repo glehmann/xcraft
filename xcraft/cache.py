@@ -83,6 +83,17 @@ def cached_build(project: Project, name: str, key: str) -> Path:
     return _builds_dir(project, name) / key
 
 
+NOCHECK = "nocheck"
+"""The file marking the builds without the tests of their specs in the cache, see untested()."""
+
+
+def untested(project: Project, name: str, key: str) -> bool:
+    """Return whether the cached build of `name` with `key` was made without the tests of its spec, %check, which the
+    builds with them make again, and which is never pushed.
+    """
+    return (cached_build(project, name, key) / NOCHECK).exists()
+
+
 def has_normal_build(project: Project, name: str) -> bool:
     """Return whether `name` has a cached build, of any version, besides the development builds."""
     # not a build in progress, nor a development one

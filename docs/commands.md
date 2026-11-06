@@ -10,11 +10,12 @@
 | `xcraft build <pkg> -v` | Show the build log while building |
 | `xcraft build <pkg> --locked` | Fail the builds that would change the lock: new upstream packages, or what a build found, for CI |
 | `xcraft build [<pkg>...] --dev ID` / `--final` | Development builds with another identifier than `dev`, or `$XCRAFT_DEV`; or final builds, without development suffixes (see [Development builds](builds.md#development-builds)) |
+| `xcraft build [<pkg>...] --nocheck` | Without running the tests of the specs, their `%check`, for faster iterations; also for `repo`, `iso` and `boot`, not with `--final` (see [Builds without their tests](builds.md#builds-without-their-tests)) |
 | `xcraft repo <pkg>... [--dependents]` | When they have development builds, a repository of them alone, for test hosts |
 | `xcraft repo <pkg>... --host h [--upgrade]` | The same, copied to test hosts over ssh, and upgraded there |
 | `xcraft publish [repos\|isos] [--stage s] [--locked] [--local] [--unsigned] [--dev-key] [--arch a]` | Publish a snapshot of the distribution, its repositories and its ISOs, or only those given, for all the architectures or `--arch`, as the stage's latest one; a `--local` one is of the host's architecture by default |
-| `xcraft iso [--netinstall] [--output f] [-V id] [--locked] [--unsigned] [--dev ID \| --final]` | Make the installation ISO, from a local snapshot (see [Installation ISO](iso.md)) |
-| `xcraft boot [--iso f] [--disk f] [--headless] [--unsigned] [--dev ID \| --final]` | Build the ISO and boot its installer in a local QEMU VM, creating a virtual disk if missing |
+| `xcraft iso [--netinstall] [--output f] [-V id] [--locked] [--unsigned] [--dev ID \| --final] [--nocheck]` | Make the installation ISO, from a local snapshot (see [Installation ISO](iso.md)) |
+| `xcraft boot [--iso f] [--disk f] [--headless] [--unsigned] [--dev ID \| --final] [--nocheck]` | Build the ISO and boot its installer in a local QEMU VM, creating a virtual disk if missing |
 | `xcraft vm start [--background]` | Start the VM again from its installed disk, without the ISO, with the options of `xcraft boot` |
 | `xcraft vm <command>` | Inspect a VM, read its console, send input, save diagnostics, or stop it |
 | `xcraft key create` / `xcraft key show [--export]` | The developer's key, which signs the development builds |

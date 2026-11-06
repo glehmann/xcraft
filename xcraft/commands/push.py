@@ -9,7 +9,7 @@ import typer
 from rich.markup import escape
 
 from xcraft import ccache, remote, remote_pages, upstream_copy
-from xcraft.cache import BUILD_FILES, build_keys, build_path, cached_build
+from xcraft.cache import BUILD_FILES, build_keys, build_path, cached_build, untested
 from xcraft.commands import Arch, Final, Key, Packages, To, prepared_project, remote_storage, unprepared_project
 from xcraft.devbuilds import developed
 from xcraft.display import activity, console
@@ -57,7 +57,8 @@ def _push_builds(
     project: Project, storage: Remote, packages: list[str] | None, *, signer: Signer | None, final: bool
 ) -> list[str]:
     """Upload the current builds of `packages`, all by default, and return those not built: the final builds, but
-    of the packages with development builds, unless `final`.
+    of the packages with development builds, unless `final`. The builds without the tests of their specs, see
+    xcraft.cache.untested(), are not built for it.
     """
     keys, skipped = build_keys(project), set() if final else developed(project)
     if shown := sorted(skipped & {*(packages or project.packages)}):
@@ -68,7 +69,11 @@ def _push_builds(
     with activity("checking the remote storage"), ThreadPoolExecutor(remote.REQUESTS) as pool:
         found = pool.map(lambda path: remote.tree_exists(storage, path, trusted=signer), paths.values())
         present = [name for name, exists in zip(paths, found, strict=True) if exists]
-    not_built = [n for n in paths if n not in present and not cached_build(project, n, keys[n]).exists()]
+    if without_tests := [n for n in paths if n not in present and untested(project, n, keys[n])]:
+        console.print(f"built without their tests, with --nocheck, not pushed: {', '.join(without_tests)}")
+    not_built = [
+        n for n in paths if n not in present and (n in without_tests or not cached_build(project, n, keys[n]).exists())
+    ]
     pushed = [name for name in paths if name not in present and name not in not_built]
     for name in pushed:
         with activity(f"uploading the build of {name}"):

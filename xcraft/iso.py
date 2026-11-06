@@ -78,9 +78,16 @@ def dev_suffixes(project: Project, dev: str | None) -> dict[str, str]:
 
 
 def iso_key(
-    project: Project, *, netinstall: bool, volid: str | None, signer: Signer | None, dev: str | None = None
+    project: Project,
+    *,
+    netinstall: bool,
+    volid: str | None,
+    signer: Signer | None,
+    dev: str | None = None,
+    nocheck: bool = False,
 ) -> str:
-    """Return the key of the ISO of the checkout, with the development builds `dev`, if any: what it is made of.
+    """Return the key of the ISO of the checkout, with the development builds `dev`, if any, and with the builds
+    without the tests of their specs with `nocheck`: what it is made of.
 
     Read without containers, nor the secret key of `signer`.
     """
@@ -124,6 +131,8 @@ def iso_key(
     ]
     if suffixes := dev_suffixes(project, dev):  # but the keys of the ISOs of final builds
         data.append(suffixes)
+    if nocheck:  # but the keys of the others
+        data.append("nocheck")
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
 
@@ -331,12 +340,13 @@ def _snapshot_iso(
     volid: str | None,
     signer: Signer | None,
     dev: str | None = None,
+    nocheck: bool = False,
 ) -> Path:
-    """Return the ISO of `snapshot`, with the development builds `dev`, if any: cached, fetched, or assembled and
-    cached by the key of the checkout.
+    """Return the ISO of `snapshot`, with the development builds `dev`, if any, and those without the tests of their
+    specs with `nocheck`: cached, fetched, or assembled and cached by the key of the checkout.
     """
     with project.lock():
-        key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev)
+        key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck)
         if found := _existing_iso(project, key, output, netinstall=netinstall, signer=signer, dev=dev):
             return found
         checkout = _checkout_inputs(project)
@@ -344,7 +354,7 @@ def _snapshot_iso(
         if checkout != _checkout_inputs(project):
             msg = "ISO inputs changed while making the image: run again"
             raise RuntimeError(msg)
-        key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev)
+        key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck)
         tree = cached_iso(project, key)
         with project.tmp_dir("cache-iso") as work:
             staged = work / "tree"
@@ -381,20 +391,22 @@ def checkout_iso(
     volid: str | None = None,
     signer: Signer | None = None,
     dev: str | None = None,
+    nocheck: bool = False,
 ) -> Path:
     """Return the ISO of the checkout: build or fetch its packages, assemble a local snapshot, and make its ISO.
 
-    With the development builds `dev`, like xcraft build makes them, or final builds only without.
+    With the development builds `dev`, like xcraft build makes them, or final builds only without, and without the
+    tests of the specs with `nocheck`.
     """
     with project.lock():
         dev = dev if dev_suffixes(project, dev) else None  # of final builds only otherwise, like the remote storage's
-        key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev)
+        key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck)
         if found := _existing_iso(project, key, output, netinstall=netinstall, signer=signer, dev=dev):
             return found
         checkout = _checkout_inputs(project)
         resolution.prepare(project)
         dest = (project.state / "publish").absolute()
-        publish.snapshot([project], dest, signer=signer, storage=None, build=False, dev=dev)
+        publish.snapshot([project], dest, signer=signer, storage=None, build=False, dev=dev, nocheck=nocheck)
         if checkout != _checkout_inputs(project):
             msg = "ISO inputs changed while assembling the snapshot: run again"
             raise RuntimeError(msg)
@@ -406,4 +418,5 @@ def checkout_iso(
             volid=volid,
             signer=signer,
             dev=dev,
+            nocheck=nocheck,
         )
