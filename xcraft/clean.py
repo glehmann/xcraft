@@ -54,22 +54,21 @@ def clean(
 ) -> int:
     """Remove what xcraft can regenerate, and return how many bytes that freed.
 
-    That is the build trees, the outdated builds of the platform, those of none
-    of the `keys`, all of them with `all_builds`, the compiler caches with `ccache`, and those of dune with
-    `dune_cache`, of the packages
+    That is the build trees, the outdated builds of the platform, those of none of the `keys`, signed or not, all of
+    them with `all_builds`, the compiler caches with `ccache`, and those of dune with `dune_cache`, of the packages
     `names`, or of all of them with what they share: the metadata of the specs and the resolutions of the platform but
-    those this process read, the results of the checks, the requirements of the upstream packages, and the
-    upstream packages downloaded, and the ISOs of the platform but those of the keys `isos`, if given: those in
-    .xcraft/iso/ too, the hard links to their cache, and the copies, see xcraft.iso. The source cache is kept, and so
-    are the signed builds, which signing again would make other files.
+    those this process read, the results of the checks, the requirements of the upstream packages, and the upstream
+    packages downloaded, and the ISOs of the platform but those of the keys `isos`, if given: those in .xcraft/iso/ too,
+    the hard links to their cache, and the copies, see xcraft.iso. The source cache is kept. A signed build removed is
+    fetched again from the remote storage, where publishing put it, or else signed again.
 
-    The local repository and snapshot, made again when needed, are removed in
-    both cases: they have hard links to the files of the builds, which would
-    keep using the space.
+    The local repository and snapshot, made again when needed, are removed in both cases: they have hard links to the
+    files of the builds, which would keep using the space.
     """
     state = project.state
     before = _disk_usage(state)
-    builds = state / "cache/builds" / project.arch
+    # the builds, and the signed ones, by signer
+    trees = [state / "cache/builds" / project.arch, *(state / "cache/signed").glob(f"*/{project.arch}")]
     paths = [state / "repo", state / "publish"]
     if names is None:
         paths += [state / "build", state / "tmp", state / "cache/extra"]
@@ -83,10 +82,10 @@ def clean(
         ]
         paths += [state / "cache" / cache for cache in ("checks", "upstream", "rpms", "srpms")]
         paths += _other_isos(project, isos) if isos is not None else []
-        packages = list(builds.glob("*"))
+        packages = [pkg for tree in trees for pkg in tree.glob("*")]
     else:
         paths += [state / "build" / name for name in names]
-        packages = [builds / name for name in names if (builds / name).exists()]
+        packages = [tree / name for tree in trees for name in names if (tree / name).exists()]
     if all_builds:
         paths += packages
     else:
@@ -101,7 +100,7 @@ def clean(
             shutil.rmtree(path)
         else:
             path.unlink(missing_ok=True)
-    for pkg in builds.glob("*"):
+    for pkg in (pkg for tree in trees for pkg in tree.glob("*")):
         if not any(pkg.iterdir()):
             pkg.rmdir()
     return before - _disk_usage(state)

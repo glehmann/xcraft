@@ -229,7 +229,9 @@ def test_clean_keeps_sources_and_current_builds(project: Project, monkeypatch: p
                  # of another architecture: see xcraft clean --arch
                  "cache/specs/aarch64/old.json", "cache/resolved/aarch64/old.json",
                  "cache/checks/installable/old", "cache/upstream/old.json", "cache/rpms/old.rpm",
-                 "cache/srpms/old.src.rpm", "cache/signed/key/x86_64_v2/foo/old/RPMS/foo.rpm"):  # fmt: skip
+                 "cache/srpms/old.src.rpm", "cache/signed/key/x86_64_v2/foo/old/RPMS/foo.rpm",
+                 "cache/signed/key/x86_64_v2/foo/current/RPMS/foo.rpm",
+                 "cache/signed/key/aarch64/foo/old/RPMS/foo.rpm"):  # fmt: skip
         (state / path).parent.mkdir(parents=True, exist_ok=True)
         (state / path).write_bytes(b"x" * 8192)
     monkeypatch.setattr(specs, "_read", {state / "cache/specs/x86_64_v2/current.json"})
@@ -261,12 +263,13 @@ def test_clean_keeps_sources_and_current_builds(project: Project, monkeypatch: p
     kept = [
         "cache/resolved/aarch64/old.json",
         "cache/resolved/x86_64_v2/current.json",
-        "cache/signed/key/x86_64_v2/foo/old/RPMS/foo.rpm",
+        "cache/signed/key/aarch64/foo/old/RPMS/foo.rpm",
         "cache/sources/abc/foo.tar.gz",
         "cache/specs/aarch64/old.json",
         "cache/specs/x86_64_v2/current.json",
     ]
-    assert files(state) == sorted([*kept, "cache/builds/x86_64_v2/foo/current/RPMS/foo.rpm", "ccache/foo/data"])
+    current = ["cache/builds/x86_64_v2/foo/current/RPMS/foo.rpm", "cache/signed/key/x86_64_v2/foo/current/RPMS/foo.rpm"]
+    assert files(state) == sorted([*kept, *current, "ccache/foo/data"])
     clean(project, [keys], all_builds=True, ccache=True)
     assert files(state) == kept
 
