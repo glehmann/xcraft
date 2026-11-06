@@ -215,6 +215,17 @@ upstream packages, and the builds of ours there, see `checks.record_rpm_deps()`.
 fetched with it: a machine with the same builds of ours there as the one which recorded it does not resolve it again,
 like a new checkout once it fetched all those of the main branch, after CI rebuilt all of them. The builds fetched are recorded together, before
 a build that may need them, or once all are fetched, rather than after each one, with only some of ours there.
+What a build kept is used, rather than resolved again, while all of these are the same as when it was resolved:
+
+- the base context: the lock, the repositories and the rest of what it is resolved with, but the builds of ours;
+- the names of the packages of ours with builds there, which may provide what it requires;
+- the builds of ours its requirements resolved to.
+
+So a new build of a package of ours resolves again only the records whose requirements resolved to it. A build of
+ours starting to provide something a requirement resolved to upstream is not noticed. Before the builds, the records
+the cached builds kept are restored as they are, without resolving them again, while the base context is the same,
+for the build keys: only the builds without a record, or with packages unresolved, are resolved. The builds record
+them all again after.
 
 ## Checking a key
 

@@ -86,7 +86,12 @@ What is installed, by name, each pinned:
 They are resolved by dnf, without installing anything, natively for every architecture, against the upstream
 repositories in the locked versions, our copy of them, and a repository of the metadata of our binary packages,
 written from their specs and what their builds recorded, see `xcraft.resolution` and `buildenv/resolve.py`. The
-results are cached by what they are resolved from.
+results are cached by what they are resolved from, but the epoch-version-releases of our packages: a new release of
+one of them resolves nothing again. A cached result is used only while the binary packages of ours that a package
+refers to with a version, or in a rich dependency, have the epoch-version-releases it was resolved with: the
+resolution itself lists them, from all the packages of the repositories, upstream ones included, the build
+requirements of ours, and the requests of what is published. The architectures
+not cached are resolved at the same time.
 
 ### What the builds record
 

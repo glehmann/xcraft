@@ -174,6 +174,24 @@ def root(
     return root
 
 
+def test_iso_published_by_ci(root: Path, tmp_path: Path) -> None:
+    # signed with the key of the builds of the storage, like those of CI, see root()
+    project = Project.find()
+    ci = release_signer(project)
+    assert ci
+    image = tmp_path / "test.iso"
+    image.write_bytes(secrets.token_bytes(2048))
+    cache_image(project, image, signer=ci)
+    code, output = xcraft("push", "isos")
+    assert code == 0, output
+    shutil.rmtree(project.state / "cache")  # in the storage only
+    # a checkout signing with another key, like the developer's: CI's ISO rather than making it
+    project.frozen = True
+    developer = Signer("0" * 40)
+    assert checkout_iso(project, signer=developer, published=True).read_bytes() == image.read_bytes()
+    assert not (project.state / "publish").exists()
+
+
 def test_iso_cache(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     project = Project.find()
     signer = release_signer(project)
@@ -669,7 +687,7 @@ def test_resolutions_from_the_remote_storage(root: Path, monkeypatch: pytest.Mon
     assert code == 0, output
     assert re.search(r"^resolutions: [1-9]\d* pushed", output, re.MULTILINE)
     assert re.search(r"^resolutions: 0 pushed", xcraft("push", "resolutions", "--to", "main")[1], re.MULTILINE)
-    resolved, log = root / ".xcraft/cache/resolved", root / ".xcraft/logs/_resolve.log"
+    resolved, log = root / ".xcraft/cache/resolved", root / f".xcraft/logs/_resolve-{ARCH}.log"
     caches = sorted(c for c in resolution.resolutions_read() if c.is_relative_to(resolved))
 
     def new_checkout() -> str:
@@ -688,13 +706,46 @@ def test_resolutions_from_the_remote_storage(root: Path, monkeypatch: pytest.Mon
     assert sorted(resolved.rglob("*.json")) == caches
     # resolved, when what the storage has is not what was signed: the build roots of this test only
     project = Project.find()
-    roots = resolution._cache(project, resolution._roots_data(project))
+    roots = resolution._cache(project, resolution._unversioned(project, resolution._roots_data(project)))
     (tampered := root / "tampered.json").write_text("{}")
     storage, tree = remote.storages(project)[0], resolution.remote_tree(roots)
     remote.upload(storage, f"{remote.read_tree(storage, tree)[0]}/{roots.name}", tampered)
     assert "no resolutions from the remote storage" in new_checkout()
     assert log.exists()
     assert sorted(resolved.rglob("*.json")) == caches
+
+
+def test_resolutions_replaced_for_other_versions(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # resolving here, not reading what the other tests resolved, see conftest.py
+    monkeypatch.setattr(resolution, "_run", getattr(resolution._run, "__wrapped__", resolution._run))
+    # build roots of their own, which the version of trivial changes: with-deps requires one
+    trivial = root / "base/trivial/trivial.spec"
+    trivial.write_text(
+        trivial.read_text().replace("BuildArch: noarch", f"BuildArch: noarch\nProvides: t-{secrets.token_hex(4)}")
+    )
+    deps = root / "base/with-deps/with-deps.spec"
+    deps.write_text(deps.read_text().replace("BuildRequires: trivial", "BuildRequires: trivial >= 1.0"))
+    log = root / f".xcraft/logs/_resolve-{ARCH}.log"
+
+    def pushed() -> str:
+        """Push the resolutions, like CI, in a new process."""
+        monkeypatch.setattr(resolution, "_resolved", {})
+        code, output = xcraft("push", "resolutions", "--to", "main")
+        assert code == 0, output
+        return output
+
+    pushed()
+    # another release of trivial: the same key, resolved again, which replaces those of the storage
+    trivial.write_text(trivial.read_text().replace("Release: 1%{?dist}", "Release: 2%{?dist}"))
+    assert re.search(r"^resolutions: [1-9]\d* pushed", pushed(), re.MULTILINE)
+    # a new checkout of it gets them from the storage, rather than resolving
+    shutil.rmtree(root / ".xcraft/cache/resolved")
+    log.unlink(missing_ok=True)
+    monkeypatch.setattr(resolution, "_resolved", {})
+    monkeypatch.setattr(resolution, "_unreachable", set())
+    code, output = xcraft("status")
+    assert code == 0, output
+    assert not log.exists()
 
 
 def test_builds(root: Path) -> None:

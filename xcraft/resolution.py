@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
@@ -30,7 +31,7 @@ from rich.markup import escape
 from xcraft import remote
 from xcraft.builds import drop_gone
 from xcraft.container import BUILDENV, PACKAGES, base_packages, repo_file, run_natively
-from xcraft.display import console
+from xcraft.display import activity, console
 from xcraft.graph import reachable
 from xcraft.localrepo import extra_rpms
 from xcraft.lock import Locked, Pin, cached_lock, choose_versions, load_lock, save_lock
@@ -84,29 +85,33 @@ class Resolved(BaseModel):
     ISO."""
     tools_error: str = ""
     """Why the tools making the ISO cannot be installed."""
+    versioned: dict[str, str] = {}
+    """The binary packages of ours a package refers to with a version, or in a rich dependency, with their
+    epoch-version-releases when resolved: another of them may resolve otherwise, see _unversioned()."""
 
     def image_packages(self) -> dict[str, Locked]:
         """Return the upstream packages of the image."""
         return {name: self.packages[name] for name in self.image}
 
 
-def _run(project: Project, data: dict, *, show: str, rpms: Sequence[Path] = ()) -> Resolved:
+def _run(project: Project, data: dict, *, show: str, rpms: Sequence[Path] = (), quiet: bool = False) -> Resolved:
     """Return what resolve.py resolves from `data` for the platform of `project`, with the built `rpms`, in the cache,
-    and the extra upstream RPMs.
+    and the extra upstream RPMs, showing `show` unless `quiet`. Those of the platforms can run at the same time.
     """
     cache = project.state / "cache"
     paths = sorted(f"/cache/{rpm.relative_to(cache)}" for rpm in [*rpms, *extra_rpms(project)])
     data = {"rpms": paths, "record": {}, "wanted": [], "versions": [], **data}
     if "base" not in data:  # by reference in the cache keys, see _cache()
         data["base"] = base_packages(project)
-    with project.tmp_dir("resolve") as work:
+    with project.tmp_dir(f"resolve-{project.arch}") as work:
         (work / "input.json").write_text(json.dumps(data))
         run_natively(
             project,
-            "resolve",
+            f"resolve-{project.arch}",
             ["python3", "/xcraft/resolve.py", "/work/input.json", "/work/output.json"],
             volumes=[f"{work}:/work", f"{cache}:/cache:ro"],
             show=show,
+            quiet=quiet,
         )
         return Resolved.model_validate_json((work / "output.json").read_text())
 
@@ -180,15 +185,28 @@ def _fetched(project: Project, cache: Path) -> bool:
     return found
 
 
-def _cached(project: Project, data: dict, *, show: str) -> Resolved:
-    """Return what resolve.py resolves from `data`, from the cache when it was resolved before, here or by CI."""
-    if (cache := _cache(project, data)) not in _resolved:
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        if not cache.exists() and not _fetched(project, cache):
-            resolved = _run(project, data, show=show)
-            write_atomically(cache, resolved.model_dump_json())  # for the commands reading it at once
-        _resolved[cache] = Resolved.model_validate_json(cache.read_text())
+def _cached(project: Project, data: dict, *, show: str, quiet: bool = False, key: dict | None = None) -> Resolved:
+    """Return what resolve.py resolves from `data`, from the cache when it was resolved before, here or by CI: by
+    `data`, or what of it changes the result, `key`.
+    """
+    cache = _cache(project, key or data)
+    if (resolved := _resolved.get(cache)) is not None and _holds(resolved, data):
+        return resolved
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    # read again from the file, but when what this process read does not hold, like after a change of a version
+    found = resolved is None and (cache.exists() or _fetched(project, cache))
+    if not found or not _holds(Resolved.model_validate_json(cache.read_text()), data):
+        write_atomically(cache, _run(project, data, show=show, quiet=quiet).model_dump_json())  # for the commands too
+    _resolved[cache] = Resolved.model_validate_json(cache.read_text())
     return _resolved[cache]
+
+
+def _holds(resolved: Resolved, data: dict) -> bool:
+    """Return whether what was `resolved` holds for `data`: with the same epoch-version-releases of the binary packages
+    of ours referred to with a version, which _unversioned() leaves out of the key.
+    """
+    evrs = {b["name"]: b["evr"] for b in data.get("ours", [])}
+    return all(evrs.get(name) == evr for name, evr in resolved.versioned.items())
 
 
 def _image_data(project: Project) -> dict:
@@ -283,10 +301,50 @@ def _roots_data(project: Project) -> dict:
     return {**_image_data(project), "ours": _ours(project), "builds": builds, "runtime": runtime}
 
 
+def _unversioned(project: Project, data: dict) -> dict:
+    """Return the `data` of the build roots, for their cache key, with the epoch-version-releases of our packages as
+    placeholders, in their binary packages and where they are given: a new release of one of them resolves nothing
+    again, but when a package refers to it with a version, which what was resolved tells, see Resolved.versioned.
+    """
+    owner_evrs = {
+        c.split(" ", 1)[0]: b.evr for p in project.packages.values() for b in p.binaries for c in [b.name, *b.provides]
+    }
+
+    def unversioned(capability: str) -> str:
+        if (words := capability.split()) and len(words) == 3 and owner_evrs.get(words[0]) == words[2]:  # noqa: PLR2004
+            return f"{words[0]} {words[1]} @evr@"
+        return capability
+
+    ours = [
+        b
+        | {
+            "evr": "@evr@",
+            **{field: [unversioned(c) for c in b[field]] for field in ("provides", "requires", "recommends")},
+        }
+        for b in data["ours"]
+    ]
+    builds = {n: b | {"buildrequires": [unversioned(r) for r in b["buildrequires"]]} for n, b in data["builds"].items()}
+    return data | {"ours": ours, "builds": builds}
+
+
 def _roots(project: Project) -> Resolved:
-    return _cached(
-        project, _roots_data(project), show=f"resolving the build roots of {project.arch}, and what is published"
-    )
+    data = _roots_data(project)
+    show = f"resolving the build roots of {project.arch}, and what is published"
+    return _cached(project, data, show=show, key=_unversioned(project, data))
+
+
+def _roots_together(platforms: list[Project]) -> None:
+    """Resolve the build roots of the `platforms` not cached yet at the same time, each in its own container, under
+    one activity: they take as long as one of them, rather than as long as all, see prepare().
+    """
+    data = {p.arch: _roots_data(p) for p in platforms}  # parsing the specs, which shows its activity
+    keys = {p.arch: _unversioned(p, data[p.arch]) for p in platforms}
+    caches = {p.arch: _cache(p, keys[p.arch]) for p in platforms}
+    if len(pending := [p for p in platforms if not caches[p.arch].exists()]) < 2:  # noqa: PLR2004
+        return
+    show = f"resolving the build roots of {', '.join(p.arch for p in pending)}, and what is published"
+    with activity(show), ThreadPoolExecutor(len(pending)) as pool:
+        list(pool.map(lambda p: _cached(p, data[p.arch], show=show, quiet=True, key=keys[p.arch]), pending))
 
 
 def resolve(project: Project) -> Resolved:
@@ -460,6 +518,8 @@ def prepare(project: Project, *, roots: bool = True, repin: set[str] | None = No
     if roots:
         for platform in project.all_platforms():
             _locking(platform, _image)
+        _roots_together(project.all_platforms())
+        for platform in project.all_platforms():
             _locking(platform, _roots)
         _record(project, repinned)
     project.refresh()  # for the build roots recorded

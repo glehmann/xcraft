@@ -50,5 +50,14 @@ def iso(
     project = Project.find(arch)
     project.frozen = locked
     signer = choose_signer(project, local=True, unsigned=unsigned, dev_key=False, key=key)
-    path = checkout_iso(project, output, netinstall=netinstall, volid=volid, signer=signer, dev=ident, nocheck=nocheck)
+    path = checkout_iso(
+        project,
+        output,
+        netinstall=netinstall,
+        volid=volid,
+        signer=signer,
+        dev=ident,
+        nocheck=nocheck,
+        published=not (key or unsigned),  # CI's, rather than one made with the developer's key
+    )
     console.print(f"[bold green]✓[/] {path}")

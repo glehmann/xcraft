@@ -25,12 +25,11 @@ from xcraft.display import activity, changes, console
 from xcraft.lock import load_lock
 from xcraft.pinned import REPO_ID
 from xcraft.project import INTERNAL
-from xcraft.signing import key_paths, key_signer, repo_keys
+from xcraft.signing import Signer, key_paths, key_signer, repo_keys
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
     from xcraft.project import Project, Remote
-    from xcraft.signing import Signer
 
 _INSTALL_TOOLS = (
     f"{container.DNF_LOCK} dnf -q -y --disablerepo='*' --enablerepo={REPO_ID} --setopt=install_weak_deps=False install "
@@ -383,6 +382,13 @@ def snapshot_isos(project: Project, snapshot: Path, dest: Path, *, signer: Signe
     return isos
 
 
+def _build_signers(project: Project) -> list[Signer]:
+    """Return the keys of the builds of the remote storages, which sign what CI publishes, see Remote.build_keys."""
+    return [
+        Signer(key) for key in sorted({k for storage in project.config.remote.values() for k in storage.build_keys})
+    ]
+
+
 def checkout_iso(
     project: Project,
     output: Path | None = None,
@@ -392,17 +398,25 @@ def checkout_iso(
     signer: Signer | None = None,
     dev: str | None = None,
     nocheck: bool = False,
+    published: bool = False,
 ) -> Path:
     """Return the ISO of the checkout: build or fetch its packages, assemble a local snapshot, and make its ISO.
 
     With the development builds `dev`, like xcraft build makes them, or final builds only without, and without the
-    tests of the specs with `nocheck`.
+    tests of the specs with `nocheck`. With `published`, when the ISO signed by `signer` is neither cached nor in the
+    remote storage, the one CI published, signed with a key of the builds of the storage, is taken rather than made.
     """
     with project.lock():
         dev = dev if dev_suffixes(project, dev) else None  # of final builds only otherwise, like the remote storage's
         key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck)
         if found := _existing_iso(project, key, output, netinstall=netinstall, signer=signer, dev=dev):
             return found
+        for ci in [] if dev or nocheck or not published else _build_signers(project):
+            ci_key = iso_key(project, netinstall=netinstall, volid=volid, signer=ci)
+            if ci.key != (signer and signer.key) and (
+                found := _existing_iso(project, ci_key, output, netinstall=netinstall, signer=ci, dev=None)
+            ):
+                return found
         checkout = _checkout_inputs(project)
         resolution.prepare(project)
         dest = (project.state / "publish").absolute()

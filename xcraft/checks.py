@@ -167,6 +167,7 @@ def _record_new_rpm_deps(
         for name in supplied
     }
     in_specs = {as_built: parsed for binaries in names.values() for as_built, parsed in binaries.items()}
+    owners = {b.name: n for n in supplied for b in project.parsed[n].binaries}
     binaries = {
         name: [b for rpm in _rpms(build) if (b := rpm.name.rsplit("-", 2)[0]) in names[name]]
         for name, build in builds.items()
@@ -185,15 +186,21 @@ def _record_new_rpm_deps(
                     f"[yellow]cannot record what rpm generated for {binary}[/]: {escape(result.errors[binary])}"
                 )
         resolved = [b for b in binaries[name] if b not in failed]
+        requires = {
+            names[name][b]: [in_specs.get(r, r) for r in result.requires[b]] for b in resolved if b in result.requires
+        }
         recorded = {
             "version": RECORDING,
             "context": context,
-            # the packages of ours they need by their names in the specs too, whatever their builds
-            "requires": {
-                names[name][b]: [in_specs.get(r, r) for r in result.requires[b]]
-                for b in resolved
-                if b in result.requires
+            # but the builds of ours, see record_rpm_deps()
+            "base": rpm_deps_context(project, {}),
+            # and our packages there, which may provide what it requires, and those it resolved to, with their keys
+            "present": sorted(supplied),
+            "ours": {
+                o: supplied[o] for o in sorted({owners[r] for rs in requires.values() for r in rs if r in owners})
             },
+            # the packages of ours they need by their names in the specs too, whatever their builds
+            "requires": requires,
             "provides": {names[name][b]: result.provides[b] for b in resolved if b in result.provides},
             "unresolved": failed,
         }
@@ -217,23 +224,57 @@ def _unsuffixed(project: Project, name: str, value: str, suffix: str) -> str:
     return value.removesuffix(suffix) if suffix else value
 
 
-def record_rpm_deps(project: Project, names: list[str], keys: dict[str, str], *, quiet: bool = False) -> bool:
+def _kept_rpm_deps(build: Path, context: str, base: str, supplied: dict[str, str], *, loose: bool) -> dict | None:
+    """Return what `build` kept of what rpm generated, its rpm-deps.json, if it holds, else None.
+
+    It holds when its `context` is the current one, or else when all of these are the same as when it was resolved:
+    - the base context, `base`: the context without the builds of ours, like the lock and the repositories;
+    - the names of the packages of ours with builds there, those `supplied`, which may provide what it requires;
+    - the cache keys of the builds of ours its requirements resolved to.
+    When `loose`, the base context is enough.
+    """
+    recorded = json.loads(path.read_text()) if (path := build / "rpm-deps.json").exists() else {}
+    if recorded.get("version") != RECORDING:
+        return None
+    if recorded.get("context") == context:
+        return recorded
+    if recorded.get("base") != base or recorded.get("ours") is None:  # recorded without them
+        return None
+    if loose:
+        return recorded
+    ours = recorded["ours"].items()
+    return (
+        recorded if recorded.get("present") == sorted(supplied) and all(supplied.get(n) == k for n, k in ours) else None
+    )
+
+
+def record_rpm_deps(
+    project: Project, names: list[str], keys: dict[str, str], *, quiet: bool = False, loose: bool = False
+) -> bool:
     """Record in the lock of the builds what rpm generated for the binary packages of the cached builds of `names`, with
     `keys`, without their release suffixes, nor the provides their specs declare, and return whether it changed.
 
     What a build generated is kept with it, for the same version of the recording, RECORDING, and what its requirements
     are resolved with, the builds of ours included: see rpm_deps_context(). The binary packages which cannot be
     resolved yet are shown, unless `quiet`, and resolved again each time, while the others are recorded.
+
+    What a build kept is used rather than resolved again while it holds, see _kept_rpm_deps(): a new build of another
+    package of ours resolves it again only when its requirements resolved to that package. A build of ours providing
+    something its requirements resolved to upstream is not noticed then.
+
+    With `loose`, what the builds kept is recorded while the base context alone is the same: to restore what they
+    recorded before the build keys are computed, without resolving it again; only the builds without what they
+    generated kept, or with packages unresolved, are resolved. The builds record it all again after them, see
+    xcraft.build.
     """
     # the builds the requirements may resolve to
     supplied = {n: k for n, k in keys.items() if cached_build(project, n, k).exists()}
     if not (builds := {n: cached_build(project, n, keys[n]) for n in names if n in supplied}):
         return False
-    context = rpm_deps_context(project, supplied)
+    context, base = rpm_deps_context(project, supplied), rpm_deps_context(project, {})
 
     def found(build: Path) -> dict | None:
-        recorded = json.loads(path.read_text()) if (path := build / "rpm-deps.json").exists() else {}
-        return recorded if (recorded.get("version"), recorded.get("context")) == (RECORDING, context) else None
+        return _kept_rpm_deps(build, context, base, supplied, loose=loose)
 
     if new := {name: build for name, build in builds.items() if not (kept := found(build)) or kept.get("unresolved")}:
         _record_new_rpm_deps(project, new, supplied, context, quiet=quiet)

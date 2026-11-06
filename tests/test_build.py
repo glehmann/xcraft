@@ -20,7 +20,7 @@ from typer.testing import CliRunner
 
 from tests import ARCH, TOML, TOYS, copy_project
 from xcraft import build as builder
-from xcraft import buildid, container, localrepo, pinned, process, resolution
+from xcraft import buildid, checks, container, localrepo, pinned, process, resolution
 from xcraft.__main__ import app
 from xcraft.builds import builds_path, load_builds, save_builds
 from xcraft.cache import BuildError
@@ -787,6 +787,137 @@ def test_recorded_of_binaries_named_with_their_releases(root: Path) -> None:
     assert load_builds(Project.find()).requires.of(ARCH) == {"trivial-lp_1.0_1.xcpng8.99": ["tcl"]}
 
 
+def test_recorded_once_after_a_change(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # what trivial recorded, with the former build of with-deps there, which it does not resolve to: recorded as it is,
+    # rather than resolved again; with-deps records its own when built
+    assert xcraft("build")[0] == 0
+    edit_spec = root / "base/with-deps/with-deps.spec"
+    edit_spec.write_text(f"# changed\n{edit_spec.read_text()}")
+    resolved: list[list[str]] = []
+    resolve = checks.resolve_rpm_deps
+
+    def counted(project: Project, names: dict[str, str], rpms: list[Path]) -> resolution.Resolved:
+        resolved.append(sorted(names.values()))
+        return resolve(project, names, rpms)
+
+    monkeypatch.setattr(checks, "resolve_rpm_deps", counted)
+    code, output = xcraft("build")
+    assert code == 0, output
+    assert [line.split(" in ")[0] for line in results(output)] == ["✓ with-deps built", "1 built, 1 cached"]
+    assert resolved == [["with-deps"]]
+
+
+def test_build_roots_kept_for_another_release(root: Path) -> None:
+    def key() -> Path:
+        project = Project.find()
+        return resolution._cache(project, resolution._unversioned(project, resolution._roots_data(project)))
+
+    def release(name: str, number: int) -> None:
+        spec = root / f"base/{name}/{name}.spec"
+        spec.write_text(re.sub(r"^Release: \d+", f"Release: {number}", spec.read_text(), flags=re.MULTILINE))
+
+    # another release of trivial, whose version with-deps does not compare: the same build roots
+    first = key()
+    release("trivial", 2)
+    assert key() == first
+
+
+def _roots_key() -> Path:
+    """Return the cache of the build roots of the project, as looked up, with the lock as it is."""
+    project = Project.find()
+    return resolution._cache(project, resolution._unversioned(project, resolution._roots_data(project)))
+
+
+def _resolved_again(monkeypatch: pytest.MonkeyPatch, *, new_process: bool = True) -> tuple[Path, resolution.Resolved]:
+    """Return the cache of the build roots of the project looked up, before what the resolution locks, and what they
+    resolve to, in a new process, or in this one, with what it read already.
+    """
+    if new_process:
+        monkeypatch.setattr(resolution, "_resolved", {})
+    cache = _roots_key()
+    resolution.prepare(project := Project.find())
+    return cache, resolution.resolve(project)
+
+
+def test_build_roots_resolved_again_for_versions_upstream_requires(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # upstream toyrun-bin, published, requires toyrun = 2-1: ours, while of that version, or else the upstream one
+    write_spec(root, "toyrun")
+    spec = root / "base/toyrun/toyrun.spec"
+    spec.write_text(spec.read_text().replace("Version: 1.0", "Version: 2").replace("Release: 1%{?dist}", "Release: 1"))
+    (root / "xcraft.toml").write_text(f'{TOML}\n[publish]\nextra = ["toyrun-bin"]\n')
+    lock = load_lock(Project.find())
+    lock.sources["toyrun"] = "2-1"
+    save_lock(Project.find(), lock)
+    resolved = _resolved_again(monkeypatch)[1]
+    assert "toyrun" not in resolved.runtime
+    cache = _roots_key()  # with what the resolution locked
+    spec.write_text(spec.read_text().replace("Version: 2", "Version: 3"))
+    # the same key, without the versions of ours, but resolved again, as toyrun-bin refers to its version
+    again, resolved = _resolved_again(monkeypatch)
+    assert again == cache
+    assert "toyrun" in resolved.runtime
+
+
+def test_build_roots_resolved_again_for_versions_of_build_requirements(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = root / "base/with-deps/with-deps.spec"
+    spec.write_text(spec.read_text().replace("BuildRequires: trivial", "BuildRequires: trivial >= 1.0-2.xcpng8.99"))
+    resolved = _resolved_again(monkeypatch)[1]
+    assert "with-deps" in resolved.errors
+    cache = _roots_key()
+    trivial = root / "base/trivial/trivial.spec"
+    trivial.write_text(trivial.read_text().replace("Release: 1%{?dist}", "Release: 3%{?dist}"))
+    again, resolved = _resolved_again(monkeypatch)
+    assert again == cache
+    assert "with-deps" not in resolved.errors
+
+
+def test_build_roots_resolved_again_for_versions_of_rich_dependencies(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = root / "base/with-deps/with-deps.spec"
+    spec.write_text(
+        spec.read_text().replace(
+            "BuildArch: noarch", "BuildArch: noarch\nRequires: (trivial >= 1.0-2.xcpng8.99 or nonexistent)"
+        )
+    )
+    resolved = _resolved_again(monkeypatch)[1]
+    assert resolved.runtime_errors
+    cache = _roots_key()
+    trivial = root / "base/trivial/trivial.spec"
+    trivial.write_text(trivial.read_text().replace("Release: 1%{?dist}", "Release: 2%{?dist}"))
+    again, resolved = _resolved_again(monkeypatch)
+    assert again == cache
+    assert not resolved.runtime_errors
+
+
+def test_build_roots_resolved_again_for_versions_published(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (root / "xcraft.toml").write_text(f'{TOML}\n[publish]\nextra = ["trivial >= 1.0-2.xcpng8.99"]\n')
+    resolved = _resolved_again(monkeypatch)[1]
+    assert resolved.runtime_errors
+    cache = _roots_key()
+    trivial = root / "base/trivial/trivial.spec"
+    trivial.write_text(trivial.read_text().replace("Release: 1%{?dist}", "Release: 2%{?dist}"))
+    again, resolved = _resolved_again(monkeypatch)
+    assert again == cache
+    assert not resolved.runtime_errors
+
+
+def test_build_roots_resolved_again_in_the_same_process(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # what the process read of the resolution of the former version, kept in memory, does not hold either; of a
+    # version no release of trivial has, the same key
+    spec = root / "base/with-deps/with-deps.spec"
+    spec.write_text(spec.read_text().replace("BuildRequires: trivial", "BuildRequires: trivial >= 1.0-2"))
+    assert "with-deps" in _resolved_again(monkeypatch)[1].errors
+    cache = _roots_key()
+    trivial = root / "base/trivial/trivial.spec"
+    trivial.write_text(trivial.read_text().replace("Release: 1%{?dist}", "Release: 2%{?dist}"))
+    again, resolved = _resolved_again(monkeypatch, new_process=False)
+    assert again == cache
+    assert "with-deps" not in resolved.errors
+
+
 def test_lock_update_changing_implicit_deps(root: Path) -> None:
     # a script run by toyrun, upstream, which rpm generates a requirement on
     spec = root / "base/trivial/trivial.spec"
@@ -992,9 +1123,11 @@ def test_building_until_recorded(root: Path, monkeypatch: pytest.MonkeyPatch) ->
     states = []
     record = builder.record_rpm_deps
 
-    def recording(project: Project, names: list[str], keys: dict[str, str], *, quiet: bool = False) -> bool:
+    def recording(
+        project: Project, names: list[str], keys: dict[str, str], *, quiet: bool = False, loose: bool = False
+    ) -> bool:
         states.extend(builder.building(project, name) for name in names)
-        return record(project, names, keys, quiet=quiet)
+        return record(project, names, keys, quiet=quiet, loose=loose)
 
     monkeypatch.setattr(builder, "record_rpm_deps", recording)
     code, output = xcraft("build", "trivial")

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from xcraft.buildenv.resolve import canonical, entry, primary, write_repo
+from xcraft.buildenv.resolve import canonical, entry, primary, versioned_names, write_repo
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -59,3 +59,19 @@ def test_repository_of_ours(tmp_path: Path) -> None:
     compressed = (tmp_path / "repodata/primary.xml.gz").read_bytes()
     assert gzip.decompress(compressed) == primary([binary])
     assert hashlib.sha256(compressed).hexdigest() in (tmp_path / "repodata/repomd.xml").read_text()
+
+
+@pytest.mark.parametrize(
+    ("dep", "names"),
+    [
+        ("trivial >= 1.0-2", ["trivial"]),
+        ("trivial", []),  # without a version
+        ("/usr/bin/toyrun", []),
+        ("pkgconfig(foo) = 1.0", ["pkgconfig(foo)"]),
+        # rich: all the words, the capabilities with their own parentheses
+        ("(pkgconfig(example) >= 1.0-2 or nonexistent)", ["pkgconfig(example)", ">=", "1.0-2", "or", "nonexistent"]),
+        ("((a or b) with c(x))", ["a", "or", "b", "with", "c(x)"]),
+    ],
+)
+def test_versioned_names(dep: str, names: list[str]) -> None:
+    assert versioned_names(dep) == names

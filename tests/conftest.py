@@ -78,7 +78,7 @@ def _shared_resolutions(directory: Path) -> Callable[..., Resolved]:
     run = resolution._run
 
     @functools.wraps(run)
-    def shared(project: Project, data: dict, *, show: str, rpms: Sequence[Path] = ()) -> Resolved:
+    def shared(project: Project, data: dict, *, show: str, rpms: Sequence[Path] = (), quiet: bool = False) -> Resolved:
         local = [Path(volume.split(":")[0]) / "repodata/repomd.xml" for volume in container._local_repos(project)]
         inputs = [
             (BUILDENV / "resolve.py").read_text(), repo_file(project), upstream_copy.repo_file(project), project.arch,
@@ -89,7 +89,7 @@ def _shared_resolutions(directory: Path) -> Callable[..., Resolved]:
         if path.exists():
             os.utime(path)  # used, see XCRAFT_TEST_RESOLUTIONS
             return Resolved.model_validate_json(path.read_text())
-        resolved = run(project, data, show=show, rpms=rpms)
+        resolved = run(project, data, show=show, rpms=rpms, quiet=quiet)
         path.parent.mkdir(parents=True, exist_ok=True)
         write_atomically(path, resolved.model_dump_json())
         return resolved

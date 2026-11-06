@@ -415,7 +415,14 @@ def base_packages(project: Project) -> list[str]:
 
 
 def run_natively(
-    project: Project, step: str, args: list[str], *, volumes: list[str], show: str, repos: dict[str, str] | None = None
+    project: Project,
+    step: str,
+    args: list[str],
+    *,
+    volumes: list[str],
+    show: str,
+    repos: dict[str, str] | None = None,
+    quiet: bool = False,
 ) -> None:
     """Run `args` as root in the base image of the host, for the platform of `project`, with its repositories, the
     upstream copies of the storages, see xcraft.upstream_copy, the other `repos`, by file name, and its dnf cache,
@@ -445,7 +452,8 @@ def run_natively(
             "--security-opt", "label=disable", *(a for v in [*mounts, *volumes] for a in ("--volume", v)),
             base_image(native), "flock", "/var/cache/dnf/.xcraft.lock", *args,
         ]  # fmt: skip
-        with activity(show) as on_line:
+        # quiet, for those run at the same time, under one activity: one only shows at a time
+        with nullcontext(lambda _: None) if quiet else activity(show) as on_line:
             try:
                 failed = _run_logged(cmd, log, on_line, container)
             except BaseException:

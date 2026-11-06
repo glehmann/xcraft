@@ -17,7 +17,7 @@ from xcraft.iso import push_isos
 from xcraft.project import Project, Remote
 from xcraft.resolution import remote_tree, resolutions_read
 from xcraft.signing import Signer, key_signer
-from xcraft.sources import has_cached_source, read_manifest, source_path
+from xcraft.sources import has_cached_source, read_manifest, sha256_of, source_path
 
 app = typer.Typer()
 
@@ -93,17 +93,18 @@ def _push_builds(
 
 
 def _push_resolutions(project: Project, storage: Remote, *, signer: Signer | None) -> None:
-    """Upload the resolutions this process read, those of the project as it is once loaded, which `storage` misses."""
+    """Upload the resolutions this process read, those of the project as it is once loaded, which `storage` misses, or
+    has others of: resolved again here, as the versions of the packages of ours they depend on changed, see
+    resolution._holds(), which the storage gets in their place, a new generation of their tree.
+    """
     caches = project.state / "cache/resolved"
     trees = {remote_tree(cache): cache for cache in sorted(resolutions_read()) if cache.is_relative_to(caches)}
+
+    def stored(tree: str) -> str | None:
+        return remote.read_manifest(storage, tree, trusted=signer).get(trees[tree].name)
+
     with activity("checking the remote storage"), ThreadPoolExecutor(remote.REQUESTS) as pool:
-        missing = [
-            t
-            for t, exists in zip(
-                trees, pool.map(lambda t: remote.tree_exists(storage, t, trusted=signer), trees), strict=True
-            )
-            if not exists
-        ]
+        missing = [t for t, sha in zip(trees, pool.map(stored, trees), strict=True) if sha != sha256_of(trees[t])]
     for tree in missing:
         with activity("uploading the resolutions"):
             remote.upload_tree(storage, tree, trees[tree].parent, [trees[tree].name], signer=signer)

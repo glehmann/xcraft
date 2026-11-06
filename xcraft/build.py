@@ -205,14 +205,19 @@ def update_build_ids(project: Project) -> list[str]:
 
 
 def _record_cached(project: Project, dev: str | None) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
-    """Record what rpm generated for the cached builds of the current keys, and return the keys, with what they
-    recorded, the hashes of the package directories they have, and the suffixes of the development builds `dev`.
+    """Return the keys, the hashes of the package directories they have, and the suffixes of the development builds
+    `dev`, with what rpm generated for the cached builds of these keys recorded first: restored from what they kept,
+    without resolving it again but for those without it, which the builds do after them, see _recorded_again().
     """
     hashes = buildkey.directories(project)
     for _ in range(5):
         keys, autorev = dev_keys(project, dev, hashes)
         if not record_rpm_deps(
-            project, [n for n, k in keys.items() if cached_build(project, n, k).exists()], keys, quiet=True
+            project,
+            [n for n, k in keys.items() if cached_build(project, n, k).exists()],
+            keys,
+            quiet=True,
+            loose=True,
         ):
             return keys, hashes, autorev
         resolution.prepare(project)  # for what they recorded

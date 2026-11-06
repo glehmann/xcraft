@@ -144,7 +144,7 @@ def boot(
     if not iso:
         project.frozen = locked
         signer = choose_signer(project, local=True, unsigned=unsigned, dev_key=False, key=key)
-        iso = checkout_iso(project, signer=signer, dev=ident, nocheck=nocheck)
+        iso = checkout_iso(project, signer=signer, dev=ident, nocheck=nocheck, published=not (key or unsigned))
         console.print(f"[bold green]✓[/] {iso}")
     with project.lock():
         vm.check_stopped(vm_dir)

@@ -114,6 +114,24 @@ def write_repo(path: Path, ours: list[dict]) -> None:
     )
 
 
+def versioned_names(dep: str) -> list[str]:
+    """Return the names a dependency `dep` refers to with a version, like ``foo >= 1.0``, or in a rich dependency, like
+    ``(pkgconfig(foo) >= 1.0 or bar)``: all its words then, with the parentheses of its syntax stripped, not those of
+    the names, which the keywords and the versions do not match.
+    """
+    if not dep.startswith("("):
+        return [words[0]] if len(words := dep.split()) == 3 else []  # noqa: PLR2004, name, operator, version
+    names = []
+    for word in dep.split():
+        name = word
+        while name.startswith("(") and name.count("(") > name.count(")"):
+            name = name[1:]
+        while name.endswith(")") and name.count(")") > name.count("("):
+            name = name[:-1]
+        names.append(name)
+    return names
+
+
 class Resolver:
     """dnf, on the repositories of the architecture of `data`, with the upstream packages of the locked versions only,
     and ours.
@@ -336,6 +354,25 @@ class Resolver:
             ),
         )
 
+    def versioned(self) -> dict[str, str]:
+        """Return the binary packages of ours a package of the repositories, upstream or ours, a build of ours, or what
+        is published refers to with a version, or in a rich dependency, by any of their names, with their
+        epoch-version-releases: their other versions may resolve otherwise, which xcraft.resolution checks before
+        using what this resolved for others.
+        """
+        providers: dict[str, set[str]] = {}  # the names of ours, and their capabilities, to those having them
+        for p in self.ours.values():
+            for name in [p.name, *(str(c).split(" ", 1)[0] for c in p.provides)]:
+                providers.setdefault(name, set()).add(p.name)
+        relations = ("requires", "recommends", "suggests", "supplements", "enhances", "conflicts", "obsoletes")
+        deps = [str(d) for p in self.base.sack.query().available() for r in relations for d in getattr(p, r)]
+        # and the build requirements of ours, and the requests of what is published, not in the metadata of packages
+        deps += [r for build in self.data.get("builds", {}).values() for r in build["buildrequires"]]
+        runtime = self.data.get("runtime", {})
+        deps += [*runtime.get("extra", []), *runtime.get("installer", []), *runtime.get("iso", [])]
+        found = {b for dep in deps for name in versioned_names(dep) for b in providers.get(name, ())}
+        return {name: self.ours[name].evr for name in sorted(found)}
+
     def by_version(self, vrs: set[str]) -> list[str]:
         """Return the versions-releases `vrs`, oldest first."""
 
@@ -385,6 +422,8 @@ def main() -> None:
         if (source := resolver.canonical(p.sourcerpm)[0]) in locked
     }
     result["unlocked"] = sorted(resolver.needed - locked.keys())
+    if "builds" in data:  # see xcraft.resolution._unversioned()
+        result["versioned"] = resolver.versioned()
     result["versions"] = {
         s: resolver.by_version(resolver.versions[s])
         for s in {*result["unlocked"], *data["versions"]}
