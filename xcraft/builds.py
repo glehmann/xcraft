@@ -39,6 +39,9 @@ class BuildId(BaseModel):
     """The build key, the same on all the architectures."""
     accepts: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     """The build key a reused build is accepted for, the current one: an equivalence, chosen with xcraft reuse."""
+    evr: str | None = None
+    """The epoch-version-release of the package, without %dist: the numbers start again at 1 when it goes up. None for
+    the build IDs given before it was recorded."""
 
     def text(self) -> str:
         """Return it on one line: ``<number> <key>``, and ``accepts <key>`` for a reused build."""
@@ -102,7 +105,9 @@ def parse_builds(text: str) -> Builds:
     builds = Builds()
     for package, entries in tomllib.loads(_unconflicted(text)).items():
         if "build" in entries:
-            builds.ids[package] = BuildId(number=entries["build"], key=entries["key"], accepts=entries.get("accepts"))
+            builds.ids[package] = BuildId(
+                number=entries["build"], key=entries["key"], accepts=entries.get("accepts"), evr=entries.get("evr")
+            )
         for arch, found in [
             ("", entries),
             *((a, v) for a, v in entries.items() if isinstance(v, dict) and a not in FIELDS),
@@ -153,6 +158,8 @@ def render(project: Project, builds: Builds) -> str:
         add(name, "key", i.key)
         if i.accepts:
             add(name, "accepts", i.accepts)
+        if i.evr:
+            add(name, "evr", i.evr)
     arches = sorted({a for field in FIELDS for a in getattr(builds, field).arches})
     for arch in ["", *arches]:
         for field in FIELDS:

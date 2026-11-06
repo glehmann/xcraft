@@ -368,11 +368,12 @@ def test_development_builds_against_other_ones(root: Path) -> None:
 def test_development_builds_changed_by_others(root: Path) -> None:
     commit_base(root)
     git(root, "checkout", "-qb", "feature")
-    # another release: what rpm generated for trivial, which with-deps is built against, changes with its build
+    # another release: what rpm generated for trivial, which with-deps is built against, changes with its build; the
+    # builds of the new release are numbered from 1, those of with-deps, of the same one, from the next number
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace("Release: 1%{?dist}", "Release: 2%{?dist}"))
     assert built() == [
-        "trivial-1.0-2+b2~1.dev.xcpng8.99.noarch.rpm",
+        "trivial-1.0-2+b1~1.dev.xcpng8.99.noarch.rpm",
         "with-deps-1.0-1+b2~1.dev.xcpng8.99.noarch.rpm",
     ]
     assert re.search(r"^with-deps +1\.0-1\+b2~1\.dev\.xcpng8\.99 +built", xcraft("status")[1], re.MULTILINE)
@@ -440,6 +441,41 @@ def test_numbers_given_again_on_main_branch(root: Path) -> None:
         buildid.check_first_parent(project, ids)
     ids["trivial"] = ids["trivial"].model_copy(update={"number": 3})
     buildid.check_first_parent(project, ids)
+
+
+def test_numbers_start_again_for_a_new_evr(root: Path) -> None:
+    commit_base(root)
+    assert buildid.read(Project.find())["trivial"].evr == "1.0-1"
+    # without the epoch-version-releases, like given before they were recorded: added, for the same numbers
+    builds = root / "xcraft.builds"
+    builds.write_text("".join(line for line in builds.read_text().splitlines(keepends=True) if ".evr = " not in line))
+    git(root, "commit", "-qam", "without the EVRs")
+    assert buildid.read(Project.find())["trivial"].evr is None
+    assert update() == {"trivial": 1, "with-deps": 1}
+    assert buildid.read(Project.find())["trivial"].evr == "1.0-1"
+    git(root, "commit", "-qam", "with the EVRs")
+    edit(root, "changed")
+    assert update() == {"trivial": 2, "with-deps": 2}
+    git(root, "commit", "-qam", "changed")
+
+    def release(number: int) -> None:
+        spec = root / "base/trivial/trivial.spec"
+        spec.write_text(re.sub(r"^Release: \d+", f"Release: {number}", spec.read_text(), flags=re.MULTILINE))
+
+    # a greater release: from 1, which the name of its RPMs tells apart, but not for with-deps, built against it
+    release(2)
+    assert update() == {"trivial": 1, "with-deps": 3}
+    assert buildid.read(Project.find())["trivial"].evr == "1.0-2"
+    git(root, "commit", "-qam", "release 2")
+    project = Project.find()
+    project.frozen = True
+    buildid.update(project)  # on the main branch, checked against the previous commit
+    # back to a lower one, whose numbers were given before, like 1.0-1+b2: refused
+    release(1)
+    with pytest.raises(buildid.BuildIdError, match=r"goes down, from that of master: trivial 1\.0-2 to 1\.0-1; "):
+        buildid.update(Project.find())
+    release(3)
+    assert update()["trivial"] == 1
 
 
 def test_reused_builds(root: Path) -> None:

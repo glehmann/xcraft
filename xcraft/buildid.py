@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from rpm_version import evr_compare  # ty: ignore[unresolved-import]  # pyright: ignore[reportAttributeAccessIssue]
+
 from xcraft import buildkey, process
 from xcraft.builds import BuildId, builds_path, load_builds, parse_builds, save_builds
 from xcraft.display import console
@@ -82,10 +84,21 @@ def _on_main(project: Project) -> bool:
     return bool(main := _main(project)) and _git(project, "merge-base", "--is-ancestor", "HEAD", main) is not None
 
 
+def _evr(project: Project, name: str) -> str | None:
+    """Return the epoch-version-release of the package `name`, without %dist, if its spec is parsed."""
+    package = project.parsed.get(name)
+    return package.binaries[0].evr.removesuffix(package.dist) if package and package.binaries else None
+
+
+def _newer(evr: str | None, than: str | None) -> bool:
+    """Return whether the epoch-version-release `evr` is greater than `than`, both known: its builds start at 1."""
+    return bool(evr and than) and evr_compare(evr, than) > 0
+
+
 def check_first_parent(project: Project, ids: dict[str, BuildId]) -> None:
     """On the main branch, check that the packages whose build key changed since the first parent of the current
-    commit have greater numbers: one number is never given to two different builds, even by a merge conflict resolved
-    by keeping one side.
+    commit have greater numbers, or greater epoch-version-releases: one number is never given to two different builds
+    of an EVR, even by a merge conflict resolved by keeping one side.
     """
     if not _on_main(project):
         return
@@ -94,7 +107,9 @@ def check_first_parent(project: Project, ids: dict[str, BuildId]) -> None:
         return
     previous = _at(project, parent)
     if reused := sorted(
-        name for name, i in ids.items() if (p := previous.get(name)) and p.key != i.key and i.number <= p.number
+        name
+        for name, i in ids.items()
+        if (p := previous.get(name)) and p.key != i.key and i.number <= p.number and not _newer(i.evr, p.evr)
     ):
         msg = f"build numbers given again to other builds, since the previous commit: {', '.join(reused)}"
         raise BuildIdError(msg)
@@ -103,10 +118,19 @@ def check_first_parent(project: Project, ids: dict[str, BuildId]) -> None:
 def update(project: Project, reuse: Callable[[str, dict[str, BuildId]], bool] | None = None) -> list[str]:
     """Write the build IDs of the packages, and return those changed, those `reuse` takes reusing their builds, see
     compute(). When the project is frozen, fail instead if they would change, or, on the main branch, if they reuse the
-    numbers of the previous commit for other builds.
+    numbers of the previous commit for other builds. Fail when a package changed gets a lower epoch-version-release
+    than the main branch's, whose numbers may have been given before.
     """
-    ids, current = compute(project, base(project), reuse=reuse), read(project)
+    fork, current = base(project), read(project)
+    ids = compute(project, fork, reuse=reuse)
     changed = sorted(name for name in ids.keys() | current.keys() if ids.get(name) != current.get(name))
+    if lowered := sorted(n for n in changed if n in ids and (f := (fork or {}).get(n)) and _newer(f.evr, ids[n].evr)):
+        evrs = ", ".join(f"{n} {(fork or {})[n].evr} to {ids[n].evr}" for n in lowered)
+        msg = (
+            f"the epoch-version-release goes down, from that of {project.config.main_branch}: {evrs}; its builds could "
+            "get the numbers of earlier ones, and the hosts would not upgrade to them: raise the epoch, or the release"
+        )
+        raise BuildIdError(msg)
     if project.frozen:
         if changed:
             msg = f"the build IDs would change, which --locked forbids: {', '.join(changed)}"
@@ -190,8 +214,10 @@ def compute(
 
     A package with the key of the fork keeps its build ID, and so does one reusing a build for the key, there or in the
     working tree, while it is the fork's. Otherwise, a package `reuse` takes, with the build IDs of those before it,
-    reuses the build of the fork, accepting the key; and the others get the next number of the fork's. The numbers the
-    main branch gave since the fork do not count: giving one again conflicts on merge, in the lines of the package.
+    reuses the build of the fork, accepting the key; and the others get the next number of the fork's, or 1 for a
+    greater epoch-version-release than the fork's, which tells its builds apart already: a lower one, whose numbers
+    may have been given before, fails update(). The numbers the main branch gave since the fork do not count: giving
+    one again conflicts on merge, in the lines of the package.
     Without the main branch, the numbers are those of the working tree, 1 for new packages: there is nothing to number
     them against.
     """
@@ -207,13 +233,17 @@ def compute(
             # still the fork's build
             reused = [i for i in (current.get(name),) if i and i.accepts and (fork is None or i.same(fork.get(name)))]
             if found := next((i for i in [*filter(None, [known]), *reused] if i.matches(key)), None):
-                ids[name] = found
+                # with its epoch-version-release, if given before it was recorded: that of its spec, of the same key
+                ids[name] = found if found.evr else found.model_copy(update={"evr": _evr(project, name)})
             elif known and reuse and reuse(name, ids):
                 ids[name] = known.model_copy(update={"accepts": key})
             elif fork is None:
-                ids[name] = BuildId(number=known.number if known else 1, key=key)
+                ids[name] = BuildId(number=known.number if known else 1, key=key, evr=_evr(project, name))
             else:
-                ids[name] = BuildId(number=known.number + 1 if known else 1, key=key)
+                evr = _evr(project, name)
+                ids[name] = BuildId(
+                    number=known.number + 1 if known and not _newer(evr, known.evr) else 1, key=key, evr=evr
+                )
     return ids
 
 

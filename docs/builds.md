@@ -66,7 +66,12 @@ lines, like `xen.build = 42` and `xen.key = "3f1c…e2a0"`. The number is in the
 building, and after, with what the builds found.
 
 A package keeps the build ID of the main branch, `main_branch` of `xcraft.toml`, `master` by default, where the
-current branch forks from it, as long as its key is the same. Otherwise it gets the next number: a branch keeps the
+current branch forks from it, as long as its key is the same. Otherwise it gets the next number, or 1 when its
+epoch-version-release, without `%{dist}`, is greater than there, like after `xcraft bump`: `xcraft.builds` records it,
+as `xen.evr = "4.17.5-1"`, and its RPMs tell the builds of the new one apart already. A lower one than there fails, as
+its builds could get the numbers of earlier ones, and the hosts would not upgrade to them: raise the epoch instead.
+Without its `evr` line, which the build IDs given before it lack, the number is the next one: `xcraft build --ids`
+adds those lines, to commit on the main branch. A branch keeps the
 same number however many times it changes the package, whatever the main branch got since, and once another branch got
 that number on the main branch, merging it conflicts, and computing the build IDs again gives the next one, even while
 the merge is in progress. The packages built against it get new numbers too. The reason of a new number is in
