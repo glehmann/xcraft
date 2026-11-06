@@ -212,6 +212,7 @@ def _existing_iso(
     """
     tree = cached_iso(project, key)
     if tree.exists():
+        os.utime(tree)  # used, see xcraft clean --unused
         return _copy_iso(project, tree, output, netinstall=netinstall, signer=signer, dev=dev)
     if not project.config.remote or dev:
         return None

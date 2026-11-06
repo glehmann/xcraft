@@ -285,6 +285,30 @@ def test_clean_keeps_sources_and_current_builds(project: Project, monkeypatch: p
     assert files(state) == sorted([*kept, f"cache/sources/{'0' * 64}/foo-2.tar.gz"])
 
 
+def test_clean_keeps_what_was_used(project: Project) -> None:
+    state, now = project.state, time.time()
+    for path in ("cache/builds/x86_64_v2/foo/old", "cache/builds/x86_64_v2/foo/used",
+                 "cache/signed/key/x86_64_v2/foo/old", "cache/signed/key/x86_64_v2/foo/used",
+                 "cache/isos/x86_64_v2/old", "cache/isos/x86_64_v2/used",
+                 "cache/sources/old", "cache/sources/used"):  # fmt: skip
+        (state / path).mkdir(parents=True)
+        (state / path / "file").write_bytes(b"x" * 8192)
+    for path in ("cache/specs/x86_64_v2/old.json", "cache/resolved/x86_64_v2/used.json"):
+        (state / path).parent.mkdir(parents=True)
+        (state / path).write_text("{}")
+    for path in state.rglob("old*"):
+        os.utime(path, (now - 86400, now - 86400))
+    assert clean(project, [{}], sources=True, isos=set(), used_since=now - 3600) > 0
+    assert sorted(p.relative_to(state).as_posix() for p in state.rglob("*") if p.parent.name != "used") == [
+        "cache", "cache/builds", "cache/builds/x86_64_v2", "cache/builds/x86_64_v2/foo",
+        "cache/builds/x86_64_v2/foo/used", "cache/isos", "cache/isos/x86_64_v2", "cache/isos/x86_64_v2/used",
+        "cache/resolved", "cache/resolved/x86_64_v2", "cache/resolved/x86_64_v2/used.json", "cache/signed",
+        "cache/signed/key", "cache/signed/key/x86_64_v2", "cache/signed/key/x86_64_v2/foo",
+        "cache/signed/key/x86_64_v2/foo/used", "cache/sources", "cache/sources/used", "cache/specs",
+        "cache/specs/x86_64_v2",
+    ]  # fmt: skip
+
+
 def test_previous_duration(project: Project) -> None:
     assert previous_duration(project, "foo") is None
     log = project.state / "cache/builds/x86_64_v2/foo/key/build.log"

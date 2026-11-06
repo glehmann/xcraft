@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import shutil
 from typing import TYPE_CHECKING
 
@@ -43,6 +44,31 @@ def _other_isos(project: Project, isos: set[str]) -> list[Path]:
     return [*(t for t in trees if t.name not in isos), *named]
 
 
+def _shared(project: Project, isos: set[str] | None, *, sources: bool, used_since: float) -> list[Path]:
+    """Return what the packages share that clean() removes, see there."""
+    state = project.state
+    paths = [state / "build", state / "tmp", state / "cache/extra"]
+    paths += [state / "cache" / cache for cache in ("checks", "upstream", "rpms", "srpms")]
+    # but those of the specs and resolutions this process read: the current ones, once the project is prepared
+    current = specs_read() | resolutions_read()
+    paths += [
+        p
+        for d in ("specs", "resolved")
+        for p in (state / "cache" / d / project.arch).glob("*.json")
+        if p not in current and p.stat().st_mtime < used_since
+    ]
+    if isos is not None:
+        used = {t.name for t in (state / "cache/isos" / project.arch).glob("*") if t.stat().st_mtime >= used_since}
+        paths += _other_isos(project, isos | used)
+    # but those of the steps, like _resolve.log
+    paths += [log for log in (state / "logs").glob("[!_]*.log") if log.stem not in project.package_dirs]
+    if sources:
+        manifests = [d / "sources" for d in project.package_dirs.values() if (d / "sources").exists()]
+        had = {digest for manifest in manifests for digest in read_manifest(manifest).values()}
+        paths += [d for d in project.source_cache.glob("*") if d.name not in had and d.stat().st_mtime < used_since]
+    return paths
+
+
 def clean(
     project: Project,
     keys: list[dict[str, str]],
@@ -53,6 +79,7 @@ def clean(
     dune_cache: bool = False,
     sources: bool = False,
     isos: set[str] | None = None,
+    used_since: float = math.inf,
 ) -> int:
     """Remove what xcraft can regenerate, and return how many bytes that freed.
 
@@ -62,8 +89,11 @@ def clean(
     those this process read, the results of the checks, the requirements of the upstream packages, and the upstream
     packages downloaded, and the ISOs of the platform but those of the keys `isos`, if given: those in .xcraft/iso/ too,
     the hard links to their cache, and the copies, see xcraft.iso, the logs of the packages removed from the project,
-    and with `sources`, the source archives none of its packages has. A signed build removed is
-    fetched again from the remote storage, where publishing put it, or else signed again.
+    and with `sources`, the source archives none of its packages has. A signed build removed is fetched again from the
+    remote storage, where publishing put it, or else signed again.
+
+    The outdated builds, ISOs, specs, resolutions and source archives used since the time `used_since` are kept: those
+    xcraft read last then, see the os.utime() of their uses.
 
     The local repository and snapshot, made again when needed, are removed in both cases: they have hard links to the
     files of the builds, which would keep using the space.
@@ -74,23 +104,7 @@ def clean(
     trees = [state / "cache/builds" / project.arch, *(state / "cache/signed").glob(f"*/{project.arch}")]
     paths = [state / "repo", state / "publish"]
     if names is None:
-        paths += [state / "build", state / "tmp", state / "cache/extra"]
-        # but those of the specs and resolutions this process read: the current ones, once the project is prepared
-        current = specs_read() | resolutions_read()
-        paths += [
-            p
-            for d in ("specs", "resolved")
-            for p in (state / "cache" / d / project.arch).glob("*.json")
-            if p not in current
-        ]
-        paths += [state / "cache" / cache for cache in ("checks", "upstream", "rpms", "srpms")]
-        paths += _other_isos(project, isos) if isos is not None else []
-        # but those of the steps, like _resolve.log
-        paths += [log for log in (state / "logs").glob("[!_]*.log") if log.stem not in project.package_dirs]
-        if sources:
-            manifests = [d / "sources" for d in project.package_dirs.values() if (d / "sources").exists()]
-            had = {digest for manifest in manifests for digest in read_manifest(manifest).values()}
-            paths += [d for d in project.source_cache.glob("*") if d.name not in had]
+        paths += _shared(project, isos, sources=sources, used_since=used_since)
         packages = [pkg for tree in trees for pkg in tree.glob("*")]
     else:
         paths += [state / "build" / name for name in names]
@@ -99,7 +113,10 @@ def clean(
         paths += packages
     else:
         paths += [
-            build for pkg in packages for build in pkg.iterdir() if build.name not in {k.get(pkg.name) for k in keys}
+            build
+            for pkg in packages
+            for build in pkg.iterdir()
+            if build.name not in {k.get(pkg.name) for k in keys} and build.stat().st_mtime < used_since
         ]
     for cache, wanted in (("ccache", ccache), ("dune-cache", dune_cache)):
         if wanted:

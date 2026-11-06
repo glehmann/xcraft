@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -233,6 +234,7 @@ def _signed_build(project: Project, signer: Signer, name: str, key: str, *, stor
         work.rename(signed)
     if storage and not remote.tree_exists(storage, path, trusted=signer):
         remote.upload_tree(storage, path, signed, ["RPMS", "SRPMS"], signer=signer)
+    os.utime(signed)  # used, see xcraft clean --unused
     return signed
 
 

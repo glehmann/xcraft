@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import stat
 from typing import TYPE_CHECKING
 
@@ -103,6 +104,7 @@ def parse(project: Project, dirs: list[Path]) -> dict[str, Package]:
             cache.parent.mkdir(parents=True, exist_ok=True)
             (work / "specs.json").rename(cache)
     _read.add(cache)
+    os.utime(cache)  # used, see xcraft clean --unused
     packages = _Packages.validate_json(cache.read_bytes())
     for name, package in packages.items():
         package.name = name

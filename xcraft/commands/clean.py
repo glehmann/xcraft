@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import math
 import os
+import time
 from typing import Annotated
 
 import typer
@@ -32,6 +34,16 @@ def clean(
             "them first, see xcraft push sources, unless the remote storage or the URLs of their specs have them.",
         ),
     ] = False,
+    unused: Annotated[
+        float | None,
+        typer.Option(
+            "--unused",
+            metavar="DAYS",
+            help="Keep the outdated builds, ISOs, specs, resolutions and source archives used in the last DAYS days, "
+            "like those of other branches.",
+            show_default=False,
+        ),
+    ] = None,
     arch: Arch = None,
 ) -> None:
     """Remove the build trees and outdated builds, signed or not, of the given packages only, or of all with what they
@@ -59,6 +71,7 @@ def clean(
             ccache=ccache,
             dune_cache=dune_cache,
             sources=sources,
+            used_since=math.inf if unused is None else time.time() - unused * 86400,
             isos=isos,
         )
     console.print(f"freed {_size(freed)}")

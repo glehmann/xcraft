@@ -146,6 +146,7 @@ def has_cached_source(project: Project, filename: str, digest: str) -> bool:
     archive = project.source_cache / digest / filename
     if not archive.exists():
         return False
+    os.utime(archive.parent)  # used, see xcraft clean --unused
     if sha256_of(archive) != digest:
         msg = f"{filename} in the source cache does not match the sha256 of the manifest"
         raise SourceError(msg)

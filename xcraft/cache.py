@@ -7,6 +7,7 @@ suffix, if any.
 
 from __future__ import annotations
 
+import os
 import re
 from typing import TYPE_CHECKING
 
@@ -110,8 +111,9 @@ def builds_repo(project: Project, keys: dict[str, str], names: Iterable[str] | N
     repo = LocalRepo(project, project.state / "repo")
     repo.reset()
     for name in keys if names is None else names:
-        if cached_build(project, name, keys[name]).exists():
-            repo.add(cached_build(project, name, keys[name]))
+        if (build := cached_build(project, name, keys[name])).exists():
+            os.utime(build)  # used, see xcraft clean --unused
+            repo.add(build)
     return repo
 
 
