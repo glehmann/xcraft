@@ -11,7 +11,7 @@ import typer
 from xcraft import build as builder
 from xcraft import process
 from xcraft.cache import release_suffix
-from xcraft.commands import Arch, Dev, Final, Packages, dev_ident, prepared_project
+from xcraft.commands import Arch, Dev, Final, NoCheck, Packages, dev_ident, prepared_project
 from xcraft.display import activity, console
 from xcraft.graph import dependents
 from xcraft.packages import is_debug
@@ -101,6 +101,7 @@ def repo(  # noqa: C901
     ] = False,
     dev: Dev = None,
     final: Final = False,
+    nocheck: NoCheck = False,
     arch: Arch = None,
 ) -> None:
     """Build the given packages, all by default, and what they need, put them in a repository, and check them.
@@ -108,7 +109,7 @@ def repo(  # noqa: C901
     When the given packages have development builds, see --dev, the repository only has them, to install on test
     hosts over their packages, with a .repo file.
     """
-    ident = dev_ident(ctx, dev, final=final)
+    ident = dev_ident(ctx, dev, final=final, nocheck=nocheck)
     if (hosts or upgrade) and not (packages and ident):
         msg = "--host and --upgrade are for the development builds of the given packages"
         raise typer.BadParameter(msg)
@@ -123,7 +124,7 @@ def repo(  # noqa: C901
     if with_dependents:
         names += sorted(dependents(project.deps, names) - set(names))
     with project.lock():
-        results, keys, autorev = builder.build(project, names, dev=ident)
+        results, keys, autorev = builder.build(project, names, dev=ident, nocheck=nocheck)
         if failed := [r.name for r in results if r.failed]:
             msg = f"not built: {', '.join(failed)}"
             raise RuntimeError(msg)

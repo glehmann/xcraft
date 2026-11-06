@@ -5,12 +5,13 @@
 #   lock: the prefix of the dnf commands, which the containers run one at a time
 #   autorev: the release suffix of the build, %autorev: +b<n> of its build ID, and ~<counter>.<ID> for a development one
 #   replace: the upstream packages of the image to replace by ours, or nothing
+#   nocheck: --nocheck, for rpmbuild to skip %check, or nothing
 # It installs the build dependencies, including the dynamic ones, from the repository of the pinned upstream packages
 # on /pinned and the one of our builds only, then runs rpmbuild, with stdin from /dev/null like
 # koji and mock, so that interactive steps of a build don't wait forever, and without the network, like them too: the
 # build only uses what it is given.
-# shellcheck shell=bash disable=SC2086 # $lock and $replace are lists of words
-: "${spec:?}" "${stage:?}" "${repo:?}" "${lock:?}" "${autorev?}" "${replace?}"
+# shellcheck shell=bash disable=SC2086 # $lock, $replace and $nocheck are lists of words
+: "${spec:?}" "${stage:?}" "${repo:?}" "${lock:?}" "${autorev?}" "${replace?}" "${nocheck?}"
 set -euo pipefail
 export CCACHE_DIR=/ccache PATH=/usr/lib64/ccache:$PATH
 spec=/build/SPECS/$spec
@@ -58,7 +59,7 @@ time {
         . "$profile"
     done
     set -eu -o pipefail
-    offline rpmbuild -b"$stage" "${defines[@]}" "$spec" </dev/null
+    offline rpmbuild -b"$stage" $nocheck "${defines[@]}" "$spec" </dev/null
     if [ "$stage" = a ]; then
         python3 /xcraft/made.py /build/made.json /build/RPMS
     fi

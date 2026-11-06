@@ -29,7 +29,12 @@ SCRIPTS = ("build.sh", "offline.py", "record.py", "made.py", "rpmdeps.py")
 """The scripts of the builds, in xcraft/buildenv/: see The recipe."""
 RECIPE = hashlib.sha256("".join([REPO_FILE, *((BUILDENV / s).read_text() for s in SCRIPTS)]).encode()).hexdigest()
 """What makes the builds, besides the image and the packages: a change to it rebuilds them all, but see _SAME_BUILDS."""
-_SAME_BUILDS: dict[str, str] = {}
+_SAME_BUILDS: dict[str, str] = {
+    # rpmbuild --nocheck for xcraft build --nocheck, whose builds are not cached nor pushed as the others
+    "a153b6010fc5ce7977bc37ce2a9ae37f61d55c70e7696b24da632ce9f96f4a93": (
+        "29c33cba085b64d826ac79e52005810ad38ef1db16ec3d0d747117564ebe8622"
+    ),
+}
 """Recipes making the same packages as an earlier one, by their hash, with the earliest one: their builds keep its
 keys."""
 

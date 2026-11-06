@@ -912,6 +912,17 @@ def test_push_needs_the_credentials(root: Path, monkeypatch: pytest.MonkeyPatch)
     assert "pushing needs the S3 credentials" in output
 
 
+def test_push_without_the_builds_without_their_tests(root: Path) -> None:
+    # not the build the other tests pushed: the same key everywhere
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(spec.read_text().replace('echo "hello"', 'echo "without its tests"'))
+    assert xcraft("build", "trivial", "--nocheck")[0] == 0
+    code, output = xcraft("push", "builds", "trivial", "--to", "main")
+    assert code == 1
+    assert "built without their tests, with --nocheck, not pushed: trivial\n" in output
+    assert output.endswith("not built: trivial")
+
+
 def test_publish_source_packages_of_all_architectures(root: Path, tmp_path: Path) -> None:
     arches = [ARCH, "x86_64"] if ARCH == "x86_64_v2" else [ARCH]
     platforms = ", ".join(f'"{p}"' for p in [PLATFORM, "linux/amd64"][: len(arches)])

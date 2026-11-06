@@ -132,3 +132,11 @@ xcraft repo xen --dependents --host root@testhost --upgrade
 Without `--host`, `--baseurl` gives where the hosts find the repository, for instance over http; by default, it is its
 directory, to copy at the same place on the hosts. Bringing a host back to an earlier state, like after a change is
 dropped, is up to the developer, like restoring a btrfs snapshot.
+
+## Builds without their tests
+
+`--nocheck`, for `xcraft build`, `repo`, `iso` and `boot`, builds the packages without running the tests of their
+specs: rpmbuild skips `%check`, with the same build roots, for faster iterations. Those builds are cached with a
+`nocheck` mark: the builds without `--nocheck` make them again, with their tests, `xcraft push` never pushes them, and
+the ISOs made with them are cached apart. The packages fetched from the remote storage keep their builds, made with
+their tests. It cannot be used with `--final`.

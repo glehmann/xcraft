@@ -9,7 +9,7 @@ import typer
 
 from xcraft import build as builder
 from xcraft.cache import cached_build
-from xcraft.commands import Arch, Dev, Final, Packages, dev_ident, prepared_project
+from xcraft.commands import Arch, Dev, Final, NoCheck, Packages, dev_ident, prepared_project
 from xcraft.display import console
 from xcraft.graph import dependents
 
@@ -35,13 +35,14 @@ def build(
     ] = False,
     dev: Dev = None,
     final: Final = False,
+    nocheck: NoCheck = False,
     arch: Arch = None,
 ) -> None:
     """Build the given packages, all by default, and what they need, in the build environment.
 
     The packages whose build ID is not the main branch's get development builds, unless --final, see --dev.
     """
-    ident = dev_ident(ctx, dev, final=final)
+    ident = dev_ident(ctx, dev, final=final, nocheck=nocheck)
     project = prepared_project(packages, locked=locked, arch=arch)
     names = list(packages or sorted(project.packages))
     if with_dependents:
@@ -51,7 +52,7 @@ def build(
         return
     with project.lock():
         results, keys, autorev = builder.build(
-            project, names, with_deps=not no_deps, verbose=verbose, dev=ident, fetch=fetch
+            project, names, with_deps=not no_deps, verbose=verbose, dev=ident, nocheck=nocheck, fetch=fetch
         )
     if dev_built := [r.name for r in results if r.name in autorev and r.status == "built"]:
         if verbose:

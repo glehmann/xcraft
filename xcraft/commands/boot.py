@@ -8,7 +8,7 @@ from typing import Annotated
 import typer
 
 from xcraft import process, vm
-from xcraft.commands import Arch, Dev, Final, Key, choose_signer, dev_ident
+from xcraft.commands import Arch, Dev, Final, Key, NoCheck, choose_signer, dev_ident
 from xcraft.commands.vm import check_port, show
 from xcraft.display import console
 from xcraft.iso import checkout_iso
@@ -90,6 +90,7 @@ def boot(
     key: Key = None,
     dev: Dev = None,
     final: Final = False,
+    nocheck: NoCheck = False,
 ) -> None:
     """Build the installation ISO, create a virtual disk if missing, and boot it with QEMU: with the development builds
     of the packages whose build ID is not the main branch's, like xcraft build, unless --final.
@@ -101,7 +102,7 @@ def boot(
         msg = "--kernel-args and --unattended edit the GRUB menu of the ISO: not with --bios"
         raise typer.BadParameter(msg)
     check_port(ssh_port)
-    ident = dev_ident(ctx, dev, final=final)
+    ident = dev_ident(ctx, dev, final=final, nocheck=nocheck)
     project = Project.find(arch)
     kernel_args = _kernel_args(project, kernel_args, unattended=unattended)
     vm_dir = (vm_dir or project.state / "vm" / project.arch).absolute()
@@ -118,7 +119,7 @@ def boot(
     if not iso:
         project.frozen = locked
         signer = choose_signer(project, local=True, unsigned=unsigned, dev_key=False, key=key)
-        iso = checkout_iso(project, signer=signer, dev=ident)
+        iso = checkout_iso(project, signer=signer, dev=ident, nocheck=nocheck)
         console.print(f"[bold green]✓[/] {iso}")
     with project.lock():
         vm.check_stopped(vm_dir)

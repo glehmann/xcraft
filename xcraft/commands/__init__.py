@@ -106,8 +106,23 @@ Final = Annotated[
 ]
 
 
-def dev_ident(ctx: typer.Context, dev: str | None, *, final: bool) -> str | None:
-    """Return the identifier of the development builds, or None for final builds: --final overrides $XCRAFT_DEV."""
+NoCheck = Annotated[
+    bool,
+    typer.Option(
+        "--nocheck",
+        help="Without running the tests of the specs, their %check, for faster development iterations. The builds "
+        "without --nocheck make those builds again, with their tests, and xcraft push never pushes them.",
+    ),
+]
+
+
+def dev_ident(ctx: typer.Context, dev: str | None, *, final: bool, nocheck: bool = False) -> str | None:
+    """Return the identifier of the development builds, or None for final builds: --final overrides $XCRAFT_DEV, and
+    cannot be used with --nocheck.
+    """
+    if final and nocheck:
+        msg = "--final and --nocheck cannot be used together: the final builds run the tests of the specs"
+        raise typer.BadParameter(msg)
     if final:
         if (source := ctx.get_parameter_source("dev")) and source.name == "COMMANDLINE":  # not $XCRAFT_DEV
             msg = "--final and --dev cannot be used together"

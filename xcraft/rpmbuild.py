@@ -91,6 +91,7 @@ def run_build(
     *,
     replace: list[str],
     suffix: str = "",
+    nocheck: bool = False,
     after: str = "",
     log: Path | None = None,
     on_line: Callable[[str], None] | None = None,
@@ -99,7 +100,7 @@ def run_build(
 
     The upstream packages of the image named in `replace` are replaced first by
     ours. `suffix` is the release suffix of the build, %autorev: its number, and its development build suffix, if
-    any. The output goes to
+    any. With `nocheck`, rpmbuild skips %check. The output goes to
     `log`, or to an interactive terminal without log.
     """
     parameters = {
@@ -109,6 +110,7 @@ def run_build(
         "lock": DNF_LOCK,
         "autorev": suffix,
         "replace": " ".join(replace),
+        "nocheck": "--nocheck" if nocheck else "",
     }
     script = "".join(f"{p}={shlex.quote(value)}\n" for p, value in parameters.items()) + f". /xcraft/build.sh\n{after}"
     if size := project.config.ccache_size.get(name):

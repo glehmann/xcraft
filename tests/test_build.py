@@ -287,6 +287,24 @@ def test_build_back_to_a_cached_key(root: Path) -> None:
     assert not list((root / f".xcraft/cache/builds/{ARCH}/trivial").glob(".*"))
 
 
+def test_build_without_the_tests_of_the_specs(root: Path) -> None:
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(spec.read_text().replace("%files\n", "%check\nexit 1\n\n%files\n"))
+    builds = root / f".xcraft/cache/builds/{ARCH}/trivial"
+    code, output = xcraft("build", "trivial", "--nocheck")
+    assert code == 0, output
+    assert len(list(builds.glob("*/nocheck"))) == 1
+    assert xcraft("build", "trivial", "--nocheck") == (0, "1 cached\n")
+    # the builds with the tests make it again, which fails
+    code, output = xcraft("build", "trivial")
+    assert code == 1
+    assert results(output)[0].startswith("✗ trivial"), output
+    assert not list(builds.glob("*/nocheck"))
+    code, output = xcraft("build", "trivial", "--nocheck", "--final")
+    assert code == 2
+    assert "--final and --nocheck cannot be used together" in " ".join(output.replace("│", "").split())
+
+
 def test_failed_build_skips_dependents(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace('echo "hello"', 'echo "build failure"; exit 3'))
