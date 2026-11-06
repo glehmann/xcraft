@@ -248,9 +248,11 @@ def test_image_packages_replaced_by_ours(root: Path) -> None:
 
 def test_repo_host_options(root: Path) -> None:
     for args, error in [
-        (["--host", "h", "--final"], "--host and --upgrade are for the development builds of the given packages"),
-        (["--upgrade"], "--upgrade needs --host"),
-        (["--host", "h", "--baseurl", "http://x/"], "with --host, the hosts find the repository in"),
+        (["--host", "h", "--final"], "--host, --vm and --upgrade are for the development builds of the given packages"),
+        (["--upgrade"], "--upgrade needs --host or --vm"),
+        (["--host", "h", "--baseurl", "http://x/"], "with --host or --vm, the hosts find the repository in"),
+        (["--host", "ssh://root@h:port"], "not a host: ssh://root@h:port, as ssh://[user@]host[:port]"),
+        (["--vm"], "no VM running in"),
     ]:
         code, output = xcraft("repo", "trivial", *args)
         assert code == 2

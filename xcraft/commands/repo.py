@@ -3,19 +3,27 @@
 from __future__ import annotations
 
 import shlex
+import tempfile
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
+from urllib.parse import urlsplit
 
 import typer
 
 from xcraft import build as builder
-from xcraft import process
+from xcraft import process, vm
 from xcraft.cache import release_suffix
 from xcraft.commands import Arch, Dev, Final, NoCheck, Packages, dev_ident, prepared_project
 from xcraft.display import activity, console
 from xcraft.graph import dependents
 from xcraft.packages import is_debug
+from xcraft.project import Project
 from xcraft.signing import check_signatures, dev_signer
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 REMOTE = "/var/local/xcraft"
 """Where the repositories of development builds go on the hosts, one per ID."""
@@ -23,12 +31,53 @@ KEY_FILE = "RPM-GPG-KEY-xcraft-test"
 """The developer's key, in the repositories of development builds."""
 
 
-def _hosts(hosts: list[str] | None) -> list[str] | None:
-    """Refuse the hosts ssh and rsync would take for options."""
-    if bad := [host for host in hosts or [] if host.startswith("-")]:
-        msg = f"not a host: {', '.join(bad)}"
+@dataclass
+class _Host:
+    """A test host: its `name`, as given, and how ssh reaches it, with the `options` of ssh, like its port."""
+
+    name: str
+    destination: str
+    options: list[str] = field(default_factory=list)
+
+    def ssh(self, command: str) -> list[str]:
+        return ["ssh", *self.options, self.destination, command]
+
+
+def _host(name: str) -> _Host:
+    """Return the host `name`, as ssh takes it, or as ssh://[user@]host[:port], whose port rsync cannot take."""
+    if name.startswith("-"):  # which ssh and rsync would take for options
+        msg = f"not a host: {name}"
         raise typer.BadParameter(msg)
+    if not name.startswith("ssh://"):
+        return _Host(name, name)
+    url = urlsplit(name)
+    try:
+        port = url.port
+    except ValueError:
+        port = -1
+    if not url.hostname or url.path or port == -1:
+        msg = f"not a host: {name}, as ssh://[user@]host[:port]"
+        raise typer.BadParameter(msg)
+    user = f"{url.username}@" if url.username else ""
+    return _Host(name, f"{user}{url.hostname}", ["-p", str(port)] if port else [])
+
+
+def _hosts(hosts: list[str] | None) -> list[str] | None:
+    """Check the hosts, see _host()."""
+    for host in hosts or []:
+        _host(host)
     return hosts
+
+
+def _vm_host(project: Project) -> _Host:
+    """Return the VM xcraft boot started for the project, running, by its SSH port: without checking its host key,
+    which each installation changes, on the same port of localhost.
+    """
+    try:
+        port = vm.ssh_port(project.state / "vm" / project.arch)
+    except RuntimeError as e:
+        raise typer.BadParameter(str(e), param_hint="--vm") from None
+    return _Host(f"the VM, on port {port}", vm.SSH_DESTINATION, vm.ssh_options(port))
 
 
 def _kept(installed: list[str], rpms: list[str]) -> list[tuple[str, str]]:
@@ -45,27 +94,44 @@ def _kept(installed: list[str], rpms: list[str]) -> list[tuple[str, str]]:
     )
 
 
-def _copy_to_host(host: str, output: Path, ident: str, binaries: list[str], *, upgrade: bool) -> None:
+@contextmanager
+def _connected(host: _Host) -> Generator[_Host]:
+    """Connect to `host` once, asking for its password, if any, before the activity of the copy, and yield it with
+    the options of ssh sharing that connection, which its commands and rsync reuse, closed then.
+    """
+    # a short path: the socket of the connection is longer still, and Unix sockets are limited to about 100 bytes
+    with tempfile.TemporaryDirectory(prefix="xcraft-ssh-") as tmp:
+        shared = replace(host, options=[*host.options, "-o", f"ControlPath={tmp}/%C"])
+        master = ["-o", "ControlMaster=yes", "-o", "ControlPersist=yes", "-f", "-N", host.destination]
+        process.run(["ssh", *shared.options, *master])
+        try:
+            yield shared
+        finally:
+            process.run(["ssh", *shared.options, "-O", "exit", host.destination], check=False, capture=True)
+
+
+def _copy_to_host(host: _Host, output: Path, ident: str, binaries: list[str], *, upgrade: bool) -> None:
     """Copy the repository of development builds in `output` to `host`, with its .repo file, and maybe upgrade
     `binaries`.
     """
     remote = f"{REMOTE}/{ident}"
-    with activity(f"copying the repository to {host}"):
-        process.run(["ssh", host, f"mkdir -p {remote}"], capture=True)
-        process.run(["rsync", "-a", "--delete", f"{output}/", f"{host}:{remote}/"], capture=True)
-        process.run(["ssh", host, f"install -m 644 {remote}/xcraft-{ident}.repo /etc/yum.repos.d/"], capture=True)
-    console.print(f"[bold green]✓[/] repository on {host}, in {remote}")
+    with activity(f"copying the repository to {host.name}"):
+        process.run(host.ssh(f"mkdir -p {remote}"), capture=True)
+        rsh = ["-e", shlex.join(["ssh", *host.options])] if host.options else []
+        process.run(["rsync", "-a", "--delete", *rsh, f"{output}/", f"{host.destination}:{remote}/"], capture=True)
+        process.run(host.ssh(f"install -m 644 {remote}/xcraft-{ident}.repo /etc/yum.repos.d/"), capture=True)
+    console.print(f"[bold green]✓[/] repository on {host.name}, in {remote}")
     if upgrade:
         # only those installed: dnf upgrade fails on the others
         script = (
             f"names=$(rpm -q --qf '%{{NAME}}\\n' {shlex.join(binaries)} | grep -v ' ' || true)\n"
             'if [ -n "$names" ]; then dnf -y upgrade --refresh $names; else echo "none of them is installed"; fi\n'
         )
-        process.run(["ssh", host, script])
+        process.run(host.ssh(script))
         query = f"rpm -q --qf '%{{NAME}}-%{{VERSION}}-%{{RELEASE}}.%{{ARCH}}\\n' {shlex.join(binaries)} || true"
-        installed = process.run(["ssh", host, query], capture=True).stdout.splitlines()
+        installed = process.run(host.ssh(query), capture=True).stdout.splitlines()
         for kept, built in _kept(installed, sorted(p.name for p in output.glob("*.rpm"))):
-            console.print(f"[yellow]warning[/]: {host} keeps {kept}, not {built}: newer, or held")
+            console.print(f"[yellow]warning[/]: {host.name} keeps {kept}, not {built}: newer, or held")
 
 
 def repo(  # noqa: C901
@@ -90,12 +156,19 @@ def repo(  # noqa: C901
         list[str] | None,
         typer.Option(
             "--host",
-            help=f"Test host, as for ssh, to copy the repository of development builds to, in {REMOTE}/<ID>, with "
-            "its .repo file. Can be repeated.",
+            help=f"Test host, as for ssh, or as ssh://[user@]host[:port], to copy the repository of development "
+            f"builds to, in {REMOTE}/<ID>, with its .repo file. Can be repeated.",
             show_default=False,
             callback=_hosts,
         ),
     ] = None,
+    to_vm: Annotated[
+        bool,
+        typer.Option(
+            "--vm",
+            help="The VM xcraft boot started for the project, running, as a test host: root on its SSH port.",
+        ),
+    ] = False,
     upgrade: Annotated[
         bool, typer.Option("--upgrade", help="Also upgrade, on the hosts, the packages they have installed.")
     ] = False,
@@ -110,16 +183,17 @@ def repo(  # noqa: C901
     hosts over their packages, with a .repo file.
     """
     ident = dev_ident(ctx, dev, final=final, nocheck=nocheck)
-    if (hosts or upgrade) and not (packages and ident):
-        msg = "--host and --upgrade are for the development builds of the given packages"
+    if (hosts or to_vm or upgrade) and not (packages and ident):
+        msg = "--host, --vm and --upgrade are for the development builds of the given packages"
         raise typer.BadParameter(msg)
-    if upgrade and not hosts:
-        msg = "--upgrade needs --host"
+    if upgrade and not (hosts or to_vm):
+        msg = "--upgrade needs --host or --vm"
         raise typer.BadParameter(msg)
-    if hosts and baseurl:
-        msg = f"with --host, the hosts find the repository in {REMOTE}/<ID>: no --baseurl"
+    if (hosts or to_vm) and baseurl:
+        msg = f"with --host or --vm, the hosts find the repository in {REMOTE}/<ID>: no --baseurl"
         raise typer.BadParameter(msg)
     project = prepared_project(packages, arch=arch)
+    targets = [*map(_host, hosts or []), *([_vm_host(project)] if to_vm else [])]  # before building
     names = list(packages or sorted(project.packages))
     if with_dependents:
         names += sorted(dependents(project.deps, names) - set(names))
@@ -130,7 +204,7 @@ def repo(  # noqa: C901
             raise RuntimeError(msg)
         # the development builds of the given packages, alone, to install over a host's packages
         developed = sorted(set(names) & autorev.keys()) if packages else []
-        if hosts and not developed:
+        if targets and not developed:
             msg = f"no development builds of {', '.join(names)}: they are the main branch's"
             raise typer.BadParameter(msg)
         output = (output or project.root / (f"repo-{ident}" if developed else "repo")).absolute()
@@ -138,7 +212,7 @@ def repo(  # noqa: C901
         builder.make_repo(project, published, output, keys, autorev=autorev if developed else None)
     console.print(f"[bold green]✓[/] repository in {output}, with all dependencies satisfied")
     if developed and ident:
-        url = baseurl or (f"file://{REMOTE}/{ident}" if hosts else f"file://{output}")
+        url = baseurl or (f"file://{REMOTE}/{ident}" if targets else f"file://{output}")
         repo_file = output / f"xcraft-{ident}.repo"
         if signer := dev_signer(project):
             key = signer.public_key()
@@ -160,9 +234,10 @@ def repo(  # noqa: C901
             for n in project.packages[name].built_names(release_suffix(keys[name]))
             if not is_debug(n)
         ]
-        for host in hosts or []:
-            _copy_to_host(host, output, ident, binaries, upgrade=upgrade)
-        if not hosts:
+        for host in targets:
+            with _connected(host) as shared:
+                _copy_to_host(shared, output, ident, binaries, upgrade=upgrade)
+        if not targets:
             console.print(f"on the hosts, with this directory at {url}:", markup=False)
             console.print(
                 f"  copy {repo_file.name} to /etc/yum.repos.d/, then: dnf upgrade --refresh {' '.join(binaries)}",

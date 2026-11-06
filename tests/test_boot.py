@@ -154,9 +154,10 @@ def test_boot_invalid_options(root: Path, args: list[str], message: str) -> None
 
 
 def test_vm_start_needs_a_session(root: Path) -> None:
-    code, output = xcraft("vm", "--arch", "x86_64_v2", "start")
-    assert code == 1, output
-    assert "no VM session" in output
+    for command in ("start", "ssh", "ssh-copy-id"):
+        code, output = xcraft("vm", "--arch", "x86_64_v2", command)
+        assert code == 1, output
+        assert "no VM session" in output
     session = root / ".xcraft/vm/x86_64_v2"
     session.mkdir(parents=True)
     # launched by an xcraft without xcraft vm start: without its options
@@ -166,6 +167,10 @@ def test_vm_start_needs_a_session(root: Path) -> None:
     code, output = xcraft("vm", "--arch", "x86_64_v2", "start")
     assert code == 1, output
     assert "launched by an older xcraft" in " ".join(output.split())
+    for command in ("ssh", "ssh-copy-id"):
+        code, output = xcraft("vm", "--arch", "x86_64_v2", command)
+        assert code == 1, output
+        assert "no VM running in" in " ".join(output.split())
 
 
 @pytest.mark.parametrize("edit", [["--kernel-args", "quiet"], ["--unattended"]])

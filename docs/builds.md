@@ -120,7 +120,8 @@ cached apart from the final builds, never pushed to the remote storage, nor take
 with a `xcraft-ID.repo` file for the hosts, which keep their usual repositories for everything else. Their
 dependencies are checked with our other current builds. `--dependents` adds the packages built against them.
 
-With `--host`, as given to ssh and repeatable, xcraft copies the repository to each host with rsync, in
+With `--host`, as given to ssh, or as `ssh://[user@]host[:port]` for another port, and repeatable, xcraft copies the
+repository to each host with rsync, through one SSH connection per host, which asks for its password once, if any, in
 `/var/local/xcraft/ID/`, and installs its `.repo` file, and with `--upgrade`, it also upgrades the packages the host
 has installed, warning about those it keeps in other builds than the repository's, like newer ones of another
 identifier:
@@ -128,6 +129,10 @@ identifier:
 ```
 xcraft repo xen --dependents --host root@testhost --upgrade
 ```
+
+`--vm` takes the VM `xcraft boot` installed for the project, running, like after `xcraft vm start`, as a host: root on
+its SSH port of localhost, without checking its host key, which each installation changes. `ssh-copy-id` with that port
+spares typing its password each time.
 
 Without `--host`, `--baseurl` gives where the hosts find the repository, for instance over http; by default, it is its
 directory, to copy at the same place on the hosts. Bringing a host back to an earlier state, like after a change is
