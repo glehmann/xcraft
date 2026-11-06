@@ -60,6 +60,18 @@ def _templates_hash(project: Project) -> str:
     return digest.hexdigest()
 
 
+def _code_hash() -> str:
+    """Return the hash of the files of xcraft, but the bytecode Python leaves there, which differs by checkout: all of
+    them, rather than a list of those making the ISOs, easy to get incomplete.
+    """
+    root = Path(__file__).parent
+    digest = hashlib.sha256()
+    for path in sorted(p for p in root.rglob("*") if p.is_file() and "__pycache__" not in p.parts):
+        digest.update(f"{path.relative_to(root)}\0".encode())
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
+
+
 def dev_suffixes(project: Project, dev: str | None) -> dict[str, str]:
     """Return the release suffixes of the development builds `dev` of the ISO of the checkout.
 
@@ -105,22 +117,7 @@ def iso_key(
         builds.model_dump(mode="json"),
         lock.model_dump(mode="json"),
         _templates_hash(project),
-        container.buildenv_hash(),
-        [
-            Path(__file__).with_name(module).read_text()
-            for module in (
-                "iso.py",
-                "buildkey.py",
-                "publish.py",
-                "container.py",
-                "cache.py",
-                "specs.py",
-                "resolution.py",
-                "localrepo.py",
-                "repodata.py",
-                "signing.py",
-            )
-        ],
+        _code_hash(),
         netinstall,
         volid,
         signer.key.upper() if signer else None,

@@ -39,7 +39,7 @@ def cache_image(project: Project, image: Path, *, signer: Signer | None = None, 
     return tree
 
 
-def test_iso_inputs(project: Project) -> None:
+def test_iso_inputs(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     def key() -> str:
         return iso_key(project, netinstall=False, volid=None, signer=None)
 
@@ -74,6 +74,13 @@ def test_iso_inputs(project: Project) -> None:
         assert key() == before
     finally:
         bytecode.unlink()
+    # but any other file of xcraft, like project.py, which gives the default volume id: of a copy, which the other
+    # tests do not read
+    code = shutil.copytree(Path(iso.__file__).parent, project.root.parent / "xcraft")
+    monkeypatch.setattr(iso, "__file__", str(code / "iso.py"))
+    before = key()
+    (code / "project.py").write_text(f"{(code / 'project.py').read_text()}\n")
+    assert key() != before
     # the build IDs: the numbers of the builds, and the reuses of builds
     for accepts in (None, "45" * 32):
         before = key()
