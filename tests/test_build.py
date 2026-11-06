@@ -20,13 +20,13 @@ from typer.testing import CliRunner
 
 from tests import ARCH, TOML, TOYS, copy_project
 from xcraft import build as builder
-from xcraft import buildid, checks, clean, container, localrepo, pinned, process, resolution
+from xcraft import buildid, checks, clean, container, localrepo, pinned, process, publish, resolution
 from xcraft.__main__ import app
 from xcraft.builds import builds_path, load_builds, save_builds
 from xcraft.cache import BuildError
 from xcraft.iso import _INSTALL_TOOLS, _check_installed_tools
 from xcraft.localrepo import LocalRepo
-from xcraft.lock import Recorded, load_lock, save_lock
+from xcraft.lock import Recorded, load_lock, lock_path, save_lock
 from xcraft.project import Project
 from xcraft.publish import _check_installable
 from xcraft.resolution import ISO_TOOLS, ResolutionError
@@ -577,6 +577,21 @@ def test_recorded_requires_of_the_image(root: Path) -> None:
     assert load_builds(Project.find()).requires.of(ARCH)["trivial"] == ["bash"]
     assert xcraft("build", "--dry-run")[0] == 0
     assert "bash" in load_lock(Project.find()).runtime[ARCH]
+
+
+def test_snapshot_of_a_checkout_changed_while_making_it(
+    root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the lock of another git checkout, once the builds are done: the snapshot is of the one before, not of its keys
+    checked = publish._check_installable
+
+    def changed(project: Project, repos: list[Path]) -> None:
+        checked(project, repos)
+        (lock := lock_path(project)).write_text(f"{lock.read_text()}# of another checkout\n")
+
+    monkeypatch.setattr(publish, "_check_installable", changed)
+    with pytest.raises(BuildError, match="the checkout changed while making the snapshot"):
+        publish.snapshot([Project.find()], tmp_path / "snapshot", signer=None, storage=None, build=False)
 
 
 def test_snapshots_checked_in_turn(root: Path, tmp_path: Path) -> None:

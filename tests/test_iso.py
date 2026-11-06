@@ -10,8 +10,9 @@ import pytest
 
 from tests import PROJECT, TOML
 from tests.test_build import xcraft
-from xcraft import buildkey, iso
+from xcraft import buildkey, iso, publish
 from xcraft.builds import BuildId, load_builds, save_builds
+from xcraft.cache import BuildError
 from xcraft.container import BUILDENV
 from xcraft.iso import Image, cached_iso, checkout_iso, iso_id, iso_key, iso_name
 from xcraft.lock import Pin, load_lock, save_lock
@@ -147,9 +148,22 @@ def test_iso_not_cached_when_the_lock_changed_while_making_it(
 
     monkeypatch.setattr(iso, "_assemble_iso", assembled)
     with pytest.raises(RuntimeError, match="ISO inputs changed while making the image"):
-        iso._snapshot_iso(project, project.root, None, netinstall=False, volid=None, signer=None)
+        iso._snapshot_iso(
+            project, project.root, publish.current_checkout(project), None, netinstall=False, volid=None, signer=None
+        )
     assert not cached_iso(project, key).exists()
     assert not cached_iso(project, iso_key(project, netinstall=False, volid=None, signer=None)).exists()
+
+
+def test_iso_not_made_of_a_snapshot_of_another_checkout(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    # like a git checkout after the snapshot, before its ISO is made: its key would be the new checkout's
+    checkout = publish.current_checkout(project)
+    lock = load_lock(project)
+    lock.sources["kernel"] = "1-1"
+    save_lock(project, lock)
+    monkeypatch.setattr(iso, "_assemble_iso", lambda *_, **__: pytest.fail("assembled"))
+    with pytest.raises(BuildError, match="the checkout changed while making the snapshot"):
+        iso._snapshot_iso(project, project.root, checkout, None, netinstall=False, volid=None, signer=None)
 
 
 def test_iso_masked_units_invalidate_cache(project: Project) -> None:

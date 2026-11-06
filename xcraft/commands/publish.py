@@ -112,7 +112,7 @@ def _publish(  # noqa: C901, PLR0912
         if uploader and output is None and uploader.reuse(platforms, only=only, isos=with_isos):
             return
         console.print("assembling the snapshot")
-        built, stored = snapshot(platforms, dest, signer=signer, storage=storage, build=build)
+        built, stored, checkout = snapshot(platforms, dest, signer=signer, storage=storage, build=build)
         if storage and output is not None:  # all of it, in the directory asked
             for repo in sorted({path.rsplit("/", 1)[0] for path in stored}):
                 publisher.materialize(storage, dest, stored, repo)
@@ -120,9 +120,10 @@ def _publish(  # noqa: C901, PLR0912
             console.print(f"getting the ISOs for {platform.arch}")
             if storage and stored and not fetch_isos(platform, signer=signer):  # made from its packages
                 publisher.materialize(storage, dest, stored, f"{REPO}/{platform.arch}")
-            for iso in snapshot_isos(platform, dest / REPO / platform.arch, dest / ISO_DIR, signer=signer):
+            for iso in snapshot_isos(platform, dest / REPO / platform.arch, checkout, dest / ISO_DIR, signer=signer):
                 console.print(f"[bold green]✓[/] {iso}")
         if uploader:
+            publisher.check_checkout(project, checkout)  # which the keys of what is uploaded are computed from
             isos = {
                 file: source
                 for platform in with_isos

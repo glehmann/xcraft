@@ -60,11 +60,6 @@ def _templates_hash(project: Project) -> str:
     return digest.hexdigest()
 
 
-def _checkout_inputs(project: Project) -> tuple[dict[str, str], str, str]:
-    """Return the hashes of the files of the checkout the ISO is made of, to detect their changes while making it."""
-    return buildkey.directories(project), _templates_hash(project), sha256_of(project.root / "xcraft.toml")
-
-
 def dev_suffixes(project: Project, dev: str | None) -> dict[str, str]:
     """Return the release suffixes of the development builds `dev` of the ISO of the checkout.
 
@@ -342,6 +337,7 @@ def _assemble_iso(
 def _snapshot_iso(
     project: Project,
     snapshot: Path,
+    checkout: publish.Checkout,
     output: Path | None,
     *,
     netinstall: bool,
@@ -350,12 +346,14 @@ def _snapshot_iso(
     dev: str | None = None,
     nocheck: bool = False,
 ) -> Path:
-    """Return the ISO of `snapshot`, with the development builds `dev`, if any, and those without the tests of their
-    specs with `nocheck`: cached, fetched, or assembled and cached by the key of the checkout.
+    """Return the ISO of `snapshot`, made of `checkout`, with the development builds `dev`, if any, and those without
+    the tests of their specs with `nocheck`: cached, fetched, or assembled and cached by the key of the checkout.
 
-    Raise when the key changed while assembling it, like the lock by a checkout: the ISO is of the one before.
+    Raise when the checkout is not the snapshot's anymore, or when the key changed while assembling it, like the lock
+    by a git checkout: the ISO would be of the one before.
     """
     with project.lock():
+        publish.check_checkout(project, checkout)
         key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck)
         if found := _existing_iso(project, key, output, netinstall=netinstall, signer=signer, dev=dev):
             return found
@@ -376,16 +374,18 @@ def _snapshot_iso(
         return _copy_iso(project, tree, output, netinstall=netinstall, signer=signer, dev=dev)
 
 
-def snapshot_isos(project: Project, snapshot: Path, dest: Path, *, signer: Signer | None) -> list[Path]:
-    """Make the full and netinstall ISOs of `snapshot`, its binaries for the architecture, in `dest`, with their
-    detached signatures by `signer`, if any, and return them.
+def snapshot_isos(
+    project: Project, snapshot: Path, checkout: publish.Checkout, dest: Path, *, signer: Signer | None
+) -> list[Path]:
+    """Make the full and netinstall ISOs of `snapshot`, its binaries for the architecture, made of `checkout`, in
+    `dest`, with their detached signatures by `signer`, if any, and return them.
 
     `dest` is the directory of the ISOs of all the architectures.
     """
     dest.mkdir(parents=True, exist_ok=True)
     isos = []
     for netinstall in (False, True):
-        iso = _snapshot_iso(project, snapshot, None, netinstall=netinstall, volid=None, signer=signer)
+        iso = _snapshot_iso(project, snapshot, checkout, None, netinstall=netinstall, volid=None, signer=signer)
         isos.append(Path(shutil.move(iso, dest / iso.name)))
         if signer:
             signer.sign_file(isos[-1])
@@ -443,16 +443,15 @@ def checkout_iso(
                 found := _existing_iso(project, ci_key, output, netinstall=netinstall, signer=ci, dev=None)
             ):
                 return found
-        checkout = _checkout_inputs(project)
         resolution.prepare(project)
         dest = (project.state / "publish").absolute()
-        publish.snapshot([project], dest, signer=signer, storage=None, build=False, dev=dev, nocheck=nocheck)
-        if checkout != _checkout_inputs(project):
-            msg = "ISO inputs changed while assembling the snapshot: run again"
-            raise RuntimeError(msg)
+        _, _, checkout = publish.snapshot(
+            [project], dest, signer=signer, storage=None, build=False, dev=dev, nocheck=nocheck
+        )
         return _snapshot_iso(
             project,
             dest / publish.REPO / project.arch,
+            checkout,
             output,
             netinstall=netinstall,
             volid=volid,

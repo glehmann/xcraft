@@ -22,13 +22,13 @@ from typing import TYPE_CHECKING, NamedTuple
 from rich.markup import escape
 
 from xcraft import build as builder
-from xcraft import container, localrepo, pinned, remote, repodata, resolution, upstream_copy
-from xcraft.builds import load_builds
+from xcraft import buildkey, container, localrepo, pinned, remote, repodata, resolution, upstream_copy
+from xcraft.builds import builds_path, load_builds
 from xcraft.cache import BuildError, build_path, cached_build
 from xcraft.container import BUILDENV, buildenv_hash, run_natively
 from xcraft.display import activity, console
 from xcraft.localrepo import extra_rpms, fresh_dir
-from xcraft.lock import load_lock
+from xcraft.lock import load_lock, lock_path
 from xcraft.project import INTERNAL
 from xcraft.signing import Signer, check_signatures, dev_signer
 from xcraft.sources import sha256_of
@@ -321,6 +321,38 @@ def _summary(dest: Path, built: list[tuple[Project, dict[str, str]]], *, build: 
     )
 
 
+class Checkout(NamedTuple):
+    """What a snapshot is made of in the checkout, which its keys, and those of its ISOs, are computed from: the hashes
+    of the package directories and xcraft.toml as its builds start, and the locks once they are done, which they
+    change.
+    """
+
+    directories: dict[str, str]
+    config: bytes
+    locks: bytes
+
+
+def _locks(project: Project) -> bytes:
+    """Return the content of the lock and of the lock of the builds."""
+    return b"\0".join(
+        path.read_bytes() if path.exists() else b"" for path in (lock_path(project), builds_path(project))
+    )
+
+
+def current_checkout(project: Project) -> Checkout:
+    """Return the checkout as it is now."""
+    return Checkout(buildkey.directories(project), (project.root / "xcraft.toml").read_bytes(), _locks(project))
+
+
+def check_checkout(project: Project, checkout: Checkout) -> None:
+    """Raise when the checkout is no longer `checkout`, changed by another command, like git checkout: what was made
+    of it would get the keys of the new one.
+    """
+    if checkout != current_checkout(project):
+        msg = "the checkout changed while making the snapshot, which is of the one before: run again"
+        raise BuildError(msg)
+
+
 class Stored(NamedTuple):
     """A file of the remote storage: its path there, and its SHA-256."""
 
@@ -548,10 +580,11 @@ def snapshot(
     build: bool,
     dev: str | None = None,
     nocheck: bool = False,
-) -> tuple[list[tuple[Project, dict[str, str]]], dict[str, Stored]]:
-    """Make the snapshot of the `platforms` in `dest`, and return them with the keys of their packages, and the
+) -> tuple[list[tuple[Project, dict[str, str]]], dict[str, Stored], Checkout]:
+    """Make the snapshot of the `platforms` in `dest`, and return them with the keys of their packages, the
     packages of `storage`, by path in the snapshot, with their paths there and SHA-256: they are not in `dest`, see
-    materialize().
+    materialize(), and the checkout it is made of, which must stay the same until what is keyed by it is made, see
+    check_checkout(): it is checked at the end.
 
     Our packages of all the platforms are built or fetched first, until their keys stop changing, but only fetched for
     the platforms the host emulates: with `storage`, only the builds it misses and those they need, as the snapshot
@@ -564,12 +597,14 @@ def snapshot(
     `storage`, and with `nocheck`, those built skip the tests of their specs, unlike the final builds.
     """
     project = platforms[0]
+    start = current_checkout(project)
     fresh_dir(project, dest)
     assembler = _Assembler(
         project, dest, signer, storage, *(_with_copy(platforms, storage, signer) if storage else ({}, {}))
     )
     fetch: Fetch = "needed" if storage else "all"
     built = list(zip(platforms, _built_all(platforms, fetch=fetch, dev=dev, nocheck=nocheck), strict=True))
+    checkout = start._replace(locks=_locks(project))
     for platform, keys in built:
         arch = f"{REPO}/{platform.arch}"
         assembler.add_ours(platform, keys)
@@ -584,8 +619,9 @@ def snapshot(
         assembler.index(f"{repo}/Source")
     if signer:
         (dest / KEY_FILE).write_text(signer.public_key())
+    check_checkout(project, checkout)
     _summary(dest, built, build=build)
-    return built, assembler.files()
+    return built, assembler.files(), checkout
 
 
 def materialize(storage: Remote, dest: Path, files: dict[str, Stored], repo: str) -> None:
