@@ -600,29 +600,3 @@ def upstream_sources(project: Project, names: list[str]) -> list[str]:
         msg = f"not locked: {', '.join(unknown)}"
         raise ResolutionError(msg)
     return sorted({n if n in lock.sources else binaries[n] for n in names})
-
-
-def _lock_installed(project: Project, installed: dict[str, Locked]) -> bool:
-    """Lock the upstream source packages of the `installed` packages not locked yet, and return whether all of them
-    were installed in the locked versions: those locked here may get other ones, which the other architectures have,
-    and the packages have to be installed again.
-
-    Raise when locked ones were installed in another version: not from the repository of the pinned packages.
-    """
-
-    def changed() -> list[str]:
-        """Return the installed packages of locked sources not in their locked versions, or not in them at all."""
-        locked, sources = resolve_image(project).packages, cached_lock(project).sources
-        return sorted(
-            n
-            for n, p in installed.items()
-            if ((locked[n].evr, locked[n].arch) != (p.evr, p.arch) if n in locked else p.source in sources)
-        )
-
-    if before := changed():
-        msg = f"packages installed in another version than locked: {', '.join(before)}"
-        raise ResolutionError(msg)
-    if new := sorted({p.source for p in installed.values()} - cached_lock(project).sources.keys()):
-        lock_sources(project, new)
-        return not changed()
-    return True
