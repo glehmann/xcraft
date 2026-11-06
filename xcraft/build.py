@@ -276,6 +276,8 @@ class _Run:
     use_remote: bool = field(default=False, init=False)
     recorded: bytes = field(default=b"", init=False)
     """The state of the lock of the `keys`, see _lock_state()."""
+    unrecorded: list[str] = field(default_factory=list, init=False)
+    """The packages fetched, whose builds are recorded together, see _record_fetched()."""
 
     def build(self, plan: list[str]) -> list[Result]:
         """Build the packages of `plan`, in order, and return how it went, see xcraft.build.build()."""
@@ -302,7 +304,7 @@ class _Run:
             return result
         if self.use_remote:
             self._fetch_for(name)
-            self._refresh()  # for what they recorded
+        self._record_fetched()  # for its build root, with what the builds of its dependencies generated
         status = None if self.verbose else f"{step} building {name}{_estimate(self.project, name)}"
         if (result := self._build_shown(name, status)).status == "built":
             keep_built(self.project, self.dev, self.autorev, [name], self.hashes)
@@ -386,10 +388,21 @@ class _Run:
             console.print(f"[yellow]remote storage unavailable[/]: {escape(str(e))}")
 
     def _fetched(self, name: str) -> Result:
-        """Record what rpm generated for the build of `name` just fetched, show it, and return its result."""
-        record_rpm_deps(self.project, [name], self.keys, quiet=True)  # see _recorded_again()
+        """Show the build of `name` just fetched, and return its result: recorded later, see _record_fetched()."""
+        self.unrecorded.append(name)
         console.print(f"[green]↓[/] {name} [green]fetched[/]")
         return Result(name, "fetched")
+
+    def _record_fetched(self) -> None:
+        """Record what rpm generated for the builds fetched since the last time, together, before a build, which may
+        need them, and else at the end, see _recorded_again(): once, rather than after each fetch, with only some of
+        our builds there, which what they generated may resolve to. Their builds are the main branch's, which CI
+        recorded, with all ours there too, like in a new checkout once all are fetched.
+        """
+        if self.unrecorded:
+            record_rpm_deps(self.project, self.unrecorded, self.keys, quiet=True)
+            self.unrecorded.clear()
+            self._refresh()
 
     def _build_shown(self, name: str, status: str | None) -> Result:
         """Build `name` with _build_one(), and show how it went."""
@@ -502,6 +515,7 @@ class _Run:
         may provide what they could not resolve before, which changes the keys of those built against them, then built
         again, like a change of the lock during the builds, or fetched again from the remote storage.
         """
+        self.unrecorded.clear()  # recorded with all the others
         cached = [n for n, k in self.keys.items() if cached_build(self.project, n, k).exists()]
         if record_rpm_deps(self.project, cached, self.keys):
             self._refresh()

@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 from xml.etree import ElementTree as ET
 
-from xcraft import localrepo, pinned, remote, repodata
+from xcraft import localrepo, pinned, remote, remote_pages, repodata
 from xcraft.container import ContainerError, run_natively
 from xcraft.display import activity
 from xcraft.lock import load_lock
@@ -170,6 +170,7 @@ def push(project: Project, storage: Remote) -> list[str]:
     """Copy to `storage` the pinned packages of the architecture of `project` its copy misses, and the source packages
     of those the snapshots publish, from the store of the pinned RPMs of the machine, the latest snapshot, or else the
     upstream repositories, and return the problems: the packages found nowhere, and those of the file names of others.
+    The pages of the directories of the copy are updated when it changes.
     """
     from xcraft import publish  # noqa: PLC0415, which uses this module
 
@@ -195,6 +196,7 @@ def push(project: Project, storage: Remote) -> list[str]:
             }
         problems += [f"{f}: in no repository, nor in the store of the pinned RPMs" for f in wanted if f not in copies]
         new = _update(project, storage, project.arch, work, entries, hrefs, copies)
+        changed = bool(new)
         entries |= {wanted[f][1].sha256: entry for f, entry in new.items()}
         # the source packages of those the snapshots publish, from their metadata
         binaries = {pins[n].sha256: f"{n}-{pins[n].evr}.{pins[n].arch}" for n in _published(project)}
@@ -212,5 +214,8 @@ def push(project: Project, storage: Remote) -> list[str]:
                 else:
                     copies |= {f: (cache / f, None) for f in left if (cache / f).exists()}
             problems += [f"{f}: in no repository, nor in the latest snapshot" for f in missing if f not in copies]
-            _update(project, storage, SOURCE, work, entries, hrefs, copies)
+            changed |= bool(_update(project, storage, SOURCE, work, entries, hrefs, copies))
+    if changed:
+        with activity("making the pages of the directories"):
+            remote_pages.update_pages(project, storage, [f"{PREFIX}/"])
     return problems

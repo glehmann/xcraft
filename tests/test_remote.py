@@ -27,7 +27,19 @@ import pytest
 from tests import ARCH, PLATFORM, TOML, copy_project, needs_gpg
 from tests.test_build import results, write_spec, xcraft
 from tests.test_iso import cache_image
-from xcraft import buildid, ccache, container, pinned, remote, remote_pages, repodata, resolution, upload, upstream_copy
+from xcraft import (
+    buildid,
+    ccache,
+    checks,
+    container,
+    pinned,
+    remote,
+    remote_pages,
+    repodata,
+    resolution,
+    upload,
+    upstream_copy,
+)
 from xcraft import publish as publisher
 from xcraft.iso import checkout_iso, fetch_isos, iso_key, iso_name, iso_path, push_isos
 from xcraft.lock import load_lock
@@ -538,6 +550,37 @@ def test_builds_shared_by_checkouts(
     assert code == 0, output
     assert output.splitlines()[0] == "↓ trivial fetched"
     assert output.splitlines()[-1] == "1 built, 1 fetched"
+
+
+def test_fetched_builds_recorded_once(
+    root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_signer: tuple[str, Path]
+) -> None:
+    """The builds come with what rpm generated for them, which a checkout fetching them all does not resolve again."""
+    (root / "xcraft.toml").write_text(re.sub(r"\[sign\]\n.*?(?=\[remote.main\])", "", REMOTE, flags=re.DOTALL))
+    monkeypatch.setenv("GNUPGHOME", str(build_signer[1]))
+    # not the builds of the other tests: the same keys everywhere
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
+    assert xcraft("build")[0] == 0
+    assert xcraft("push", "builds", "--key", build_signer[0], "--to", "main")[0] == 0
+    recorded = {p.parts[-3]: p.read_text() for p in root.glob(".xcraft/cache/builds/*/*/*/rpm-deps.json")}
+    assert set(recorded) == {"trivial", "with-deps"}
+    other = tmp_path / "elsewhere" / "xcraft"
+    shutil.copytree(root, other, ignore=shutil.ignore_patterns(".xcraft"))
+    monkeypatch.setenv("XCRAFT_PROJECT", str(other))
+    resolved: list[dict[str, str]] = []
+    resolve = checks.resolve_rpm_deps
+
+    def counted(project: Project, names: dict[str, str], rpms: list[Path]) -> resolution.Resolved:
+        resolved.append(names)
+        return resolve(project, names, rpms)
+
+    monkeypatch.setattr(checks, "resolve_rpm_deps", counted)
+    code, output = xcraft("build")
+    assert code == 0, output
+    assert output.splitlines()[-1] == "2 fetched"
+    assert resolved == []
+    assert {p.parts[-3]: p.read_text() for p in other.glob(".xcraft/cache/builds/*/*/*/rpm-deps.json")} == recorded
 
 
 def test_push_everything(root: Path, tmp_path: Path) -> None:
@@ -1288,6 +1331,9 @@ def test_upstream_copy(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixt
         code, output = xcraft("push", "upstream", "--to", "dev")
         assert code == 0, output
         assert "[xcraft-upstream-dev]" in upstream_copy.repo_file(Project.find())
+        # browsable, like the other trees of the storage
+        assert remote.exists(storage, f"{prefix}/{remote.INDEX}")
+        assert remote.exists(storage, f"{prefix}/{ARCH}/{remote.INDEX}")
         pins = pinned.pins(Project.find())
         assert _copied(storage, ARCH, tmp_path / "1") == {p.sha256: pinned.file_name(n, p) for n, p in pins.items()}
         assert set(remote.listing(storage, f"{prefix}/{ARCH}/")) >= {pinned.file_name(n, p) for n, p in pins.items()}

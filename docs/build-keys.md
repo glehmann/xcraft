@@ -211,7 +211,10 @@ Assumed, rather than covered:
 
 What rpm generated for a build is recorded again when what it resolves to may change: the locked versions, the
 requirements and the binary packages of our specs and their capabilities, the packages of the image, and the extra
-upstream packages, see `checks.record_rpm_deps()`.
+upstream packages, and the builds of ours there, see `checks.record_rpm_deps()`. It is pushed with the build, and
+fetched with it: a machine with the same builds of ours there as the one which recorded it does not resolve it again,
+like a new checkout once it fetched all those of the main branch, after CI rebuilt all of them. The builds fetched are recorded together, before
+a build that may need them, or once all are fetched, rather than after each one, with only some of ours there.
 
 ## Checking a key
 
