@@ -227,12 +227,18 @@ copying them all costs a few GiB once.
   by build, and they are removed eventually.
 - **A mirror of the upstream repositories.** Hundreds of GiB, for the few hundred packages we lock.
 
-## Risks and open questions
+## Decisions
+
+- The packages of the copy are kept, without expiry: an old package must build again with the upstream packages its
+  lock pins, which the repositories may not have anymore. The storage grows with each lock update: a few hundred MiB
+  a month, by the rate of the lock updates of xcp-ng-dist.
+- The metadata of the copy is not signed: the lock is what is trusted, by the SHA-256 of each package, which xcraft
+  checks before using it, and the image and the build roots are checked against the lock once installed. Forged
+  metadata could only make dnf choose other packages, which these checks reject. The source archives are not signed
+  for the same reason. The packages keep their upstream signatures, which dnf checks.
+
+## Risks
 
 - The metadata of the copy is read by Python: xcraft.repodata cannot read zstd before Python 3.14. The metadata it
   writes is gzip, so this only matters if it changes.
-- The packages keep their upstream signatures, which dnf checks, and xcraft checks their SHA-256 against the lock. The
-  metadata is not signed: it could be, with the key of the builds, like the snapshots'.
-- The storage grows with each lock update, without removal: a few hundred MiB a month, by the rate of the lock updates
-  of xcp-ng-dist. A later cleanup could remove the packages no tag nor branch locks anymore.
 - The store of a developer's machine is trusted for nothing: its RPMs are copied only when their SHA-256 is the lock's.
