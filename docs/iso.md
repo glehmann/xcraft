@@ -66,7 +66,9 @@ xcraft vm start                        # boot the resulting installation, withou
 xcraft boot --iso /path/to/image.iso   # boot an existing ISO
 ```
 
-The disk persists between runs and is never resized or recreated automatically. Use `--disk /path/to/new.qcow2`
+The disk persists between runs and is never resized or recreated automatically. `xcraft boot` boots the ISO even when
+the disk has an installed system, whose boot entry the UEFI firmware variables would put first: the ISO is first in
+the boot order QEMU gives the firmware, with BIOS and UEFI alike. Use `--disk /path/to/new.qcow2`
 for a fresh installation, with `--disk-size 100G` to change the size of a new disk. The installer VM exits when it
 requests a reboot, which tells the installation finished: `xcraft boot` ends then with a ✓, and fails when the VM
 stops otherwise, from the reason QEMU gives, like a power-off, or a kernel panic with the pvpanic driver of the

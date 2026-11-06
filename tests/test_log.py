@@ -8,11 +8,12 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
+from rich.text import Text
 from typer.testing import CliRunner
 
 from tests import TOML
 from xcraft.__main__ import app
-from xcraft.display import activity, diagnostics, read_tail
+from xcraft.display import _commands, activity, diagnostics, read_tail
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -174,3 +175,18 @@ def test_progress_in_ci() -> None:
     env = {**os.environ, "FORCE_COLOR": "1"}
     output = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True).stdout
     assert output == "\x1b[32mbuilt\x1b[0m\n"
+
+
+def test_commands_highlighted() -> None:
+    # those of the command line of xcraft.__main__, imported
+    def highlighted(message: str) -> list[str]:
+        text = Text(message)
+        _commands.highlight(text)
+        return [message[span.start : span.end] for span in text.spans]
+
+    assert highlighted("no key: see xcraft key create") == ["xcraft key create"]
+    assert highlighted("see xcraft boot and xcraft vm start") == ["xcraft boot", "xcraft vm start"]
+    assert highlighted("1 to update: xcraft lock --update updates them") == ["xcraft lock --update"]
+    # not the word xcraft alone, nor in other names
+    assert highlighted("another xcraft command is building or changing this project") == []
+    assert highlighted("the xcraft-build image") == []

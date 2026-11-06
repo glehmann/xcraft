@@ -11,6 +11,7 @@ from typing import Annotated
 
 import pyte
 import typer
+from rich.text import Text
 
 from xcraft import display, process, vm
 from xcraft.commands import Arch
@@ -53,10 +54,13 @@ def check_port(port: int | None) -> None:
 def show(root: Path, session: vm.Session) -> None:
     """Show how to control the VM launched in `root`, and to log in."""
     display.console.print(f"virtual disk: {session.disk}\nVM session: {root}", markup=False)
-    display.console.print(f"Control: xcraft vm --vm-dir {root} status", markup=False)
+    display.console.print(Text.assemble("Control: ", (f"xcraft vm --vm-dir {root} status", display.COMMAND)))
     if session.ssh_port:
+        ssh = f"ssh -p {session.ssh_port} root@127.0.0.1"
         display.console.print(
-            f"SSH when enabled in the guest: xcraft vm ssh, or ssh -p {session.ssh_port} root@127.0.0.1", markup=False
+            Text.assemble(
+                "SSH when enabled in the guest: ", ("xcraft vm ssh", display.COMMAND), ", or ", (ssh, display.COMMAND)
+            )
         )
 
 
