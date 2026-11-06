@@ -458,11 +458,12 @@ def _record_published(recorded: Lock, lock: Lock, arch: str, roots: Resolved) ->
     """Record in the `lock` the upstream binary packages of the published repositories and of the tools making the ISO
     of `arch`, as resolved with the build `roots`, each as `recorded` until it can be resolved.
     """
-    for field, values, failed in (
+    for field, resolved, failed in (
         ("runtime", roots.runtime, roots.runtime_errors),
         ("iso", roots.tools, roots.tools_error),
     ):
-        if values := getattr(recorded, field).get(arch, []) if failed else values:
+        values = getattr(recorded, field).get(arch, []) if failed else resolved
+        if values:
             getattr(lock, field)[arch] = values
 
 
