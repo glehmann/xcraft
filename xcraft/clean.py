@@ -59,7 +59,8 @@ def clean(
     `names`, or of all of them with what they share: the metadata of the specs and the resolutions of the platform but
     those this process read, the results of the checks, the requirements of the upstream packages, and the upstream
     packages downloaded, and the ISOs of the platform but those of the keys `isos`, if given: those in .xcraft/iso/ too,
-    the hard links to their cache, and the copies, see xcraft.iso. The source cache is kept. A signed build removed is
+    the hard links to their cache, and the copies, see xcraft.iso, and the logs of the packages removed from the
+    project. The source cache is kept. A signed build removed is
     fetched again from the remote storage, where publishing put it, or else signed again.
 
     The local repository and snapshot, made again when needed, are removed in both cases: they have hard links to the
@@ -82,6 +83,8 @@ def clean(
         ]
         paths += [state / "cache" / cache for cache in ("checks", "upstream", "rpms", "srpms")]
         paths += _other_isos(project, isos) if isos is not None else []
+        # but those of the steps, like _resolve.log
+        paths += [log for log in (state / "logs").glob("[!_]*.log") if log.stem not in project.package_dirs]
         packages = [pkg for tree in trees for pkg in tree.glob("*")]
     else:
         paths += [state / "build" / name for name in names]

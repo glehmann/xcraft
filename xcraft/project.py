@@ -277,7 +277,7 @@ class Project:
 
         It works on the platform of the RPM architecture `arch`, $XCRAFT_ARCH, or the host's, like x86_64 for
         x86_64_v2, or else on the first one of the configuration. This process uses it, see use(), unless not `use`,
-        for the commands reading only the logs, which xcraft clean keeps.
+        for the commands reading only the logs, like xcraft log -f, during xcraft clean.
         """
         # resolved: the containers mount it, and links are resolved against it
         candidates = (

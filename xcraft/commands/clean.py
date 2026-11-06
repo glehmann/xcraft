@@ -27,8 +27,8 @@ def clean(
     arch: Arch = None,
 ) -> None:
     """Remove the build trees and outdated builds, signed or not, of the given packages only, or of all with what they
-    share: the outdated caches of the specs, the resolutions and the checks, and the upstream packages downloaded. What
-    is of an architecture is of the one of --arch only.
+    share: the outdated caches of the specs, the resolutions and the checks, the upstream packages downloaded, and the
+    logs of the packages removed from the project. What is of an architecture is of the one of --arch only.
 
     The current builds are kept: the final ones, and the development ones, as last built. So are the ISOs of the
     checkout, see xcraft iso, but the others, from the remote storage or made again when needed.

@@ -231,9 +231,11 @@ def test_clean_keeps_sources_and_current_builds(project: Project, monkeypatch: p
                  "cache/checks/installable/old", "cache/upstream/old.json", "cache/rpms/old.rpm",
                  "cache/srpms/old.src.rpm", "cache/signed/key/x86_64_v2/foo/old/RPMS/foo.rpm",
                  "cache/signed/key/x86_64_v2/foo/current/RPMS/foo.rpm",
-                 "cache/signed/key/aarch64/foo/old/RPMS/foo.rpm"):  # fmt: skip
+                 "cache/signed/key/aarch64/foo/old/RPMS/foo.rpm",
+                 "logs/foo.log", "logs/gone.log", "logs/_resolve.log"):  # fmt: skip
         (state / path).parent.mkdir(parents=True, exist_ok=True)
         (state / path).write_bytes(b"x" * 8192)
+    (project.root / "base/foo").mkdir(parents=True)  # but not gone, removed from the project
     monkeypatch.setattr(specs, "_read", {state / "cache/specs/x86_64_v2/current.json"})
     monkeypatch.setattr(resolution, "_resolved", {state / "cache/resolved/x86_64_v2/current.json": Resolved()})
 
@@ -267,6 +269,8 @@ def test_clean_keeps_sources_and_current_builds(project: Project, monkeypatch: p
         "cache/sources/abc/foo.tar.gz",
         "cache/specs/aarch64/old.json",
         "cache/specs/x86_64_v2/current.json",
+        "logs/_resolve.log",
+        "logs/foo.log",
     ]
     current = ["cache/builds/x86_64_v2/foo/current/RPMS/foo.rpm", "cache/signed/key/x86_64_v2/foo/current/RPMS/foo.rpm"]
     assert files(state) == sorted([*kept, *current, "ccache/foo/data"])
