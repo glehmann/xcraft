@@ -44,12 +44,6 @@ def write_atomically(path: Path, text: str) -> None:
     _sync(path.parent)
 
 
-def remove_durably(path: Path) -> None:
-    """Remove the file `path`, even on a power loss, once returned."""
-    path.unlink()
-    _sync(path.parent)
-
-
 class ProjectLockedError(RuntimeError):
     """Raised when the lock of a project is held by another command."""
 

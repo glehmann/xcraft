@@ -72,18 +72,9 @@ def _fork(project: Project) -> str | None:
 
 def base(project: Project) -> dict[str, BuildId] | None:
     """Return the build IDs of the main branch where the current one forks from it, or None out of a git repository,
-    or without the main branch. Fail when it forks before the main branch got xcraft.builds.
+    or without the main branch.
     """
-    if not (fork := _fork(project)):
-        return None
-    # .buildid/ before lock format 4: the migration numbers from 1, the branches forked before it are rebased
-    if (
-        _git(project, "rev-parse", "-q", "--verify", f"{fork}:.buildid")
-        and _builds_at(project, _main(project) or fork).ids
-    ):
-        msg = f"the current branch forks from {project.config.main_branch} before xcraft.builds: rebase it on it"
-        raise BuildIdError(msg)
-    return _at(project, fork)
+    return _at(project, fork) if (fork := _fork(project)) else None
 
 
 def _on_main(project: Project) -> bool:

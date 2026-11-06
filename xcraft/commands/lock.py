@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-import shutil
 from typing import Annotated
 
 import typer
 
 from xcraft import resolution
 from xcraft.build import update_build_ids
-from xcraft.builds import builds_path, load_builds, save_builds, upgrade_builds
+from xcraft.builds import builds_path, load_builds
 from xcraft.display import console
-from xcraft.lock import choose_versions, load_lock, lock_path, save_lock, upgrade_lock
-from xcraft.project import Project, remove_durably, write_atomically
+from xcraft.lock import choose_versions, load_lock, lock_path, save_lock
+from xcraft.project import Project
 from xcraft.resolution import available_versions, upstream_sources
 
 
@@ -64,12 +63,6 @@ def lock(
             "--outdated", help="Show the versions --update would change, without changing them, and fail then."
         ),
     ] = False,
-    upgrade: Annotated[
-        bool,
-        typer.Option(
-            "--upgrade", help="Upgrade a lock of an older xcraft, pinning its packages again, and .buildid/ too."
-        ),
-    ] = False,
 ) -> None:
     """Show the lock of upstream packages and the lock of the builds, or update the first.
 
@@ -78,38 +71,12 @@ def lock(
     even in the same versions, like those published again. Otherwise, the pinned packages are kept, whatever the
     repositories have now: a build fails rather than getting other ones. --outdated, for CI, fails when an update
     would change the versions in the lock: not when it would only pin other contents of the same versions, which only
-    --update looks for. --upgrade moves .buildid/ and what the builds recorded in a lock of format 3 or older to
-    xcraft.builds, from a copy of the lock in .xcraft/ until then: run it again when interrupted.
+    --update looks for.
     """
     if packages and not (update or outdated):
         msg = "packages to update need --update or --outdated"
         raise typer.BadParameter(msg)
     project = Project.find()
-    if upgrade:
-        with project.lock():
-            # the lock upgraded, kept until xcraft.builds has what its builds recorded: an interrupted upgrade starts
-            # again from it, and one refused keeps none
-            original = project.state / "xcraft.lock.upgrading"
-            if original.exists():
-                write_atomically(lock_path(project), original.read_text())
-            lock, records = upgrade_lock(project)
-            if not original.exists():
-                original.parent.mkdir(parents=True, exist_ok=True)
-                write_atomically(original, lock_path(project).read_text())
-            save_lock(project, lock)
-            try:
-                resolution.prepare(project, roots=False)  # the images, which parse the specs
-                save_builds(project, upgrade_builds(project, records))
-            except BaseException:
-                write_atomically(lock_path(project), original.read_text())
-                remove_durably(original)
-                raise
-            remove_durably(original)  # before .buildid/, which a new start would need
-            shutil.rmtree(project.root / ".buildid", ignore_errors=True)
-            resolution.prepare(project)
-            update_build_ids(project)
-        console.print(f"{lock_path(project).relative_to(project.root)} upgraded")
-        return
     if update or outdated:
         project.frozen = not update  # --outdated only reads the lock, like for CI
         with project.lock():

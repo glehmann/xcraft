@@ -116,7 +116,7 @@ machine, and pinned in the lock, see `resolution.prepare()`: the key covers what
 without resolving anything. A pin stays until `xcraft lock --update` pins it again, even when the repositories publish
 other contents for it: a build then fails, rather than getting another RPM. A resolution of another version or
 architecture of a pinned package fails too, rather than pinning it. See `buildkey.lock_inputs()`, and the format of
-the lock, `lock.FORMAT`, which `xcraft lock --upgrade` upgrades.
+the lock, `lock.FORMAT`.
 
 The image and the build roots get the pinned packages only: they install from a repository of the pinned RPMs of
 their architecture, and nothing else upstream, see `xcraft.pinned`. Each RPM is downloaded once, into a store of the

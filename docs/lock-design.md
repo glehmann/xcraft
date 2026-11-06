@@ -1,6 +1,6 @@
 # Design: the locks of the dependencies and of the builds
 
-Status: implemented, the lock of the dependencies in format 4, and [the lock of the
+Status: implemented, the lock of the dependencies, and [the lock of the
 builds](#the-lock-of-the-builds-xcraftbuilds), with the build IDs and what the builds record.
 
 ## What the locks are for
@@ -19,8 +19,8 @@ It is the only source of the upstream versions: the repositories are pools to ta
 upstream-mirror-design.md for our copy of them.
 
 **The lock of the builds** says which build of each package of ours a commit has, its build ID, and what its builds
-found that its spec does not say, which the resolution needs before building: one file, `xcraft.builds`. Up to lock
-format 3, the build IDs were in `.buildid/`, and what the builds found in `xcraft.lock`, see [Problems](#problems).
+found that its spec does not say, which the resolution needs before building: one file, `xcraft.builds`. Before it,
+the build IDs were a file by package, and what the builds found in `xcraft.lock`, see [Problems](#problems).
 
 # The lock of the dependencies: `xcraft.lock`
 
@@ -114,9 +114,7 @@ What a build records can change its build root: it is then not cached, and built
   packages not pinned yet, and drops the entries of packages and binary packages gone.
 - **The builds** record what they found, in the lock of the builds, then `prepare()` again for what it needs.
 - **`xcraft lock --update [packages]`** locks the latest versions all the architectures have, and pins their binary
-  packages again, even of the same versions; **`--outdated`**, for CI, says whether it would change versions;
-  **`--upgrade`** upgrades a lock of an older format, dropping what it has without pins, which `prepare()` resolves
-  and pins again, and moving what the builds recorded in it, and `.buildid/`, to the lock of the builds.
+  packages again, even of the same versions; **`--outdated`**, for CI, says whether it would change versions.
 - **`--locked`**, for CI, forbids any change: of the lock, and of the build IDs, see buildid.py.
 
 The lock is changed from the lock as read, and saved only if it did not change meanwhile, by another command, under
@@ -159,21 +157,7 @@ The builds change the lock of the builds first, under the lock of the project, f
 The two files are written apart, each one atomically, not together: a command stopped between them leaves records
 without the build roots they need, which the next `prepare()` resolves and pins.
 
-# Up to lock format 3
-
-## Build IDs: `.buildid/`
-
-A file by package of ours, `.buildid/<package>`, one line: `<number> <key>`, or `<number> <key> accepts <key>` for a
-build reused despite changes, see `xcraft reuse`. The key covers what makes the package, on all the architectures, see
-build-keys.md; the number goes in its release, `+b<number>`, see buildid.py. The rules are the same since:
-
-- a package keeps the build ID of the main branch where the current branch forks from it while its key is the same,
-  and gets the next number of the fork's otherwise: the numbers the main branch gave since do not count;
-- on the main branch, a changed key needs a greater number than the previous commit's, so that a number is never given
-  to two builds, even by a merge conflict resolved by keeping one side;
-- two branches changing the same package both take the next number, so their files conflict on merge: on purpose,
-  the merge is built again, with a new number;
-- `--locked`, in CI, forbids any change.
+# Before the lock of the builds
 
 ## Problems
 
@@ -202,7 +186,7 @@ their release suffixes, to those the specs declare, without.
 
 ### The build IDs are many files
 
-`.buildid/` has a file by package, 44 in xcp-ng-dist: an upstream update, or a change of a package many others are
+The build IDs had a file by package, 44 in xcp-ng-dist: an upstream update, or a change of a package many others are
 built against, changes dozens of them, which fill `jj status` and the diffs.
 
 # The lock of the builds: `xcraft.builds`
@@ -239,11 +223,24 @@ jj does not use git's merge drivers:
 - **a blank line after the lines of each package**, the last one included.
 
 `build` and `key` are the build ID, its number and its key, and `accepts`, only for a build reused, the key it is
-accepted for, as `.buildid/` had them on one line; `buildrequires`, `requires` and `provides` are what the builds
-recorded, as the lock had them, and `<arch>.` the entries of an architecture that differ. The lock of the
+accepted for; `buildrequires`, `requires` and `provides` are what the builds
+recorded, as the lock of the dependencies had them, and `<arch>.` the entries of an architecture that differ. The lock of the
 dependencies keeps `[sources]`, `[binaries.<arch>]`, `[image]`, `[roots]`, `[runtime]` and `[iso]`:
 `[roots]` is by package of ours, but it is what we pin from upstream for it, which an upstream update changes for many
 packages at once, and its review goes with the pins.
+
+## Build IDs
+
+The key covers what makes the package, on all the architectures, see build-keys.md; the number goes in its release,
+`+b<number>`, see buildid.py:
+
+- a package keeps the build ID of the main branch where the current branch forks from it while its key is the same,
+  and gets the next number of the fork's otherwise: the numbers the main branch gave since do not count;
+- on the main branch, a changed key needs a greater number than the previous commit's, so that a number is never given
+  to two builds, even by a merge conflict resolved by keeping one side;
+- two branches changing the same package both take the next number, so their lines conflict on merge: on purpose,
+  the merge is built again, with a new number;
+- `--locked`, in CI, forbids any change.
 
 ## Merges
 
@@ -273,8 +270,8 @@ build, which the keys of the packages built against it cover: `--locked` refuses
 
 The one loss, against a file by package: two branches adding packages that sort into the same gap conflict, which is
 resolved keeping both. Otherwise, xcraft reads a file in conflict without the lines of the packages the conflicts touch:
-building gives their build IDs again and records what their builds find, like it wrote the files of `.buildid/` in
-conflict again; `--locked`, in CI, refuses a merge not built again.
+building gives their build IDs again and records what their builds find; `--locked`, in CI, refuses a merge not built
+again.
 
 ## History
 
@@ -313,20 +310,10 @@ requiring something it provides.
 ## Keys and build IDs
 
 The keys cover the same inputs, by architecture, but the records as `xcraft.builds` has them: without the provides
-the specs declare, and with the placeholders, which the build IDs of the packages built against cover. So the keys of
-the packages built against those with such records change once: the move goes with build IDs numbered from 1 again,
-on a main branch rewritten without `.buildid/`, and all the packages built again. A bump still changes the keys of the
-packages built against the one bumped, through its build ID.
+the specs declare, and with the placeholders, which the build IDs of the packages built against cover. A bump changes
+the keys of the packages built against the one bumped, through its build ID.
 
-## Migration
-
-Lock format 4: `xcraft lock --upgrade` moves `.buildid/` and the three tables to `xcraft.builds`, without the
-provides the specs declare and with the versions as `%{evr}` or `%{version}`, removes `.buildid/`, and keeps the rest
-of the lock as it is: no pin changes. The main branch where the current one forks from it is read in `xcraft.builds`
-only: without it, there, the build IDs are numbered from 1; once the main branch has it, a branch forking before it
-fails, to be rebased.
-
-## Workflows, after
+## Workflows
 
 - **A bump of a package of ours:** its spec, and its `build` and `key` lines.
 - **A new BuildRequires, of an upstream package not locked:** its spec, `xcraft.lock`, which locks and pins it, from
@@ -340,9 +327,9 @@ fails, to be rebased.
 
 # Alternatives considered
 
-- **A file by package, `.buildid/<package>` and `.recorded/<package>.toml`:** two packages added in the same gap
+- **A file by package, for its build ID and for its records:** two packages added in the same gap
   merge, but the files of the build IDs stay many, and those of the records double them; the history of a package is
-  that of its files, without a regex. Its records in its `.buildid/` file would conflict with its build ID, which is
+  that of its files, without a regex. Its records in the file of its build ID would conflict with its build ID, which is
   the same with one file as the changes of a package's records come with a new build ID.
 - **Tables by package, `[xen]` then `build = …`:** merges like the format chosen, but the lines of a change do not name
   their package, so its history needs the whole diff.

@@ -70,31 +70,34 @@ The builds are stored, locally and in the remote storage, by architecture, under
 
 ### Build IDs
 
-A package's build ID is its build number with its build key. It is in `.buildid/<package>`, tracked, one line:
+A package's build ID is its build number with its build key. It is in `xcraft.builds`, tracked, with what the builds
+of the package recorded, after a comment line with its name:
 
-```text
-42 3f1c…e2a0
+```toml
+# xen
+xen.build = 42
+xen.key = "3f1c…e2a0"
 ```
 
 The other inputs of the key are already in the repository, in the package directory, `xcraft.toml`, `xcraft.lock`,
-and the other `.buildid` files: the reason of a new number is in the same commit, as their diff.
+and the other build IDs: the reason of a new number is in the same commit, as their diff.
 
 The main branch is `main_branch` in `xcraft.toml`, `master` by default. Official builds are only made by CI on the
-main branch, so the first-parent history of its `.buildid` files is the record of the official numbers: no server, nor
+main branch, so the first-parent history of its `xcraft.builds` is the record of the official numbers: no server, nor
 registry in the remote storage, is needed. A package keeps the build ID of the main branch, where the current branch
 forks from it, while its key is the same; otherwise it gets the next number. So:
 
 - a branch proposes the same number however many times it changes the package;
 - reverting a change brings back the main branch's build ID, withdrawing the proposal;
 - a branch's numbers do not change when the main branch moves on, only when it is merged or rebased;
-- two unmerged branches can both propose 43: number and key on one line, both change it, so merging the second one
-  conflicts, and recomputing the file resolves it to 44, the merge forking from the main branch's tip even while it
+- two unmerged branches can both propose 43: number and key on adjacent lines, both change them, so merging the
+  second one conflicts, and recomputing the build IDs resolves it to 44, the merge forking from the main branch's tip even while it
   is in progress.
 
 Out of a git repository, or without the main branch, there is nothing to number against: the numbers stay those of the
 working tree, 1 for new packages.
 
-The builds check the files, like `--locked` checks the lock: in CI, every build checks that the committed files are
+The builds check the build IDs, like `--locked` checks the lock: in CI, every build checks that the committed ones are
 those xcraft computes, failing otherwise; locally, xcraft updates them. On the main branch, a key differing from the
 first parent's must come with a greater number than the first parent's, so that no number is given to two different
 builds, even when a merge conflict was resolved by keeping one side. This needs that commit in CI, with

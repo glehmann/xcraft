@@ -26,7 +26,7 @@ from xcraft.builds import builds_path, load_builds, save_builds
 from xcraft.cache import BuildError
 from xcraft.iso import _INSTALL_TOOLS, _check_installed_tools
 from xcraft.localrepo import LocalRepo
-from xcraft.lock import Recorded, load_lock, lock_path, save_lock
+from xcraft.lock import Recorded, load_lock, save_lock
 from xcraft.project import Project
 from xcraft.publish import _check_installable
 from xcraft.resolution import ISO_TOOLS, ResolutionError
@@ -953,77 +953,6 @@ def test_patchset_during_a_build(root: Path, tmp_path: Path) -> None:
     assert output.startswith("trivial: patchset from 1.0, 1 added")
     assert (root / "base/trivial/0001-a-fix.patch").exists()
     assert xcraft("patchset", str(repo), "--package", "nope")[0] == 2
-
-
-def test_lock_upgrade_refused(root: Path) -> None:
-    """An upgrade of a lock of this format is refused, keeping nothing to start again from, which would undo what
-    follows.
-    """
-    project = Project.find()
-    refused = "the lock has the format 4, which this xcraft does not upgrade"
-    assert refused in xcraft("lock", "--upgrade")[1]
-    assert not (root / ".xcraft/xcraft.lock.upgrading").exists()
-    lock = load_lock(project)
-    lock.sources["later-edit"] = "1-1"
-    save_lock(project, lock)
-    edited = lock_path(project).read_bytes()
-    assert refused in xcraft("lock", "--upgrade")[1]
-    assert lock_path(project).read_bytes() == edited
-
-
-def test_lock_upgrade(root: Path) -> None:
-    project = Project.find()
-    sources = load_lock(project).sources
-    lock_path(project).write_text("[sources]\n" + "".join(f'"{s}" = "{v}"\n' for s, v in sources.items()))
-    code, output = xcraft("build", "--dry-run")
-    assert code == 1
-    assert "the lock has the format 1, not 4: xcraft lock --upgrade upgrades it" in output
-    code, output = xcraft("lock", "--upgrade")
-    assert code == 0, output
-    assert load_lock(project).binaries[ARCH]["bash"].source == "bash"
-    # of format 3: .buildid/ and what the builds recorded in the lock move to xcraft.builds, without the provides the
-    # specs declare, like the self-provides, and those of x86_64 only, which aarch64 had from the shared entries
-    spec = root / "base/trivial/trivial.spec"
-    spec.write_text(spec.read_text().replace("BuildArch: noarch\n", "%ifarch x86_64\nProvides: x86-only = 1\n%endif\n"))
-    text = lock_path(project).read_text().replace("version = 4", "version = 3")
-    recorded = (
-        '[requires]\n"trivial" = ["tcl"]\n\n[provides]\n"trivial" = ["trivial = 1.0-1.xcpng8.99", "x86-only = 1"]\n'
-    )
-    lock_path(project).write_text(f"{text}\n{recorded}")
-    builds_path(project).unlink()
-    (root / ".buildid").mkdir()
-    (root / ".buildid/trivial").write_text(f"7 {'ab' * 32}\n")
-    # a failure before xcraft.builds has them, like without podman, leaves the lock as it was, to upgrade again
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setenv("PATH", str(root / "no-tools"))
-        assert xcraft("lock", "--upgrade")[0] == 1
-    assert lock_path(project).read_text() == f"{text}\n{recorded}"
-    assert not builds_path(project).exists()
-    assert (root / ".buildid/trivial").exists()
-    assert not (root / ".xcraft/xcraft.lock.upgrading").exists()
-    # one interrupted once the lock is upgraded, before xcraft.builds has the records: the next one starts again
-    (root / ".xcraft/xcraft.lock.upgrading").write_text(f"{text}\n{recorded}")
-    lock_path(project).write_text(text.replace("version = 3", "version = 4"))
-    # its copy removed on the disk before .buildid/, which a power loss could otherwise bring back without it
-    synced = []
-    fsync = os.fsync
-
-    def recorded_fsync(fd: int) -> None:
-        if Path(f"/proc/self/fd/{fd}").samefile(root / ".xcraft"):
-            synced.append(((root / ".xcraft/xcraft.lock.upgrading").exists(), (root / ".buildid").exists()))
-        fsync(fd)
-
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(os, "fsync", recorded_fsync)
-        code, output = xcraft("lock", "--upgrade")
-    assert code == 0, output
-    assert synced[-1] == (False, True)
-    assert not (root / ".xcraft/xcraft.lock.upgrading").exists()
-    assert not (root / ".buildid").exists()
-    assert "[requires]" not in lock_path(project).read_text()
-    builds = load_builds(project)
-    assert (builds.requires.of(ARCH), builds.provides) == ({"trivial": ["tcl"]}, Recorded())
-    assert builds.ids["trivial"].number == 7  # out of git, nothing to number against
 
 
 def test_ccache_with_a_compiler(root: Path) -> None:

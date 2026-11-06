@@ -820,10 +820,7 @@ and `jj log -r "diff_lines(regex:'^xen\.', 'xcraft.builds')"`, or `xcraft histor
 - `buildrequires`, for each package with `%generate_buildrequires`, its dynamic `BuildRequires`.
 
 An architecture which finds others has its own entries, which replace the shared ones, like `xen.aarch64.requires`.
-So a bump of a package changes its spec and its `build` and `key` lines only. `xcraft lock --upgrade` moves
-`.buildid/` and what the lock of format 3 recorded to it, keeping the original lock in `.xcraft/xcraft.lock.upgrading`
-until `xcraft.builds` has them: a failed upgrade restores it, and an interrupted one, like by a power loss, starts
-again from it when run again.
+So a bump of a package changes its spec and its `build` and `key` lines only.
 
 **Build roots, resolved.** Before building, dnf resolves the build environment image, from the base image and
 `packages` of `xcraft.toml`, and the build root of each package, from its `BuildRequires`, against the upstream

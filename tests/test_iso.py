@@ -74,10 +74,10 @@ def test_iso_inputs(project: Project) -> None:
     finally:
         bytecode.unlink()
     # the build IDs: the numbers of the builds, and the reuses of builds
-    for text in (f"2 {'01' * 32}", f"2 {'01' * 32} accepts {'45' * 32}"):
+    for accepts in (None, "45" * 32):
         before = key()
         builds = load_builds(project)
-        builds.ids["trivial"] = BuildId.parse(text)
+        builds.ids["trivial"] = BuildId(number=2, key="01" * 32, accepts=accepts)
         save_builds(project, builds)
         assert key() != before
 

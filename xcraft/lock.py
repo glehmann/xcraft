@@ -46,15 +46,8 @@ class Locked(BaseModel):
     sha256: str
 
 
-FORMAT = 4
-"""The version of the format of the lock: 2, the upstream binary packages of the images and of the build roots, with
-their SHA-256; 3, those of the published repositories and of the tools making the ISO too; 4, without what the builds
-record, in the lock of the builds, see xcraft.builds. A lock of another format is upgraded by xcraft lock --upgrade
-only."""
-
-
-_UNPINNED = {1: ("image", "roots", "runtime", "iso"), 2: ("runtime", "iso"), 3: ()}
-"""What a lock of an older format has without pins, by format, which xcraft lock --upgrade drops."""
+FORMAT = 1
+"""The version of the format of the lock."""
 
 
 class LockFormatError(RuntimeError):
@@ -221,7 +214,7 @@ def parse_lock(text: str) -> Lock:
     """Return the lock of the content of a lock file, of the format of this xcraft."""
     data = tomllib.loads(text)
     if text and data.get("version") != FORMAT:
-        msg = f"the lock has the format {data.get('version', 1)}, not {FORMAT}: xcraft lock --upgrade upgrades it"
+        msg = f"the lock has the format {data.get('version')}, not {FORMAT}: of another xcraft"
         raise LockFormatError(msg)
     return _validate(data)
 
@@ -241,24 +234,6 @@ def cached_lock(project: Project) -> Lock:
 def load_lock(project: Project) -> Lock:
     """Return the lock of the project, empty when there is none yet: a copy of their own, which they may change."""
     return cached_lock(project).model_copy(deep=True)
-
-
-_RECORDS = ("requires", "provides", "buildrequires")
-"""The tables of what the builds recorded, in a lock of format 3 or older."""
-
-
-def upgrade_lock(project: Project) -> tuple[Lock, dict[str, Recorded]]:
-    """Return the lock of the project, of an older format, without what it has without pins: the images and the build
-    roots, of source packages in format 1, and what is published and the tools making the ISO, in format 2. prepare()
-    resolves and pins them again, keeping the pinned packages. Return with it what the builds recorded in it, by table,
-    which the lock of the builds has since format 4.
-    """
-    data = tomllib.loads(lock_path(project).read_text())
-    if (version := data.get("version", 1)) not in _UNPINNED:
-        msg = f"the lock has the format {version}, which this xcraft does not upgrade"
-        raise LockFormatError(msg)
-    records = {field: Recorded.model_validate(_recorded(data.pop(field, {}))) for field in _RECORDS}
-    return _validate({k: v for k, v in data.items() if k not in (*_UNPINNED[version], "version")}), records
 
 
 def _array(items: list[str]) -> str:
