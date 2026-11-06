@@ -12,12 +12,14 @@
 | `xcraft build [<pkg>...] --dev ID` / `--final` | Development builds with another identifier than `dev`, or `$XCRAFT_DEV`; or final builds, without development suffixes (see [Development builds](builds.md#development-builds)) |
 | `xcraft build [<pkg>...] --nocheck` | Without running the tests of the specs, their `%check`, for faster iterations; also for `repo`, `iso` and `boot`, not with `--final` (see [Builds without their tests](builds.md#builds-without-their-tests)) |
 | `xcraft repo <pkg>... [--dependents]` | When they have development builds, a repository of them alone, for test hosts |
-| `xcraft repo <pkg>... --host h [--upgrade]` | The same, copied to test hosts over ssh, and upgraded there |
+| `xcraft repo <pkg>... --host h [--upgrade]` | The same, copied to test hosts over ssh, `ssh://[user@]host[:port]` for another port, and upgraded there |
+| `xcraft repo <pkg>... --vm [--upgrade]` | The same, for the VM `xcraft boot` installed, running |
 | `xcraft publish [repos\|isos] [--stage s] [--locked] [--local] [--unsigned] [--dev-key] [--arch a]` | Publish a snapshot of the distribution, its repositories and its ISOs, or only those given, for all the architectures or `--arch`, as the stage's latest one; a `--local` one is of the host's architecture by default |
 | `xcraft iso [--netinstall] [--output f] [-V id] [--locked] [--unsigned] [--dev ID \| --final] [--nocheck]` | Make the installation ISO, from a local snapshot (see [Installation ISO](iso.md)) |
 | `xcraft boot [--iso f] [--disk f] [--headless] [--unsigned] [--dev ID \| --final] [--nocheck]` | Build the ISO and boot its installer in a local QEMU VM, creating a virtual disk if missing |
 | `xcraft vm start [--background]` | Start the VM again from its installed disk, without the ISO, with the options of `xcraft boot` |
 | `xcraft vm <command>` | Inspect a VM, read its console, send input, save diagnostics, or stop it |
+| `xcraft vm ssh [<command>...]` / `xcraft vm ssh-copy-id` | Log in as root in the VM, or run a command in it; install your SSH key there |
 | `xcraft key create` / `xcraft key show [--export]` | The developer's key, which signs the development builds |
 | `xcraft push` | Upload everything the remote storage misses: the source archives and the builds of all packages, with the `index.html` pages of their directories, and the resolutions |
 | `xcraft push sources [<pkg>...] [--check] [--to main\|dev]` | Upload cached sources, or check the selected bucket; defaults to dev |

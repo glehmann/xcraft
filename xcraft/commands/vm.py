@@ -11,7 +11,7 @@ from typing import Annotated
 import pyte
 import typer
 
-from xcraft import display, vm
+from xcraft import display, process, vm
 from xcraft.commands import Arch
 from xcraft.project import Project
 
@@ -54,7 +54,9 @@ def show(root: Path, session: vm.Session) -> None:
     display.console.print(f"virtual disk: {session.disk}\nVM session: {root}", markup=False)
     display.console.print(f"Control: xcraft vm --vm-dir {root} status", markup=False)
     if session.ssh_port:
-        display.console.print(f"SSH when enabled in the guest: ssh -p {session.ssh_port} root@127.0.0.1", markup=False)
+        display.console.print(
+            f"SSH when enabled in the guest: xcraft vm ssh, or ssh -p {session.ssh_port} root@127.0.0.1", markup=False
+        )
 
 
 @app.command()
@@ -104,6 +106,40 @@ def start(
     show(root, session)
     if not background:
         vm.wait(proc, root)
+
+
+@app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def ssh(
+    ctx: typer.Context,
+    command: Annotated[
+        list[str] | None,
+        typer.Argument(
+            help="Command to run in the VM, with its arguments: a login shell by default.", show_default=False
+        ),
+    ] = None,
+) -> None:
+    """Log in as root in the running VM, or run a command in it, with ssh, exiting with its code: without checking its
+    host key, as each installation changes it. See xcraft vm ssh-copy-id, not to type its password each time.
+    """
+    port = vm.ssh_port(directory(ctx))
+    result = process.run(["ssh", *vm.ssh_options(port), vm.SSH_DESTINATION, *(command or []), *ctx.args], check=False)
+    raise typer.Exit(result.returncode)
+
+
+@app.command("ssh-copy-id")
+def ssh_copy_id(
+    ctx: typer.Context,
+    identity: Annotated[
+        Path | None,
+        typer.Option("--identity", "-i", help="Public key to install, rather than the one ssh-copy-id chooses."),
+    ] = None,
+) -> None:
+    """Install your SSH public key for root in the running VM, asking for its password once: ssh, and xcraft repo --vm,
+    then need none, until the next installation. Its host key is not checked, as each installation changes it.
+    """
+    port = vm.ssh_port(directory(ctx))
+    keys = ["-i", str(identity)] if identity else []
+    process.run(["ssh-copy-id", *keys, *vm.ssh_options(port), vm.SSH_DESTINATION])
 
 
 @app.command()

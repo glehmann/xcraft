@@ -195,6 +195,37 @@ class Session(BaseModel):
     launch: Launch | None = None  # None: launched by an xcraft without xcraft vm start
 
 
+SSH_DESTINATION = "root@127.0.0.1"
+"""Where ssh reaches the VM, on its SSH port of localhost."""
+
+
+def ssh_options(port: int) -> list[str]:
+    """Return the options of ssh reaching the VM on `port` of localhost: without checking its host key, which each
+    installation changes on the same port.
+    """
+    return [
+        "-p",
+        str(port),
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "LogLevel=ERROR",
+    ]
+
+
+def ssh_port(directory: Path) -> int:
+    """Return the SSH port of the VM running in `directory`, failing when it does not run, or has none."""
+    if not (directory / "session.json").is_file() or not running(directory):
+        msg = f"no VM running in {directory}: see xcraft boot and xcraft vm start"
+        raise RuntimeError(msg)
+    if not (port := Session.model_validate_json((directory / "session.json").read_text()).ssh_port):
+        msg = f"the VM of {directory} has no SSH port"
+        raise RuntimeError(msg)
+    return port
+
+
 def firmware(code: Path | None, template: Path | None) -> tuple[Path, Path]:
     """Return the OVMF code and template of its variables: those given, or else those installed."""
     if bool(code) != bool(template):

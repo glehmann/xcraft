@@ -7,9 +7,12 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import socket
 import subprocess
 import sys
-from typing import TYPE_CHECKING
+import time
+from pathlib import Path
 
 import pytest
 import typer
@@ -22,7 +25,7 @@ from xcraft.cache import BuildError, build_keys, previous_duration
 from xcraft.checks import _check_made, record_rpm_deps
 from xcraft.clean import clean, repos_disk_usage
 from xcraft.commands import complete_arch, prepared_project
-from xcraft.commands.repo import _kept
+from xcraft.commands.repo import _connected, _Host, _host, _kept
 from xcraft.commands.shell import package_of
 from xcraft.localrepo import OUTPUT_MARKER, RepoError, extra_rpms, fresh_dir
 from xcraft.lock import Lock, Pin, save_lock
@@ -33,9 +36,6 @@ from xcraft.resolution import Resolved
 from xcraft.rpmbuild import prepare_tree
 from xcraft.sources import SourceError, cache_source, parse_manifest, write_manifest
 from xcraft.specs import STAGED_TIME, hash_dir, main_spec
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 @pytest.fixture
@@ -619,6 +619,51 @@ def test_packages_kept_by_test_hosts() -> None:
         "package qemu is not installed",
     ]
     assert _kept(installed, rpms) == [("xen-libs-4.17-1+b3~4.qcow2.x86_64", "xen-libs-4.17-1+b3~2.dev.x86_64")]
+
+
+def test_test_hosts_with_their_ports() -> None:
+    assert _host("root@h") == _Host("root@h", "root@h")
+    assert _host("ssh://root@127.0.0.1:2222") == _Host("ssh://root@127.0.0.1:2222", "root@127.0.0.1", ["-p", "2222"])
+    assert _host("ssh://h") == _Host("ssh://h", "h")
+    for bad in ("-oProxyCommand=x", "ssh://h:port", "ssh://h/path", "ssh://"):
+        with pytest.raises(typer.BadParameter, match="not a host"):
+            _host(bad)
+
+
+@pytest.mark.skipif(not shutil.which("sshd", path="/usr/sbin:/usr/bin"), reason="needs sshd")
+def test_test_host_connected_once(tmp_path: Path) -> None:
+    # a real sshd on localhost, as this user, which the commands of a copy reach through one connection
+    for key in ("host", "user"):
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", tmp_path / key], check=True)
+    shutil.copy(tmp_path / "user.pub", tmp_path / "authorized_keys")
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    (tmp_path / "sshd_config").write_text(
+        f"Port {port}\nListenAddress 127.0.0.1\nHostKey {tmp_path / 'host'}\nAuthorizedKeysFile "
+        f"{tmp_path / 'authorized_keys'}\nPasswordAuthentication no\nUsePAM no\nStrictModes no\n"
+    )
+    sshd = shutil.which("sshd", path="/usr/sbin:/usr/bin")
+    assert sshd
+    log = tmp_path / "sshd.log"
+    with subprocess.Popen([sshd, "-D", "-f", tmp_path / "sshd_config", "-E", log]) as server:
+        try:
+            options = ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"]
+            options += ["-i", str(tmp_path / "user"), "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes"]
+            host = _Host("test", "127.0.0.1", ["-p", str(port), *options])
+            for _ in range(100):  # until it listens
+                if subprocess.run([*host.ssh("true")], capture_output=True, check=False).returncode == 0:
+                    break
+                time.sleep(0.1)
+            before = log.read_text().count("Accepted publickey")
+            with _connected(host) as shared:
+                for _ in range(3):
+                    subprocess.run(shared.ssh("true"), check=True)
+                control = Path(shared.options[shared.options.index("-o", len(host.options)) + 1].split("=", 1)[1])
+            assert log.read_text().count("Accepted publickey") == before + 1
+            assert not control.parent.exists()
+        finally:
+            server.terminate()
 
 
 def test_package_of_a_path(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:

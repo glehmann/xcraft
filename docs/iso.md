@@ -122,7 +122,12 @@ xcraft vm screenshot /tmp/installer.png
 xcraft vm logs /tmp/installer-diagnostics
 xcraft vm stop
 xcraft vm start --background           # the installed disk, without the ISO
+xcraft vm ssh-copy-id                  # your SSH key for root, asking its password once
+xcraft vm ssh                          # a login shell in the VM, or: xcraft vm ssh rpm -qa --last
 ```
+
+`ssh` and `ssh-copy-id` reach root on the SSH port of the VM, on localhost, without checking its host key, which each
+installation changes; like ssh, `ssh` gives the remote shell its command as one line, and exits with its code.
 
 `console` renders the current 80-by-24 serial screen and waits for output stability. A wait timeout prints the screen,
 saves a diagnostics bundle in the session directory, and fails. Physical typing uses the US keyboard layout, which
