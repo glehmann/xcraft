@@ -77,6 +77,8 @@ and [DEMO.md](DEMO.md) is a tour of the main features.
 
 Design notes: [build keys](docs/build-keys.md), [the locks](docs/lock-design.md),
 [rebuilds and releases](docs/rebuild-release-workflow-design.md),
-[identical rebuilds](docs/identical-rebuilds-design.md), [CI of pull requests](docs/pr-ci-design.md), [the upstream mirror](docs/upstream-mirror-design.md),
-[compiler caches](docs/ccache-sync-design.md), [the remote storage's security](docs/remote-storage-security-design.md),
+[identical rebuilds](docs/identical-rebuilds-design.md), [CI of pull requests](docs/pr-ci-design.md),
+[layout of the published repositories](docs/publishing-layout-design.md),
+[the upstream mirror](docs/upstream-mirror-design.md), [compiler caches](docs/ccache-sync-design.md),
+[the remote storage's security](docs/remote-storage-security-design.md),
 [CI secrets](docs/ci-secret-management-design.md), and [faster development iterations](docs/dev-iteration.md).

@@ -1,7 +1,7 @@
 # Design: our own copy of the upstream packages we lock
 
-Status: implemented with the main and dev buckets, see xcraft/upstream_copy.py: the copies of the pull requests,
-the pin download from the copy of a merged pull request, and the check of the releases wait for their buckets.
+Status: implemented with the main and dev buckets, see xcraft/upstream_copy.py; the check of the releases waits for
+their bucket. The pull requests have no copy of their own, see pr-ci-design.md.
 
 ## The problem
 
@@ -108,23 +108,19 @@ it.
 ### The buckets
 
 The copy of the ci bucket, `.xcraft/upstream/` there, is the reference, written by CI on the main branch only, with the
-CI key: see ci-secret-management-design.md and pr-ci-design.md for the buckets. Until they are set up, the ci bucket is
-the main one, and the pull requests have no copy.
+CI key: see ci-secret-management-design.md for the buckets. Until they are set up, the ci bucket is the main one.
 
-- **pr:** the PR key cannot write the ci bucket, so the jobs of a pull request push the packages of its lock the ci copy
-  misses to a copy of their own, `.xcraft/upstream/pr<N>/<arch>/` in the pr bucket: those of a lock update, downloaded
-  by its builds. It is removed with the rest of the data of the pull request when it closes.
-- **dev:** the same, for a developer, in the dev bucket.
+- **dev:** a developer pushes the packages of their lock the ci copy misses to the copy of the dev bucket.
+- **pull requests:** no copy: they push nothing but their stage, in the dev bucket, see pr-ci-design.md, which has
+  the upstream packages it publishes.
 - **release:** no copy. A release publishes a snapshot of the ci bucket, whose packages are in the ci copy already.
 
 When a pull request is merged, CI on the main branch builds the packages it changed again, so it installs the pins of
-the new lock: the pin download, xcraft/buildenv/pin.py, takes them from the upstream repositories, the ci copy, or the
-copy of the merged pull request, which CI knows from the merge, for a version upstream dropped since the pull request
-pinned it. `xcraft push` then copies them to the ci copy, from the store of the runner. A version the pull request
-pinned and replaced before its merge is not needed anymore: nothing is lost when its copy is removed.
+the new lock: the pin download, xcraft/buildenv/pin.py, takes them from the ci copy, or else from the upstream
+repositories. `xcraft push` then copies them to the ci copy, from the store of the runner.
 
-A version is then lost only if upstream drops it before a build of ours downloads it, the risk of the lock update
-itself.
+A version is then lost only if upstream drops it before the main branch's CI downloads it, the risk of the lock
+update itself.
 
 ### Publishing
 

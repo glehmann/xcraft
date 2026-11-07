@@ -230,7 +230,7 @@ The published stages, the ones hosts install, get a bucket of their own, the rel
 release manager, then by the signing host of part 2, C1 or C2, with an S3 key allowed to write it and to read the main
 bucket, and nothing else. `[remote.release] build_keys` has the release key only. The main bucket keeps what CI writes:
 the builds, the sources, the compiler caches, and the `incoming` stage, signed with the CI key; it becomes the ci
-bucket, named after its writer like the others, see [the buckets](pr-ci-design.md#the-buckets).
+bucket, named after its writer like the others.
 
 - **The CI's S3 key cannot touch the releases**: today it can delete or replace anything of the main bucket, the
   published stages included. Its theft then costs the main bucket's availability, which can be made again, not what
@@ -246,8 +246,8 @@ builds of the main one: a copy between buckets, by a key reading the one and wri
 server-side; otherwise they go through the machine publishing, which is acceptable for a first release. The release
 key signs what the builds signed by the CI key contain: see [What the release key signs](#options).
 
-The other buckets follow the same rule, one writer and one trusted key each: dev, the developers', and pr, the CI of
-the pull requests', see [the CI of pull requests](pr-ci-design.md#the-buckets).
+The dev bucket follows the same rule: the developers write it, each trusting their own key, and so does the CI of the
+pull requests, as a developer, with the PR key, see [the CI of pull requests](pr-ci-design.md#signing-and-trust).
 
 ### Not a stage of the ci bucket
 
