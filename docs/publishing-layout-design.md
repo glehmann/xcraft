@@ -13,9 +13,11 @@ design](ci-secret-management-design.md#4-a-bucket-for-the-releases) and [the CI 
    other paths. The incoming stage is not mirrored, but it must be published like the releases are, to exercise what
    the releases use.
 3. **One package name, several contents.** The same package signed by the CI key, a release key or the PR key is
-   three files of one name; there is a key by major release, for XCP-ng 9, 10, and so on; upstream may publish other
-   contents under the same version, which `xcraft lock --update` pins again; and a reset of the build IDs, like the
-   restart at 1, gives a number again to other contents.
+   three files of one name. There is a release key by major version, for XCP-ng 9, 10, and so on: our packages have
+   the major version in their `%{dist}`, but an upstream package, of AlmaLinux 10 for both XCP-ng 9 and 10, is then
+   two files of one name. Upstream may also publish other contents under the same version, which
+   `xcraft lock --update` pins again, and a reset of the build IDs, like the restart at 1, gives a number again to
+   other contents.
 4. **The upstream packages keep their own signatures.** The hosts must trust the keys of AlmaLinux and EPEL too, and
    anything signed by them is installable from the hosts' other repositories. XCP-ng 8 signs again all the packages it
    publishes, the upstream ones included: the hosts trust its key only.
