@@ -119,7 +119,9 @@ the final build, `+b<n>`. The other packages get their final builds, fetched fro
 `<c>` is a counter of the package and number, going up when the inputs of the build or the identifier change, so that
 each development build upgrades the previous ones, whatever their identifiers, while a build of the same inputs is
 cached: `1+b42~1.dev`, `1+b42~2.dev`, `1+b42~3.qcow2`, then `1+b42`. The counters are in `.xcraft/dev-builds.json`,
-which `xcraft clean` keeps, so they are specific to the checkout. `--final` makes final builds, overriding
+which `xcraft clean` keeps, so they are specific to the checkout. `$XCRAFT_DEV_COUNTER` gives the counter of all the
+development builds instead, like the run number of a CI workflow, which only grows, as CI keeps nothing between its
+runs. `--final` makes final builds, overriding
 `$XCRAFT_DEV`, but not with `--dev`. On the main branch, all the builds are final ones. The development builds are
 cached apart from the final builds, never pushed to the remote storage, nor taken from it; `xcraft status` shows them,
 `clean` keeps those last built, `shell` installs them, and `repo` makes a repository of them for the hosts, see below.

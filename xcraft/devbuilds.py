@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter
@@ -11,7 +12,7 @@ from pydantic import TypeAdapter
 from xcraft import buildid
 from xcraft.buildid import proposed
 from xcraft.buildkey import Inputs
-from xcraft.cache import build_keys
+from xcraft.cache import BuildError, build_keys
 from xcraft.graph import components
 from xcraft.project import write_atomically
 
@@ -73,6 +74,16 @@ def _suffixes(
     return suffixes
 
 
+def dev_counter() -> int | None:
+    """Return the counter of all the development builds, $XCRAFT_DEV_COUNTER, if any."""
+    if not (counter := os.environ.get("XCRAFT_DEV_COUNTER")):
+        return None
+    if not counter.isdigit() or not 0 < int(counter) < 2**31:
+        msg = f"$XCRAFT_DEV_COUNTER must be a positive number: {counter}"
+        raise BuildError(msg)
+    return int(counter)
+
+
 def dev_keys(
     project: Project, ident: str | None, hashes: dict[str, str] | None = None
 ) -> tuple[dict[str, str], dict[str, str]]:
@@ -86,12 +97,17 @@ def dev_keys(
     until keep_built() keeps the counters of new ones. The developed packages of a component, built against each other,
     have the same counter, the next one when one of them changed. The `hashes` of the package directories are those of
     now by default.
+
+    $XCRAFT_DEV_COUNTER gives the counter of all the development builds instead, like the run number of a CI
+    workflow, which only grows, as CI keeps nothing between its runs.
     """
     if ident is None:
         return build_keys(project, {}, hashes), {}
-    current, counters = _current(project, hashes), _counters(project)
+    current, counters, fixed = _current(project, hashes), _counters(project), dev_counter()
 
     def suffix(members: dict[str, str], fingerprint: str) -> dict[str, str]:
+        if fixed is not None:
+            return dict.fromkeys(members, f"~{fixed}.{ident}")
         kept = [counters.get(key, (0, "", "")) for key in members.values()]
         counter = kept[0][0]
         if any(last != (counter, fingerprint, ident) for last in kept):

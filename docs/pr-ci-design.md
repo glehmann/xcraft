@@ -80,8 +80,7 @@ them: the build runs the code of the pull request, its scriptlets and build tool
 
 ## What xcraft needs
 
-- `$XCRAFT_DEV_COUNTER`, or `--dev-counter`: the counter of all the development builds, rather than those kept in
-  `.xcraft`.
+- `$XCRAFT_DEV_COUNTER`: the counter of all the development builds, rather than those kept in `.xcraft`.
 - `xcraft publish --dev`, with `$XCRAFT_DEV`, to the dev bucket or locally: its snapshot already has the development
   builds of local snapshots; the ISOs need them in their keys too, as `xcraft iso` has them. It publishes the
   development builds only, copying the others server-side from the main bucket, and writes nothing

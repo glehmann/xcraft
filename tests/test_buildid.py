@@ -621,3 +621,20 @@ def test_reused_builds_of_upstream_updates(root: Path, monkeypatch: pytest.Monke
     assert update() == {"trivial": 1, "with-deps": 2}
     assert buildid.reuse(Project.find(), [], ["toyrun"]) == ["with-deps"]
     assert update() == {"trivial": 1, "with-deps": 1}
+
+
+def test_development_builds_counted_by_ci(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert xcraft("build")[0] == 0
+    commit_base(root)
+    git(root, "checkout", "-qb", "feature")
+    edit(root, "changed", name="with-deps")
+    # the run number of a workflow, rather than the counters of .xcraft, which CI does not keep
+    monkeypatch.setenv("XCRAFT_DEV_COUNTER", "42")
+    assert built("--dev", "pr7") == ["with-deps-1.0-1+b2~42.pr7.xcpng8.99.noarch.rpm"]
+    edit(root, "changed again", name="with-deps")
+    monkeypatch.setenv("XCRAFT_DEV_COUNTER", "43")
+    assert built("--dev", "pr7") == ["with-deps-1.0-1+b2~43.pr7.xcpng8.99.noarch.rpm"]
+    monkeypatch.setenv("XCRAFT_DEV_COUNTER", "-1")
+    code, output = xcraft("build", "--dev", "pr7")
+    assert code != 0
+    assert "$XCRAFT_DEV_COUNTER must be a positive number: -1" in output
