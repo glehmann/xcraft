@@ -64,14 +64,37 @@ incoming.
 
 ### The stages of the pull requests: references to master's pool
 
-`xcraft publish --dev`, see [the CI of pull requests](pr-ci-design.md), publishes the development builds only, as
-files of the stage, signed by the PR key into the pool of the dev bucket. The final packages, master's builds and the
-upstream ones, are referred to in the metadata of the stage at their path in the pool of the ci bucket, with the
-`xml:base` of their location, signed by the CI key: nothing is copied nor uploaded for them. dnf checks them against
-the SHA-256 of the metadata, signed by the PR key. The testers trust the CI key and the PR key.
+`xcraft publish --dev`, see [the CI of pull requests](pr-ci-design.md), publishes the development builds only, signed
+by the PR key, as files of the stage, not in a pool: their counter is the run number, so they are signed and used
+once, and removing the stage removes all a pull request wrote. The final packages, master's builds and the upstream
+ones, are referred to in the metadata of the stage at their path in the pool of the ci bucket, with the `xml:base` of
+their location, signed by the CI key: nothing is copied nor uploaded for them. dnf checks them against the SHA-256 of
+the metadata, signed by the PR key. The testers trust the CI key and the PR key. A final package the ci pool does not
+have, master not having published it, is signed by the PR key into the stage, as the development builds.
 
 Such a stage cannot be mirrored, and breaks once the ci pool loses the packages it refers to: the pull requests are
 temporary, and so are their stages. The ISOs, made from the files, download the referred packages.
+
+### Removing what nothing refers to
+
+What a stage has is copied from its pool, and Garage stores the blocks of a copy once: a pool entry also in a stage
+costs nothing, and what costs is what only a pool has. A pool entry is kept while a stage refers to it, by a copy of
+its file or by a reference:
+
+- **The stages of the pull requests** are removed when they close, with `xcraft unpublish`, and leave nothing
+  behind, their development builds being theirs only. They are the frequent removals, and remove nothing from a
+  pool.
+- **The dated snapshots of incoming** are what makes a pool grow: one by push of master, each with the builds of its
+  changes. Kept forever, they would keep every pool entry. They expire instead, after a retention, like 90 days,
+  but the latest and those of the releases, which are published from them.
+- **The pools** are then pruned by their bucket's writer, by a command run with the publications, or on a schedule:
+  it marks the entries the stages of its bucket have, by the SHA-256 of their manifests, and those the stages of the
+  pull requests refer to, in the dev bucket, by the locations of their metadata, readable by anyone, and removes the
+  others older than a day: a publication or a pull request referring to an entry it has just signed is not
+  disturbed. The release pool is never pruned while the releases are kept.
+
+A pull request referring to an entry pruned before its stage was published, from a fork point older than the
+retention, publishes again with that package signed into its stage, as one the ci pool does not have.
 
 ### The keys and the buckets
 
@@ -88,7 +111,7 @@ of its major version, `repos/<release>/` and its pool: to bind, by `[publish] re
 
 - The pool of the ci bucket after a full rebuild: emptied with the bucket today, which breaks the stages of the open
   pull requests, as they are temporary; or kept, by content.
-- The removal of what no stage refers to anymore, in the pools, if their size calls for it.
+- The retention of the dated snapshots of incoming, and whether the other stages of the ci bucket have one.
 - The binding of the release keys to their major versions in `xcraft.toml`, and whether the CI key is by major version
   too.
 - Whether a repository of all the versions of the pool, a flat repository, is published for the hosts, to install an
@@ -100,5 +123,7 @@ of its major version, `repos/<release>/` and its pool: to bind, by `[publish] re
 
 1. The pool, replacing `.xcraft/signed/`, with the stages copied from it: no change for the hosts.
 2. The signature of the upstream packages, with the keys of the ISOs and of the hosts reduced to ours.
-3. `xcraft publish --dev`, referring to the pool of the ci bucket, then the CI of the pull requests.
-4. The release bucket and the release keys by major version.
+3. `xcraft publish --dev`, referring to the pool of the ci bucket, `xcraft unpublish`, then the CI of the pull
+   requests.
+4. The expiry of the dated snapshots of incoming, and the pruning of the pools.
+5. The release bucket and the release keys by major version.

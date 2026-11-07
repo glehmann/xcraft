@@ -62,9 +62,10 @@ them. See [the secret management](ci-secret-management-design.md#1-enhancements-
 ### Closing a pull request
 
 A workflow on `pull_request: closed` removes the stage of the pull request, `repos/<release>/pr123/` and
-`isos/<release>/pr123/`, with `xcraft unpublish --to dev --stage pr123`: it is all a pull request writes, but for its
-development builds in the pool of the dev bucket. The stages `pr<n>` are the pull requests': the developers do not use
-them.
+`isos/<release>/pr123/`, with `xcraft unpublish --to dev --stage pr123`: it is all a pull request writes, its
+development builds included, see [removing what nothing refers
+to](publishing-layout-design.md#removing-what-nothing-refers-to). The stages `pr<n>` are the pull requests': the
+developers do not use them.
 
 ### Forks
 
