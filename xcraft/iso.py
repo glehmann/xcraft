@@ -300,9 +300,12 @@ def check_iso_config(project: Project) -> None:
 
 
 def _assemble_iso(
-    project: Project, snapshot: Path, *, netinstall: bool, volid: str | None, signer: Signer | None
+    project: Project, snapshot: Path, *, netinstall: bool, volid: str | None, signer: Signer | None, keep: bool
 ) -> Path:
-    """Make the ISO of `snapshot`, its binaries for the architecture, in .xcraft/tmp/, and return it."""
+    """Make the ISO of `snapshot`, its binaries for the architecture, in .xcraft/tmp/, and return it: trusting the key
+    of `signer`, if any, which signs all its packages in final mode, or else, with `keep`, those of the signers of
+    our packages and of the upstream repositories too.
+    """
     iso = project.config.iso
     check_iso_config(project)
     if error := resolution.resolve(project).tools_error:
@@ -321,7 +324,7 @@ def _assemble_iso(
                 "packages": iso.packages, "netinstall": netinstall, "signed": bool(signer),
                 "keys": [
                     "/work/key.asc", *(f"/work/signer-{i}.asc" for i in range(len(signers))),
-                    *key_paths(repo_keys(project), work),
+                    *(key_paths(repo_keys(project), work) if keep else []),
                 ] if signer else [],
                 "name": iso.name, "version": iso.version,
             })
@@ -381,7 +384,7 @@ def _snapshot_iso(
         key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck, keep=keep)
         if found := _existing_iso(project, key, output, netinstall=netinstall, signer=signer, dev=dev):
             return found
-        made = _assemble_iso(project, snapshot, netinstall=netinstall, volid=volid, signer=signer)
+        made = _assemble_iso(project, snapshot, netinstall=netinstall, volid=volid, signer=signer, keep=keep)
         if key != iso_key(
             project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck, keep=keep
         ):

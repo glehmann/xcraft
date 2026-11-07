@@ -1425,10 +1425,10 @@ def test_upstream_copy(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixt
         assert bc.sha256 in _copied(storage, ARCH, tmp_path / "4")
         # the metadata of before the previous update is gone, but not that of the previous one
         assert len([f for f in remote.listing(storage, f"{prefix}/{ARCH}/repodata/") if "primary" in f]) == 2
-        # publishing copies them from the copy
+        # publishing in dev mode copies them from the copy, as they are, while final mode signs them again
         caplog.clear()
         with caplog.at_level(logging.DEBUG, logger="xcraft"):
-            code, output = xcraft("publish", "repos", "--to", "dev", "--stage", f"copy-{STAGE}")
+            code, output = xcraft("publish", "repos", "--to", "dev", "--stage", f"copy-{STAGE}", "--dev", "copy")
         assert code == 0, output
         copied = [m.split()[1] for m in caplog.messages if m.startswith("copying ")]
         assert f"s3://xcraft-dev/{prefix}/{ARCH}/{pinned.file_name('bc', bc)}" in copied
@@ -1764,3 +1764,32 @@ def test_publish_of_a_pull_request(
     assert not remote.listing(dev, f"repos/9.0/{stage}/")
     assert not remote.listing(dev, f".xcraft/inputs/repos/9.0/{stage}/")
     assert xcraft("unpublish", "--stage", stage)[1].endswith(f"no stage {stage} to remove\n")
+
+
+@needs_gpg
+def test_upstream_packages_signed_again_in_final_mode(root: Path, tmp_path: Path) -> None:
+    stage = f"signed-{secrets.token_hex(4)}"
+    (root / "xcraft.toml").write_text(f'{REMOTE}extra = ["bc"]\n')  # an upstream package for the hosts
+    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
+    assert code == 0, output
+    signer = key_signer(Project.find())  # of [sign]
+    assert signer
+    storage = Project.find().config.remote["main"]
+    # all the packages of the hosts signed by its key, the upstream ones too
+    latest = f"repos/9.0/{stage}/latest"
+    binaries = [f for f in remote.read_manifest(storage, latest, trusted=signer) if f.startswith(f"base/{ARCH}/")]
+    upstream = [f for f in binaries if f.endswith(".rpm") and not Path(f).name.startswith(("trivial-", "with-deps-"))]
+    assert upstream
+    for f in upstream:
+        assert remote.download(storage, f"{latest}/{f}", tmp_path / f)
+    check_signatures(Project.find(), tmp_path, upstream, what="upstream", public_key=signer.public_key())
+    copies = remote.listing(storage, f".xcraft/upstream-signed/{signer.key}/{ARCH}/")
+    assert any(f.endswith(".rpm") for f in copies)
+    # signed once: another snapshot copies them, even without the cache
+    shutil.rmtree(root / ".xcraft/cache/upstream-signed", ignore_errors=True)  # signed here, or by another test
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(spec.read_text().replace('echo "hello"', 'echo "hello, signed upstream"'))
+    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
+    assert code == 0, output
+    assert not (root / ".xcraft/cache/upstream-signed").exists()  # none signed again
+    assert remote.listing(storage, f".xcraft/upstream-signed/{signer.key}/{ARCH}/") == copies

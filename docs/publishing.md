@@ -130,4 +130,9 @@ available to the builds, which run the code of the specs.
   developer's key even when `[sign]` exists. Without `[sign]` or `--key`, publishing uses the developer's key by
   default. Trees signed with that key are trusted by the same checkout without adding it to `remote.main.build_keys`.
 
-The upstream packages keep their signatures, which are checked against the keys of their repositories.
+The upstream packages are checked against the keys of their repositories. In final mode, the snapshot signs them
+again with its key, so that the hosts and the ISOs trust that key alone: once by key, kept in
+`.xcraft/cache/upstream-signed/<fingerprint>/<sha256 of the original>/` and in the remote storage, in a repository by
+key and architecture, `.xcraft/upstream-signed/<fingerprint>/<arch>/`, which the next snapshots copy from, while the
+upstream copy keeps the originals. Their source packages keep their signatures. In dev mode, all the packages keep
+theirs, and the ISOs trust the keys of the upstream repositories too.

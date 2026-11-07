@@ -1,7 +1,10 @@
 # Design: the layout of the published repositories, and their signatures
 
-Status: proposal, gathering the questions of the publication of the pull requests, of the mirrors, of the release
-keys and of the signatures of our packages and of the upstream ones. It builds on [the buckets of the CI secrets
+Status: the first three steps of the [order](#order) implemented: the builds signed at build and stored by signer,
+the upstream packages signed again in final mode, and the publications of dev mode and of the pull requests; the
+expiry of the snapshots of incoming and the release bucket to come. It gathers the questions of the publication of
+the pull requests, of the mirrors, of the release keys and of the signatures of our packages and of the upstream
+ones. It builds on [the buckets of the CI secrets
 design](ci-secret-management-design.md#4-a-bucket-for-the-releases) and [the CI of pull requests](pr-ci-design.md).
 
 ## Snapshots and stages
@@ -106,6 +109,8 @@ again:
 .xcraft/upstream-signed/<fingerprint>/<arch>/<sha256 of the original>/<file>
 ```
 
+The source packages are not signed again: an SRPM is not installed, and they are most of the space, up to 4.9 GiB.
+
 The same rule as the builds, a tree by signer, for the copies only: the originals stay as they are, in one tree, as
 they are inputs, what the lock pins and the builds install, through one repository, `.xcraft/upstream/<arch>/`. By
 their upstream key, they would not be found from the lock, which does not have it, nor the configuration, a
@@ -119,8 +124,7 @@ the publication of incoming and of the releases only, by our keys.
 - **Metadata by key and architecture,** updated with xcraft.repodata like the upstream copy's: a snapshot takes the
   entries of the signed files from it, without downloading them, and it lists which pins are signed already.
 - **Auditable:** signing rewrites the signature header only, so a signed copy has the main header of its original,
-  byte for byte, which is checked when signing, and can be by anyone later, from the header ranges of both metadata,
-  a few KiB by package.
+  byte for byte, which anyone can check, from the header ranges of both metadata, a few KiB by package.
 - **Kept without expiry,** like the originals: a few hundred MiB by architecture and key, only those a lock update
   brings once the first publication with a key signed them all.
 
@@ -210,8 +214,6 @@ of its major version, `repos/<release>/` and its copies: to bind, by `[publish] 
   too.
 - Whether a repository of all the versions, a flat repository, is published for the hosts, to install an older
   version; the builds and the signed copies make it cheap, as metadata only.
-- Whether the source packages are signed again, or published with their upstream signatures: an SRPM is not
-  installed, and they are most of the space, up to 4.9 GiB.
 - Whether `xcraft iso`, `xcraft boot` and `xcraft push isos` keep `--unsigned`, now that dev mode generates a key.
 - The pruning of the remote builds, master's that no lock of a kept branch has, and the developers' in the dev
   bucket.

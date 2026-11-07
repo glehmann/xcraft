@@ -60,11 +60,11 @@ def repo_file(project: Project) -> str:
     )
 
 
-def read(storage: Remote, directory: str, work: Path) -> tuple[dict[str, Entry], list[str]]:
+def read(storage: Remote, directory: str, work: Path, prefix: str = PREFIX) -> tuple[dict[str, Entry], list[str]]:
     """Return the metadata entries of the packages of the copy `directory`, by SHA-256, read in `work`, and the paths
-    of its metadata files: nothing without metadata.
+    of its metadata files: nothing without metadata. Of another copy than the upstream one, under `prefix`.
     """
-    prefix = f"{PREFIX}/{directory}"
+    prefix = f"{prefix}/{directory}"
     if not remote.download(storage, f"{prefix}/repodata/repomd.xml", work / "repodata/repomd.xml"):
         return {}, []
     try:  # unsigned: its locations are checked before any download
@@ -122,7 +122,7 @@ def _wanted(
     )
 
 
-def _update(
+def update(
     project: Project,
     storage: Remote,
     directory: str,
@@ -130,17 +130,19 @@ def _update(
     entries: dict[str, Entry],
     hrefs: list[str],
     copies: Copies,
+    prefix: str = PREFIX,
 ) -> dict[str, Entry]:
     """Add the packages `copies` to the copy `directory`, of metadata `entries` and files `hrefs`, and return their
-    metadata entries, by file name: the new metadata files first, then repomd.xml, and the metadata files of before
-    the previous update deleted.
+    metadata entries, by path in it: the new metadata files first, then repomd.xml, and the metadata files of before
+    the previous update deleted. Of another copy than the upstream one, under `prefix`.
     """
     if not copies:
         return {}
-    prefix, local = f"{PREFIX}/{directory}", work / f"new-{directory}"
+    prefix, local = f"{prefix}/{directory}", work / f"new-{directory}"
     local.mkdir()
     for f, (src, _) in copies.items():
         if not isinstance(src, str):
+            (local / f).parent.mkdir(parents=True, exist_ok=True)
             localrepo.link(src, local / f)
     new = {f: entry for f, (_, entry) in copies.items() if entry}
     if len(new) < len(copies):
@@ -149,11 +151,11 @@ def _update(
             "upstream-repo",
             ["bash", "-c", "dnf -q -y install createrepo_c && createrepo_c -q --general-compress-type=gz /repo"],
             volumes=[f"{local}:/repo"],
-            show=f"indexing the new packages of the upstream copy of {directory}",
+            show=f"indexing the new packages of {prefix}",
         )
         made = {repodata.location(e): e for e in (repodata.read(local) or {}).values()}
         new |= {f: made[f] for f in copies if f not in new}
-    with activity(f"copying {len(copies)} packages to the upstream copy of {directory}"):
+    with activity(f"copying {len(copies)} packages to {prefix}"):
         remote.transfer(storage, {f"{prefix}/{f}": src for f, (src, _) in copies.items()})
         metadata = work / f"repo-{directory}"
         repodata.write(metadata, {repodata.location(e): e for e in entries.values()} | new)
@@ -195,7 +197,7 @@ def push(project: Project, storage: Remote) -> list[str]:
                 f: (rpm, None) for f, (n, p) in wanted.items() if f not in copies and (rpm := pinned.stored(n, p))
             }
         problems += [f"{f}: in no repository, nor in the store of the pinned RPMs" for f in wanted if f not in copies]
-        new = _update(project, storage, project.arch, work, entries, hrefs, copies)
+        new = update(project, storage, project.arch, work, entries, hrefs, copies)
         changed = bool(new)
         entries |= {wanted[f][1].sha256: entry for f, entry in new.items()}
         # the source packages of those the snapshots publish, from their metadata
@@ -214,7 +216,7 @@ def push(project: Project, storage: Remote) -> list[str]:
                 else:
                     copies |= {f: (cache / f, None) for f in left if (cache / f).exists()}
             problems += [f"{f}: in no repository, nor in the latest snapshot" for f in missing if f not in copies]
-            changed |= bool(_update(project, storage, SOURCE, work, entries, hrefs, copies))
+            changed |= bool(update(project, storage, SOURCE, work, entries, hrefs, copies))
     if changed:
         with activity("making the pages of the directories"):
             remote_pages.update_pages(project, storage, [f"{PREFIX}/"])

@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from rich.markup import escape
 
 from xcraft import build as builder
-from xcraft import buildkey, container, localrepo, pinned, remote, repodata, resolution, upstream_copy
+from xcraft import buildkey, container, localrepo, pinned, remote, repodata, resolution, upstream_copy, upstream_signed
 from xcraft.builds import builds_path, load_builds
 from xcraft.cache import BUILD_FILES, BuildError, build_path, build_signers, cached_build, release_suffix, signed_build
 from xcraft.container import BUILDENV, buildenv_hash, run_natively
@@ -507,17 +507,26 @@ class _Assembler:
 
     def add_upstream(self, project: Project, names: list[str], repo: str, source: str) -> None:
         """Add the upstream packages `names` to `repo`, and their sources to `source`, checking the signatures of
-        those the storage misses: those it has were when added.
+        those the storage misses: those it has were when added. Signed by `signer` in final mode, unless `keep`: their
+        sources keep their signatures.
         """
         locked = pinned.pins(project)
         rpms = {name: _rpm_name(locked, name) for name in names}
-        missing = [name for name in names if not self.reuse(repo, rpms[name], locked[name].sha256)]
-        with activity(f"getting the upstream packages for {repo}", log=True) as on_line:
-            (self.dest / repo).mkdir(parents=True, exist_ok=True)
-            for rpm in _upstream_rpms(project, missing, on_line):
-                localrepo.link(rpm, self.dest / repo / rpm.name)
-        added = [f"{repo}/{rpms[name]}" for name in missing]
-        srpms = {name: repodata.sourcerpm(self.known[locked[name].sha256][0]) for name in names if name not in missing}
+        (self.dest / repo).mkdir(parents=True, exist_ok=True)
+        added = []
+        if self.signer and not self.keep:
+            self._add_signed_upstream(project, self.signer, names, repo, rpms)
+        else:
+            missing = [name for name in names if not self.reuse(repo, rpms[name], locked[name].sha256)]
+            with activity(f"getting the upstream packages for {repo}", log=True) as on_line:
+                for rpm in _upstream_rpms(project, missing, on_line):
+                    localrepo.link(rpm, self.dest / repo / rpm.name)
+            added = [f"{repo}/{rpms[name]}" for name in missing]
+        srpms = {
+            name: repodata.sourcerpm(self.known[digest][0])
+            for name in names
+            if (digest := locked[name].sha256) in self.known
+        }
         with activity(f"getting their sources, for {source}", log=True) as on_line:
             srpms |= _srpm_names(project, [name for name in names if not srpms.get(name)])
             new = {
@@ -531,6 +540,36 @@ class _Assembler:
                 localrepo.link(cache / srpm, self.dest / source / srpm)
                 added.append(f"{source}/{srpm}")
         check_signatures(project, self.dest, added, what="upstream packages")
+
+    def _add_signed_upstream(
+        self, project: Project, signer: Signer, names: list[str], repo: str, rpms: dict[str, str]
+    ) -> None:
+        """Add the upstream packages `names`, named `rpms`, to `repo`, signed by `signer`: the copies of the storage, or
+        else signed now, once, from the originals, whose signatures are checked first, see xcraft.upstream_signed, and
+        pushed there.
+        """
+        locked = pinned.pins(project)
+        originals = {name: locked[name].sha256 for name in names}
+        with project.tmp_dir("upstream-signed-copies") as work:
+            known = upstream_signed.read(project, self.storage, signer, work / "metadata") if self.storage else ({}, [])
+            copies = upstream_signed.by_original(known[0])
+            if missing := [name for name in names if originals[name] not in copies]:
+                with activity(f"signing the upstream packages of {repo}", log=True) as on_line:
+                    found = _upstream_rpms(project, missing, on_line)
+                    check_signatures(project, found[0].parent, [rpm.name for rpm in found], what="upstream packages")
+                    made = upstream_signed.signed(
+                        project, signer, {originals[n]: rpm for n, rpm in zip(missing, found, strict=True)}
+                    )
+                if self.storage:
+                    copies |= upstream_signed.push(project, self.storage, signer, made, work, known)
+                else:
+                    for name in missing:
+                        localrepo.link(made[originals[name]], self.dest / repo / rpms[name])
+        for name in names:
+            if (original := originals[name]) in copies:
+                entry, digest = copies[original]
+                self.known.setdefault(digest, (entry, upstream_signed.path(project, signer, repodata.location(entry))))
+                self.reuse(repo, rpms[name], digest)
 
 
 def _fetch_metadata(work: Path, repo: str, fetch: Callable[[str], bool]) -> bool:
