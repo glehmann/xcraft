@@ -15,7 +15,8 @@
 | `xcraft repo <pkg>... [--dependents]` | When they have development builds, a repository of them alone, for test hosts |
 | `xcraft repo <pkg>... --host h [--upgrade]` | The same, copied to test hosts over ssh, `ssh://[user@]host[:port]` for another port, and upgraded there |
 | `xcraft repo <pkg>... --vm [--upgrade]` | The same, for the VM `xcraft boot` installed, running |
-| `xcraft publish [repos\|isos] [--stage s] [--locked] [--local] [--dev-key] [--arch a]` | Publish a snapshot of the distribution, its repositories and its ISOs, or only those given, for all the architectures or `--arch`, as the stage's latest one; a `--local` one is of the host's architecture by default |
+| `xcraft publish [repos\|isos] [--stage s] [--locked] [--local] [--dev-key] [--dev ID] [--arch a]` | Publish a snapshot of the distribution, its repositories and its ISOs, or only those given, for all the architectures or `--arch`, as the stage's latest one; a `--local` one is of the host's architecture by default; `--dev` in dev mode, like the CI of a pull request |
+| `xcraft unpublish --stage s [--to main\|dev]` | Remove a stage of the remote storage, all its snapshots, like that of a closed pull request |
 | `xcraft iso [--netinstall] [--output f] [-V id] [--locked] [--unsigned] [--dev ID \| --final] [--nocheck]` | Make the installation ISO, from a local snapshot (see [Installation ISO](iso.md)) |
 | `xcraft boot [--iso f] [--disk f] [--headless] [--unsigned] [--dev ID \| --final] [--nocheck]` | Build the ISO and boot its installer in a local QEMU VM, creating a virtual disk if missing |
 | `xcraft vm start [--background]` | Start the VM again from its installed disk, without the ISO, with the options of `xcraft boot` |

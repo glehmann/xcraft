@@ -88,6 +88,8 @@ class Uploader:
     storage: Remote
     signer: Signer | None
     build: bool
+    dev: bool = False
+    """Whether the snapshots are of dev mode, whose packages keep the signatures of their builds."""
 
     @property
     def _signing(self) -> Signer | None:
@@ -188,7 +190,9 @@ class Uploader:
         copied there, and so are those of `stored`, which are not in `src`, by path in the snapshot, with their paths in
         the storage and SHA-256.
         """
-        signed = [f"{INTERNAL}/builds/{self.signer.key}/{p.arch}/" for p, _ in platforms] if self.signer else []
+        signed = [
+            f"{INTERNAL}/builds/{self.signer.key}/{p.arch}/" for p, _ in platforms if not self.dev and self.signer
+        ]
         self._upload(
             src,
             "repos",
@@ -203,7 +207,7 @@ class Uploader:
         with their paths there and SHA-256: those of the first architecture, for the source packages.
         """
         stored: dict[str, Stored] = {}
-        if not (signer := self.signer):
+        if not (signer := self.signer) or self.dev:  # of other keys, in the snapshot's stored ones then
             return stored
         for platform, keys in platforms:
             repos = {"RPMS": f"{REPO}/{platform.arch}", "SRPMS": f"{REPO}/Source"}
@@ -271,7 +275,11 @@ class Uploader:
         console.print(f"[bold green]✓[/] published {tree}, and as {latest}")
 
     def _write(
-        self, tree: str, manifest: dict[str, str], files: Mapping[str, str | Path], on_line: Callable[[str], None]
+        self,
+        tree: str,
+        manifest: dict[str, str],
+        files: Mapping[str, str | Path | remote.Located],
+        on_line: Callable[[str], None],
     ) -> None:
         """Write the `files` to `tree`, from their sources, by batches, then its `manifest`, deleting the files
         of a failed publish of the same name, and of the previous latest snapshot, but the pages.

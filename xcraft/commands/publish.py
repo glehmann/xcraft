@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from pathlib import Path
 from typing import Annotated
@@ -26,6 +27,17 @@ Local = Annotated[
     bool, typer.Option("--local", help="Only make the snapshot locally, in --output, without publishing it.")
 ]
 Output = Annotated[Path | None, typer.Option(help="Directory of the local snapshot. .xcraft/publish/ by default.")]
+PublishDev = Annotated[
+    str | None,
+    typer.Option(
+        "--dev",
+        metavar="ID",
+        help="Publish in dev mode, like the CI of a pull request: with the development builds of ID, see xcraft build "
+        "--dev, which are files of the stage only, never pushed as builds, and the final builds and upstream packages "
+        "of the main bucket copied from it, all keeping the signatures of their builds, whose keys the stage has.",
+        show_default=False,
+    ),
+]
 DevKey = Annotated[bool, typer.Option("--dev-key", help="Sign with the developer's key, for a test storage.")]
 Stage = Annotated[
     str | None,
@@ -70,8 +82,12 @@ def _publish(  # noqa: C901, PLR0912
     to: Destination,
     stage: str | None,
     arch: str | None,
+    dev: str | None,
 ) -> None:
-    """Publish the repositories and the ISOs of a snapshot, or `only` the repos or the isos."""
+    """Publish the repositories and the ISOs of a snapshot, or `only` the repos or the isos, of dev mode with `dev`."""
+    if dev is not None and not re.fullmatch(r"[a-zA-Z0-9]{1,16}", dev):
+        msg = f"the development build ID must be 1 to 16 letters and digits: {dev}"
+        raise typer.BadParameter(msg, param_hint="--dev")
     project = prepared_project(locked=locked, arch=None if arch == "all" else arch)
     if stage is not None:
         try:
@@ -108,25 +124,31 @@ def _publish(  # noqa: C901, PLR0912
         update_build_ids(project)  # the final builds are numbered by them
         dest = (output or project.state / "publish").absolute()
         build = only != "isos" and project.config.publish.build
-        uploader = Uploader(project, storage, signer, build) if storage else None
-        if uploader and output is None and uploader.reuse(platforms, only=only, isos=with_isos):
+        uploader = Uploader(project, storage, signer, build, dev=dev is not None) if storage else None
+        # of the development builds of the run, made again by each one, rather than reused
+        if uploader and output is None and dev is None and uploader.reuse(platforms, only=only, isos=with_isos):
             return
         console.print("assembling the snapshot")
-        built, stored, checkout = snapshot(platforms, dest, signer=signer, storage=storage, build=build)
+        built, stored, checkout = snapshot(
+            platforms, dest, signer=signer, storage=storage, build=build, dev=dev, keep=dev is not None
+        )
         if storage and output is not None:  # all of it, in the directory asked
             for repo in sorted({path.rsplit("/", 1)[0] for path in stored}):
                 publisher.materialize(storage, dest, stored, repo)
         for platform in with_isos:
             console.print(f"getting the ISOs for {platform.arch}")
-            if storage and stored and not fetch_isos(platform, signer=signer):  # made from its packages
+            # made from its packages
+            if storage and stored and (dev is not None or not fetch_isos(platform, signer=signer)):
                 publisher.materialize(storage, dest, stored, f"{REPO}/{platform.arch}")
-            for iso in snapshot_isos(platform, dest / REPO / platform.arch, checkout, dest / ISO_DIR, signer=signer):
+            repo = dest / REPO / platform.arch
+            for iso in snapshot_isos(platform, repo, checkout, dest / ISO_DIR, signer=signer, dev=dev):
                 console.print(f"[bold green]✓[/] {iso}")
         if uploader:
             publisher.check_checkout(project, checkout)  # which the keys of what is uploaded are computed from
             isos = {
                 file: source
                 for platform in with_isos
+                if dev is None  # those of the checkout: of final builds
                 for file, source in push_isos(platform, uploader.storage, signer=signer).items()
             }
             name = uploader.snapshot_name()
@@ -147,6 +169,7 @@ def everything(
     to: To = "dev",
     stage: Stage = None,
     arch: Arch = None,
+    dev: PublishDev = None,
 ) -> None:
     r"""Publish a snapshot of the distribution in the remote storage, as the latest one, for all the architectures.
 
@@ -173,6 +196,7 @@ def repos(
     to: To = "dev",
     stage: Stage = None,
     arch: Arch = None,
+    dev: PublishDev = None,
 ) -> None:
     """Publish repositories as repos/<release>/<stage>/<date>/, and as the stage's latest snapshot."""
     _publish("repos", **ctx.params)
@@ -189,6 +213,7 @@ def isos(
     to: To = "dev",
     stage: Stage = None,
     arch: Arch = None,
+    dev: PublishDev = None,
 ) -> None:
     """Publish signed packages and netinstall ISOs as isos/<release>/<stage>/<date>/, and as the stage's latest ones.
 

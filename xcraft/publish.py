@@ -22,7 +22,7 @@ from rich.markup import escape
 from xcraft import build as builder
 from xcraft import buildkey, container, localrepo, pinned, remote, repodata, resolution, upstream_copy
 from xcraft.builds import builds_path, load_builds
-from xcraft.cache import BUILD_FILES, BuildError, build_path, cached_build, signed_build
+from xcraft.cache import BUILD_FILES, BuildError, build_path, build_signers, cached_build, release_suffix, signed_build
 from xcraft.container import BUILDENV, buildenv_hash, run_natively
 from xcraft.display import activity, console
 from xcraft.localrepo import extra_rpms, fresh_dir
@@ -327,17 +327,19 @@ def check_checkout(project: Project, checkout: Checkout) -> None:
 
 
 class Stored(NamedTuple):
-    """A file of the remote storage: its path there, and its SHA-256."""
+    """A file of the remote storage: its path there, or in the main bucket, and its SHA-256."""
 
-    path: str
+    path: str | remote.Located
     digest: str
 
 
-def _put(storage: Remote | None, source: Path | str, dest: Path, digest: str) -> None:
-    """Put the local file `source`, or the one of `storage`, as `dest`, checking its SHA-256."""
+def _put(storage: Remote | None, source: Path | str | remote.Located, dest: Path, digest: str) -> None:
+    """Put the local file `source`, or the one of `storage`, or of another storage, as `dest`, checking its SHA-256."""
     if isinstance(source, Path):
         localrepo.link(source, dest)
-    elif not (storage and remote.download(storage, source, dest)) or sha256_of(dest) != digest:
+        return
+    storage, path = source if isinstance(source, remote.Located) else (storage, source)
+    if not (storage and remote.download(storage, path, dest)) or sha256_of(dest) != digest:
         msg = f"{source} is missing or corrupted in the storage"
         raise BuildError(msg)
 
@@ -353,22 +355,26 @@ class _Assembler:
     dest: Path
     signer: Signer | None
     storage: Remote | None
-    known: dict[str, tuple[Entry, str]]
+    known: dict[str, tuple[Entry, str | remote.Located]]
     """The metadata of the packages of the latest snapshot and of the upstream copy, by SHA-256, with their paths in
-    the storage."""
+    the storage, or in the main bucket."""
     sources: dict[str, str]
     """The SHA-256 of the source packages of the latest snapshot and of the upstream copy, by file name."""
     keep: bool = False
+    main: Remote | None = None
+    """The main bucket, which the snapshot of another one copies our final builds from, in dev mode."""
     signers: dict[str, str] = field(default_factory=dict)
     """The public keys of the signers of our packages, by fingerprint, when they keep their signatures."""
     stored: dict[str, dict[str, Stored]] = field(default_factory=dict)
     """The packages the storage has, by repository and file name, with their paths there and SHA-256."""
+    copies: dict[str, Stored] = field(default_factory=dict)
+    """Our packages of the main bucket, by path in the snapshot, put in its directory too, for their metadata."""
 
     def has(self, repo: str, name: str) -> bool:
         """Return whether the repository `repo` of the snapshot has the package `name`."""
         return name in self.stored.get(repo, {}) or (self.dest / repo / name).exists()
 
-    def reuse(self, repo: str, name: str, digest: str, path: str | None = None) -> bool:
+    def reuse(self, repo: str, name: str, digest: str, path: str | remote.Located | None = None) -> bool:
         """Add the package `name` with `digest` to `repo`, and return whether the storage has it, as `path` or in the
         latest snapshot, with its metadata: otherwise, it must be put in the directory of the repository.
         """
@@ -400,7 +406,8 @@ class _Assembler:
 
     def files(self) -> dict[str, Stored]:
         """Return the packages the storage has, by path in the snapshot, with their paths there and SHA-256."""
-        return {f"{repo}/{name}": stored for repo, files in self.stored.items() for name, stored in files.items()}
+        stored = {f"{repo}/{name}": stored for repo, files in self.stored.items() for name, stored in files.items()}
+        return self.copies | stored
 
     def add_ours(self, project: Project, keys: dict[str, str]) -> None:
         """Add our packages, with their `keys`, to the base repository of the platform of `project`, and their
@@ -436,34 +443,58 @@ class _Assembler:
         if any, with the files put in the directory of the snapshot: those the storage misses.
         """
         repos = {"RPMS": f"{REPO}/{project.arch}", "SRPMS": f"{REPO}/Source"}
-        tree, files = self._build_files(project, name, key)
+        tree, files, fingerprint = self._build_files(project, name, key)
         local = []
         for path, digest in sorted(files.items()):
             repo, file = repos.get(path.split("/")[0]), Path(path).name
             if not repo or (repo == repos["SRPMS"] and self.has(repo, file)):
                 continue
-            at = tree / path if isinstance(tree, Path) else f"{tree}/{path}"
-            if not self.reuse(repo, file, digest, at if isinstance(at, str) else None):
+            at = (
+                tree / path
+                if isinstance(tree, Path)
+                else remote.Located(tree.storage, f"{tree.path}/{path}")
+                if isinstance(tree, remote.Located)
+                else f"{tree}/{path}"
+            )
+            if not self.reuse(repo, file, digest, None if isinstance(at, Path) else at):
                 _put(self.storage, at, self.dest / repo / file, digest)
                 local.append(f"{repo}/{file}")
+                if isinstance(at, remote.Located):
+                    self.copies[f"{repo}/{file}"] = Stored(at, digest)
         if self.signer and not self.keep:
             return self.signer.public_key(), local
-        if not isinstance(tree, Path) or not (tree / KEY_FILE).exists():  # a build of before the signed builds
+        if isinstance(tree, remote.Located) and fingerprint:
+            public_key = self.signers.get(fingerprint) or remote.public_key(tree.storage, fingerprint)
+        elif isinstance(tree, Path) and (tree / KEY_FILE).exists():
+            fingerprint, public_key = tree.parents[2].name, (tree / KEY_FILE).read_text()
+        else:  # a build of before the signed builds
             return None, local
-        public_key = (tree / KEY_FILE).read_text()
-        self.signers[tree.parents[2].name] = public_key  # .../<fingerprint>/<arch>/<name>/<key>
+        if public_key:
+            self.signers[fingerprint] = public_key
         return public_key, local
 
-    def _build_files(self, project: Project, name: str, key: str) -> tuple[Path | str, dict[str, str]]:
+    def _build_files(
+        self, project: Project, name: str, key: str
+    ) -> tuple[Path | str | remote.Located, dict[str, str], str | None]:
         """Return the directory of the files of the build of `name` with `key`, signed by `signer`, if any, in the
         storage, or the local one when there is no storage, or it misses it: signed now, and pushed there; with its
-        files, by path in it, and their SHA-256.
+        files, by path in it, and their SHA-256, and the key signing those of the main bucket. With `keep`, a final
+        build of the main bucket is there, signed by a key it trusts, like CI's, for the snapshots of another bucket,
+        rather than uploaded again.
         """
+        if self.keep and (main := self.main) and "~" not in release_suffix(key):
+            trusted = trusted_key(project, self.signer)
+            for fingerprint in build_signers(project):
+                root, files = remote.read_tree(
+                    main, build_path(project, name, key, fingerprint), trusted=trusted, signer=fingerprint
+                )
+                if files:
+                    return remote.Located(main, root), files, fingerprint
         if self.storage and self.signer and not self.keep:
             path, trusted = build_path(project, name, key, self.signer.key), trusted_key(project, self.signer)
             root, files = remote.read_tree(self.storage, path, trusted=trusted, signer=self.signer.key)
             if files:
-                return root, files
+                return root, files, None
         if not cached_build(project, name, key).exists() and not builder.fetch_build(project, name, key):
             msg = f"the build of {name} is neither cached nor in the remote storage"
             raise BuildError(msg)
@@ -472,7 +503,7 @@ class _Assembler:
             if self.signer and not self.keep
             else cached_build(project, name, key)
         )
-        return local, {p.relative_to(local).as_posix(): sha256_of(p) for p in local.rglob("*.rpm")}
+        return local, {p.relative_to(local).as_posix(): sha256_of(p) for p in local.rglob("*.rpm")}, None
 
     def add_upstream(self, project: Project, names: list[str], repo: str, source: str) -> None:
         """Add the upstream packages `names` to `repo`, and their sources to `source`, checking the signatures of
@@ -547,14 +578,29 @@ def previous(
 
 
 def _with_copy(
-    platforms: list[Project], storage: Remote, signer: Signer | None
-) -> tuple[dict[str, tuple[Entry, str]], dict[str, str]]:
-    """Return the packages of the latest snapshot, like previous(), and those of the upstream copy of the storage, for
-    the architectures of `platforms`: copied from there, without being uploaded.
+    platforms: list[Project], storage: Remote, signer: Signer | None, main: Remote | None
+) -> tuple[dict[str, tuple[Entry, str | remote.Located]], dict[str, str]]:
+    """Return the packages of the latest snapshot, like previous(), and those of the upstream copy of the storage, and
+    of the `main` bucket, if any, for the architectures of `platforms`: copied from there, without being uploaded.
     """
-    known, sources = upstream_copy.stored(platforms[0], storage, [p.arch for p in platforms])
+    arches = [p.arch for p in platforms]
+    known: dict[str, tuple[Entry, str | remote.Located]] = {}
+    sources: dict[str, str] = {}
+    if main:
+        found, sources = upstream_copy.stored(platforms[0], main, arches)
+        known = {digest: (entry, remote.Located(main, path)) for digest, (entry, path) in found.items()}
+    found, own = upstream_copy.stored(platforms[0], storage, arches)
     latest, latest_sources = previous(platforms[0], storage, signer)
-    return known | latest, sources | latest_sources
+    return known | found | latest, sources | own | latest_sources
+
+
+def _main(project: Project, storage: Remote | None, *, keep: bool) -> Remote | None:
+    """Return the main bucket, trusting the keys of both, which a snapshot of the other one, of dev mode, copies our
+    final builds and upstream packages from, if any.
+    """
+    if not (keep and storage and (main := project.config.remote.get("main")) and main.bucket != storage.bucket):
+        return None
+    return next(s for s in remote.storages(project) if s.bucket == main.bucket)
 
 
 def snapshot(
@@ -588,8 +634,15 @@ def snapshot(
     project = platforms[0]
     start = current_checkout(project)
     fresh_dir(project, dest)
+    main = _main(project, storage, keep=keep)
     assembler = _Assembler(
-        project, dest, signer, storage, *(_with_copy(platforms, storage, signer) if storage else ({}, {})), keep=keep
+        project,
+        dest,
+        signer,
+        storage,
+        *(_with_copy(platforms, storage, signer, main) if storage else ({}, {})),
+        keep=keep,
+        main=main,
     )
     fetch: Fetch = "needed" if storage else "all"
     built = list(zip(platforms, _built_all(platforms, fetch=fetch, dev=dev, nocheck=nocheck), strict=True))

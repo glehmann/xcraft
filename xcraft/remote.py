@@ -25,7 +25,7 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 from urllib.parse import urlparse
 
 import urllib3
@@ -39,11 +39,18 @@ from xcraft.signing import Signer, SigningError, dev_signer
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator
+    from collections.abc import Callable, Generator, Mapping
 
     from mypy_boto3_s3 import S3Client
 
     from xcraft.project import Project, Remote
+
+
+class Located(NamedTuple):
+    """A file of another storage, which the copies to a storage read server-side: on the same S3 service."""
+
+    storage: Remote
+    path: str
 
 
 class RemoteError(RuntimeError):
@@ -254,18 +261,18 @@ def _forget(storage: Remote, paths: list[str]) -> None:
 
 def transfer(
     storage: Remote,
-    files: dict[str, str | Path],
+    files: Mapping[str, str | Path | Located],
     on_line: Callable[[str], None] = lambda _: None,
     *,
     requests: int = REQUESTS,
 ) -> None:
-    """Write the paths of `files`, `requests` at once: copies of the paths of the storage, or uploads of the local
-    files.
+    """Write the paths of `files`, `requests` at once: copies of the paths of the storage, or of another bucket of the
+    same S3 service, whatever its endpoint, which refuses them otherwise, or uploads of the local files.
     """
     _forget(storage, list(files))
     with writing(storage, f"write {len(files)} files") as s3:
 
-        def write(dest: str, src: str | Path) -> str:
+        def write(dest: str, src: str | Path | Located) -> str:
             if isinstance(src, Path):
                 log.debug("uploading %s to %s", src, _s3_url(storage, dest))
                 if src.stat().st_size < SINGLE:  # without the machinery of the uploads in parts
@@ -273,8 +280,11 @@ def transfer(
                 else:
                     s3.upload_file(str(src), storage.bucket, dest)
             else:
-                log.debug("copying %s to %s", _s3_url(storage, src), _s3_url(storage, dest))
-                s3.copy_object(Bucket=storage.bucket, Key=dest, CopySource={"Bucket": storage.bucket, "Key": src})
+                source = src if isinstance(src, Located) else Located(storage, src)
+                log.debug("copying %s to %s", _s3_url(source.storage, source.path), _s3_url(storage, dest))
+                s3.copy_object(
+                    Bucket=storage.bucket, Key=dest, CopySource={"Bucket": source.storage.bucket, "Key": source.path}
+                )
             return dest
 
         with ThreadPoolExecutor(requests) as pool:
@@ -402,7 +412,7 @@ def forget() -> None:
     _keys.clear()
 
 
-def _build_key(storage: Remote, fingerprint: str) -> str | None:
+def public_key(storage: Remote, fingerprint: str) -> str | None:
     """Return the public key `fingerprint` of the storage, downloaded once, or None when it has not that key."""
     if (storage.url, fingerprint) not in _keys:
         with tempfile.TemporaryDirectory(prefix="xcraft-key-") as tmp:
@@ -440,7 +450,7 @@ def _checked_manifest(
         keyring = work / "keys"
         keyring.mkdir(mode=0o700)
         verifier = Signer(key="", gnupghome=keyring)
-        keys = [k for fingerprint in storage.build_keys if (k := _build_key(storage, fingerprint))]
+        keys = [k for fingerprint in storage.build_keys if (k := public_key(storage, fingerprint))]
         (work / "keys.asc").write_text("\n".join([*keys, *([trusted.public_key()] if trusted else [])]))
         try:
             if keys or trusted:

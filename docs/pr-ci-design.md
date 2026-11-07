@@ -1,8 +1,11 @@
 # Design: the CI of pull requests
 
-Status: decided, not implemented. The PR signing key exists (`CC3128112B8E6023E6A13F33F6DE1632420D9C0B`, the secret
-`PR_SIGNING_PRIVATE_KEY` and the variable `PR_SIGNING_KEY_FINGERPRINT` of xcp-ng-dist). It starts simple: the dev
-bucket, the compiler caches as they are, and a stage by pull request.
+Status: implemented in xcraft, `$XCRAFT_DEV_COUNTER`, `xcraft publish --dev` and `xcraft unpublish`, and in the
+`pull-request.yml` workflow of xcp-ng-dist. The PR signing key exists (`CC3128112B8E6023E6A13F33F6DE1632420D9C0B`, the
+secret `PR_SIGNING_PRIVATE_KEY` and the variable `PR_SIGNING_KEY_FINGERPRINT` of xcp-ng-dist). To set up: the
+credentials of the dev bucket, the secrets `DEV_AWS_ACCESS_KEY_ID` and `DEV_AWS_SECRET_ACCESS_KEY`, of a key reading
+the main bucket too, for the copies. It starts simple: the dev bucket, the compiler caches as they are, and a stage by
+pull request.
 
 ## Today
 
@@ -29,13 +32,13 @@ request. For #123, on each push, on each architecture, with `XCRAFT_DEV=pr123` a
 1. `xcraft build --locked --fetch=needed`: the packages the pull request changes, and those built against them, get
    development builds, `<release>+b<n>~<run number>.pr123`, signed at build by the PR key, the key of the run; the
    others are master's, fetched from the main bucket, signed by the CI key.
-2. `xcraft publish --locked --to dev --stage pr123 --key "$PR_SIGNING_KEY_FINGERPRINT"`: the snapshot, checked to be
-   installable, and the ISOs on x86_64, in `repos/<release>/pr123/` and `isos/<release>/pr123/` of the dev bucket,
-   for the testers to install from. The development builds go there in the snapshot only: they are never pushed as
-   builds, nor fetched. Nothing is signed by the publication: master's builds and the upstream originals are copied
-   server-side from the main bucket, which costs neither disk nor upload; the upstream packages a pull request adds,
-   which the main bucket's copy does not have, are uploaded as they are, with the key of their repository among the
-   stage's, as for every publication of dev mode. See [the layout of the published
+2. `xcraft publish --locked --to dev --stage pr123 --dev pr123`, with `XCRAFT_KEY`, the PR key: the snapshot,
+   checked to be installable, and the ISOs on x86_64, in `repos/<release>/pr123/` and `isos/<release>/pr123/` of the
+   dev bucket, for the testers to install from. The development builds go there in the snapshot only: they are never
+   pushed as builds, nor fetched. Nothing is signed by the publication: master's builds and the upstream originals are
+   copied server-side from the main bucket, which costs neither disk nor upload; the upstream packages a pull request
+   adds, which the main bucket's copy does not have, are uploaded as they are, with the key of their repository among
+   the stage's, as for every publication of dev mode. See [the layout of the published
    repositories](publishing-layout-design.md#the-stages-of-the-pull-requests).
 
 The compiler caches are fetched from master's, as the builds of every branch do now, and never pushed: the next push

@@ -88,6 +88,16 @@ A snapshot published to the storage is of all the architectures, unless `--arch`
 given: it replaces the latest one, whose other architectures would be gone. In CI, after `xcraft push builds`,
 `xcraft publish --locked` fails rather than change the lock.
 
+`xcraft publish --dev ID` publishes in dev mode, like the CI of a pull request: its snapshot has the development
+builds of `ID`, see [development builds](builds.md#development-builds), which are files of the stage only, never
+pushed as builds, and the final builds and upstream packages the main bucket has, copied from it server-side, when
+publishing to another bucket on the same S3 service, like the dev one, rather than uploaded again. All of them keep
+the signatures of their builds, the development ones by the key of the command, like the PR key, master's by CI's:
+the stage has the public key of each signer, `RPM-GPG-KEY-<fingerprint>`, next to its own, `RPM-GPG-KEY`, and its ISOs
+import them all. Its snapshots are never reused, as each run builds its development builds again.
+`xcraft unpublish --stage s` removes a stage, all its snapshots and ISOs, and what xcraft keeps of them, like the CI
+of a pull request once closed: its files are its own copies, which nothing else refers to.
+
 Only one `xcraft publish` must run at a time on a storage, like in a CI job of its own: Garage has no conditional
 writes, so two publishes at the same time could take the same snapshot name, and mix their files.
 

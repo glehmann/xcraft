@@ -26,6 +26,7 @@ import pytest
 
 from tests import ARCH, PLATFORM, TOML, copy_project, needs_gpg
 from tests.test_build import results, write_spec, xcraft
+from tests.test_buildid import commit_base, edit, git
 from tests.test_iso import cache_image
 from xcraft import (
     buildid,
@@ -1715,3 +1716,51 @@ def test_reused_builds_are_fetched(root: Path) -> None:
     code, output = xcraft("build", "with-deps", "--fetch=none")
     assert code == 1
     assert "✗ with-deps: not built, and the remote storage is not used" in output
+
+
+@needs_gpg
+def test_publish_of_a_pull_request(
+    root: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # master's builds in the main bucket, signed by the key of [sign], CI's
+    assert xcraft("build")[0] == 0
+    commit_base(root)
+    code, output = xcraft("push", "builds", "--to", "main")
+    assert code == 0, output
+    ci = key_signer(Project.find())
+    assert ci
+    # a pull request changing with-deps, built again by each of its runs, numbered by them
+    git(root, "checkout", "-qb", "feature")
+    edit(root, "changed", name="with-deps")
+    monkeypatch.setenv("XCRAFT_DEV_COUNTER", "7")
+    stage = f"pr7-{STAGE}"
+    with caplog.at_level(logging.DEBUG, logger="xcraft"):
+        code, output = xcraft("publish", "repos", "--to", "dev", "--stage", stage, "--dev", "pr7")
+    assert code == 0, output
+    developer = dev_signer(Project.find())  # the key of the pull request, made by the publication
+    assert developer
+    dev = Project.find().config.remote["dev"]
+    latest = f"repos/9.0/{stage}/latest"
+    manifest = remote.read_manifest(dev, latest, trusted=developer)
+    ours = sorted(f for f in manifest if f.startswith(f"base/{ARCH}/") and f.endswith(".noarch.rpm"))
+    assert ours == [
+        f"base/{ARCH}/trivial-1.0-1+b1.xcpng8.99.noarch.rpm",
+        f"base/{ARCH}/with-deps-1.0-1+b2~7.pr7.xcpng8.99.noarch.rpm",
+    ]
+    # master's build copied from the main bucket, server-side, keeping CI's signature, whose key the stage has
+    assert any(
+        m.startswith(f"copying s3://xcraft/.xcraft/builds/{ci.key}/") and f"s3://xcraft-dev/repos/9.0/{stage}/" in m
+        for m in caplog.messages
+    )
+    snapshot = root / ".xcraft/publish"
+    check_signatures(Project.find(), snapshot, [ours[0]], what="master's", public_key=ci.public_key())
+    check_signatures(Project.find(), snapshot, [ours[1]], what="the pull request's", public_key=developer.public_key())
+    assert {"RPM-GPG-KEY", f"RPM-GPG-KEY-{ci.key}"} <= set(manifest)
+    # the development builds are files of the stage only
+    assert not remote.listing(dev, f".xcraft/builds/{developer.key}/")
+    # removed with the pull request
+    code, output = xcraft("unpublish", "--stage", stage)
+    assert code == 0, output
+    assert not remote.listing(dev, f"repos/9.0/{stage}/")
+    assert not remote.listing(dev, f".xcraft/inputs/repos/9.0/{stage}/")
+    assert xcraft("unpublish", "--stage", stage)[1].endswith(f"no stage {stage} to remove\n")

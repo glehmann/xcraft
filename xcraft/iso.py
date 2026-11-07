@@ -401,17 +401,34 @@ def _snapshot_iso(
 
 
 def snapshot_isos(
-    project: Project, snapshot: Path, checkout: publish.Checkout, dest: Path, *, signer: Signer | None
+    project: Project,
+    snapshot: Path,
+    checkout: publish.Checkout,
+    dest: Path,
+    *,
+    signer: Signer | None,
+    dev: str | None = None,
 ) -> list[Path]:
     """Make the full and netinstall ISOs of `snapshot`, its binaries for the architecture, made of `checkout`, in
-    `dest`, with their detached signatures by `signer`, if any, and return them.
+    `dest`, with their detached signatures by `signer`, if any, and return them: of dev mode with the development
+    builds `dev`, keeping the signatures of our builds.
 
     `dest` is the directory of the ISOs of all the architectures.
     """
     dest.mkdir(parents=True, exist_ok=True)
     isos = []
     for netinstall in (False, True):
-        iso = _snapshot_iso(project, snapshot, checkout, None, netinstall=netinstall, volid=None, signer=signer)
+        iso = _snapshot_iso(
+            project,
+            snapshot,
+            checkout,
+            None,
+            netinstall=netinstall,
+            volid=None,
+            signer=signer,
+            dev=dev if dev_suffixes(project, dev) else None,
+            keep=dev is not None,
+        )
         isos.append(Path(shutil.move(iso, dest / iso.name)))
         if signer:
             signer.sign_file(isos[-1])

@@ -34,6 +34,7 @@ from xcraft.commands import (
     reuse,
     shell,
     status,
+    unpublish,
     vm,
 )
 from xcraft.display import console, known_commands
@@ -53,7 +54,7 @@ for panel, commands in {
     "Building": [build.build, repo.repo, shell.shell, log.log, graph.graph, status.status, clean.clean],
     "Packages": [bump.bump, patchset.patchset, history.history],
     "Upstream packages": [lock.lock, reuse.reuse],
-    "Publishing": [iso.iso, boot.boot],
+    "Publishing": [iso.iso, boot.boot, unpublish.unpublish],
     "Host": [doctor.doctor],
 }.items():
     for command in commands:
