@@ -35,6 +35,13 @@ KEY_FILE = "RPM-GPG-KEY"
 """The public key of the signer of a build, in it, and of a snapshot, in it."""
 
 
+def signer_key_file(fingerprint: str) -> str:
+    """Return the name of the file of the public key `fingerprint` of a signer of the packages of a snapshot, next to
+    its key, KEY_FILE: a file by key, as older versions of rpm import only the first key of a file.
+    """
+    return f"{KEY_FILE}-{fingerprint}"
+
+
 class SigningError(RuntimeError):
     """Raised when packages cannot be signed."""
 
@@ -154,6 +161,13 @@ def build_signer(project: Project, key: str | None, *, final: bool) -> Signer:
     if final:
         msg = "no key to sign the final builds: run xcraft key create, configure [sign], or use --key"
         raise SigningError(msg)
+    return new_dev_key(project)
+
+
+def new_dev_key(project: Project) -> Signer:
+    """Make the developer's key, for the builds of dev mode and their publications, when there is none, and return
+    it, telling it.
+    """
     signer = create_dev_key(project, f"xcraft developer of {getpass.getuser()}@{socket.gethostname()}")
     console.print(
         f"[yellow]made the developer's key {signer.key}[/], in {dev_keyring(project)}, signing the builds: trusted by"

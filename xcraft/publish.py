@@ -27,7 +27,7 @@ from xcraft.container import BUILDENV, buildenv_hash, run_natively
 from xcraft.display import activity, console
 from xcraft.localrepo import extra_rpms, fresh_dir
 from xcraft.lock import load_lock, lock_path
-from xcraft.signing import KEY_FILE, Signer, check_signatures, dev_signer
+from xcraft.signing import KEY_FILE, Signer, check_signatures, dev_signer, signer_key_file
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
@@ -206,7 +206,7 @@ def _signed_build(project: Project, signer: Signer, name: str, key: str, *, stor
     """
     signed = signed_build(project, name, key, signer)
     path = build_path(project, name, key, signer.key)
-    if storage and not remote.tree_exists(storage, path, trusted=signer):
+    if storage and not remote.tree_exists(storage, path, trusted=signer, signer=signer.key):
         remote.upload_tree(storage, path, signed, BUILD_FILES, signer=signer)
     return signed
 
@@ -345,7 +345,8 @@ def _put(storage: Remote | None, source: Path | str, dest: Path, digest: str) ->
 @dataclass
 class _Assembler:
     """A snapshot, signed by `signer`, if any, copying the packages `storage` has, if any: the packages the storage
-    misses, all without one, in its directory, and the metadata of all of them.
+    misses, all without one, in its directory, and the metadata of all of them. Our packages are signed by `signer`,
+    unless `keep`, or without it: they keep the signatures of their builds then, whose keys are in `signers`.
     """
 
     project: Project
@@ -357,6 +358,9 @@ class _Assembler:
     the storage."""
     sources: dict[str, str]
     """The SHA-256 of the source packages of the latest snapshot and of the upstream copy, by file name."""
+    keep: bool = False
+    signers: dict[str, str] = field(default_factory=dict)
+    """The public keys of the signers of our packages, by fingerprint, when they keep their signatures."""
     stored: dict[str, dict[str, Stored]] = field(default_factory=dict)
     """The packages the storage has, by repository and file name, with their paths there and SHA-256."""
 
@@ -405,28 +409,31 @@ class _Assembler:
         arch = f"{REPO}/{project.arch}"
         for repo in (arch, f"{REPO}/Source"):
             (self.dest / repo).mkdir(parents=True, exist_ok=True)
-        local = []
+        local: dict[str | None, list[str]] = {}  # by public key
+        signing = self.signer and not self.keep
         with activity(
-            f"signing our packages for {project.arch}" if self.signer else "getting our packages", log=True
+            f"signing our packages for {project.arch}" if signing else "getting our packages", log=True
         ) as on_line:
-            if (storage := self.storage) and (signer := self.signer):  # their manifests, checked once, concurrently
+            if (storage := self.storage) and (signer := self.signer) and signing:  # their manifests, checked once
                 trusted = trusted_key(project, signer)
                 trees = [build_path(project, n, k, signer.key) for n, k in keys.items()]
                 with ThreadPoolExecutor(remote.REQUESTS) as pool:
                     list(pool.map(lambda tree: remote.read_manifest(storage, tree, trusted=trusted), trees))
             for name in sorted(keys):
                 on_line(name)
-                local += self._add_build(project, name, keys[name])
+                public_key, files = self._add_build(project, name, keys[name])
+                local.setdefault(public_key, []).extend(files)
         # those of the storage are in trees it trusts: checked when signed
-        if self.signer:
-            check_signatures(project, self.dest, local, what="packages of ours", public_key=self.signer.public_key())
+        for public_key, files in local.items():
+            if public_key:
+                check_signatures(project, self.dest, files, what="packages of ours", public_key=public_key)
         for rpm in extra_rpms(project):  # neither ours nor from the repositories: as they are
             if not self.reuse(arch, rpm.name, sha256_of(rpm)):
                 localrepo.link(rpm, self.dest / arch / rpm.name)
 
-    def _add_build(self, project: Project, name: str, key: str) -> list[str]:
-        """Add the build of `name` with `key`, of the platform of `project`, and return the files put in the directory
-        of the snapshot: those the storage misses.
+    def _add_build(self, project: Project, name: str, key: str) -> tuple[str | None, list[str]]:
+        """Add the build of `name` with `key`, of the platform of `project`, and return the public key of its signer,
+        if any, with the files put in the directory of the snapshot: those the storage misses.
         """
         repos = {"RPMS": f"{REPO}/{project.arch}", "SRPMS": f"{REPO}/Source"}
         tree, files = self._build_files(project, name, key)
@@ -439,16 +446,22 @@ class _Assembler:
             if not self.reuse(repo, file, digest, at if isinstance(at, str) else None):
                 _put(self.storage, at, self.dest / repo / file, digest)
                 local.append(f"{repo}/{file}")
-        return local
+        if self.signer and not self.keep:
+            return self.signer.public_key(), local
+        if not isinstance(tree, Path) or not (tree / KEY_FILE).exists():  # a build of before the signed builds
+            return None, local
+        public_key = (tree / KEY_FILE).read_text()
+        self.signers[tree.parents[2].name] = public_key  # .../<fingerprint>/<arch>/<name>/<key>
+        return public_key, local
 
     def _build_files(self, project: Project, name: str, key: str) -> tuple[Path | str, dict[str, str]]:
         """Return the directory of the files of the build of `name` with `key`, signed by `signer`, if any, in the
         storage, or the local one when there is no storage, or it misses it: signed now, and pushed there; with its
         files, by path in it, and their SHA-256.
         """
-        if self.storage and self.signer:
+        if self.storage and self.signer and not self.keep:
             path, trusted = build_path(project, name, key, self.signer.key), trusted_key(project, self.signer)
-            root, files = remote.read_tree(self.storage, path, trusted=trusted)
+            root, files = remote.read_tree(self.storage, path, trusted=trusted, signer=self.signer.key)
             if files:
                 return root, files
         if not cached_build(project, name, key).exists() and not builder.fetch_build(project, name, key):
@@ -456,7 +469,7 @@ class _Assembler:
             raise BuildError(msg)
         local = (
             _signed_build(project, self.signer, name, key, storage=self.storage)
-            if self.signer
+            if self.signer and not self.keep
             else cached_build(project, name, key)
         )
         return local, {p.relative_to(local).as_posix(): sha256_of(p) for p in local.rglob("*.rpm")}
@@ -553,6 +566,7 @@ def snapshot(
     build: bool,
     dev: str | None = None,
     nocheck: bool = False,
+    keep: bool = False,
 ) -> tuple[list[tuple[Project, dict[str, str]]], dict[str, Stored], Checkout]:
     """Make the snapshot of the `platforms` in `dest`, and return them with the keys of their packages, the
     packages of `storage`, by path in the snapshot, with their paths there and SHA-256: they are not in `dest`, see
@@ -565,7 +579,9 @@ def snapshot(
     own. With `build`, the snapshot has the build repository too. Each binary must be installable alone, from the
     binaries of its architecture, checked with the metadata only. Our source packages are those of the first platform:
     those of the others, built from the same sources, differ by their build times. With a `signer`, our packages and
-    the metadata of the repositories are signed, and the public key is in `dest`. With `dev`, the identifier of the
+    the metadata of the repositories are signed, and the public key is in `dest`; with `keep` too, for dev mode, our
+    packages keep the signatures of their builds instead, whose keys are in `dest`, see signer_key_file(). With `dev`,
+    the identifier of the
     development builds, those of the packages whose build ID is not the main branch's are, for local snapshots, without
     `storage`, and with `nocheck`, those built skip the tests of their specs, unlike the final builds.
     """
@@ -573,7 +589,7 @@ def snapshot(
     start = current_checkout(project)
     fresh_dir(project, dest)
     assembler = _Assembler(
-        project, dest, signer, storage, *(_with_copy(platforms, storage, signer) if storage else ({}, {}))
+        project, dest, signer, storage, *(_with_copy(platforms, storage, signer) if storage else ({}, {})), keep=keep
     )
     fetch: Fetch = "needed" if storage else "all"
     built = list(zip(platforms, _built_all(platforms, fetch=fetch, dev=dev, nocheck=nocheck), strict=True))
@@ -592,6 +608,9 @@ def snapshot(
         assembler.index(f"{repo}/Source")
     if signer:
         (dest / KEY_FILE).write_text(signer.public_key())
+    for fingerprint, public_key in assembler.signers.items():
+        if not signer or fingerprint != signer.key:
+            (dest / signer_key_file(fingerprint)).write_text(public_key)
     check_checkout(project, checkout)
     _summary(dest, built, build=build)
     return built, assembler.files(), checkout

@@ -76,8 +76,7 @@ The builds, their uploads, the compiler caches, publishing and `xcraft iso` acce
 `$XCRAFT_KEY`, to select a host GPG key. Without it, they use `[sign]` when configured, or the checkout's developer key
 made with `xcraft key create`, or by the first build of dev mode.
 The keyring is `[sign].gnupghome`, or `GNUPGHOME` when it is omitted. Publishing uses its selected signer for signed
-builds and snapshot manifests. `--unsigned` skips package signing but remote manifests still need a default signing
-key; it cannot be combined with `--key` or `--dev-key`.
+builds and snapshot manifests, and always signs: a local snapshot without a key makes the developer's one.
 `remote.main.build_keys` only lists trusted public keys for verification; its order does not select the signing key.
 The checkout also trusts its own developer key, without any configuration change.
 Public keys are uploaded to `.xcraft/keys/<fingerprint>.asc` and checked against the configured

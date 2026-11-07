@@ -16,6 +16,7 @@ from xcraft.display import console
 from xcraft.iso import check_iso_config, fetch_isos, push_isos, snapshot_isos
 from xcraft.project import Destination, Project, Publish
 from xcraft.publish import ISO_DIR, REPO, snapshot
+from xcraft.signing import dev_signer, new_dev_key
 from xcraft.upload import Uploader
 
 app = typer.Typer()
@@ -25,14 +26,6 @@ Local = Annotated[
     bool, typer.Option("--local", help="Only make the snapshot locally, in --output, without publishing it.")
 ]
 Output = Annotated[Path | None, typer.Option(help="Directory of the local snapshot. .xcraft/publish/ by default.")]
-Unsigned = Annotated[
-    bool,
-    typer.Option(
-        "--unsigned",
-        help="Publish without package signing. By default, use --key, \\[sign], or the developer's key. "
-        "Remote manifests still need a signing key.",
-    ),
-]
 DevKey = Annotated[bool, typer.Option("--dev-key", help="Sign with the developer's key, for a test storage.")]
 Stage = Annotated[
     str | None,
@@ -72,7 +65,6 @@ def _publish(  # noqa: C901, PLR0912
     locked: bool,
     local: bool,
     output: Path | None,
-    unsigned: bool,
     dev_key: bool,
     key: str | None,
     to: Destination,
@@ -88,14 +80,19 @@ def _publish(  # noqa: C901, PLR0912
             msg = "stage must start with a letter, digit or underscore and contain only letters, digits, _, - or ."
             raise typer.BadParameter(msg, param_hint="--stage") from e
         project = replace(project, config=project.config.model_copy(update={"publish": publish}))
-    signer = choose_signer(
+    # signed always: by --key, [sign] or the developer's key, which a local snapshot, or one of the dev bucket, makes
+    # when there is none
+    if not (local or dev_key or key or to != "dev" or dev_signer(project)):
+        new_dev_key(project)
+    sign_builds(
         project,
-        local=local,
-        unsigned=unsigned,
-        dev_key=dev_key or (not local and to == "dev" and not key and not unsigned),
-        key=key,
-    )
-    sign_builds(project, key, final=True, signer=signer)  # before the platforms, which copy it
+        key,
+        final=False,
+        signer=choose_signer(
+            project, local=local, unsigned=False, dev_key=dev_key or (not local and to == "dev" and not key), key=key
+        ),
+    )  # before the platforms, which copy it
+    signer = project.signer
     platforms = project.all_platforms() if arch == "all" or (arch is None and not local) else [project]
     if arch is None and len(platforms) < len(others := project.all_platforms()):
         console.print(
@@ -145,7 +142,6 @@ def everything(
     locked: Locked = False,
     local: Local = False,
     output: Output = None,
-    unsigned: Unsigned = False,
     dev_key: DevKey = False,
     key: Key = None,
     to: To = "dev",
@@ -172,7 +168,6 @@ def repos(
     locked: Locked = False,
     local: Local = False,
     output: Output = None,
-    unsigned: Unsigned = False,
     dev_key: DevKey = False,
     key: Key = None,
     to: To = "dev",
@@ -189,7 +184,6 @@ def isos(
     locked: Locked = False,
     local: Local = False,
     output: Output = None,
-    unsigned: Unsigned = False,
     dev_key: DevKey = False,
     key: Key = None,
     to: To = "dev",

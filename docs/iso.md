@@ -32,7 +32,10 @@ cover the packages, the lock and the ISO's configuration.
 Images are cached in `.xcraft/cache/isos/<arch>/<key>/`, which those of `.xcraft/iso/` are hard links to, rather than
 copies; `xcraft clean` removes them but those of the checkout: full and netinstall, signed with the default key, with
 those of the builds of the storage, or unsigned, of final builds or of the development ones. Both `xcraft iso` and `xcraft boot` reuse the matching local
-image, then try the trusted remote storage, and only assemble a snapshot and build an ISO on a cache miss. A cache
+image, then try the trusted remote storage, and only assemble a snapshot and build an ISO on a cache miss. Unless
+`--final`, in dev mode, its snapshot keeps the signatures of our builds, the developer's, CI's for the builds fetched
+from the storage, rather than signing them again, and the ISO imports the keys of all their signers, published next
+to the snapshot's key as `RPM-GPG-KEY-<fingerprint>`. A cache
 hit needs no build containers or signing secrets. The key covers package inputs and the whole of both locks, on all
 the architectures, as the build keys do, read before the build IDs are computed again, ISO templates and
 configuration, the build recipe and its format, architecture, netinstall and volume-id options, and signing identity.

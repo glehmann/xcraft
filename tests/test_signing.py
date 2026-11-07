@@ -14,7 +14,7 @@ import typer
 
 from tests import ARCH, PROJECT, TOYS, copy_project, needs_gpg
 from tests.test_build import xcraft
-from xcraft import buildid
+from xcraft import buildid, publish
 from xcraft.cache import build_keys, cached_build
 from xcraft.commands import choose_signer
 from xcraft.project import Project, Sign
@@ -194,3 +194,33 @@ def test_final_builds_need_a_key(root: Path) -> None:
     assert code == 2
     assert "no key to sign the final builds" in " ".join(output.replace("│", "").split())
     assert not (root / ".xcraft/key").exists()  # made for dev mode only
+
+
+@needs_gpg
+def test_snapshots_of_dev_mode_keep_the_signatures_of_the_builds(
+    build_environment: Path, root: Path, tmp_path: Path
+) -> None:
+    assert xcraft("build", "trivial")[0] == 0
+    developer = dev_signer(Project.find())  # made by the build
+    assert developer
+    # another key signing the snapshot, like a stage's
+    (keyring := tmp_path / "stage").mkdir(mode=0o700)
+    stage = Signer(key="", gnupghome=keyring)
+    stage.gpg("--passphrase", "", "--quick-generate-key", "Stage", "ed25519", "sign", "never")
+    stage.key = stage.gpg("--with-colons", "--list-secret-keys").split("fpr:::::::::")[1].split(":")[0]
+    try:
+        project = Project.find()
+        dest = tmp_path / "snapshot"
+        publish.snapshot([project], dest, signer=stage, storage=None, build=False, keep=True)
+        ours = [str(p.relative_to(dest)) for p in dest.glob("base/*/trivial-*.rpm")]
+        assert ours
+        check_signatures(project, dest, ours, what="ours", public_key=developer.public_key())  # not signed again
+        assert (dest / "RPM-GPG-KEY").read_text() == stage.public_key()
+        assert (dest / f"RPM-GPG-KEY-{developer.key}").read_text() == developer.public_key()
+        assert (dest / f"base/{ARCH}/repodata/repomd.xml.asc").exists()
+        # signed again in final mode
+        publish.snapshot([project], dest, signer=stage, storage=None, build=False)
+        check_signatures(project, dest, ours, what="ours", public_key=stage.public_key())
+        assert not list(dest.glob("RPM-GPG-KEY-*"))
+    finally:
+        subprocess.run(["gpgconf", "--homedir", str(stage.gnupghome), "--kill", "gpg-agent"], check=False)

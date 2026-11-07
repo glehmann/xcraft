@@ -25,7 +25,7 @@ from xcraft.display import activity, changes, console
 from xcraft.lock import load_lock
 from xcraft.pinned import REPO_ID
 from xcraft.project import INTERNAL
-from xcraft.signing import Signer, key_paths, key_signer, repo_keys
+from xcraft.signing import Signer, key_paths, key_signer, repo_keys, signer_key_file
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
@@ -92,9 +92,11 @@ def iso_key(
     signer: Signer | None,
     dev: str | None = None,
     nocheck: bool = False,
+    keep: bool = False,
 ) -> str:
     """Return the key of the ISO of the checkout, with the development builds `dev`, if any, and with the builds
-    without the tests of their specs with `nocheck`: what it is made of.
+    without the tests of their specs with `nocheck`, and keeping the signatures of our builds with `keep`: what it is
+    made of.
 
     Read without the secret key of `signer`, and without containers but for the development builds, whose suffixes
     need the lock prepared, see dev_suffixes().
@@ -126,6 +128,8 @@ def iso_key(
         data.append(suffixes)
     if nocheck:  # but the keys of the others
         data.append("nocheck")
+    if keep:  # but the keys of the ISOs of final mode
+        data.append("as built")
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
 
@@ -307,11 +311,18 @@ def _assemble_iso(
     with project.tmp_dir("iso") as work:
         if signer:
             (work / "key.asc").write_text(signer.public_key())
+        # of the signers of our packages, keeping the signatures of their builds in dev mode: see publish.snapshot()
+        signers = sorted(snapshot.parents[1].glob(signer_key_file("*")))
+        for i, key in enumerate(signers):
+            shutil.copy(key, work / f"signer-{i}.asc")
         (work / "config.json").write_text(
             json.dumps({
                 "snapshot": "/snapshot", "templates": "/templates", "tree": "/work/tree", "installer": iso.installer,
                 "packages": iso.packages, "netinstall": netinstall, "signed": bool(signer),
-                "keys": ["/work/key.asc", *key_paths(repo_keys(project), work)] if signer else [],
+                "keys": [
+                    "/work/key.asc", *(f"/work/signer-{i}.asc" for i in range(len(signers))),
+                    *key_paths(repo_keys(project), work),
+                ] if signer else [],
                 "name": iso.name, "version": iso.version,
             })
         )  # fmt: skip
@@ -356,20 +367,24 @@ def _snapshot_iso(
     signer: Signer | None,
     dev: str | None = None,
     nocheck: bool = False,
+    keep: bool = False,
 ) -> Path:
     """Return the ISO of `snapshot`, made of `checkout`, with the development builds `dev`, if any, and those without
-    the tests of their specs with `nocheck`: cached, fetched, or assembled and cached by the key of the checkout.
+    the tests of their specs with `nocheck`, keeping the signatures of our builds with `keep`: cached, fetched, or
+    assembled and cached by the key of the checkout.
 
     Raise when the checkout is not the snapshot's anymore, or when the key changed while assembling it, like the lock
     by a git checkout: the ISO would be of the one before.
     """
     with project.lock():
         publish.check_checkout(project, checkout)
-        key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck)
+        key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck, keep=keep)
         if found := _existing_iso(project, key, output, netinstall=netinstall, signer=signer, dev=dev):
             return found
         made = _assemble_iso(project, snapshot, netinstall=netinstall, volid=volid, signer=signer)
-        if key != iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck):
+        if key != iso_key(
+            project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck, keep=keep
+        ):
             made.unlink()
             msg = "ISO inputs changed while making the image: run again"
             raise RuntimeError(msg)
@@ -413,15 +428,17 @@ def _build_signers(project: Project) -> list[Signer]:
 def checkout_iso_keys(project: Project, dev: str) -> set[str]:
     """Return the keys of the ISOs of the checkout, which xcraft clean keeps: the full and netinstall ones, signed with
     the default key, with those of the builds of the storage, like CI's, or unsigned, of final builds, or of the
-    development builds `dev`, but those of another volume id or without the tests of the specs, made again if needed.
+    development builds `dev`, of dev mode or not, but those of another volume id or without the tests of the specs,
+    made again if needed.
     """
     signers = [key_signer(project), *_build_signers(project), None]
     idents = [None, dev] if dev_suffixes(project, dev) else [None]
     return {
-        iso_key(project, netinstall=netinstall, volid=None, signer=signer, dev=ident)
+        iso_key(project, netinstall=netinstall, volid=None, signer=signer, dev=ident, keep=keep)
         for netinstall in (False, True)
         for signer in signers
         for ident in idents
+        for keep in (False, True)
     }
 
 
@@ -439,13 +456,15 @@ def checkout_iso(
     """Return the ISO of the checkout: build or fetch its packages, assemble a local snapshot, and make its ISO.
 
     With the development builds `dev`, like xcraft build makes them, or final builds only without, and without the
-    tests of the specs with `nocheck`. With `published`, when the ISO signed by `signer` is neither cached nor in the
+    tests of the specs with `nocheck`. With `dev`, in dev mode, our packages keep the signatures of their builds, and
+    the ISO imports all their keys. With `published`, when the ISO signed by `signer` is neither cached nor in the
     remote storage, the one CI published, signed with a key of the builds of the storage, is taken rather than made.
     """
     with project.lock():
+        keep = dev is not None
         dev = dev if dev_suffixes(project, dev) else None  # of final builds only otherwise, like the remote storage's
         nocheck = nocheck and dev is not None  # which the final builds ignore
-        key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck)
+        key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck, keep=keep)
         if found := _existing_iso(project, key, output, netinstall=netinstall, signer=signer, dev=dev):
             return found
         for ci in [] if dev or not published else _build_signers(project):
@@ -458,7 +477,7 @@ def checkout_iso(
         resolution.prepare(project)
         dest = (project.state / "publish").absolute()
         _, _, checkout = publish.snapshot(
-            [project], dest, signer=signer, storage=None, build=False, dev=dev, nocheck=nocheck
+            [project], dest, signer=signer, storage=None, build=False, dev=dev, nocheck=nocheck, keep=keep
         )
         return _snapshot_iso(
             project,
@@ -470,4 +489,5 @@ def checkout_iso(
             signer=signer,
             dev=dev,
             nocheck=nocheck,
+            keep=keep,
         )

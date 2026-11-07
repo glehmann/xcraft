@@ -68,7 +68,9 @@ def _push_builds(
     paths = {name: build_path(project, name, keys[name], signer.key) for name in names}
     # first: a build of xcraft build --fetch=needed may be in the storage only
     with activity("checking the remote storage"), ThreadPoolExecutor(remote.REQUESTS) as pool:
-        found = pool.map(lambda path: remote.tree_exists(storage, path, trusted=signer), paths.values())
+        found = pool.map(
+            lambda path: remote.tree_exists(storage, path, trusted=signer, signer=signer.key), paths.values()
+        )
         present = [name for name, exists in zip(paths, found, strict=True) if exists]
     if without_tests := [n for n in paths if n not in present and untested(project, n, keys[n])]:
         console.print(f"built without their tests, with --nocheck, not pushed: {', '.join(without_tests)}")

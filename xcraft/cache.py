@@ -178,8 +178,10 @@ before it was have none."""
 
 def previous_duration(project: Project, name: str) -> float | None:
     """Return how long the last cached build of `name` took, if any."""
-    builds = sorted((b / "build.log" for b in _cached_builds(project, name) if (b / "build.log").exists()),
-                    key=lambda log: log.stat().st_mtime)
+    builds = sorted(
+        (b / "build.log" for b in _cached_builds(project, name) if (b / "build.log").exists()),
+        key=lambda log: log.stat().st_mtime,
+    )
     for log in reversed(builds):
         # the build environment runs the build under `time`
         if times := re.findall(r"^real\s+(\d+)m([\d.]+)s$", log.read_text(errors="replace"), re.MULTILINE):

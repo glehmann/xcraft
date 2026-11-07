@@ -226,9 +226,14 @@ the trees updated in place, like the snapshots and the compiler caches, and thos
 the tree itself."""
 
 
-_checked: dict[tuple[str, str, frozenset[str]], tuple[str, dict[str, str]] | None] = {}
-"""The manifests checked, by storage, tree and trusted fingerprints, with the directory of their files, or None for
-the trees missing or not trusted, until written, or the next command."""
+_checked: dict[tuple[str, str, frozenset[str]], tuple[str, dict[str, str], frozenset[str]] | None] = {}
+"""The manifests checked, by storage, tree and trusted fingerprints, with the directory of their files, and the trusted
+keys signing them, or None for the trees missing or not trusted, until written, or the next command."""
+
+
+_manifests: dict[tuple[str, str], bytes | None] = {}
+"""The manifests downloaded, by storage and tree, or None for those missing, checked with other keys too: until
+written, or the next command."""
 
 
 _keys: dict[tuple[str, str], str | None] = {}
@@ -243,6 +248,8 @@ def _forget(storage: Remote, paths: list[str]) -> None:
     trees = {path.rsplit("/", 1)[0] for path in paths if path.endswith(f"/{MANIFEST}")}
     for key in [k for k in _checked if k[0] == storage.url and k[1] in trees]:
         del _checked[key]
+    for tree in trees:
+        _manifests.pop((storage.url, tree), None)
 
 
 def transfer(
@@ -391,6 +398,7 @@ def _parse(prefix: str, text: str) -> tuple[str, dict[str, str]]:
 def forget() -> None:
     """Forget the manifests and keys read in the storages, for a new command."""
     _checked.clear()
+    _manifests.clear()
     _keys.clear()
 
 
@@ -414,17 +422,21 @@ def _build_key(storage: Remote, fingerprint: str) -> str | None:
 
 def _checked_manifest(
     storage: Remote, prefix: str, trusted: Signer | None, fingerprints: frozenset[str]
-) -> tuple[str, dict[str, str]] | None:
-    """Return the directory of the files of the MANIFEST of `prefix`, and those files, when signed with the keys of
-    `fingerprints`.
+) -> tuple[str, dict[str, str], frozenset[str]] | None:
+    """Return the directory of the files of the MANIFEST of `prefix`, those files, and the keys of `fingerprints`
+    signing it, when one does.
 
     Only the text gpg verified is read, not what may be around its signed part.
     """
     with tempfile.TemporaryDirectory(prefix="xcraft-manifest-") as tmp:
         work = Path(tmp)
         manifest, payload = work / MANIFEST, work / "payload"
-        if not download(storage, f"{prefix}/{MANIFEST}", manifest):
+        if (storage.url, prefix) not in _manifests:
+            found = download(storage, f"{prefix}/{MANIFEST}", manifest)
+            _manifests[storage.url, prefix] = manifest.read_bytes() if found else None
+        if (text := _manifests[storage.url, prefix]) is None:
             return None
+        manifest.write_bytes(text)
         keyring = work / "keys"
         keyring.mkdir(mode=0o700)
         verifier = Signer(key="", gnupghome=keyring)
@@ -438,33 +450,40 @@ def _checked_manifest(
         except (SigningError, ValueError):
             log.warning("ignoring invalid remote tree %s", prefix)
             return None
-    valid = any(
-        line.startswith("[GNUPG:] VALIDSIG ") and (line.split()[2] in fingerprints or line.split()[-1] in fingerprints)
+    signers = frozenset(
+        key
         for line in status.splitlines()
+        if line.startswith("[GNUPG:] VALIDSIG ")  # with the signing key, then the primary one
+        for key in (line.split()[2], line.split()[-1])
+        if key in fingerprints
     )
-    return parsed if valid else None
+    return (*parsed, signers) if signers else None
 
 
-def _manifest(storage: Remote, prefix: str, trusted: Signer | None) -> tuple[str, dict[str, str]] | None:
+def _manifest(
+    storage: Remote, prefix: str, trusted: Signer | None, signer: str | None = None
+) -> tuple[str, dict[str, str]] | None:
+    """Return the directory of the files of the trusted tree `prefix`, and their SHA-256, signed by `signer`, with one,
+    or None.
+    """
     fingerprints = frozenset(storage.build_keys + ([trusted.key.upper()] if trusted else []))
     if not fingerprints:
         return None
     if (storage.url, prefix, fingerprints) not in _checked:
         _checked[storage.url, prefix, fingerprints] = _checked_manifest(storage, prefix, trusted, fingerprints)
-    return (checked[0], dict(checked[1])) if (checked := _checked[storage.url, prefix, fingerprints]) else None
+    if not (checked := _checked[storage.url, prefix, fingerprints]) or signer not in (None, *checked[2]):
+        return None
+    return checked[0], dict(checked[1])
 
 
-def tree_exists(storage: Remote, prefix: str, *, trusted: Signer | None = None) -> bool:
-    """Return whether the storage has the complete tree `prefix`."""
-    return _manifest(storage, prefix, trusted) is not None
+def tree_exists(storage: Remote, prefix: str, *, trusted: Signer | None = None, signer: str | None = None) -> bool:
+    """Return whether the storage has the complete tree `prefix`, signed by `signer`, with one."""
+    return _manifest(storage, prefix, trusted, signer) is not None
 
 
-def storages(project: Project, fingerprint: str | None = None) -> list[Remote]:
-    """Return the storages, main then dev, each trusting the keys of both, or only `fingerprint` among them: a tree is
-    as trusted in either.
-    """
+def storages(project: Project) -> list[Remote]:
+    """Return the storages, main then dev, each trusting the keys of both: a tree is as trusted in either."""
     keys = sorted({key for storage in project.config.remote.values() for key in storage.build_keys})
-    keys = [key for key in keys if fingerprint in (None, key)]
     return [
         storage.model_copy(update={"build_keys": keys})
         for name in ("main", "dev")
@@ -472,20 +491,17 @@ def storages(project: Project, fingerprint: str | None = None) -> list[Remote]:
     ]
 
 
-def _own(project: Project, fingerprint: str | None = None) -> Signer | None:
-    """Return the key of the command, or else the developer's, whose trees are trusted too: when it is `fingerprint`,
-    with one.
-    """
-    own = project.signer or dev_signer(project)
-    return own if own and fingerprint in (None, own.key) else None
+def _own(project: Project) -> Signer | None:
+    """Return the key of the command, or else the developer's, whose trees are trusted too."""
+    return project.signer or dev_signer(project)
 
 
-def _first[T](project: Project, attempt: Callable[[Remote], T], fingerprint: str | None = None) -> T | None:
-    """Return the first result of `attempt` on main, then dev, trusting `fingerprint` only, with one, that is not
-    empty, or else raise the error of one, if any.
+def _first[T](project: Project, attempt: Callable[[Remote], T]) -> T | None:
+    """Return the first result of `attempt` on main, then dev, that is not empty, or else raise the error of one, if
+    any.
     """
     error = None
-    for storage in storages(project, fingerprint):
+    for storage in storages(project):
         try:
             if result := attempt(storage):
                 return result
@@ -500,8 +516,8 @@ def tree_available(project: Project, prefix: str, fingerprint: str | None = None
     """Return whether main, or else dev, has the trusted tree `prefix`, signed by `fingerprint`, with one, from its
     manifest only.
     """
-    trusted = _own(project, fingerprint)
-    return bool(_first(project, lambda s: tree_exists(s, prefix, trusted=trusted), fingerprint))
+    trusted = _own(project)
+    return bool(_first(project, lambda s: tree_exists(s, prefix, trusted=trusted, signer=fingerprint)))
 
 
 def download_tree(
@@ -511,13 +527,16 @@ def download_tree(
     on_line: Callable[[str], None] = lambda _: None,
     *,
     trusted: Signer | None = None,
+    signer: str | None = None,
 ) -> bool:
-    """Download the tree `prefix` as the new directory `dest`, and return whether the storage has it."""
+    """Download the tree `prefix`, signed by `signer`, with one, as the new directory `dest`, and return whether the
+    storage has it.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
     # next to it, to move it there
     with tempfile.TemporaryDirectory(dir=dest.parent, prefix=".download-") as tmp:
         tree = Path(tmp) / "tree"
-        if (found := _manifest(storage, prefix, trusted)) is None:
+        if (found := _manifest(storage, prefix, trusted, signer)) is None:
             return False
         root, manifest = found
         tree.mkdir()
@@ -547,8 +566,8 @@ def fetch_tree(
     """Download the trusted tree `prefix`, signed by `fingerprint`, with one, from main, or else dev, as `dest`, its
     manifest checked before its files, and return whether one has it.
     """
-    trusted = _own(project, fingerprint)
-    return bool(_first(project, lambda s: download_tree(s, prefix, dest, on_line, trusted=trusted), fingerprint))
+    trusted = _own(project)
+    return bool(_first(project, lambda s: download_tree(s, prefix, dest, on_line, trusted=trusted, signer=fingerprint)))
 
 
 def update_tree(
@@ -611,6 +630,7 @@ def write_manifest(
         key.write_text(signer.public_key())
         upload(storage, f"{KEYS}/{signer.key}.asc", key)
         upload(storage, f"{prefix}/{MANIFEST}", file)
+        _manifests[storage.url, prefix] = file.read_bytes()  # rather than downloaded again
 
 
 def upload_tree(storage: Remote, prefix: str, src: Path, names: list[str], *, signer: Signer | None) -> dict[str, str]:
@@ -626,11 +646,13 @@ def upload_tree(storage: Remote, prefix: str, src: Path, names: list[str], *, si
     return manifest
 
 
-def read_tree(storage: Remote, prefix: str, *, trusted: Signer | None = None) -> tuple[str, dict[str, str]]:
+def read_tree(
+    storage: Remote, prefix: str, *, trusted: Signer | None = None, signer: str | None = None
+) -> tuple[str, dict[str, str]]:
     """Return the directory of the files of the tree `prefix` in the storage, and their SHA-256, by path in the tree:
-    none without its manifest.
+    none without its manifest, signed by `signer`, with one.
     """
-    return _manifest(storage, prefix, trusted) or (prefix, {})
+    return _manifest(storage, prefix, trusted, signer) or (prefix, {})
 
 
 def read_manifest(storage: Remote, prefix: str, *, trusted: Signer | None = None) -> dict[str, str]:

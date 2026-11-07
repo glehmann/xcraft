@@ -209,7 +209,7 @@ class Uploader:
             repos = {"RPMS": f"{REPO}/{platform.arch}", "SRPMS": f"{REPO}/Source"}
             for package, key in keys.items():
                 tree = build_path(platform, package, key, signer.key)
-                root, found = remote.read_tree(self.storage, tree, trusted=self._trusted)
+                root, found = remote.read_tree(self.storage, tree, trusted=self._trusted, signer=signer.key)
                 stored = {
                     f"{repo}/{Path(path).name}": Stored(f"{root}/{path}", digest)
                     for path, digest in found.items()

@@ -15,13 +15,14 @@ from rich.text import Text
 
 from xcraft import build as builder
 from xcraft import process, vm
-from xcraft.cache import release_suffix
+from xcraft.cache import cached_build, release_suffix
 from xcraft.commands import Arch, Dev, Final, Key, NoCheck, Packages, dev_ident, prepared_project, sign_builds
 from xcraft.display import COMMAND, activity, console
 from xcraft.graph import dependents
 from xcraft.packages import is_debug
 from xcraft.project import Project
-from xcraft.signing import check_signatures, dev_signer
+from xcraft.signing import KEY_FILE as BUILD_KEY
+from xcraft.signing import check_signatures, run_signer
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -135,7 +136,28 @@ def _copy_to_host(host: _Host, output: Path, ident: str, binaries: list[str], *,
             console.print(f"[yellow]warning[/]: {host.name} keeps {kept}, not {built}: newer, or held")
 
 
-def repo(  # noqa: C901
+def _sign_repo(project: Project, output: Path, developed: list[str], keys: dict[str, str]) -> list[str]:
+    """Sign the metadata of the repository `output` of the development builds `developed`, with their `keys`, by the
+    key of the command, and return the files of the public keys of the repository and of the signers of its packages,
+    which keep the signatures of their builds: of the key of the command, or of a former one.
+    """
+    signer, signers = run_signer(project), {}
+    for name in developed:
+        build = cached_build(project, name, keys[name])
+        rpms = [rpm.name for rpm in (build / "RPMS").rglob("*.rpm")]
+        public_key = signers.setdefault(build.parents[2].name, (build / BUILD_KEY).read_text())
+        check_signatures(project, output, rpms, what="development packages", public_key=public_key)
+    signer.sign_file(output / "repodata/repomd.xml")
+    (output / KEY_FILE).write_text(signer.public_key())
+    files = [KEY_FILE]
+    for fingerprint, public_key in signers.items():
+        if fingerprint != signer.key:
+            (output / (file := f"{KEY_FILE}-{fingerprint}")).write_text(public_key)
+            files.append(file)
+    return files
+
+
+def repo(
     ctx: typer.Context,
     packages: Packages = None,
     with_dependents: Annotated[
@@ -217,19 +239,10 @@ def repo(  # noqa: C901
     if developed and ident:
         url = baseurl or (f"file://{REMOTE}/{ident}" if targets else f"file://{output}")
         repo_file = output / f"xcraft-{ident}.repo"
-        if signer := dev_signer(project):
-            key = signer.public_key()
-            rpms = sorted(f.relative_to(output).as_posix() for f in output.glob("*.rpm"))
-            check_signatures(project, output, rpms, what="development packages", public_key=key)
-            signer.sign_file(output / "repodata/repomd.xml")
-            (output / KEY_FILE).write_text(key)
-            checks = f"gpgcheck=1\nrepo_gpgcheck=1\ngpgkey={url.rstrip('/')}/{KEY_FILE}\n"
-        else:
-            console.print("[yellow]the development packages are not signed[/]: see xcraft key create")
-            checks = "gpgcheck=0\n"
+        gpgkey = " ".join(f"{url.rstrip('/')}/{file}" for file in _sign_repo(project, output, developed, keys))
         repo_file.write_text(
             f"[xcraft-{ident}]\nname=xcraft development builds {ident}\nbaseurl={url}\n"
-            f"enabled=1\n{checks}metadata_expire=0\n"
+            f"enabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey={gpgkey}\nmetadata_expire=0\n"
         )
         binaries = [
             n

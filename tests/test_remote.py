@@ -1040,10 +1040,10 @@ def test_publish_source_packages_of_all_architectures(root: Path, tmp_path: Path
             assert xcraft("build", "--arch", arch)[0] == 0
         assert xcraft("push", "builds", "--to", "main", "--arch", arch)[0] == 0
     stage = f"sources-{secrets.token_hex(4)}"
-    assert xcraft("publish", "repos", "--to", "main", "--unsigned", "--stage", stage)[0] == 0
+    assert xcraft("publish", "repos", "--to", "main", "--stage", stage)[0] == 0
     spec = root / "base/with-deps/with-deps.spec"
     spec.write_text(spec.read_text().replace('echo "with-deps"', 'echo "with-deps, changed"'))
-    assert xcraft("publish", "repos", "--to", "main", "--unsigned", "--stage", stage)[0] == 0
+    assert xcraft("publish", "repos", "--to", "main", "--stage", stage)[0] == 0
     assert remote.download_tree(storage, f"repos/9.0/{stage}/latest", tmp_path / "latest")
     sources = tmp_path / "latest/base/Source"
     indexed = repodata.read(sources) or {}
@@ -1055,7 +1055,7 @@ def test_publish(root: Path) -> None:  # noqa: PLR0915
     arches = [ARCH, "x86_64"] if ARCH == "x86_64_v2" else [ARCH]
     platforms = ", ".join(f'"{p}"' for p in [PLATFORM, "linux/amd64"][: len(arches)])
     (root / "xcraft.toml").write_text(REMOTE.replace(f'["{PLATFORM}"]', f"[{platforms}]") + 'extra = ["bc"]\n')
-    code, output = xcraft("publish", "--to", "main", "--unsigned")
+    code, output = xcraft("publish", "--to", "main")
     assert code == 0, output
     assert {"bc", "glibc"} <= set(load_lock(Project.find()).runtime[ARCH])
     bc = resolve_image(Project.find()).packages["bc"]
@@ -1074,18 +1074,18 @@ def test_publish(root: Path) -> None:  # noqa: PLR0915
         assert remote.exists(storage, f"{base}/Source/bc-{bc.evr}.src.rpm")
         assert 'href="trivial-1.0-1%2Bb1.xcpng8.99.noarch.rpm"' in page(f"{base}/{arches[-1]}/")
     # a second one the same day, without changing the locks, of the repositories only, like all without [iso]
-    code, output = xcraft("publish", "repos", "--to", "main", "--locked", "--unsigned")
+    code, output = xcraft("publish", "repos", "--to", "main", "--locked")
     assert code == 0, output
     assert f"published repos/9.0/{STAGE}/{day}.2, and as repos/9.0/{STAGE}/latest" in output
     assert not remote.tree_exists(storage, f"isos/9.0/{STAGE}/latest")
     # An explicit stage has an independent snapshot sequence and latest tree.
     incoming = f"{STAGE}-incoming"
-    code, output = xcraft("publish", "--to", "main", "--stage", incoming, "repos", "--locked", "--unsigned")
+    code, output = xcraft("publish", "--to", "main", "--stage", incoming, "repos", "--locked")
     assert code == 0, output
     assert f"published repos/9.0/{incoming}/{day}, and as repos/9.0/{incoming}/latest" in output
     assert remote.tree_exists(storage, f"repos/9.0/{STAGE}/latest")
     assert remote.tree_exists(storage, f"repos/9.0/{incoming}/latest")
-    code, output = xcraft("publish", "isos", "--to", "main", "--unsigned")
+    code, output = xcraft("publish", "isos", "--to", "main")
     assert code == 2
     assert "no ISO to publish: see [iso] in xcraft.toml" in output
     # a local one is of the host's architecture, unless asked
@@ -1187,11 +1187,11 @@ def test_signed_publish(root: Path) -> None:  # noqa: PLR0915
 
 def test_publish_rebuilt_package(root: Path, tmp_path: Path) -> None:
     """A rebuild keeping its version-release is published, not the previous build of the storage."""
-    code, output = xcraft("publish", "--to", "main", "--unsigned")
+    code, output = xcraft("publish", "--to", "main")
     assert code == 0, output
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace('echo "hello"', 'echo "hello, rebuilt"'))
-    code, output = xcraft("publish", "--to", "main", "--unsigned")
+    code, output = xcraft("publish", "--to", "main")
     assert code == 0, output
     storage = Project.find().config.remote.get("main")
     assert storage
@@ -1209,12 +1209,12 @@ def test_publish_from_latest_metadata(root: Path, tmp_path: Path, caplog: pytest
     """A snapshot has the metadata of the packages of the latest one, without downloading them."""
     stage = f"metadata-{secrets.token_hex(4)}"
     (root / "xcraft.toml").write_text(f'{REMOTE}extra = ["bc"]\n')
-    code, output = xcraft("publish", "repos", "--to", "main", "--unsigned", "--stage", stage)
+    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
     assert code == 0, output
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace('echo "hello"', 'echo "hello, rebuilt"'))
     with caplog.at_level(logging.DEBUG, logger="xcraft"):
-        code, output = xcraft("publish", "repos", "--to", "main", "--unsigned", "--stage", stage)
+        code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
     assert code == 0, output
     assert not [m for m in caplog.messages if "downloading " in m and ".rpm to " in m]
     # each manifest checked once
@@ -1427,7 +1427,7 @@ def test_upstream_copy(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixt
         # publishing copies them from the copy
         caplog.clear()
         with caplog.at_level(logging.DEBUG, logger="xcraft"):
-            code, output = xcraft("publish", "repos", "--to", "dev", "--unsigned", "--stage", f"copy-{STAGE}")
+            code, output = xcraft("publish", "repos", "--to", "dev", "--stage", f"copy-{STAGE}")
         assert code == 0, output
         copied = [m.split()[1] for m in caplog.messages if m.startswith("copying ")]
         assert f"s3://xcraft-dev/{prefix}/{ARCH}/{pinned.file_name('bc', bc)}" in copied
