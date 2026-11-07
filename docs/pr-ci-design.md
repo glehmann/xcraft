@@ -27,12 +27,15 @@ request. For #123, on each push, on each architecture, with `XCRAFT_DEV=pr123` a
 `XCRAFT_DEV_COUNTER=${{ github.run_number }}`:
 
 1. `xcraft build --locked --fetch=needed`: the packages the pull request changes, and those built against them, get
-   development builds, `<release>+b<n>~<run number>.pr123`; the others are master's, fetched from the main bucket.
+   development builds, `<release>+b<n>~<run number>.pr123`, signed at build by the PR key, the key of the run; the
+   others are master's, fetched from the main bucket, signed by the CI key.
 2. `xcraft publish --locked --to dev --stage pr123 --key "$PR_SIGNING_KEY_FINGERPRINT"`: the snapshot, checked to be
    installable, and the ISOs on x86_64, in `repos/<release>/pr123/` and `isos/<release>/pr123/` of the dev bucket,
    for the testers to install from. The development builds go there in the snapshot only: they are never pushed as
-   builds, nor fetched. The final packages, master's and the upstream ones, are copied server-side from the pool of
-   the main bucket, signed by the CI key, which costs neither disk nor upload, see [the layout of the published
+   builds, nor fetched. Nothing is signed by the publication: master's builds and the upstream originals are copied
+   server-side from the main bucket, which costs neither disk nor upload; the upstream packages a pull request adds,
+   which the main bucket's copy does not have, are uploaded as they are, with the key of their repository among the
+   stage's, as for every publication of dev mode. See [the layout of the published
    repositories](publishing-layout-design.md#the-stages-of-the-pull-requests).
 
 The compiler caches are fetched from master's, as the builds of every branch do now, and never pushed: the next push
@@ -49,11 +52,12 @@ the same inputs.
 
 ### Signing and trust
 
-The PR key signs as a developer's key does: the development builds and the metadata of the stage; master's packages,
-copied, keep the CI key's signature. It is trusted by nobody else: not in `build_keys` of any remote, which would make
-master's CI accept, from the dev bucket, a final build a pull request planted under a key master builds. The testers
-install from the stage with both keys, the PR key and the CI key, which it publishes in two files, see [the
-signatures](publishing-layout-design.md#signatures).
+The PR key signs as a developer's key does: the development builds at build, and the metadata of the stage; master's
+builds keep the CI key's signature, and the upstream packages their own. It is trusted by nobody else: not in
+`build_keys` of any remote, which would make master's CI accept, from the dev bucket, a final build a pull request
+planted under a key master builds. The testers
+install from the stage with the keys of all its signers, the PR key, the CI key and the upstream ones, which it
+publishes in a file each, see [the signatures](publishing-layout-design.md#signatures).
 
 The PR key and the write credentials of the dev bucket are repository secrets: the workflows of any branch pushed to
 the repository get them, the developers who already have the dev bucket. The CI key and the credentials of the main
@@ -80,7 +84,7 @@ them: the build runs the code of the pull request, its scriptlets and build tool
   `.xcraft`.
 - `xcraft publish --dev`, with `$XCRAFT_DEV`, to the dev bucket or locally: its snapshot already has the development
   builds of local snapshots; the ISOs need them in their keys too, as `xcraft iso` has them. It publishes the
-  development builds only, copying the others server-side from the pool of the main bucket, and writes nothing
+  development builds only, copying the others server-side from the main bucket, and writes nothing
   else to the bucket, as nothing of a pull request is reused. With the read of the main bucket for the dev bucket's
   key of the pull requests.
 - `xcraft unpublish --to dev --stage pr123`, removing a stage.

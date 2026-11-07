@@ -232,6 +232,9 @@ copying them all costs a few GiB once.
   checks before using it, and the image and the build roots are checked against the lock once installed. Forged
   metadata could only make dnf choose other packages, which these checks reject. The source archives are not signed
   for the same reason. The packages keep their upstream signatures, which dnf checks.
+- The originals are kept, with their upstream signatures: the copies signed again by our keys, for incoming and the
+  releases, are kept next to them, see [the layout of the published
+  repositories](publishing-layout-design.md#the-upstream-originals-and-their-copies-signed-once-by-key).
 
 ## Risks
 
