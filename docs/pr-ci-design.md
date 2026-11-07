@@ -31,9 +31,9 @@ request. For #123, on each push, on each architecture, with `XCRAFT_DEV=pr123` a
 2. `xcraft publish --locked --to dev --stage pr123 --key "$PR_SIGNING_KEY_FINGERPRINT"`: the snapshot, checked to be
    installable, and the ISOs on x86_64, in `repos/<release>/pr123/` and `isos/<release>/pr123/` of the dev bucket,
    for the testers to install from. The development builds go there in the snapshot only: they are never pushed as
-   builds, nor fetched. The final packages, master's and the upstream ones, are not copied: the metadata of the stage
-   refers to them in the pool of the main bucket, see [the layout of the published
-   repositories](publishing-layout-design.md#the-stages-of-the-pull-requests-references-to-masters-pool).
+   builds, nor fetched. The final packages, master's and the upstream ones, are copied server-side from the pool of
+   the main bucket, signed by the CI key, which costs neither disk nor upload, see [the layout of the published
+   repositories](publishing-layout-design.md#the-stages-of-the-pull-requests).
 
 The compiler caches are fetched from master's, as the builds of every branch do now, and never pushed: the next push
 of the pull request starts from master's again.
@@ -49,10 +49,11 @@ the same inputs.
 
 ### Signing and trust
 
-The PR key signs as a developer's key does: the development builds, the metadata of the stage, and the trees xcraft
-pushes for them, like the ISOs. It is trusted by nobody else: not in `build_keys` of any remote, which would make
+The PR key signs as a developer's key does: the development builds and the metadata of the stage; master's packages,
+copied, keep the CI key's signature. It is trusted by nobody else: not in `build_keys` of any remote, which would make
 master's CI accept, from the dev bucket, a final build a pull request planted under a key master builds. The testers
-install from the stage with the PR key imported, as they would with a developer's.
+install from the stage with both keys, the PR key and the CI key, which it publishes in two files, see [the
+signatures](publishing-layout-design.md#signatures).
 
 The PR key and the write credentials of the dev bucket are repository secrets: the workflows of any branch pushed to
 the repository get them, the developers who already have the dev bucket. The CI key and the credentials of the main
@@ -79,8 +80,9 @@ them: the build runs the code of the pull request, its scriptlets and build tool
   `.xcraft`.
 - `xcraft publish --dev`, with `$XCRAFT_DEV`, to the dev bucket or locally: its snapshot already has the development
   builds of local snapshots; the ISOs need them in their keys too, as `xcraft iso` has them. It publishes the
-  development builds only, referring to the others in the pool of the main bucket, and writes nothing else to the
-  bucket, as nothing of a pull request is reused.
+  development builds only, copying the others server-side from the pool of the main bucket, and writes nothing
+  else to the bucket, as nothing of a pull request is reused. With the read of the main bucket for the dev bucket's
+  key of the pull requests.
 - `xcraft unpublish --to dev --stage pr123`, removing a stage.
 
 ## Rejected for now
