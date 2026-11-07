@@ -459,9 +459,12 @@ def tree_exists(storage: Remote, prefix: str, *, trusted: Signer | None = None) 
     return _manifest(storage, prefix, trusted) is not None
 
 
-def storages(project: Project) -> list[Remote]:
-    """Return the storages, main then dev, each trusting the keys of both: a tree is as trusted in either."""
+def storages(project: Project, fingerprint: str | None = None) -> list[Remote]:
+    """Return the storages, main then dev, each trusting the keys of both, or only `fingerprint` among them: a tree is
+    as trusted in either.
+    """
     keys = sorted({key for storage in project.config.remote.values() for key in storage.build_keys})
+    keys = [key for key in keys if fingerprint in (None, key)]
     return [
         storage.model_copy(update={"build_keys": keys})
         for name in ("main", "dev")
@@ -469,12 +472,20 @@ def storages(project: Project) -> list[Remote]:
     ]
 
 
-def _first[T](project: Project, attempt: Callable[[Remote], T]) -> T | None:
-    """Return the first result of `attempt` on main, then dev, that is not empty, or else raise the error of one, if
-    any.
+def _own(project: Project, fingerprint: str | None = None) -> Signer | None:
+    """Return the key of the command, or else the developer's, whose trees are trusted too: when it is `fingerprint`,
+    with one.
+    """
+    own = project.signer or dev_signer(project)
+    return own if own and fingerprint in (None, own.key) else None
+
+
+def _first[T](project: Project, attempt: Callable[[Remote], T], fingerprint: str | None = None) -> T | None:
+    """Return the first result of `attempt` on main, then dev, trusting `fingerprint` only, with one, that is not
+    empty, or else raise the error of one, if any.
     """
     error = None
-    for storage in storages(project):
+    for storage in storages(project, fingerprint):
         try:
             if result := attempt(storage):
                 return result
@@ -485,9 +496,12 @@ def _first[T](project: Project, attempt: Callable[[Remote], T]) -> T | None:
     return None
 
 
-def tree_available(project: Project, prefix: str) -> bool:
-    """Return whether main, or else dev, has the trusted tree `prefix`, from its manifest only."""
-    return bool(_first(project, lambda s: tree_exists(s, prefix, trusted=dev_signer(project))))
+def tree_available(project: Project, prefix: str, fingerprint: str | None = None) -> bool:
+    """Return whether main, or else dev, has the trusted tree `prefix`, signed by `fingerprint`, with one, from its
+    manifest only.
+    """
+    trusted = _own(project, fingerprint)
+    return bool(_first(project, lambda s: tree_exists(s, prefix, trusted=trusted), fingerprint))
 
 
 def download_tree(
@@ -523,11 +537,18 @@ def download_tree(
     return True
 
 
-def fetch_tree(project: Project, prefix: str, dest: Path, on_line: Callable[[str], None] = lambda _: None) -> bool:
-    """Download the trusted tree `prefix` from main, or else dev, as `dest`, its manifest checked before its files,
-    and return whether one has it.
+def fetch_tree(
+    project: Project,
+    prefix: str,
+    dest: Path,
+    on_line: Callable[[str], None] = lambda _: None,
+    fingerprint: str | None = None,
+) -> bool:
+    """Download the trusted tree `prefix`, signed by `fingerprint`, with one, from main, or else dev, as `dest`, its
+    manifest checked before its files, and return whether one has it.
     """
-    return bool(_first(project, lambda s: download_tree(s, prefix, dest, on_line, trusted=dev_signer(project))))
+    trusted = _own(project, fingerprint)
+    return bool(_first(project, lambda s: download_tree(s, prefix, dest, on_line, trusted=trusted), fingerprint))
 
 
 def update_tree(
@@ -541,7 +562,7 @@ def update_tree(
     `wanted` takes, by path and SHA-256, and return whether a storage has it. Each file is checked against the signed
     manifest, then renamed into `dest`: those missing, corrupted or failing to download are skipped.
     """
-    found = _first(project, lambda s: (s, m) if (m := _manifest(s, prefix, dev_signer(project))) is not None else None)
+    found = _first(project, lambda s: (s, m) if (m := _manifest(s, prefix, _own(project))) is not None else None)
     if found is None:
         return False
     storage, (root, manifest) = found

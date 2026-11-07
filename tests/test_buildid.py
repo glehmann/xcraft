@@ -137,7 +137,7 @@ def test_build_ids(root: Path) -> None:
         f'\n# trivial\ntrivial.build = 1\ntrivial.key = "{ids["trivial"].key}"\n'
         in builds_path(Project.find()).read_text()
     )
-    assert {p.name for p in root.glob(".xcraft/cache/builds/*/trivial/*/RPMS/*/*.rpm")} == {
+    assert {p.name for p in root.glob(".xcraft/cache/builds/*/*/trivial/*/RPMS/*/*.rpm")} == {
         "trivial-1.0-1+b1.xcpng8.99.noarch.rpm"
     }
     # unchanged
@@ -275,10 +275,10 @@ def test_development_builds_without_the_tests_of_the_specs(root: Path) -> None:
     code, output = xcraft("build", "with-deps", "--nocheck")
     assert code == 0, output
     # the final build of trivial, which the remote storage misses, with its tests, unlike the development one
-    (final,) = root.glob(f".xcraft/cache/builds/{ARCH}/trivial/*")
+    (final,) = root.glob(f".xcraft/cache/builds/*/{ARCH}/trivial/*")
     assert not (final / "nocheck").exists()
     assert "trivial-checked" in (final / "build.log").read_text()
-    (development,) = root.glob(f".xcraft/cache/builds/{ARCH}/with-deps/*")
+    (development,) = root.glob(f".xcraft/cache/builds/*/{ARCH}/with-deps/*")
     assert "~1.dev" in development.name
     assert (development / "nocheck").exists()
     assert xcraft("build", "with-deps", "--nocheck") == (0, "2 cached\n")
@@ -286,7 +286,7 @@ def test_development_builds_without_the_tests_of_the_specs(root: Path) -> None:
     code, output = xcraft("build", "with-deps")
     assert code == 1
     assert "✗ with-deps" in output, output
-    assert not list(root.glob(f".xcraft/cache/builds/{ARCH}/*/*/nocheck"))
+    assert not list(root.glob(f".xcraft/cache/builds/*/{ARCH}/*/*/nocheck"))
     code, output = xcraft("build", "--nocheck", "--final")
     assert code == 2
     assert "--final and --nocheck cannot be used together" in " ".join(output.replace("│", "").split())
@@ -294,7 +294,7 @@ def test_development_builds_without_the_tests_of_the_specs(root: Path) -> None:
 
 def compression(root: Path, rpm: str) -> str:
     """Return the zstd level of the payload of the cached `rpm`, with T when compressed by several threads."""
-    (path,) = root.glob(f".xcraft/cache/builds/*/*/*/RPMS/*/{rpm}")
+    (path,) = root.glob(f".xcraft/cache/builds/*/*/*/*/RPMS/*/{rpm}")
     query = ["rpm", "-qp", "--qf", "%{PAYLOADFLAGS}", path]
     return subprocess.run(query, capture_output=True, text=True, check=True).stdout
 
@@ -325,7 +325,7 @@ def test_development_builds(root: Path, monkeypatch: pytest.MonkeyPatch) -> None
     # final builds, even with $XCRAFT_DEV, but not with --dev
     assert built("--final") == []
     assert "with-deps-1.0-1+b2.xcpng8.99.noarch.rpm" in {
-        p.name for p in root.glob(".xcraft/cache/builds/*/with-deps/*/RPMS/*/*.rpm")
+        p.name for p in root.glob(".xcraft/cache/builds/*/*/with-deps/*/RPMS/*/*.rpm")
     }
     assert compression(root, "with-deps-1.0-1+b2.xcpng8.99.noarch.rpm") == "19"
     code, output = xcraft("build", "--final", "--dev", "x")
@@ -446,7 +446,7 @@ def test_dynamic_buildrequires_changing_the_build_number(root: Path) -> None:
     code, output = xcraft("build", "trivial")
     assert code == 0, output
     # cached under the release suffix of its RPMs, after its key
-    rpms = list(root.glob(".xcraft/cache/builds/*/trivial/*/RPMS/*/*.rpm"))
+    rpms = list(root.glob(".xcraft/cache/builds/*/*/trivial/*/RPMS/*/*.rpm"))
     assert rpms
     for rpm in rpms:
         assert rpm.parents[2].name[64:] in rpm.name
@@ -544,7 +544,7 @@ def test_reused_builds(root: Path) -> None:
     git(root, "reset", "-q", "--hard", "HEAD~")
     assert built("with-deps") == ["trivial-1.0-1+b2~1.dev.xcpng8.99.noarch.rpm"]
     assert "with-deps-1.0-1+b1.xcpng8.99.noarch.rpm" in {
-        p.name for p in root.glob(".xcraft/cache/builds/*/with-deps/*/RPMS/*/*.rpm")
+        p.name for p in root.glob(".xcraft/cache/builds/*/*/with-deps/*/RPMS/*/*.rpm")
     }
     # until it changes otherwise
     edit(root, "changed again")

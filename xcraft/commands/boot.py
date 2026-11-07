@@ -9,7 +9,7 @@ from typing import Annotated
 import typer
 
 from xcraft import process, vm
-from xcraft.commands import Arch, Dev, Final, Key, NoCheck, choose_signer, dev_ident
+from xcraft.commands import Arch, Dev, Final, Key, NoCheck, choose_signer, dev_ident, sign_builds
 from xcraft.commands.vm import check_port, show
 from xcraft.display import console
 from xcraft.iso import checkout_iso
@@ -144,6 +144,7 @@ def boot(
     if not iso:
         project.frozen = locked
         signer = choose_signer(project, local=True, unsigned=unsigned, dev_key=False, key=key)
+        sign_builds(project, key, final=ident is None, signer=signer)
         iso = checkout_iso(project, signer=signer, dev=ident, nocheck=nocheck, published=not (key or unsigned))
         console.print(f"[bold green]✓[/] {iso}")
     with project.lock():

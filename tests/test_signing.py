@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 import pytest
 import typer
 
-from tests import ARCH, PROJECT, copy_project, needs_gpg
+from tests import ARCH, PROJECT, TOYS, copy_project, needs_gpg
 from tests.test_build import xcraft
 from xcraft import buildid
 from xcraft.cache import build_keys, cached_build
@@ -117,12 +117,6 @@ def _check_with_keys_at_urls(root: Path, tmp_path: Path, signer: Signer, signed:
 
 @needs_gpg
 def test_development_builds_are_signed(build_environment: Path, root: Path, tmp_path: Path) -> None:
-    def rpms(dev: str) -> list[Path]:
-        """Build trivial with the identifier `dev`, and return the RPMs of its development build."""
-        code, output = xcraft("build", "trivial", "--dev", dev)
-        assert code == 0, output
-        return sorted(root.glob(f".xcraft/cache/builds/*/trivial/*~*.{dev}/RPMS/*/*.rpm"))
-
     # a change on a branch: development builds
     subprocess.run(["git", "-C", str(root), "symbolic-ref", "HEAD", "refs/heads/master"], check=True)
     buildid.update(Project.find())
@@ -131,12 +125,16 @@ def test_development_builds_are_signed(build_environment: Path, root: Path, tmp_
     subprocess.run(["git", "-C", str(root), "checkout", "-qb", "feature"], check=True)
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(f"# changed\n{spec.read_text()}")
-    # unsigned without a key
-    unsigned = rpms("nokey")
-    assert xcraft("key", "create")[0] == 0
+    # signed by the developer's key, which the first build makes
+    code, output = xcraft("build", "trivial", "--dev", "key")
+    assert code == 0, output
+    assert "made the developer's key" in output
+    signed = sorted(root.glob(".xcraft/cache/builds/*/*/trivial/*~*.key/RPMS/*/*.rpm"))
     signer = dev_signer(Project.find())
     assert signer
-    signed = rpms("key")
+    assert signed
+    assert xcraft("key", "create")[0] != 0  # there is one
+    unsigned = sorted(TOYS.rglob("*.rpm"))[:1]  # the toys are not signed
     check_signatures(
         Project.find(), root, [str(p.relative_to(root)) for p in signed], what="test", public_key=signer.public_key()
     )
@@ -158,8 +156,8 @@ def test_development_builds_are_signed(build_environment: Path, root: Path, tmp_
     with pytest.raises(SigningError, match="some test are not signed with their key"):
         check_signatures(
             Project.find(),
-            root,
-            [str(p.relative_to(root)) for p in unsigned],
+            TOYS,
+            [str(p.relative_to(TOYS)) for p in unsigned],
             what="test",
             public_key=signer.public_key(),
         )
@@ -180,7 +178,8 @@ def test_signed_builds_of_each_architecture(root: Path, build_environment: Path)
     config.write_text(config.read_text().replace('"linux/arm64"', '"linux/amd64"'))
     assert xcraft("build", "trivial")[0] == 0
     project, other = Project.find(), Project.find("x86_64")
-    signer = create_dev_key(project, "Developer")
+    signer = dev_signer(project)  # made by the build
+    assert signer
     # the same build key on both: another build for the other architecture, told apart by a file
     key = build_keys(project)["trivial"]
     shutil.copytree(cached_build(project, "trivial", key), cached_build(other, "trivial", key))
@@ -188,3 +187,10 @@ def test_signed_builds_of_each_architecture(root: Path, build_environment: Path)
     signed = [_signed_build(p, signer, "trivial", key, storage=None) for p in (project, other)]
     assert not (signed[0] / "RPMS/x86_64").exists()
     assert (signed[1] / "RPMS/x86_64").read_text() == "the build of x86_64"
+
+
+def test_final_builds_need_a_key(root: Path) -> None:
+    code, output = xcraft("build", "trivial", "--final")
+    assert code == 2
+    assert "no key to sign the final builds" in " ".join(output.replace("│", "").split())
+    assert not (root / ".xcraft/key").exists()  # made for dev mode only

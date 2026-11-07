@@ -1,16 +1,19 @@
 """Signing our packages, with the host's gpg, and rpmsign in a container.
 
 The key never gets near the builds, which run the specs' code: only the host's
-gpg uses it, so it can be in an HSM, through gpg. Development builds are signed with the developer's
-own key, which xcraft makes in its own keyring, without passphrase: it is only
-for test hosts.
+gpg uses it, so it can be in an HSM, through gpg. Each build is signed once made,
+by the key of the command, see build_signer(): in dev mode, the developer's own
+key, which xcraft makes in its own keyring, without passphrase, when there is
+none: it is only for test hosts, and trusted by nobody.
 """
 
 from __future__ import annotations
 
+import getpass
 import hashlib
 import json
 import os
+import socket
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +29,10 @@ from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
     from xcraft.project import Project
+
+
+KEY_FILE = "RPM-GPG-KEY"
+"""The public key of the signer of a build, in it, and of a snapshot, in it."""
 
 
 class SigningError(RuntimeError):
@@ -60,7 +67,8 @@ class Signer:
         return {**os.environ, **({"GNUPGHOME": str(self.gnupghome)} if self.gnupghome else {})}
 
     def sign_rpms(self, project: Project, root: Path) -> None:
-        """Sign the RPMs under `root`, in place, with rpmsign in a container, and the key through the host's gpg.
+        """Sign the RPMs under `root`, in place, with rpmsign in a container, and the key through the host's gpg,
+        replacing their signatures, if any.
 
         The container uses the restricted socket of the host's gpg agent, made for that: the secret key, in a
         keyring or an HSM, stays out of it.
@@ -77,7 +85,7 @@ class Signer:
         script = (
             "export GNUPGHOME=/tmp/gnupg && mkdir -m 700 $GNUPGHOME && echo no-autostart > $GNUPGHOME/gpg.conf"
             " && ln -s /gpg-agent $GNUPGHOME/S.gpg-agent && gpg --batch -q --import /work/key.asc"
-            f" && xargs -a /work/rpms rpmsign --addsign --define '_gpg_name {self.key}'"
+            f" && xargs -a /work/rpms rpmsign --resign --define '_gpg_name {self.key}'"
         )
         with project.tmp_dir("sign") as work:
             (work / "key.asc").write_text(self.public_key())
@@ -137,6 +145,30 @@ def key_signer(project: Project, key: str | None = None) -> Signer | None:
     return signer or dev_signer(project)
 
 
+def build_signer(project: Project, key: str | None, *, final: bool) -> Signer:
+    """Return the key signing the builds: `key`, or the default one, see key_signer(), or else, unless `final`, the
+    developer's key, made now, as the development builds are never published by others.
+    """
+    if signer := key_signer(project, key):
+        return signer
+    if final:
+        msg = "no key to sign the final builds: run xcraft key create, configure [sign], or use --key"
+        raise SigningError(msg)
+    signer = create_dev_key(project, f"xcraft developer of {getpass.getuser()}@{socket.gethostname()}")
+    console.print(
+        f"[yellow]made the developer's key {signer.key}[/], in {dev_keyring(project)}, signing the builds: trusted by"
+        " nobody, it only tells they were made on this machine; use --key or \\[sign] for another key"
+    )
+    return signer
+
+
+def run_signer(project: Project) -> Signer:
+    """Return the key signing the builds of the command: its own, see build_signer(), or else the one of dev mode."""
+    if not project.signer:
+        project.signer = build_signer(project, None, final=False)
+    return project.signer
+
+
 def create_dev_key(project: Project, name: str) -> Signer:
     """Make the developer's key for development builds, `name` being its user id, and return its signer."""
     keyring = dev_keyring(project)
@@ -146,7 +178,7 @@ def create_dev_key(project: Project, name: str) -> Signer:
     keyring.mkdir(parents=True, exist_ok=True, mode=0o700)
     signer = Signer(key="", gnupghome=keyring)
     # without passphrase: only for test hosts
-    signer.gpg("--passphrase", "", "--quick-generate-key", name, "rsa4096", "sign", "never")
+    signer.gpg("--passphrase", "", "--quick-generate-key", name, "ed25519", "sign", "never")
     fingerprints = [
         line.split(":")[9] for line in signer.gpg("--with-colons", "--list-secret-keys").splitlines()
         if line.startswith("fpr:")

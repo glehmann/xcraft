@@ -26,11 +26,13 @@ from xcraft.cache import (
     BuildError,
     build_keys,
     build_path,
+    build_signers,
     builds_repo,
     cached_build,
     deps_repo,
     previous_duration,
     release_suffix,
+    signed_build_dir,
     untested,
 )
 from xcraft.checks import BuildRootChangedError, record_build, record_dynamic, record_rpm_deps, resolved_root
@@ -51,7 +53,7 @@ from xcraft.localrepo import REPO_FILE, LocalRepo, repo_id
 from xcraft.lock import lock_path
 from xcraft.packages import is_debug
 from xcraft.rpmbuild import image_replacements, prepare_tree, run_build
-from xcraft.signing import dev_signer
+from xcraft.signing import KEY_FILE, run_signer
 from xcraft.specs import hash_dir
 
 if TYPE_CHECKING:
@@ -148,9 +150,21 @@ def _shown(project: Project, name: str, status: str | None) -> Generator[Callabl
 
 
 def fetch_build(project: Project, name: str, key: str) -> bool:
-    """Download the build of `name` with `key` from the remote storage into the cache, and return whether it has it."""
+    """Download the build of `name` with `key` from the remote storage into the cache, signed by the first key of
+    build_signers() it has, and return whether it has one.
+    """
     with activity(f"downloading the build of {name}") as on_line:
-        return remote.fetch_tree(project, build_path(project, name, key), cached_build(project, name, key), on_line)
+        return any(
+            remote.fetch_tree(
+                project, build_path(project, name, key, f), signed_build_dir(project, f, name, key), on_line, f
+            )
+            for f in build_signers(project)
+        )
+
+
+def _stored_build(project: Project, name: str, key: str) -> bool:
+    """Return whether the remote storage has the build of `name` with `key`, signed by a key of build_signers()."""
+    return any(remote.tree_available(project, build_path(project, name, key, f), f) for f in build_signers(project))
 
 
 def _split_plan(
@@ -161,9 +175,7 @@ def _split_plan(
     stored = set()
     if fetch != "none" and project.config.remote:
         try:
-            stored = {
-                name for name in to_build if remote.tree_available(project, build_path(project, name, keys[name]))
-            }
+            stored = {name for name in to_build if _stored_build(project, name, keys[name])}
         except remote.RemoteError as e:
             console.print(f"[yellow]remote storage unavailable[/]: {escape(str(e))}")
         to_build = [name for name in to_build if name not in stored]
@@ -226,13 +238,13 @@ def _record_cached(project: Project, dev: str | None) -> tuple[dict[str, str], d
 
 
 def _stored(project: Project, names: list[str], keys: dict[str, str]) -> dict[str, bool]:
-    """Return whether the remote storage has the builds of `names` with `keys`, by their paths in it, asked
+    """Return whether the remote storage has the builds of `names` with `keys`, by `<name>/<key>`, asked
     concurrently: nothing when it cannot be asked, as each one is asked again then.
     """
-    paths = [build_path(project, name, keys[name]) for name in names]
     try:
         with ThreadPoolExecutor(16) as pool:
-            return dict(zip(paths, pool.map(lambda p: remote.tree_available(project, p), paths), strict=True))
+            found = pool.map(lambda name: _stored_build(project, name, keys[name]), names)
+            return {f"{name}/{keys[name]}": stored for name, stored in zip(names, found, strict=True)}
     except remote.RemoteError:
         return {}
 
@@ -277,7 +289,7 @@ class _Run:
     build_missing: bool = True
     results: dict[str, Result] = field(default_factory=dict)
     stored: dict[str, bool] = field(default_factory=dict)
-    """Whether the remote storage has the builds, by path."""
+    """Whether the remote storage has the builds, by `<name>/<key>`."""
     use_remote: bool = field(default=False, init=False)
     recorded: bytes = field(default=b"", init=False)
     """The state of the lock of the `keys`, see _lock_state()."""
@@ -359,9 +371,9 @@ class _Run:
             if self.fetch != "needed":
                 return self._fetched(name) if fetch_build(self.project, name, self.keys[name]) else None
             # fetched by _fetch_for(), if a build needs it
-            if (path := build_path(self.project, name, self.keys[name])) not in self.stored:
-                self.stored[path] = remote.tree_available(self.project, path)
-            return Result(name, "stored") if self.stored[path] else None
+            if (build := f"{name}/{self.keys[name]}") not in self.stored:
+                self.stored[build] = _stored_build(self.project, name, self.keys[name])
+            return Result(name, "stored") if self.stored[build] else None
         except remote.RemoteError as e:
             console.print(f"[yellow]remote storage unavailable, building locally[/]: {escape(str(e))}")
             self.use_remote = False
@@ -496,19 +508,20 @@ class _Run:
 
     def _cache(self, name: str, key: str, tree: Path) -> None:
         """Move the build of `name` in `tree` to the cache, with its `key`, and the suffixes `autorev` when it is a
-        development build, signed with the developer's key, if any.
+        development build, signed by the key of the command, see xcraft.signing.run_signer(), once rpmbuild is gone:
+        the specs never get near the key.
         """
-        project = self.project
-        if name in self.autorev and (signer := dev_signer(project)):
-            for output in ("RPMS", "SRPMS"):
-                signer.sign_rpms(project, tree / output)
-        build_dir = cached_build(project, name, key)
+        project, signer = self.project, run_signer(self.project)
+        for output in ("RPMS", "SRPMS"):
+            signer.sign_rpms(project, tree / output)
+        build_dir = signed_build_dir(project, signer.key, name, key)
         # assembled next to it, and renamed, not to leave a partial build in the cache
         new = build_dir.with_name(f".{build_dir.name}")
         shutil.rmtree(new, ignore_errors=True)
         new.mkdir(parents=True)
         for output in ("RPMS", "SRPMS"):
             (tree / output).rename(new / output)
+        (new / KEY_FILE).write_text(signer.public_key())
         if name in self.autorev:
             # the suffixes of all the development builds of the run, its own and those of the dependencies built with it
             (new / "autorev").write_text(json.dumps(self.autorev, sort_keys=True))
@@ -536,7 +549,7 @@ class _Run:
         """Return whether `result` holds with the current keys: its build still cached, or in the remote storage."""
         key = self.keys[result.name]
         if result.status == "stored":
-            return bool(self.stored.get(build_path(self.project, result.name, key)))
+            return bool(self.stored.get(f"{result.name}/{key}"))
         return (
             result.status not in ("built", "fetched", "cached") or cached_build(self.project, result.name, key).exists()
         )

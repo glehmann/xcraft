@@ -15,12 +15,12 @@ from pydantic import BaseModel
 from rich.markup import escape
 
 from xcraft import remote, remote_pages
-from xcraft.cache import BuildError, build_keys
+from xcraft.cache import BuildError, build_keys, build_path
 from xcraft.display import activity, console
 from xcraft.iso import iso_inputs
 from xcraft.localrepo import OUTPUT_MARKER
 from xcraft.project import INTERNAL
-from xcraft.publish import ISO_DIR, REPO, Stored, snapshot_key, snapshot_tree, stored_path, trusted_key
+from xcraft.publish import ISO_DIR, REPO, Stored, snapshot_key, snapshot_tree, trusted_key
 from xcraft.signing import Signer, key_signer
 from xcraft.sources import sha256_of
 
@@ -188,7 +188,7 @@ class Uploader:
         copied there, and so are those of `stored`, which are not in `src`, by path in the snapshot, with their paths in
         the storage and SHA-256.
         """
-        signed = [f"{INTERNAL}/signed/{self.signer.key}/{p.arch}/" for p, _ in platforms] if self.signer else []
+        signed = [f"{INTERNAL}/builds/{self.signer.key}/{p.arch}/" for p, _ in platforms] if self.signer else []
         self._upload(
             src,
             "repos",
@@ -202,11 +202,13 @@ class Uploader:
         """Return the packages of the trees of the builds of the `platforms` in the storage, by path in the snapshot,
         with their paths there and SHA-256: those of the first architecture, for the source packages.
         """
-        stored = {}
+        stored: dict[str, Stored] = {}
+        if not (signer := self.signer):
+            return stored
         for platform, keys in platforms:
             repos = {"RPMS": f"{REPO}/{platform.arch}", "SRPMS": f"{REPO}/Source"}
             for package, key in keys.items():
-                tree = stored_path(platform, self.signer, package, key)
+                tree = build_path(platform, package, key, signer.key)
                 root, found = remote.read_tree(self.storage, tree, trusted=self._trusted)
                 stored = {
                     f"{repo}/{Path(path).name}": Stored(f"{root}/{path}", digest)

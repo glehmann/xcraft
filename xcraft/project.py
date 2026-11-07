@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
     from xcraft.packages import Package
+    from xcraft.signing import Signer
 
 
 def _sync(directory: Path) -> None:
@@ -267,6 +268,8 @@ class Project:
     """The platform xcraft works on, one of the configuration's: see find()."""
     frozen: bool = False
     """Whether the lock cannot change, with --locked."""
+    signer: Signer | None = None
+    """The key signing the builds of the command, see xcraft.signing.build_signer()."""
     specs: dict[str, dict[str, Package]] = field(default_factory=dict, repr=False, compare=False)
     """The packages parsed for each platform, by platform: shared by the project on all its platforms, see
     all_platforms() and on_host(), so that a command parses them once by platform."""

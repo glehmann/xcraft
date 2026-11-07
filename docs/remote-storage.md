@@ -21,9 +21,10 @@ region = "garage"
 The writes use the credentials of `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. The top of the storage only has
 the published repositories, in `repos/`, the published ISOs, in `isos/`, and what xcraft keeps for itself, in
 `.xcraft/`, like the local state of a checkout: `.xcraft/sources/<sha256>/<filename>`,
-`.xcraft/builds/<arch>/<package>/<key>+b<n>/`, with a `manifest.asc` of the build's files, and the signed builds,
-the compiler caches, the resolutions, the public keys and the ISOs of the checkouts, in `.xcraft/signed/`,
-`.xcraft/ccache/`, `.xcraft/resolved/`, `.xcraft/keys/` and `.xcraft/isos/`.
+`.xcraft/builds/<fingerprint>/<arch>/<package>/<key>+b<n>/`, by the key signing its packages and its `manifest.asc`,
+and the compiler caches, the resolutions, the public keys and the ISOs of the checkouts, in `.xcraft/ccache/`,
+`.xcraft/resolved/`, `.xcraft/keys/` and `.xcraft/isos/`. A build is trusted when its key is the one of its path: one
+of `build_keys`, or the command's own.
 
 - When an archive of a manifest is not in the source cache, the build, or `xcraft fetch sources`, downloads it, from
   the storage, or else from the source of the spec whose URL has the name of the archive, and checks it against the
@@ -71,8 +72,9 @@ CI uses `--to main`; developer commands use their own bucket. Builds and compile
 then dev if main is absent, unavailable or invalid. Both locations use the same configured allowed signing keys and
 the checkout's own developer key. Publishing to dev uses the developer's signing key unless `--key` selects another.
 
-Build and compiler cache uploads, publishing and `xcraft iso` accept `--key <fingerprint>` to select a host GPG key.
-Without it, they use `[sign]` when configured, or the checkout's developer key made with `xcraft key create`.
+The builds, their uploads, the compiler caches, publishing and `xcraft iso` accept `--key <fingerprint>`, or
+`$XCRAFT_KEY`, to select a host GPG key. Without it, they use `[sign]` when configured, or the checkout's developer key
+made with `xcraft key create`, or by the first build of dev mode.
 The keyring is `[sign].gnupghome`, or `GNUPGHOME` when it is omitted. Publishing uses its selected signer for signed
 builds and snapshot manifests. `--unsigned` skips package signing but remote manifests still need a default signing
 key; it cannot be combined with `--key` or `--dev-key`.

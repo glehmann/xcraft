@@ -168,8 +168,8 @@ current lock and in the one of the main branch.
 
 ## The cache key
 
-A build is cached, in `.xcraft/cache/builds/<arch>/<package>/<cache key>/`, and in the remote storage, in
-`.xcraft/builds/<arch>/<package>/<cache key>/`, under its cache key: its build key, then its release suffix,
+A build is cached, in `.xcraft/cache/builds/<fingerprint>/<arch>/<package>/<cache key>/`, and in the remote storage,
+in `.xcraft/builds/<fingerprint>/<arch>/<package>/<cache key>/`, by the key signing it, under its cache key: its build key, then its release suffix,
 `%autorev`, which its spec puts at the start of `%dist`:
 
 - `+b<number>`, for a final build, the build of the main branch, made by CI;

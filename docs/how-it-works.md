@@ -26,7 +26,7 @@ built again when the configuration or the locked versions of its packages change
 **Builds.** Each build runs in a fresh container: `dnf builddep`, then the dynamic `BuildRequires` if any, then
 `rpmbuild`, with stdin from `/dev/null`, and without the network, like koji and mock: only the loopback interface. It runs against a local repository of what was built here, with a priority
 over the other repositories, so a package built locally always wins. A build result is cached in
-`.xcraft/cache/builds/<arch>/<pkg>/<key>`, under its [build key](builds.md#build-keys). A build whose log gets larger than 256 MiB,
+`.xcraft/cache/builds/<fingerprint>/<arch>/<pkg>/<key>`, by its signer, under its [build key](builds.md#build-keys). A build whose log gets larger than 256 MiB,
 like a test suite looping forever, is stopped.
 
 **Locking.** The commands changing the project (`build`, `repo`, `shell`, `import`, `bump`, `clean`) cannot run at the
@@ -74,5 +74,5 @@ registration needs the `C` flag for `sudo` in the containers, which Fedora's has
 keep the network: qemu-user cannot isolate them, while the large ones are for native builders, which share their builds
 through the [remote storage](remote-storage.md). xcraft solves the metadata of the repositories of an emulated
 architecture natively, in its dnf cache: under emulation, that takes most of the time of dnf. Each architecture has its
-lock, its build environment image, and its builds, in `.xcraft/cache/builds/<arch>/`. AlmaLinux rebuilds EPEL for
+lock, its build environment image, and its builds, in `.xcraft/cache/builds/<fingerprint>/<arch>/`. AlmaLinux rebuilds EPEL for
 `x86_64_v2` only: the other architectures get Fedora's.

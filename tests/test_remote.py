@@ -46,7 +46,7 @@ from xcraft.lock import load_lock
 from xcraft.project import Project, Remote
 from xcraft.resolution import resolve_image
 from xcraft.rpmbuild import prepare_tree
-from xcraft.signing import Signer, check_signatures, create_dev_key, dev_signer, release_signer
+from xcraft.signing import Signer, check_signatures, create_dev_key, dev_signer, key_signer, release_signer
 from xcraft.sources import SourceError, cache_source, sha256_of, source_path, write_manifest
 
 if TYPE_CHECKING:
@@ -529,7 +529,7 @@ def test_developer_storage(root: Path, tmp_path: Path) -> None:
     assert xcraft("build", "trivial", "--fetch=none")[0] == 0
     assert xcraft("push", "builds", "trivial")[0] == 0
     storage = Project.find().config.remote["dev"]
-    trees = remote.listing(storage, f".xcraft/builds/{ARCH}/trivial/")
+    trees = remote.listing(storage, f".xcraft/builds/{signer.key}/{ARCH}/trivial/")
     assert any(path.endswith(remote.MANIFEST) for path in trees)
     assert not any(path.endswith(".asc") for path in trees if not path.endswith(remote.MANIFEST))
     assert signer.key not in storage.build_keys
@@ -569,7 +569,8 @@ def test_builds_shared_by_checkouts(
     assert Project.find().id != Project(root, Project.find().config).id
     code, output = xcraft("build", "with-deps")
     assert code == 0, output
-    assert output.splitlines()[0] == "↓ trivial fetched"
+    assert output.splitlines()[0].startswith("made the developer's key")  # of this checkout, for its builds
+    assert output.splitlines()[1] == "↓ trivial fetched"
     assert output.splitlines()[-1] == "1 built, 1 fetched"
 
 
@@ -584,7 +585,7 @@ def test_fetched_builds_recorded_once(
     spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
     assert xcraft("build")[0] == 0
     assert xcraft("push", "builds", "--key", build_signer[0], "--to", "main")[0] == 0
-    recorded = {p.parts[-3]: p.read_text() for p in root.glob(".xcraft/cache/builds/*/*/*/rpm-deps.json")}
+    recorded = {p.parts[-3]: p.read_text() for p in root.glob(".xcraft/cache/builds/*/*/*/*/rpm-deps.json")}
     assert set(recorded) == {"trivial", "with-deps"}
     other = tmp_path / "elsewhere" / "xcraft"
     shutil.copytree(root, other, ignore=shutil.ignore_patterns(".xcraft"))
@@ -601,7 +602,7 @@ def test_fetched_builds_recorded_once(
     assert code == 0, output
     assert output.splitlines()[-1] == "2 fetched"
     assert resolved == []
-    assert {p.parts[-3]: p.read_text() for p in other.glob(".xcraft/cache/builds/*/*/*/rpm-deps.json")} == recorded
+    assert {p.parts[-3]: p.read_text() for p in other.glob(".xcraft/cache/builds/*/*/*/*/rpm-deps.json")} == recorded
 
 
 def test_push_everything(root: Path, tmp_path: Path) -> None:
@@ -760,7 +761,9 @@ def test_builds(root: Path) -> None:
     # browsable, as the storage does not list directories
     assert 'href=".xcraft/"' in page("")
     assert 'href="builds/"' in page(".xcraft/")
-    assert 'href="trivial/"' in page(f".xcraft/builds/{ARCH}/")
+    signer = key_signer(Project.find())
+    assert signer
+    assert 'href="trivial/"' in page(f".xcraft/builds/{signer.key}/{ARCH}/")
     # with the size of all that is below them and the date of the newest file, from their pages when only their
     # parent is listed
     assert re.search(
@@ -785,11 +788,10 @@ def test_builds(root: Path) -> None:
     assert code == 0, output
     assert output.splitlines()[0] == "↓ trivial fetched"
     assert output.splitlines()[-1] == "1 built, 1 fetched"
-    assert list(
-        (root / f".xcraft/cache/builds/{ARCH}/trivial").glob("*/RPMS/noarch/trivial-1.0-1+b1.xcpng8.99.noarch.rpm")
-    )
+    (fetched,) = root.glob(f".xcraft/cache/builds/*/{ARCH}/trivial")
+    assert list(fetched.glob("*/RPMS/noarch/trivial-1.0-1+b1.xcpng8.99.noarch.rpm"))
     # built, even though the storage has it
-    shutil.rmtree(root / f".xcraft/cache/builds/{ARCH}/trivial")
+    shutil.rmtree(fetched)
     code, output = xcraft("build", "trivial", "--fetch=none")
     assert code == 0, output
     assert output.splitlines()[-1] == "1 built"
@@ -804,7 +806,9 @@ def test_fetch_needed(root: Path) -> None:
     shutil.rmtree(root / ".xcraft/cache/builds")
     # without what rpm generated for trivial in the lock: fetched for with-deps, it changes the key of with-deps
     (root / "xcraft.lock").write_text(lock)
-    builds = root / f".xcraft/cache/builds/{ARCH}"
+    signer = key_signer(Project.find())  # of [sign], which built and pushed them
+    assert signer
+    builds = root / ".xcraft/cache/builds" / signer.key / ARCH
     # only trivial is fetched, for the build of with-deps
     code, output = xcraft("build", "--dry-run", "--fetch=needed")
     assert code == 0, output
@@ -1015,7 +1019,7 @@ def test_push_without_the_builds_without_their_tests(root: Path) -> None:
     spec.write_text(spec.read_text().replace('echo "hello"', 'echo "without its tests"'))
     assert xcraft("build", "trivial")[0] == 0
     # like the final builds an earlier xcraft made with --nocheck: the final builds run the tests now
-    (build,) = root.glob(f".xcraft/cache/builds/{ARCH}/trivial/*")
+    (build,) = root.glob(f".xcraft/cache/builds/*/{ARCH}/trivial/*")
     (build / "nocheck").touch()
     code, output = xcraft("push", "builds", "trivial", "--to", "main")
     assert code == 1
@@ -1108,7 +1112,7 @@ def test_publish(root: Path) -> None:  # noqa: PLR0915
     # the upstream packages must be signed with the keys of the repositories
     (root / "xcraft.toml").write_text(f'{REMOTE}extra = ["bc"]\n')
     srpm = root / f".xcraft/cache/srpms/bc-{bc.evr}.src.rpm"
-    shutil.copy(next(root.glob(f".xcraft/cache/builds/{ARCH}/trivial/*/SRPMS/*.src.rpm")), srpm)
+    shutil.copy(next(root.glob(f".xcraft/cache/builds/*/{ARCH}/trivial/*/SRPMS/*.src.rpm")), srpm)
     code, output = xcraft("publish", "--local")
     assert code == 1
     assert f"✗ base/Source/{srpm.name}: digests SIGNATURES NOT OK" in output
@@ -1157,8 +1161,8 @@ def test_signed_publish(root: Path) -> None:  # noqa: PLR0915
         storage = Project.find().config.remote.get("main")
         assert storage
         assert remote.exists(storage, f"repos/9.0/{STAGE}/latest/base/{ARCH}/repodata/repomd.xml.asc")
-        signed = list((root / ".xcraft/cache/signed" / signer.key / ARCH / "trivial").iterdir())
-        assert remote.tree_exists(storage, f".xcraft/signed/{signer.key}/{ARCH}/trivial/{signed[0].name}")
+        signed = list((root / ".xcraft/cache/builds" / signer.key / ARCH / "trivial").iterdir())
+        assert remote.tree_exists(storage, f".xcraft/builds/{signer.key}/{ARCH}/trivial/{signed[0].name}")
         # signed once: the next snapshots have the same files
         rpm = signed[0] / "RPMS/noarch/trivial-1.0-1+b1.xcpng8.99.noarch.rpm"
         before = rpm.read_bytes()
@@ -1175,7 +1179,7 @@ def test_signed_publish(root: Path) -> None:  # noqa: PLR0915
         assert remote.tree_exists(dev_storage, f"repos/9.0/{STAGE}/latest", trusted=signer)
         assert not remote.tree_exists(dev_storage, f"repos/9.0/{STAGE}/latest")
         assert remote.tree_exists(
-            dev_storage, f".xcraft/signed/{signer.key}/{ARCH}/trivial/{signed[0].name}", trusted=signer
+            dev_storage, f".xcraft/builds/{signer.key}/{ARCH}/trivial/{signed[0].name}", trusted=signer
         )
     finally:
         subprocess.run(["gpgconf", "--homedir", str(signer.gnupghome), "--kill", "gpg-agent"], check=False)
@@ -1438,7 +1442,7 @@ def test_publish_reuses_remote_snapshot(root: Path, caplog: pytest.LogCaptureFix
     assert code == 0, output
     project = Project.find()
     project.config.publish.stage = stage
-    for name in ("publish", "cache/builds", "cache/signed", "cache/rpms", "cache/srpms", "cache/checks"):
+    for name in ("publish", "cache/builds", "cache/rpms", "cache/srpms", "cache/checks"):
         shutil.rmtree(project.state / name, ignore_errors=True)
     with caplog.at_level(logging.DEBUG, logger="xcraft"):
         code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage, "--locked")

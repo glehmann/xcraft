@@ -12,8 +12,6 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
-import os
-import shutil
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,13 +22,12 @@ from rich.markup import escape
 from xcraft import build as builder
 from xcraft import buildkey, container, localrepo, pinned, remote, repodata, resolution, upstream_copy
 from xcraft.builds import builds_path, load_builds
-from xcraft.cache import BuildError, build_path, cached_build
+from xcraft.cache import BUILD_FILES, BuildError, build_path, cached_build, signed_build
 from xcraft.container import BUILDENV, buildenv_hash, run_natively
 from xcraft.display import activity, console
 from xcraft.localrepo import extra_rpms, fresh_dir
 from xcraft.lock import load_lock, lock_path
-from xcraft.project import INTERNAL
-from xcraft.signing import Signer, check_signatures, dev_signer
+from xcraft.signing import KEY_FILE, Signer, check_signatures, dev_signer
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
@@ -41,8 +38,6 @@ if TYPE_CHECKING:
     from xcraft.project import Project, Remote
     from xcraft.repodata import Entry
 
-KEY_FILE = "RPM-GPG-KEY"
-"""The public key of the signed snapshots, in them."""
 REPO = "base"
 """The repository of our packages, and of the upstream ones they need, in the snapshots."""
 BUILD = "build"
@@ -205,36 +200,14 @@ def _srpm_names(project: Project, names: list[str]) -> dict[str, str]:
     return srpms
 
 
-def _signed_path(project: Project, signer: Signer, name: str, key: str) -> str:
-    """Return the path of the tree of a signed build in the remote storage."""
-    return f"{INTERNAL}/signed/{signer.key}/{project.arch}/{name}/{key}"
-
-
-def stored_path(project: Project, signer: Signer | None, name: str, key: str) -> str:
-    """Return the path of the tree of a build in the remote storage: signed by `signer`, if any."""
-    return _signed_path(project, signer, name, key) if signer else build_path(project, name, key)
-
-
 def _signed_build(project: Project, signer: Signer, name: str, key: str, *, storage: Remote | None) -> Path:
-    """Return the build of `name` with `key`, signed by `signer`: from the cache, the remote storage, or signed now.
-
-    A build is signed once: the signatures have a date, so signing again would not give the same files, which the
-    storage could not store once for all the snapshots. With `storage`, the signed build goes to that bucket
-    when it does not have it: signed now, or by a local publish before.
+    """Return the build of `name` with `key` signed by `signer`, see xcraft.cache.signed_build(): with `storage`,
+    pushed there when it does not have it.
     """
-    # by architecture, as the builds of all of them have the same keys
-    signed = project.state / "cache/signed" / signer.key / project.arch / name / key
-    path = _signed_path(project, signer, name, key)
-    if not signed.exists() and not remote.fetch_tree(project, path, signed):
-        work = signed.with_name(f".{key}")
-        shutil.rmtree(work, ignore_errors=True)
-        for files in ("RPMS", "SRPMS"):
-            shutil.copytree(cached_build(project, name, key) / files, work / files)  # copies: signing changes them
-        signer.sign_rpms(project, work)
-        work.rename(signed)
+    signed = signed_build(project, name, key, signer)
+    path = build_path(project, name, key, signer.key)
     if storage and not remote.tree_exists(storage, path, trusted=signer):
-        remote.upload_tree(storage, path, signed, ["RPMS", "SRPMS"], signer=signer)
-    os.utime(signed)  # used, see xcraft clean --keep-days
+        remote.upload_tree(storage, path, signed, BUILD_FILES, signer=signer)
     return signed
 
 
@@ -436,9 +409,9 @@ class _Assembler:
         with activity(
             f"signing our packages for {project.arch}" if self.signer else "getting our packages", log=True
         ) as on_line:
-            if storage := self.storage:  # their manifests, checked once, concurrently
-                trusted = trusted_key(project, self.signer)
-                trees = [stored_path(project, self.signer, n, k) for n, k in keys.items()]
+            if (storage := self.storage) and (signer := self.signer):  # their manifests, checked once, concurrently
+                trusted = trusted_key(project, signer)
+                trees = [build_path(project, n, k, signer.key) for n, k in keys.items()]
                 with ThreadPoolExecutor(remote.REQUESTS) as pool:
                     list(pool.map(lambda tree: remote.read_manifest(storage, tree, trusted=trusted), trees))
             for name in sorted(keys):
@@ -473,8 +446,8 @@ class _Assembler:
         storage, or the local one when there is no storage, or it misses it: signed now, and pushed there; with its
         files, by path in it, and their SHA-256.
         """
-        if self.storage:
-            path, trusted = stored_path(project, self.signer, name, key), trusted_key(project, self.signer)
+        if self.storage and self.signer:
+            path, trusted = build_path(project, name, key, self.signer.key), trusted_key(project, self.signer)
             root, files = remote.read_tree(self.storage, path, trusted=trusted)
             if files:
                 return root, files

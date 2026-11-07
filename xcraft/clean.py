@@ -44,21 +44,25 @@ def _existing(removal: dict[str, list[Path]]) -> dict[str, list[Path]]:
     return {what: found for what, paths in removal.items() if (found := [p for p in paths if p.exists()])}
 
 
+def _build_trees(project: Project) -> list[Path]:
+    """Return the trees of the cached builds of the platform, one by signer."""
+    return sorted((project.state / "cache/builds").glob(f"*/{project.arch}"))
+
+
 def _builds(
     project: Project, keys: list[dict[str, str]], names: list[str] | None, *, current: bool, used_since: float
 ) -> dict[str, list[Path]]:
-    """Return the builds of the platform of the packages `names`, or of all of them, signed or not: the outdated ones,
-    of none of the `keys`, unused since the time `used_since`, and the current ones too with `current`.
+    """Return the builds of the platform of the packages `names`, or of all of them, whatever their signers: the
+    outdated ones, of none of the `keys`, unused since the time `used_since`, and the current ones too with `current`.
     """
-    state, removal = project.state, {}
-    signed = [("signed builds", tree) for tree in (state / "cache/signed").glob(f"*/{project.arch}")]  # by signer
-    for what, tree in [("builds", state / "cache/builds" / project.arch), *signed]:
+    removal = {}
+    for tree in _build_trees(project):
         packages = list(tree.glob("*")) if names is None else [tree / name for name in names if (tree / name).exists()]
         for pkg in packages:
             for build in pkg.iterdir():
                 up_to_date = build.name in {k.get(pkg.name) for k in keys}
                 if current if up_to_date else build.stat().st_mtime < used_since:
-                    removal.setdefault(f"{'current' if up_to_date else 'outdated'} {what}", []).append(build)
+                    removal.setdefault(f"{'current' if up_to_date else 'outdated'} builds", []).append(build)
     return removal
 
 
@@ -81,11 +85,11 @@ def routine_removal(
     current: bool = False,
     used_since: float = math.inf,
 ) -> dict[str, list[Path]]:
-    """Return the routine cleanup: the build trees and the outdated builds of the platform, signed or not, or all of
-    them with `current`, see builds_removal(), of the packages `names`, or of all of them with what they share: the
-    temporary files, the metadata of the specs and the resolutions of the platform but those this process read, the
-    results of the checks, the requirements of the upstream packages, the upstream packages downloaded, the ISOs of the
-    platform but those of the keys `isos`, those in .xcraft/iso/ too, but the hard links to their cache, see
+    """Return the routine cleanup: the build trees and the outdated builds of the platform, whatever their signers, or
+    all of them with `current`, see builds_removal(), of the packages `names`, or of all of them with what they share:
+    the temporary files, the metadata of the specs and the resolutions of the platform but those this process read,
+    the results of the checks, the requirements of the upstream packages, the upstream packages downloaded, the ISOs of
+    the platform but those of the keys `isos`, those in .xcraft/iso/ too, but the hard links to their cache, see
     xcraft.iso, and the logs of the packages removed from the project.
 
     The outdated builds, ISOs, specs and resolutions used since the time `used_since` are kept: those xcraft read last
@@ -125,9 +129,9 @@ def builds_removal(
     current: bool = False,
     used_since: float = math.inf,
 ) -> dict[str, list[Path]]:
-    """Return the builds of the platform of the packages `names`, or of all of them, signed or not, see _builds(), with
-    the local repository and snapshot, made again when needed, which have hard links to their files. A signed build
-    removed is fetched again from the remote storage, where publishing put it, or else signed again.
+    """Return the builds of the platform of the packages `names`, or of all of them, whatever their signers, see
+    _builds(), with the local repository and snapshot, made again when needed, which have hard links to their files. A
+    build removed is fetched again from the remote storage, where pushing or publishing put it, or else built again.
     """
     state = project.state
     removal = _builds(project, keys, names, current=current, used_since=used_since)
@@ -158,8 +162,7 @@ def remove(project: Project, removal: dict[str, list[Path]]) -> None:
             shutil.rmtree(path)
         else:
             path.unlink(missing_ok=True)
-    trees = [project.state / "cache/builds" / project.arch, *(project.state / "cache/signed").glob(f"*/{project.arch}")]
-    for pkg in (pkg for tree in trees for pkg in tree.glob("*")):
+    for pkg in (pkg for tree in _build_trees(project) for pkg in tree.glob("*")):
         if not any(pkg.iterdir()):
             pkg.rmdir()
 

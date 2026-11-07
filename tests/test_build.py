@@ -78,7 +78,7 @@ def test_build_uses_local_builds_and_cache(root: Path) -> None:
     assert code == 0
     assert output.splitlines() == ["2 cached"]  # nothing to do: no package shown
     assert xcraft("build", "with-deps", "--dry-run") == (0, "0 to build, 2 cached\n")
-    assert list((root / f".xcraft/cache/builds/{ARCH}/with-deps").glob("*/RPMS/noarch/with-deps-1.0-*.noarch.rpm"))
+    assert list(root.glob(f".xcraft/cache/builds/*/{ARCH}/with-deps/*/RPMS/noarch/with-deps-1.0-*.noarch.rpm"))
 
     # a change in trivial changes the key of with-deps too
     spec = root / "base/trivial/trivial.spec"
@@ -309,7 +309,7 @@ def test_build_back_to_a_cached_key(root: Path) -> None:
     assert code == 0, output
     assert results(output) == [results(output)[0], "1 built"]
     assert states() == {"trivial": "built", "with-deps": "missing"}
-    assert not list((root / f".xcraft/cache/builds/{ARCH}/trivial").glob(".*"))
+    assert not list(root.glob(f".xcraft/cache/builds/*/{ARCH}/trivial/.*"))
 
 
 def test_failed_build_skips_dependents(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -765,7 +765,7 @@ def test_names_with_their_releases_by_chance(root: Path) -> None:
     spec.write_text(spec.read_text().replace("Release: 1%{?dist}", "Release: 1%{?autorev}"))
     code, output = xcraft("build", "libfoo1")
     assert code == 0, output
-    assert [p.name for p in root.glob(".xcraft/cache/builds/*/libfoo1/*/RPMS/*/*.rpm")] == [
+    assert [p.name for p in root.glob(".xcraft/cache/builds/*/*/libfoo1/*/RPMS/*/*.rpm")] == [
         "libfoo1-1.0-1+b1.noarch.rpm"
     ]
 
@@ -788,7 +788,7 @@ def test_recorded_of_binaries_named_with_their_releases(root: Path) -> None:
     assert code == 0, output
     assert load_builds(Project.find()).requires.of(ARCH) == {"trivial-lp_1.0_1.xcpng8.99": ["tcl"]}
     # and recorded again, from a recording of before, of a version without them
-    for recording in root.glob(".xcraft/cache/builds/*/trivial/*/rpm-deps.json"):
+    for recording in root.glob(".xcraft/cache/builds/*/*/trivial/*/rpm-deps.json"):
         old = json.loads(recording.read_text())
         recording.write_text(json.dumps({"context": old["context"], "requires": {}, "provides": {}}))
     builds = load_builds(Project.find())

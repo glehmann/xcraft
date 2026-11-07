@@ -9,7 +9,7 @@ import typer
 
 from xcraft import build as builder
 from xcraft.cache import cached_build
-from xcraft.commands import Arch, Dev, Final, NoCheck, Packages, dev_ident, prepared_project
+from xcraft.commands import Arch, Dev, Final, Key, NoCheck, Packages, dev_ident, prepared_project, sign_builds
 from xcraft.display import console
 from xcraft.graph import dependents
 
@@ -56,10 +56,13 @@ def build(
     final: Final = False,
     nocheck: NoCheck = False,
     arch: Arch = None,
+    key: Key = None,
 ) -> None:
-    """Build the given packages, all by default, and what they need, in the build environment.
+    r"""Build the given packages, all by default, and what they need, in the build environment.
 
-    The packages whose build ID is not the main branch's get development builds, unless --final, see --dev.
+    The packages whose build ID is not the main branch's get development builds, unless --final, see --dev. The builds
+    are signed by --key, or the default key: \[sign], or else the developer's, which xcraft makes for the development
+    builds when there is none, but not for --final.
     """
     ident = dev_ident(ctx, dev, final=final, nocheck=nocheck)
     if ids:
@@ -72,6 +75,7 @@ def build(
     if dry_run:
         builder.build(project, names, with_deps=not no_deps, dry_run=True, dev=ident, fetch=fetch)
         return
+    sign_builds(project, key, final=ident is None)
     with project.lock():
         results, keys, autorev = builder.build(
             project, names, with_deps=not no_deps, verbose=verbose, dev=ident, nocheck=nocheck, fetch=fetch

@@ -228,8 +228,8 @@ def test_clean_keeps_the_isos_of_the_checkout(project: Project) -> None:
 
 def test_clean_keeps_sources_and_current_builds(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     state = project.state
-    for path in ("cache/sources/abc/foo.tar.gz", "cache/builds/x86_64_v2/foo/current/RPMS/foo.rpm",
-                 "cache/builds/x86_64_v2/foo/old/RPMS/foo.rpm", "cache/builds/x86_64_v2/gone/old/RPMS/gone.rpm",
+    for path in ("cache/sources/abc/foo.tar.gz", "cache/builds/one/x86_64_v2/foo/current/RPMS/foo.rpm",
+                 "cache/builds/one/x86_64_v2/foo/old/RPMS/foo.rpm", "cache/builds/one/x86_64_v2/gone/old/RPMS/gone.rpm",
                  "build/foo/SPECS/foo.spec", "repo/foo.rpm", "ccache/foo/data",
                  # the caches of what this process read, and of the rest
                  "cache/specs/x86_64_v2/current.json", "cache/specs/x86_64_v2/old.json",
@@ -237,9 +237,9 @@ def test_clean_keeps_sources_and_current_builds(project: Project, monkeypatch: p
                  # of another architecture: see xcraft clean --arch
                  "cache/specs/aarch64/old.json", "cache/resolved/aarch64/old.json",
                  "cache/checks/installable/old", "cache/upstream/old.json", "cache/rpms/old.rpm",
-                 "cache/srpms/old.src.rpm", "cache/signed/key/x86_64_v2/foo/old/RPMS/foo.rpm",
-                 "cache/signed/key/x86_64_v2/foo/current/RPMS/foo.rpm",
-                 "cache/signed/key/aarch64/foo/old/RPMS/foo.rpm",
+                 "cache/srpms/old.src.rpm", "cache/builds/key/x86_64_v2/foo/old/RPMS/foo.rpm",
+                 "cache/builds/key/x86_64_v2/foo/current/RPMS/foo.rpm",
+                 "cache/builds/key/aarch64/foo/old/RPMS/foo.rpm",
                  "logs/foo.log", "logs/gone.log", "logs/_resolve.log"):  # fmt: skip
         (state / path).parent.mkdir(parents=True, exist_ok=True)
         (state / path).write_bytes(b"x" * 8192)
@@ -249,8 +249,9 @@ def test_clean_keeps_sources_and_current_builds(project: Project, monkeypatch: p
 
     keys = {"foo": "current", "bar": "current"}
     # only what is of the given packages
-    for path in ("cache/builds/x86_64_v2/bar/current/RPMS/bar.rpm", "cache/builds/x86_64_v2/bar/old/RPMS/bar.rpm",
-                 "build/bar/SPECS/bar.spec", "ccache/bar/data"):  # fmt: skip
+    for path in ("cache/builds/one/x86_64_v2/bar/current/RPMS/bar.rpm",
+                 "cache/builds/one/x86_64_v2/bar/old/RPMS/bar.rpm", "build/bar/SPECS/bar.spec",
+                 "ccache/bar/data"):  # fmt: skip
         (state / path).parent.mkdir(parents=True, exist_ok=True)
         (state / path).write_bytes(b"x" * 8192)
     assert (
@@ -259,11 +260,13 @@ def test_clean_keeps_sources_and_current_builds(project: Project, monkeypatch: p
         )
         > 0
     )
-    assert "cache/builds/x86_64_v2/bar/current/RPMS/bar.rpm" in files(state)
-    assert not [f for f in files(state) if f.startswith(("cache/builds/x86_64_v2/bar/old", "build/bar", "ccache/bar"))]
-    assert {"build/foo/SPECS/foo.spec", "cache/builds/x86_64_v2/foo/old/RPMS/foo.rpm"} <= set(files(state))
+    assert "cache/builds/one/x86_64_v2/bar/current/RPMS/bar.rpm" in files(state)
+    assert not [
+        f for f in files(state) if f.startswith(("cache/builds/one/x86_64_v2/bar/old", "build/bar", "ccache/bar"))
+    ]
+    assert {"build/foo/SPECS/foo.spec", "cache/builds/one/x86_64_v2/foo/old/RPMS/foo.rpm"} <= set(files(state))
     # what the local repository, the snapshot and the repositories of xcraft repo still link
-    rpm = state / "cache/builds/x86_64_v2/bar/current/RPMS/bar.rpm"
+    rpm = state / "cache/builds/one/x86_64_v2/bar/current/RPMS/bar.rpm"
     for linked in (state / "repo/bar.rpm", state / "publish/base/x86_64_v2/bar.rpm", project.root / "repo/bar.rpm"):
         linked.parent.mkdir(parents=True, exist_ok=True)
         linked.hardlink_to(rpm)
@@ -277,16 +280,19 @@ def test_clean_keeps_sources_and_current_builds(project: Project, monkeypatch: p
 
     assert removed(project, routine_removal(project, [keys], isos=set())) > 0
     kept = [
+        "cache/builds/key/aarch64/foo/old/RPMS/foo.rpm",
         "cache/resolved/aarch64/old.json",
         "cache/resolved/x86_64_v2/current.json",
-        "cache/signed/key/aarch64/foo/old/RPMS/foo.rpm",
         "cache/sources/abc/foo.tar.gz",
         "cache/specs/aarch64/old.json",
         "cache/specs/x86_64_v2/current.json",
         "logs/_resolve.log",
         "logs/foo.log",
     ]
-    current = ["cache/builds/x86_64_v2/foo/current/RPMS/foo.rpm", "cache/signed/key/x86_64_v2/foo/current/RPMS/foo.rpm"]
+    current = [
+        "cache/builds/key/x86_64_v2/foo/current/RPMS/foo.rpm",
+        "cache/builds/one/x86_64_v2/foo/current/RPMS/foo.rpm",
+    ]
     assert files(state) == sorted([*kept, *current, "ccache/foo/data"])
     removed(project, routine_removal(project, [keys], isos=set(), current=True) | caches_removal(project, "ccache"))
     assert files(state) == kept
@@ -301,9 +307,9 @@ def test_clean_keeps_sources_and_current_builds(project: Project, monkeypatch: p
 
 def test_clean_keeps_what_was_used(project: Project) -> None:
     state, now = project.state, time.time()
-    for path in ("cache/builds/x86_64_v2/foo/old", "cache/builds/x86_64_v2/foo/used",
-                 "cache/builds/x86_64_v2/foo/current",
-                 "cache/signed/key/x86_64_v2/foo/old", "cache/signed/key/x86_64_v2/foo/used",
+    for path in ("cache/builds/one/x86_64_v2/foo/old", "cache/builds/one/x86_64_v2/foo/used",
+                 "cache/builds/one/x86_64_v2/foo/current",
+                 "cache/builds/key/x86_64_v2/foo/old", "cache/builds/key/x86_64_v2/foo/used",
                  "cache/isos/x86_64_v2/old", "cache/isos/x86_64_v2/used",
                  "cache/sources/old", "cache/sources/used"):  # fmt: skip
         (state / path).mkdir(parents=True)
@@ -316,21 +322,20 @@ def test_clean_keeps_what_was_used(project: Project) -> None:
     # the current builds too, but the outdated ones used
     removal = routine_removal(project, [{"foo": "current"}], isos=set(), current=True, used_since=now - 3600)
     removal |= sources_removal(project, now - 3600)
-    assert removal["current builds"] == [state / "cache/builds/x86_64_v2/foo/current"]
+    assert removal["current builds"] == [state / "cache/builds/one/x86_64_v2/foo/current"]
     assert removed(project, removal) > 0
     assert sorted(p.relative_to(state).as_posix() for p in state.rglob("*") if p.parent.name != "used") == [
-        "cache", "cache/builds", "cache/builds/x86_64_v2", "cache/builds/x86_64_v2/foo",
-        "cache/builds/x86_64_v2/foo/used", "cache/isos", "cache/isos/x86_64_v2", "cache/isos/x86_64_v2/used",
-        "cache/resolved", "cache/resolved/x86_64_v2", "cache/resolved/x86_64_v2/used.json", "cache/signed",
-        "cache/signed/key", "cache/signed/key/x86_64_v2", "cache/signed/key/x86_64_v2/foo",
-        "cache/signed/key/x86_64_v2/foo/used", "cache/sources", "cache/sources/used", "cache/specs",
-        "cache/specs/x86_64_v2",
+        "cache", "cache/builds", "cache/builds/key", "cache/builds/key/x86_64_v2", "cache/builds/key/x86_64_v2/foo",
+        "cache/builds/key/x86_64_v2/foo/used", "cache/builds/one", "cache/builds/one/x86_64_v2",
+        "cache/builds/one/x86_64_v2/foo", "cache/builds/one/x86_64_v2/foo/used", "cache/isos", "cache/isos/x86_64_v2",
+        "cache/isos/x86_64_v2/used", "cache/resolved", "cache/resolved/x86_64_v2", "cache/resolved/x86_64_v2/used.json",
+        "cache/sources", "cache/sources/used", "cache/specs", "cache/specs/x86_64_v2",
     ]  # fmt: skip
 
 
 def test_previous_duration(project: Project) -> None:
     assert previous_duration(project, "foo") is None
-    log = project.state / "cache/builds/x86_64_v2/foo/key/build.log"
+    log = project.state / "cache/builds/one/x86_64_v2/foo/key/build.log"
     log.parent.mkdir(parents=True)
     log.write_text("Wrote: foo.rpm\n\nreal\t4m13.250s\nuser\t9m1.000s\n")
     assert previous_duration(project, "foo") == 253.25
@@ -523,7 +528,7 @@ def test_check_made(project: Project, tmp_path: Path) -> None:
 
 
 def test_record_rpm_deps(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    build = project.state / "cache/builds/x86_64_v2/foo/key"
+    build = project.state / "cache/builds/one/x86_64_v2/foo/key"
     (build / "RPMS/x86_64").mkdir(parents=True)
     (build / "RPMS/x86_64/foo-1.0-1.x86_64.rpm").touch()
     binary = Binary(name="foo", evr="1.0-1", arch="x86_64", provides=["foo = 1.0-1"], requires=[])
@@ -551,7 +556,7 @@ def test_record_rpm_deps(project: Project, monkeypatch: pytest.MonkeyPatch) -> N
     baz = Binary(name="baz", evr="1.0-1", arch="x86_64", provides=[], requires=[])
     project.parsed = {"foo": Package(name="foo", binaries=[binary]), "baz": Package(name="baz", binaries=[baz])}
     for key, provider in (("first", "baz"), ("second", "bar")):
-        (rpms := project.state / f"cache/builds/x86_64_v2/baz/{key}/RPMS/x86_64").mkdir(parents=True)
+        (rpms := project.state / f"cache/builds/one/x86_64_v2/baz/{key}/RPMS/x86_64").mkdir(parents=True)
         (rpms / "baz-1.0-1.x86_64.rpm").touch()
         monkeypatch.setattr(
             "xcraft.checks.resolve_rpm_deps", lambda *_, provider=provider: Resolved(requires={"foo": [provider]})
@@ -564,7 +569,7 @@ def test_record_providers_named_with_their_releases(project: Project, monkeypatc
     # foo needs baz-lp, a package of ours named with its release, like the livepatch packages of the kernel
     keys = {"foo": "1" * 64 + "+b1", "baz": "2" * 64 + "+b3"}
     for name, rpm in (("foo", "foo-1.0-1+b1.x86_64.rpm"), ("baz", "baz-lp_1_1+b3-1.0-1+b3.x86_64.rpm")):
-        (build := project.state / f"cache/builds/x86_64_v2/{name}/{keys[name]}/RPMS/x86_64").mkdir(parents=True)
+        (build := project.state / f"cache/builds/one/x86_64_v2/{name}/{keys[name]}/RPMS/x86_64").mkdir(parents=True)
         (build / rpm).touch()
     foo = Binary(name="foo", evr="1.0-1", arch="x86_64", provides=[], requires=[])
     lp = Binary(name="baz-lp_1_1", autorev_name="baz-lp_1_1%{autorev}", evr="1.0-1", arch="x86_64", provides=[],
@@ -677,7 +682,7 @@ def test_keys_changed_during_the_builds(project: Project, monkeypatch: pytest.Mo
 def test_stored_builds_of_keys_changed(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(build, "record_rpm_deps", lambda *_, **__: False)
     keys = {"a": "1" * 64, "b": "2" * 64}
-    stored = {cache.build_path(project, "a", keys["a"]): True, cache.build_path(project, "b", "3" * 64): True}
+    stored = {f"a/{keys['a']}": True, f"b/{'3' * 64}": True}
     results = {name: build.Result(name, "stored") for name in keys}
     # b in the storage with the key it had then, not with the final one: fetched or built again
     after = build._Run(project, {}, keys, {}, results=results, stored=stored)._recorded_again()

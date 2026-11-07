@@ -7,7 +7,7 @@ from typing import Annotated
 
 import typer
 
-from xcraft.commands import Arch, Dev, Final, Key, NoCheck, choose_signer, dev_ident
+from xcraft.commands import Arch, Dev, Final, Key, NoCheck, choose_signer, dev_ident, sign_builds
 from xcraft.display import console
 from xcraft.iso import checkout_iso
 from xcraft.project import Project
@@ -50,6 +50,7 @@ def iso(
     project = Project.find(arch)
     project.frozen = locked
     signer = choose_signer(project, local=True, unsigned=unsigned, dev_key=False, key=key)
+    sign_builds(project, key, final=ident is None, signer=signer)
     path = checkout_iso(
         project,
         output,

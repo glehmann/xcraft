@@ -16,7 +16,7 @@ from rich.text import Text
 from xcraft import build as builder
 from xcraft import process, vm
 from xcraft.cache import release_suffix
-from xcraft.commands import Arch, Dev, Final, NoCheck, Packages, dev_ident, prepared_project
+from xcraft.commands import Arch, Dev, Final, Key, NoCheck, Packages, dev_ident, prepared_project, sign_builds
 from xcraft.display import COMMAND, activity, console
 from xcraft.graph import dependents
 from xcraft.packages import is_debug
@@ -177,6 +177,7 @@ def repo(  # noqa: C901
     final: Final = False,
     nocheck: NoCheck = False,
     arch: Arch = None,
+    key: Key = None,
 ) -> None:
     """Build the given packages, all by default, and what they need, put them in a repository, and check them.
 
@@ -195,6 +196,7 @@ def repo(  # noqa: C901
         raise typer.BadParameter(msg)
     project = prepared_project(packages, arch=arch)
     targets = [*map(_host, hosts or []), *([_vm_host(project)] if to_vm else [])]  # before building
+    sign_builds(project, key, final=ident is None)
     names = list(packages or sorted(project.packages))
     if with_dependents:
         names += sorted(dependents(project.deps, names) - set(names))

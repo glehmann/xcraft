@@ -9,7 +9,7 @@ import typer
 from rich.markup import escape
 
 from xcraft import ccache, remote, remote_pages, upstream_copy
-from xcraft.cache import BUILD_FILES, build_keys, build_path, cached_build, untested
+from xcraft.cache import BUILD_FILES, build_keys, build_path, cached_build, signed_build, untested
 from xcraft.commands import Arch, Final, Key, Packages, To, prepared_project, remote_storage, unprepared_project
 from xcraft.devbuilds import developed
 from xcraft.display import activity, console
@@ -56,15 +56,16 @@ def _push_sources(project: Project, storage: Remote, packages: list[str] | None,
 def _push_builds(
     project: Project, storage: Remote, packages: list[str] | None, *, signer: Signer | None, final: bool
 ) -> list[str]:
-    """Upload the current builds of `packages`, all by default, and return those not built: the final builds, but
-    of the packages with development builds, unless `final`. The builds without the tests of their specs, see
-    xcraft.cache.untested(), are not built for it.
+    """Upload the current builds of `packages`, all by default, signed by `signer`, signing again those of other keys,
+    and return those not built: the final builds, but of the packages with development builds, unless `final`. The
+    builds without the tests of their specs, see xcraft.cache.untested(), are not built for it.
     """
+    signer = remote.required_signer(signer)
     keys, skipped = build_keys(project), set() if final else developed(project)
     if shown := sorted(skipped & {*(packages or project.packages)}):
         console.print(f"development builds, not pushed: {', '.join(shown)}")
     names = [name for name in packages or sorted(project.packages) if name not in skipped]
-    paths = {name: build_path(project, name, keys[name]) for name in names}
+    paths = {name: build_path(project, name, keys[name], signer.key) for name in names}
     # first: a build of xcraft build --fetch=needed may be in the storage only
     with activity("checking the remote storage"), ThreadPoolExecutor(remote.REQUESTS) as pool:
         found = pool.map(lambda path: remote.tree_exists(storage, path, trusted=signer), paths.values())
@@ -77,13 +78,8 @@ def _push_builds(
     pushed = [name for name in paths if name not in present and name not in not_built]
     for name in pushed:
         with activity(f"uploading the build of {name}"):
-            remote.upload_tree(
-                storage,
-                paths[name],
-                cached_build(project, name, keys[name]),
-                BUILD_FILES,
-                signer=signer,
-            )
+            build = signed_build(project, name, keys[name], signer)
+            remote.upload_tree(storage, paths[name], build, BUILD_FILES, signer=signer)
         console.print(f"[green]↑[/] {name}")
     if pushed:
         with activity("making the pages of the directories"):

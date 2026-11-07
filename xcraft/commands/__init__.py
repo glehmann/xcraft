@@ -9,7 +9,7 @@ import typer
 
 from xcraft import resolution
 from xcraft.project import Destination, Project, Remote
-from xcraft.signing import Signer, dev_signer, key_signer
+from xcraft.signing import Signer, SigningError, build_signer, dev_signer, key_signer
 
 
 def complete_package(incomplete: str) -> list[str]:
@@ -32,7 +32,13 @@ All = Annotated[bool, typer.Option("--all", help="All packages.")]
 
 
 Key = Annotated[
-    str | None, typer.Option("--key", metavar="FINGERPRINT", help="Sign with this GPG key instead of the default key.")
+    str | None,
+    typer.Option(
+        "--key",
+        metavar="FINGERPRINT",
+        envvar="XCRAFT_KEY",
+        help="Sign with this GPG key instead of the default key, the builds too.",
+    ),
 ]
 
 
@@ -143,6 +149,17 @@ Dep = Annotated[
         show_default=False,
     ),
 ]
+
+
+def sign_builds(project: Project, key: str | None, *, final: bool, signer: Signer | None = None) -> None:
+    """Make `signer`, or else `key`, or the default key, the key signing the builds of the command, see
+    xcraft.signing.build_signer(): of the `final` builds, it must be configured.
+    """
+    try:
+        project.signer = signer or build_signer(project, key, final=final)
+        project.signer.public_key()  # in the keyring: before the builds, not after one
+    except SigningError as e:
+        raise typer.BadParameter(str(e)) from None
 
 
 def choose_signer(

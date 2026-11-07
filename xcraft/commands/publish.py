@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from xcraft import publish as publisher
 from xcraft.build import update_build_ids
-from xcraft.commands import Key, To, choose_signer, complete_arch, prepared_project, remote_storage
+from xcraft.commands import Key, To, choose_signer, complete_arch, prepared_project, remote_storage, sign_builds
 from xcraft.display import console
 from xcraft.iso import check_iso_config, fetch_isos, push_isos, snapshot_isos
 from xcraft.project import Destination, Project, Publish
@@ -88,6 +88,14 @@ def _publish(  # noqa: C901, PLR0912
             msg = "stage must start with a letter, digit or underscore and contain only letters, digits, _, - or ."
             raise typer.BadParameter(msg, param_hint="--stage") from e
         project = replace(project, config=project.config.model_copy(update={"publish": publish}))
+    signer = choose_signer(
+        project,
+        local=local,
+        unsigned=unsigned,
+        dev_key=dev_key or (not local and to == "dev" and not key and not unsigned),
+        key=key,
+    )
+    sign_builds(project, key, final=True, signer=signer)  # before the platforms, which copy it
     platforms = project.all_platforms() if arch == "all" or (arch is None and not local) else [project]
     if arch is None and len(platforms) < len(others := project.all_platforms()):
         console.print(
@@ -99,13 +107,6 @@ def _publish(  # noqa: C901, PLR0912
         msg = "no release to publish: see [publish] in xcraft.toml"
         raise typer.BadParameter(msg)
     with_isos = _iso_platforms(project, platforms, only)
-    signer = choose_signer(
-        project,
-        local=local,
-        unsigned=unsigned,
-        dev_key=dev_key or (not local and to == "dev" and not key and not unsigned),
-        key=key,
-    )
     with project.lock():
         update_build_ids(project)  # the final builds are numbered by them
         dest = (output or project.state / "publish").absolute()

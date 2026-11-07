@@ -8,8 +8,8 @@ Each build of a package has a **key**: a SHA-256 of everything that goes into it
 xcraft never builds a package whose build with the same key and release suffix it already has, locally or in the
 [remote storage](remote-storage.md), unless `--fetch=none`; it builds it again as soon as one of its inputs changes. A
 build is named by its key and release suffix, `%{autorev}`: the number of its [build ID](#build-ids), `+b<n>`, and
-its development build suffix, if any, in `.xcraft/cache/builds/<arch>/<pkg>/<key>+b<n>/`, and in the storage,
-`.xcraft/builds/<arch>/<pkg>/<key>+b<n>/`. A [development build](#development-builds), or one built against development builds,
+its development build suffix, if any, in `.xcraft/cache/builds/<fingerprint>/<arch>/<pkg>/<key>+b<n>/`, and in the storage,
+`.xcraft/builds/<fingerprint>/<arch>/<pkg>/<key>+b<n>/`, by the key signing it. A [development build](#development-builds), or one built against development builds,
 is named by the hash of its key and of the names of the builds of ours it is built against instead, with its suffix.
 
 **What it covers.** The key of a package is made of:

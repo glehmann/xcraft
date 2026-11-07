@@ -64,7 +64,8 @@ publication failing then leaves it incomplete, and the next one copies all its f
 
 A snapshot published to the storage is assembled without the packages the storage has: the latest snapshot's, whose
 metadata entries are reused by SHA-256 (the lock's for the upstream binaries, its trusted manifest's for the others),
-and our signed builds, in `signed/`, of which only those missing there are fetched, signed and pushed. Only the other
+and our builds signed by the snapshot's key, in `builds/<fingerprint>/`, of which only those missing there are
+signed again from those of another key, and pushed. Only the other
 packages are downloaded, have their signatures checked and are indexed: those of the storage were when they entered
 it. The checks of what our packages need at runtime, and of self-contained repositories, use their metadata only. Our
 snapshots' metadata is compressed with gzip; an older snapshot's zstd one is only read from Python 3.14, so the first
@@ -96,10 +97,14 @@ Our packages are signed with the host's gpg, which holds the key, by rpmsign in 
 restricted socket of the host's gpg agent, made for that, so the key never leaves the host, nor its HSM, and is never
 available to the builds, which run the code of the specs.
 
-- **Development builds** are signed with the developer's key, made with `xcraft key create`: an RSA key without
-  passphrase, in its own keyring, `.xcraft/key/`, apart from the developer's own keys, as it is only for test hosts.
-  The repositories of development builds then have its public key, and their `.repo` file checks the packages and the
-  repository's metadata (`gpgcheck`, `repo_gpgcheck`).
+- **Every build is signed once made**, once rpmbuild is gone, by the key of the command: `--key` or `$XCRAFT_KEY`,
+  or else `[sign]`, or else the developer's key. Without any, the builds of dev mode make the developer's key, as
+  `xcraft key create` does: an Ed25519 key without passphrase, in its own keyring, `.xcraft/key/`, apart from the
+  developer's own keys, as it is only for test hosts, and trusted by nobody; `--final` fails instead. A build keeps the
+  public key of its signer, `RPM-GPG-KEY`, and the cache and the storage keep the builds by signer,
+  `builds/<fingerprint>/`: the builds use those of any key, and a build pushed or published by another key is signed
+  again, into a copy. The repositories of development builds have the public key, and their `.repo` file checks the
+  packages and the repository's metadata (`gpgcheck`, `repo_gpgcheck`).
 - **Published packages** are signed with the key of `[sign]` in `xcraft.toml`:
 
   ```toml
@@ -108,9 +113,9 @@ available to the builds, which run the code of the specs.
   gnupghome = ""          # gpg's keyring, the default one when empty
   ```
 
-  Each build is signed once, and kept in `.xcraft/cache/signed/<fingerprint>/` and in the remote storage, in
-  `.xcraft/signed/<fingerprint>/`: signatures have a date, so signing again would not give the same files, which the storage
-  could not store once. The snapshot's packages are checked against the public key, its `repomd.xml` are signed, and
+  Each build is signed once by key, and kept in `.xcraft/cache/builds/<fingerprint>/` and in the remote storage, in
+  `.xcraft/builds/<fingerprint>/`: signatures have a date, so signing again would not give the same files, which the
+  storage could not store once. The snapshot's packages are checked against the public key, its `repomd.xml` are signed, and
   it has the key, as `RPM-GPG-KEY`. `--key <fingerprint>` overrides `[sign].key`, and `--dev-key` explicitly selects the
   developer's key even when `[sign]` exists. Without `[sign]` or `--key`, publishing uses the developer's key by
   default. Trees signed with that key are trusted by the same checkout without adding it to `remote.main.build_keys`.
