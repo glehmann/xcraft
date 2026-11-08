@@ -1023,7 +1023,7 @@ def test_doctor(root: Path) -> None:
     for args in (["--debug", "doctor"], ["doctor", "--debug"]):
         cmd = [sys.executable, "-m", "xcraft", *args]
         output = subprocess.run(cmd, capture_output=True, text=True, check=True, env={**os.environ, "COLUMNS": "40"})
-        assert "running podman info --format '{{.Version.Version}} {{.Host.Security.Rootless}}'\n" in output.stdout
+        assert "running podman info --format '{{.Version.Version}} {{.Host.Security.Rootless}}'\n" in output.stderr
 
 
 def test_options_before_subcommands(root: Path) -> None:

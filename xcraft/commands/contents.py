@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from typing import TYPE_CHECKING, Annotated
 
 import typer
@@ -87,7 +88,7 @@ def _show_diff(old: Contents, new: Contents, only: str | None, *, markdown: bool
         lines += [_change(new, kind, c, markdown=markdown) for c in changed]
     text = "\n".join(lines[1:]) if lines else "no change of the packages"
     if markdown:
-        console.file.write(text + "\n")
+        sys.stdout.write(text + "\n")
     else:
         console.print(escape(text))
 
@@ -158,9 +159,9 @@ def contents(
     elif why:
         _show_why(current, why)
     elif as_json:
-        console.file.write(current.model_dump_json(indent=1) + "\n")
+        sys.stdout.write(current.model_dump_json(indent=1) + "\n")
     elif only:
         for name, entry in current.sets.get(only, {}).items():
-            console.file.write(f"{name}-{entry.evr}.{entry.arch}\n")
+            sys.stdout.write(f"{name}-{entry.evr}.{entry.arch}\n")
     else:
         _show(current)

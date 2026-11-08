@@ -53,6 +53,12 @@ def known_commands(names: Iterable[str]) -> None:
 # no wrapping, for logs and pipes; the progress and the pager on a terminal only, even when FORCE_COLOR makes the
 # output of CI coloured, like a terminal's: its logs would have each frame of the progress, with cursor movements
 console = Console(highlighter=_commands, soft_wrap=True, force_interactive=None if sys.stdout.isatty() else False)
+"""The results of the commands, on stdout, for others to read too, like JSON, Markdown or the tables: see messages."""
+messages = Console(
+    stderr=True, highlighter=_commands, soft_wrap=True, force_interactive=None if sys.stderr.isatty() else False
+)
+"""The messages, on stderr: the progress of the activities, the logs of --debug, and the errors, apart from the
+results, on stdout."""
 
 
 def print_wide(table: Table) -> None:
@@ -94,7 +100,7 @@ def _colorize(line: str) -> Text:
 
 def in_ci() -> bool:
     """Return whether the output is a log of CI: not a terminal, with CI set, like GitHub Actions and others do."""
-    return not console.is_interactive and bool(os.environ.get("CI"))
+    return not messages.is_interactive and bool(os.environ.get("CI"))
 
 
 def print_log_line(line: str) -> None:
@@ -252,7 +258,7 @@ def _still(what: str) -> Generator[Callable[[str], None]]:
 
     def report() -> None:
         while not done.wait(_STILL_INTERVAL):
-            console.print(f"  still {what} ({duration(time.monotonic() - started)}): {last}", markup=False)
+            messages.print(f"  still {what} ({duration(time.monotonic() - started)}): {last}", markup=False)
 
     thread = threading.Thread(target=report, daemon=True)
     thread.start()
@@ -273,9 +279,9 @@ def activity(
     every minute that it is still running, as `still` or `description`, with the elapsed time and the last line, even
     when no line came. With `log`, other non-interactive output shows the phase and progress at most every 30 seconds.
     """
-    if not console.is_interactive:
+    if not messages.is_interactive:
         if in_ci() and not log:
-            console.print(description)
+            messages.print(description)
             with _still(still or Text.from_markup(description).plain) as on_line:
                 yield on_line
             return
@@ -284,17 +290,17 @@ def activity(
             return
         started = last = time.monotonic()
         lock = threading.Lock()
-        console.print(description)
+        messages.print(description)
 
         def update(line: str) -> None:
             nonlocal last
             with lock:
                 if time.monotonic() - last >= _LOG_INTERVAL:
-                    console.print(f"{description}: {Text.from_ansi(line).plain.strip()}", markup=False)
+                    messages.print(f"{description}: {Text.from_ansi(line).plain.strip()}", markup=False)
                     last = time.monotonic()
 
         yield update
-        console.print(f"{description} finished in {duration(time.monotonic() - started)}")
+        messages.print(f"{description} finished in {duration(time.monotonic() - started)}")
         return
     with Progress(
         SpinnerColumn(),
@@ -303,7 +309,7 @@ def activity(
         _Elapsed(),
         # the space left, not to resize the other columns as the lines come
         TextColumn("{task.fields[line]}", style="dim", markup=False, table_column=Column(ratio=1, no_wrap=True)),
-        console=console,
+        console=messages,
         transient=True,
         expand=True,
     ) as progress:

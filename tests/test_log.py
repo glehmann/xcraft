@@ -27,7 +27,7 @@ def test_activity_logs_are_throttled(monkeypatch: pytest.MonkeyPatch, capsys: py
     with activity("publishing", log=True) as update:
         update("first.rpm")
         update("second.rpm")
-    output = capsys.readouterr().out
+    output = capsys.readouterr().err
     assert "publishing\n" in output
     assert "publishing: first.rpm" in output
     assert "second.rpm" not in output
@@ -41,7 +41,7 @@ def test_activity_still_running(monkeypatch: pytest.MonkeyPatch, capsys: pytest.
         update("\x1b[1mgcc -c foo.c\x1b[0m")
         time.sleep(0.3)
     # first, then after the interval, with the last line, plain
-    assert capsys.readouterr().out == "[1/1] building foo\n  still building foo (0s): gcc -c foo.c\n"
+    assert capsys.readouterr().err == "[1/1] building foo\n  still building foo (0s): gcc -c foo.c\n"
 
 
 LOG = """\

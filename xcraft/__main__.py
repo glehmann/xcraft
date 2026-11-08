@@ -39,7 +39,7 @@ from xcraft.commands import (
     unpublish,
     vm,
 )
-from xcraft.display import console, known_commands
+from xcraft.display import console, known_commands, messages
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -129,7 +129,7 @@ class _Handler(logging.Handler):
     """Show the log messages on whole lines, above the progress of the activities, like the other messages."""
 
     def emit(self, record: logging.LogRecord) -> None:
-        console.print(self.format(record), markup=False)
+        messages.print(self.format(record), markup=False)
 
 
 def _names(typer_app: typer.Typer) -> Iterator[str]:
@@ -162,9 +162,9 @@ def main() -> None:
     except Exception as exc:
         if "--trace" in sys.argv:
             raise
-        console.print(f"error: {exc}", style="red", markup=False)
+        messages.print(f"error: {exc}", style="red", markup=False)
         if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
-            console.print(exc.stderr.strip(), markup=False)
+            messages.print(exc.stderr.strip(), markup=False)
         sys.exit(1)
 
 

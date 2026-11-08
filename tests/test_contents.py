@@ -6,8 +6,9 @@ from typing import TYPE_CHECKING
 import pytest
 
 from tests import ARCH, TOML, copy_project
-from tests.test_build import xcraft
+from tests.test_build import runner, xcraft
 from tests.test_buildid import commit_base
+from xcraft.__main__ import app
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -64,13 +65,20 @@ def test_contents(root: Path) -> None:
     assert xcraft("contents", "--set", "nothing")[0] == 2
 
 
-def test_contents_diff(root: Path) -> None:
+def test_contents_diff(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     commit_base(root)
     code, output = xcraft("contents", "--diff", "master")
     assert code == 0, output
     assert output == "no change of the packages\n"
     # with-deps requiring an upstream package, which the hosts get with it
     _requires(root, "with-deps", "bc")
+    # as Markdown, alone on stdout, for a comment: the progress of the resolution of the change on stderr, like CI's
+    monkeypatch.setenv("CI", "1")
+    result = runner.invoke(app, ["contents", "--diff", "master", "--markdown"])
+    assert result.exit_code == 0, result.output
+    assert re.match(r"\*\*base: \d+ added, 1 updated\*\*\n", result.stdout)
+    assert "- added `bc` " in result.stdout
+    assert "resolving" in result.stderr
     code, output = xcraft("contents", "--diff", "master")
     assert code == 0, output
     lines = output.splitlines()
@@ -79,10 +87,6 @@ def test_contents_diff(root: Path) -> None:
     assert re.fullmatch(r"build: \d+ removed", lines[lines.index("") + 1])
     assert "  ~ with-deps 1.0-1+b1.xcpng8.99 → 1.0-1+b2.xcpng8.99" in lines
     assert any(line.startswith("  + bc ") and line.endswith(", required by with-deps (bc)") for line in lines)
-    code, output = xcraft("contents", "--diff", "master", "--markdown")
-    assert code == 0, output
-    assert re.match(r"\*\*base: \d+ added, 1 updated\*\*\n", output)
-    assert "- added `bc` " in output
     # one revision only
     assert xcraft("contents", "--diff", "master", "--diff-stage", "main@incoming")[0] == 2
     code, output = xcraft("contents", "--diff-stage", "incoming")
