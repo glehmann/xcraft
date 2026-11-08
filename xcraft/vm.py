@@ -13,7 +13,6 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
-import pyte
 from pydantic import BaseModel, Field, JsonValue
 
 from xcraft.project import write_atomically
@@ -445,6 +444,8 @@ def kernel_line(screen: Sequence[str]) -> int:
 
 def _render(data: bytes) -> list[str]:
     """Return the screen of serial output, wide enough for GRUB's on the firmware's console."""
+    import pyte  # noqa: PLC0415, imported once needed, not at each start, like the completions'
+
     screen = pyte.Screen(200, 60)
     pyte.ByteStream(screen).feed(data)
     return screen.display
@@ -495,6 +496,8 @@ def collect(directory: Path, destination: Path) -> None:
         if (directory / name).is_file():
             shutil.copy2(directory / name, destination / name)
     if (destination / "serial.log").exists():
+        import pyte  # noqa: PLC0415
+
         screen = pyte.Screen(80, 24)
         pyte.ByteStream(screen).feed((destination / "serial.log").read_bytes())
         (destination / "console.txt").write_text("\n".join(screen.display) + "\n")

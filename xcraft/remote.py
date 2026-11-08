@@ -15,20 +15,17 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
-import email.message
 import functools
 import hashlib
 import os
 import re
 import tempfile
 import urllib.error
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, NamedTuple
 from urllib.parse import urlparse
 
-import urllib3
 from pydantic import BaseModel, field_validator
 
 from xcraft import process
@@ -41,6 +38,7 @@ from xcraft.sources import sha256_of
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Mapping
 
+    import urllib3
     from mypy_boto3_s3 import S3Client
 
     from xcraft.project import Project, Remote
@@ -73,17 +71,23 @@ to write each, which more requests at once hide."""
 @functools.cache
 def _pool() -> urllib3.PoolManager:
     """Return the connections to the storages, reused: a new one takes several round trips, with TLS."""
+    import urllib3  # noqa: PLC0415, imported once needed, like urllib.request: not at each start, like the completions'
+
     return urllib3.PoolManager(maxsize=MANY)
 
 
 def _pooled(url: str) -> bool:
     """Return whether `url` is requested through _pool(): not through a proxy, which only urllib knows."""
+    import urllib.request  # noqa: PLC0415
+
     parsed = urlparse(url)
     return parsed.scheme not in urllib.request.getproxies() or bool(urllib.request.proxy_bypass(parsed.hostname or ""))
 
 
 def _request(method: str, url: str) -> urllib3.BaseHTTPResponse:
     """Request `url`, failing like urllib, with an OSError, an HTTPError for an HTTP error."""
+    import urllib3  # noqa: PLC0415
+
     try:
         response = _pool().request(method, url, preload_content=False)
     except urllib3.exceptions.HTTPError as e:
@@ -91,6 +95,8 @@ def _request(method: str, url: str) -> urllib3.BaseHTTPResponse:
     if response.status >= 400:  # noqa: PLR2004
         response.drain_conn()
         response.release_conn()
+        import email.message  # noqa: PLC0415
+
         raise urllib.error.HTTPError(url, response.status, response.reason or "", email.message.Message(), None)
     return response
 
@@ -105,6 +111,8 @@ def _absent_or_raise(storage: Remote, path: str, error: OSError) -> bool:
 
 def exists(storage: Remote, path: str) -> bool:
     """Return whether the shared storage has `path`."""
+    import urllib.request  # noqa: PLC0415
+
     url = _url(storage, path)
     log.debug("checking %s", url)
     try:
@@ -136,6 +144,8 @@ _BLOCK = 1 << 16
 
 def _get(url: str, dest: Path, report: Callable[[int, int, int], None]) -> None:
     """Download `url` to `dest` like process.download(), over the connections of _pool()."""
+    import urllib3  # noqa: PLC0415
+
     log.debug("downloading %s to %s", url, dest)
     response = _request("GET", url)
     try:

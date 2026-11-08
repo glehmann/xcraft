@@ -8,7 +8,6 @@ from __future__ import annotations
 import logging
 import shlex
 import subprocess
-import urllib.request
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -52,6 +51,8 @@ def popen(
 
 def download(url: str, dest: Path, report: Callable[[int, int, int], None] | None = None) -> None:
     """Download `url` to `dest`, giving the progress to `report`, like urlretrieve."""
+    import urllib.request  # noqa: PLC0415, with http.client: imported once needed, not at each start
+
     log.debug("downloading %s to %s", url, dest)
     urllib.request.urlretrieve(url, dest, reporthook=report)  # noqa: S310
 

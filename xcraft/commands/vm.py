@@ -9,7 +9,6 @@ import time
 from pathlib import Path
 from typing import Annotated
 
-import pyte
 import typer
 from rich.text import Text
 
@@ -256,6 +255,8 @@ def console(
     stable: Annotated[float, typer.Option(min=0, help="Required seconds without serial output.")] = 0.2,
 ) -> None:
     """Render the current 80x24 serial screen; optionally wait for text and output stability."""
+    import pyte  # noqa: PLC0415, imported once needed, not at each start, like the completions'
+
     screen = pyte.Screen(80, 24)
     stream = pyte.ByteStream(screen)
     deadline = time.monotonic() + timeout

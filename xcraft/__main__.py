@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import inspect
 import logging
+import os
 import socket
 import subprocess
 import sys
 from typing import TYPE_CHECKING, Annotated
 
 import typer
-from typer import rich_utils
+from typer import _completion_shared
 
-from xcraft import process, remote
+from xcraft import process
 from xcraft.commands import (
     boot,
     build,
@@ -43,8 +44,22 @@ from xcraft.display import console, known_commands
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-# Typer's Rich help does not use Click's max_content_width.
-rich_utils.MAX_WIDTH = min(120, console.width, rich_utils.MAX_WIDTH or 120)
+# Typer's Rich help does not use Click's max_content_width: its width, from $TERMINAL_WIDTH, which typer.rich_utils
+# reads once imported, for the help and the errors only, rather than at each start, like for each completion.
+os.environ["TERMINAL_WIDTH"] = str(min(120, console.width, int(os.environ.get("TERMINAL_WIDTH") or 120)))
+
+_FISH_COMPLETION = """
+function __%(complete_func)s
+    set -g __%(complete_func)s_items (env %(autocomplete_var)s=complete_fish _TYPER_COMPLETE_FISH_ACTION=get-args \\
+        _TYPER_COMPLETE_ARGS=(commandline -cp) %(prog_name)s)
+    test -n "$__%(complete_func)s_items"
+end
+complete --command %(prog_name)s --no-files --condition __%(complete_func)s \\
+    --arguments '(printf "%%s\\n" $__%(complete_func)s_items)'
+"""
+"""The completion of fish: typer's runs xcraft once to know whether there are completions, then again to get them;
+this one once only, its condition getting them, which its arguments give, for each completion."""
+_completion_shared._completion_scripts["fish"] = _FISH_COMPLETION  # noqa: SLF001, which typer has no API to change
 
 app = typer.Typer(
     help="Build the XCP-ng distribution.",
@@ -85,6 +100,8 @@ def options(
 ) -> None:
     """Build the XCP-ng distribution."""
     # --trace and --debug are handled in main(), they are declared here for --help
+    from xcraft import remote  # noqa: PLC0415, with urllib3: not for the completions
+
     remote.forget()  # what another command, in the same process like the tests, read
 
 
@@ -115,14 +132,19 @@ class _Handler(logging.Handler):
         console.print(self.format(record), markup=False)
 
 
-def _names(command: object) -> Iterator[str]:
-    """Return the names of the subcommands of `command`, at all depths."""
-    for name, sub in getattr(command, "commands", {}).items():
-        yield name
-        yield from _names(sub)
+def _names(typer_app: typer.Typer) -> Iterator[str]:
+    """Return the names of the subcommands of `typer_app`, at all depths, as typer names them: from what it registered,
+    rather than from its commands, which it makes at each start, from their signatures.
+    """
+    for info in typer_app.registered_commands:
+        yield info.name or typer.main.get_command_name(getattr(info.callback, "__name__", ""))
+    for group in typer_app.registered_groups:
+        yield from filter(None, [group.name])
+        if group.typer_instance:
+            yield from _names(group.typer_instance)
 
 
-known_commands(_names(typer.main.get_command(app)))
+known_commands(_names(app))
 
 
 def main() -> None:
