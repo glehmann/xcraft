@@ -193,7 +193,9 @@ def dependencies(output: str, mode: str, interfaces: set[str], implementations: 
     def done() -> None:
         if file:
             kinds = provided if mode == "provides" else required
-            found[file] = [f"{prefix}({name}) = {value}" for prefix in ("ocaml", "ocamlx") for name, value in kinds[prefix].items()]
+            found[file] = [
+                f"{prefix}({name}) = {value}" for prefix in ("ocaml", "ocamlx") for name, value in kinds[prefix].items()
+            ]
 
     for line in output.splitlines():
         if line.startswith("File "):
