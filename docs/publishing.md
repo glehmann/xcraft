@@ -95,6 +95,11 @@ publishing to another bucket on the same S3 service, like the dev one, rather th
 the signatures of their builds, the development ones by the key of the command, like the PR key, master's by CI's:
 the stage has the public key of each signer, `RPM-GPG-KEY-<fingerprint>`, next to its own, `RPM-GPG-KEY`, and its ISOs
 import them all. Its snapshots are never reused, as each run builds its development builds again.
+Each snapshot published to the storage has a `.repo` file for the hosts of each architecture,
+`xcraft-<stage>-<arch>.repo`: the repository of the latest snapshot of the stage, with the keys of the stage, and in
+dev mode, those of the repositories of `xcraft.toml` too, whose packages keep their signatures. `--summary FILE` writes
+in `FILE`, as Markdown, where the snapshot and its ISOs are published, how a host uses its repository, and the links
+of the files of its development builds, like for the comment of a pull request.
 `xcraft unpublish --stage s` removes a stage, all its snapshots and ISOs, and what xcraft keeps of them, like the CI
 of a pull request once closed: its files are its own copies, which nothing else refers to.
 

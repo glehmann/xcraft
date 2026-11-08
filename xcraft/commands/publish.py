@@ -6,18 +6,20 @@ import re
 from dataclasses import replace
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import quote
 
 import typer
 from pydantic import ValidationError
 
 from xcraft import publish as publisher
 from xcraft.build import update_build_ids
+from xcraft.cache import cached_build, release_suffix
 from xcraft.commands import Key, To, choose_signer, complete_arch, prepared_project, remote_storage, sign_builds
 from xcraft.display import console
 from xcraft.iso import check_iso_config, fetch_isos, push_isos, snapshot_isos
-from xcraft.project import Destination, Project, Publish
-from xcraft.publish import ISO_DIR, REPO, snapshot
-from xcraft.signing import dev_signer, new_dev_key
+from xcraft.project import Destination, Project, Publish, Remote
+from xcraft.publish import ISO_DIR, REPO, snapshot, snapshot_tree
+from xcraft.signing import KEY_FILE, dev_signer, new_dev_key, repo_keys
 from xcraft.upload import Uploader
 
 app = typer.Typer()
@@ -42,6 +44,14 @@ DevKey = Annotated[bool, typer.Option("--dev-key", help="Sign with the developer
 Stage = Annotated[
     str | None,
     typer.Option("--stage", help="Stage subdirectory for repositories and ISOs. Defaults to the current user name."),
+]
+Summary = Annotated[
+    Path | None,
+    typer.Option(
+        help="Write in this file, as Markdown, where the snapshot is published, how a host uses its repositories, and "
+        "its development builds, like for the comment of a pull request.",
+        show_default=False,
+    ),
 ]
 Arch = Annotated[
     str | None,
@@ -71,6 +81,71 @@ def _iso_platforms(project: Project, platforms: list[Project], only: str | None)
     return found
 
 
+def _repo_file(project: Project) -> str:
+    return f"xcraft-{project.config.publish.stage}-{project.arch}.repo"
+
+
+def _write_repo_files(platforms: list[Project], dest: Path, storage: Remote, *, keep: bool) -> None:
+    """Write in the snapshot `dest` the .repo file of each of the `platforms`, for the hosts: the repository of the
+    latest snapshot of the stage, trusting the keys of the snapshot, and with `keep`, those of the repositories of
+    xcraft.toml, whose packages keep their signatures.
+    """
+    project = platforms[0]
+    latest = f"{storage.url.rstrip('/')}/{snapshot_tree(project, 'repos', 'latest')}"
+    keys = [f"{latest}/{f.name}" for f in sorted(dest.glob(f"{KEY_FILE}*"))] + (repo_keys(project) if keep else [])
+    release, stage = project.config.publish.release, project.config.publish.stage
+    for platform in platforms:
+        (dest / _repo_file(platform)).write_text(
+            f"[xcraft-{stage}]\nname={release} {stage}\nbaseurl={latest}/{REPO}/{platform.arch}/\nenabled=1\n"
+            f"gpgcheck=1\nrepo_gpgcheck=1\ngpgkey={' '.join(keys)}\nmetadata_expire=0\n"
+        )
+
+
+def _write_summary(
+    path: Path,
+    project: Project,
+    built: list[tuple[Project, dict[str, str]]],
+    dest: Path,
+    storage: Remote,
+    name: str,
+    *,
+    isos: bool,
+) -> None:
+    """Write in `path`, as Markdown, where the snapshot `name` made in `dest` is published: the repositories of the
+    platforms `built`, if any, and the ISOs with `isos`, how a host uses the repositories, and the files of the
+    development builds, with their links.
+    """
+    url, stage = storage.url.rstrip("/"), project.config.publish.stage
+
+    def link(tree: str, file: str) -> str:
+        return f"[{file}]({url}/{quote(f'{tree}/{file}')})"
+
+    lines = []
+    if built:
+        tree, latest = snapshot_tree(project, "repos", name), snapshot_tree(project, "repos", "latest")
+        lines += [f"- Repositories: {url}/{tree}/, and as the latest snapshot of the stage: {url}/{latest}/"]
+    if isos:
+        tree = snapshot_tree(project, "isos", name)
+        lines += [f"- ISO: {link(tree, f.name)}" for f in sorted((dest / ISO_DIR).glob("*.iso"))]
+    for platform, keys in built:
+        tree, latest = snapshot_tree(platform, "repos", name), snapshot_tree(platform, "repos", "latest")
+        lines += [
+            "",
+            f"On the {platform.arch} hosts, to install the packages, and those of the next snapshots of the stage:",
+            "```sh",
+            f"curl -o /etc/yum.repos.d/xcraft-{stage}.repo {url}/{latest}/{_repo_file(platform)}",
+            "dnf upgrade --refresh",
+            "```",
+        ]
+        if dev := {n: cached_build(platform, n, k) for n, k in sorted(keys.items()) if "~" in release_suffix(k)}:
+            lines += ["", f"Development builds, {platform.arch}:"]
+        for package, build in dev.items():
+            files = [(f"{REPO}/{platform.arch}", f.name) for f in sorted(build.glob("RPMS/*/*.rpm"))]
+            files += [(f"{REPO}/Source", f.name) for f in sorted(build.glob("SRPMS/*.rpm"))]
+            lines += [f"- {package}: " + ", ".join(link(f"{tree}/{repo}", f) for repo, f in files)]
+    path.write_text("\n".join(lines) + "\n")
+
+
 def _publish(  # noqa: C901, PLR0912
     only: str | None,
     *,
@@ -83,8 +158,11 @@ def _publish(  # noqa: C901, PLR0912
     stage: str | None,
     arch: str | None,
     dev: str | None,
+    summary: Path | None,
 ) -> None:
-    """Publish the repositories and the ISOs of a snapshot, or `only` the repos or the isos, of dev mode with `dev`."""
+    """Publish the repositories and the ISOs of a snapshot, or `only` the repos or the isos, of dev mode with `dev`,
+    with a `summary` of where it is published.
+    """
     if dev is not None and not re.fullmatch(r"[a-zA-Z0-9]{1,16}", dev):
         msg = f"the development build ID must be 1 to 16 letters and digits: {dev}"
         raise typer.BadParameter(msg, param_hint="--dev")
@@ -122,7 +200,8 @@ def _publish(  # noqa: C901, PLR0912
     with_isos = _iso_platforms(project, platforms, only)
     with project.lock():
         update_build_ids(project)  # the final builds are numbered by them
-        dest = (output or project.state / "publish").absolute()
+        # of ctx.params, which typer does not convert
+        dest = (Path(output) if output else project.state / "publish").absolute()
         build = only != "isos" and project.config.publish.build
         uploader = Uploader(project, storage, signer, build, dev=dev is not None) if storage else None
         # of the development builds of the run, made again by each one, rather than reused
@@ -153,9 +232,20 @@ def _publish(  # noqa: C901, PLR0912
             }
             name = uploader.snapshot_name()
             if only != "isos":
+                _write_repo_files(platforms, dest, uploader.storage, keep=dev is not None)
                 uploader.upload_snapshot(built, dest, name, stored=stored)
             if with_isos:
                 uploader.upload_isos(dest, name, stored=isos)
+            if summary:
+                _write_summary(
+                    Path(summary),
+                    project,
+                    [] if only == "isos" else built,
+                    dest,
+                    uploader.storage,
+                    name,
+                    isos=bool(with_isos),
+                )
 
 
 @app.callback(invoke_without_command=True)
@@ -170,6 +260,7 @@ def everything(
     stage: Stage = None,
     arch: Arch = None,
     dev: PublishDev = None,
+    summary: Summary = None,
 ) -> None:
     r"""Publish a snapshot of the distribution in the remote storage, as the latest one, for all the architectures.
 
@@ -197,6 +288,7 @@ def repos(
     stage: Stage = None,
     arch: Arch = None,
     dev: PublishDev = None,
+    summary: Summary = None,
 ) -> None:
     """Publish repositories as repos/<release>/<stage>/<date>/, and as the stage's latest snapshot."""
     _publish("repos", **ctx.params)
@@ -214,6 +306,7 @@ def isos(
     stage: Stage = None,
     arch: Arch = None,
     dev: PublishDev = None,
+    summary: Summary = None,
 ) -> None:
     """Publish signed packages and netinstall ISOs as isos/<release>/<stage>/<date>/, and as the stage's latest ones.
 
