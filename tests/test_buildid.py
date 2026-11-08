@@ -219,8 +219,8 @@ def test_build_ids_checked_by_all_the_builds(root: Path) -> None:
     code, output = xcraft("build", "--locked")
     assert code == 1
     assert "--locked forbids: trivial, with-deps" in output
-    # those of the ISOs too
-    project = Project.find()
+    # those of the ISOs too, of x86_64, whatever the host
+    project = Project.find("x86_64_v2")
     project.frozen = True
     with pytest.raises(buildid.BuildIdError, match="--locked forbids: trivial, with-deps"):
         checkout_iso(project)

@@ -46,6 +46,7 @@ extend-exclude = ["tests/project/"]
 fpr = "fpr"  # the fingerprint records of gpg --with-colons
 ba = "ba"    # rpmbuild -ba
 OPF = "OPF"  # binfmt_misc flags
+cmo = "cmo"  # the compiled OCaml modules, .cmo
 
 # dnf and hawkey are system RPM packages, in the build environment only: typed by the stubs of stubs/
 [tool.ty.environment]
