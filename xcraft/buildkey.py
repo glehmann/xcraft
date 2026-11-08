@@ -34,6 +34,10 @@ _SAME_BUILDS: dict[str, str] = {
     "a153b6010fc5ce7977bc37ce2a9ae37f61d55c70e7696b24da632ce9f96f4a93": (
         "29c33cba085b64d826ac79e52005810ad38ef1db16ec3d0d747117564ebe8622"
     ),
+    # record.py without the type ignore of its import of dnf, which the stubs of stubs/ type
+    "daefda1f7a8921a4f5b3275b779989d0a35ce26a3911cb57b06ab8dc17950c2b": (
+        "29c33cba085b64d826ac79e52005810ad38ef1db16ec3d0d747117564ebe8622"
+    ),
 }
 """Recipes making the same packages as an earlier one, by their hash, with the earliest one: their builds keep its
 keys."""

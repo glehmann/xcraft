@@ -30,7 +30,7 @@ from typing import IO
 # out of the build environment, for the tests of the helpers, without dnf
 # pyright: reportPossiblyUnboundVariable=false
 with contextlib.suppress(ImportError):
-    import dnf  # ty: ignore[unresolved-import]  # pyright: ignore[reportMissingImports]
+    import dnf
 
 SYSLINUX = Path("/usr/share/syslinux")
 MEMTEST = Path("/usr/lib64/memtest86+")

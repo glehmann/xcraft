@@ -24,6 +24,8 @@ package, ``image`` for the image, the upstream packages of the ``runtime``, with
 ``versions`` of those and of the given ones, oldest first.
 """
 
+from __future__ import annotations
+
 import functools
 import gzip
 import hashlib
@@ -31,14 +33,17 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 from xml.sax.saxutils import quoteattr
 
 # pyright: reportPossiblyUnboundVariable=false
 try:
-    import dnf  # ty: ignore[unresolved-import]  # pyright: ignore[reportMissingImports]
-    import hawkey  # ty: ignore[unresolved-import]  # pyright: ignore[reportMissingImports]
+    import dnf
+    import hawkey
 except ImportError:  # out of the build environment, for the tests of the helpers
     pass
+if TYPE_CHECKING:
+    from dnf.package import Package
 
 OPS = {"<": "LT", "<=": "LE", "=": "EQ", ">=": "GE", ">": "GT"}
 OURS = ["xcraft-ours", "@commandline"]
@@ -168,7 +173,7 @@ class Resolver:
         base.sack.add_excludes(excluded)
         # the latest of each name, of all its architectures
         latest = base.sack.query().available().filter(reponame__neq=OURS).latest()
-        self.binaries: dict[str, dnf.package.Package] = {}
+        self.binaries: dict[str, Package] = {}
         for p in latest:
             if (other := self.binaries.get(p.name)) is None or p.evr_cmp(other) >= 0:
                 self.binaries[p.name] = p
@@ -385,6 +390,13 @@ class Resolver:
         return sorted(vrs, key=functools.cmp_to_key(compare))
 
 
+def _sha256(package: Package) -> str:
+    """Return the SHA-256 of the RPM of `package`, which the lock pins it by: the repositories give it."""
+    if not package.chksum:
+        sys.exit(f"no checksum of {package} in the metadata of its repository: the lock cannot pin it")
+    return package.chksum[1].hex()
+
+
 def main() -> None:
     """Resolve the input of the command line into its output."""
     data = json.loads(Path(sys.argv[1]).read_text())
@@ -420,7 +432,7 @@ def main() -> None:
             result["tools"], result["tools_error"] = resolver.tools(image, runtime["tools"])
     locked = data["sources"]
     result["packages"] = {
-        name: {"evr": p.evr, "arch": p.arch, "source": source, "repo": p.reponame, "sha256": p.chksum[1].hex()}
+        name: {"evr": p.evr, "arch": p.arch, "source": source, "repo": p.reponame, "sha256": _sha256(p)}
         for name, p in resolver.binaries.items()
         if (source := resolver.canonical(p.sourcerpm)[0]) in locked
     }

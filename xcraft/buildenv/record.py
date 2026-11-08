@@ -10,7 +10,7 @@ import json
 import sys
 from pathlib import Path
 
-import dnf  # ty: ignore[unresolved-import]  # pyright: ignore[reportMissingImports]
+import dnf
 
 
 def main() -> None:

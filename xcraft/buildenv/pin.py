@@ -16,8 +16,8 @@ import os
 import sys
 from pathlib import Path
 
-import dnf  # ty: ignore[unresolved-import]  # pyright: ignore[reportMissingImports]
-import dnf.rpm  # ty: ignore[unresolved-import]  # pyright: ignore[reportMissingImports]
+import dnf
+import dnf.rpm
 
 STORE = Path("/store")
 
@@ -54,8 +54,9 @@ def download(arch: str, pins: dict[str, dict], *, partial: bool = False) -> None
         if same:
             wanted.append(same[0])
         elif found:
+            other = c[1].hex() if (c := found[0].chksum) else "unknown"
             problems.append(
-                f"{nevra}: the repositories have other contents, {found[0].chksum[1].hex()}, than pinned, "
+                f"{nevra}: the repositories have other contents, {other}, than pinned, "
                 f"{pin['sha256']}: xcraft lock --update {pin['source']} pins them"
             )
         else:

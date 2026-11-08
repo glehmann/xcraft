@@ -47,6 +47,14 @@ fpr = "fpr"  # the fingerprint records of gpg --with-colons
 ba = "ba"    # rpmbuild -ba
 OPF = "OPF"  # binfmt_misc flags
 
+# dnf and hawkey are system RPM packages, in the build environment only: typed by the stubs of stubs/
+[tool.ty.environment]
+extra-paths = ["stubs"]
+
+[tool.pyright]
+stubPath = "stubs"
+reportMissingModuleSource = false
+
 [tool.ruff]
 line-length = 120
 target-version = "py313"
@@ -67,6 +75,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+# the stubs of dnf and hawkey have their names, like getRevision of SWIG, or hawkey.Exception
+"stubs/*" = ["N802", "A001"]
 # typer reads the annotations of the commands at runtime
 "xcraft/commands/*" = [
     "TC001",  # typing-only-first-party-import
