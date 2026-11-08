@@ -204,10 +204,11 @@ def _cached(project: Project, data: dict, *, show: str, quiet: bool = False, key
 
 def _holds(resolved: Resolved, data: dict) -> bool:
     """Return whether what was `resolved` holds for `data`: with the same epoch-version-releases of the binary packages
-    of ours referred to with a version, which _unversioned() leaves out of the key.
+    of ours referred to with a version, which _unversioned() leaves out of the key; an epoch 0, which dnf leaves out,
+    the same as none.
     """
-    evrs = {b["name"]: b["evr"] for b in data.get("ours", [])}
-    return all(evrs.get(name) == evr for name, evr in resolved.versioned.items())
+    evrs = {b["name"]: b["evr"].removeprefix("0:") for b in data.get("ours", [])}
+    return all(evrs.get(name) == evr.removeprefix("0:") for name, evr in resolved.versioned.items())
 
 
 def _image_data(project: Project) -> dict:

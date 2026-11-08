@@ -886,6 +886,21 @@ def test_build_roots_resolved_again_for_versions_of_build_requirements(
     assert "with-deps" not in resolved.errors
 
 
+def test_build_roots_kept_for_an_epoch_0(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # with-deps requires the version of trivial, of epoch 0, which dnf leaves out of what it resolves
+    trivial = root / "base/trivial/trivial.spec"
+    trivial.write_text(trivial.read_text().replace("Version: 1.0", "Epoch: 0\nVersion: 1.0"))
+    spec = root / "base/with-deps/with-deps.spec"
+    spec.write_text(spec.read_text().replace("BuildRequires: trivial", "BuildRequires: trivial >= 0:1.0"))
+    assert "with-deps" not in _resolved_again(monkeypatch)[1].errors
+
+    def run(*args: object, **kwargs: object) -> resolution.Resolved:
+        raise AssertionError
+
+    monkeypatch.setattr(resolution, "_run", run)
+    assert "with-deps" not in _resolved_again(monkeypatch)[1].errors
+
+
 def test_image_needs_the_packages_of_the_base_image_in_the_repositories(
     root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
