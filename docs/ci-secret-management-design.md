@@ -1,8 +1,11 @@
 # Design: CI secret management
 
-Status: proposal. The four parts are independent: the first changes nothing for the users of the storage and the
-packages, and can be done now; the second and third each list options, with a recommendation; the fourth gives the
-releases a bucket of their own.
+Status: proposal, but point 1 of part 1, done: the `main` environment of xcp-ng-dist, which only `master` deploys
+to, has the CI key and the credentials of the main bucket, and the job of `build.yml` takes it on `master` only, the
+other branches running it without; the secrets of the pull requests, of the dev bucket and the PR key, stay
+repository secrets, without an environment of their own. The four parts are independent: the first changes nothing
+for the users of the storage and the packages, and can be done now; the second and third each list options, with a
+recommendation; the fourth gives the releases a bucket of their own.
 
 ## Today
 
