@@ -61,7 +61,7 @@ def xcraft(*args: str) -> tuple[int, str]:
 
 def states() -> dict[str, str]:
     """Return the state of each package shown by xcraft status."""
-    return {line.split()[0]: line.split()[2] for line in xcraft("status")[1].splitlines()[1:-1]}
+    return {line.split()[0]: line.split()[2] for line in xcraft("status", "--full")[1].splitlines()[1:-1]}
 
 
 def test_build_uses_local_builds_and_cache(root: Path) -> None:

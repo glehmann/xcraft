@@ -42,7 +42,7 @@ cd xcp-ng-dist
 uv sync && source .venv/bin/activate   # or uv run xcraft
 xcraft --install-completion            # optional
 xcraft doctor                          # what the host needs: --fix installs and configures it
-xcraft status                          # the packages, with their build numbers, and whether they are built
+xcraft status                          # the packages not built, with their build numbers; --full for all
 ```
 
 Then, to change a package:

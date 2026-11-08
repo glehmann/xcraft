@@ -39,6 +39,8 @@ Inputs = Annotated[
     ),
 ]
 
+Full = Annotated[bool, typer.Option("--full", help="Show the built packages too.")]
+
 
 def _show_inputs(project: Project, names: list[str]) -> None:
     """Show the build keys of the packages `names`, with their build IDs and what the keys are computed from, as JSON:
@@ -72,8 +74,10 @@ def status(
     final: Final = False,
     arch: Arch = None,
     with_inputs: Inputs = False,
+    full: Full = False,
 ) -> None:
-    """Show the version of the given packages, or all, and whether it is built.
+    """Show the version of the given packages, or of all those not built, or of all with --full, and whether it is
+    built; and how many are in each state.
 
     The version has the build number, and the development build suffix of those whose build ID is not the main
     branch's, unless --final. The states: error (the spec cannot be parsed), building, queued (by a running build),
@@ -107,13 +111,16 @@ def status(
         else:
             state = "outdated" if has_normal_build(project, name) else "missing"
         states[state] += 1
+        if state == "built" and not (full or packages):
+            continue
         detail = f" {queue.index(name) + 1}/{len(queue)}" if state == "queued" else ""
         table.add_row(name, evr, f"[{_STYLES[state]}]{state}{detail}[/]")
     # one line per package, for grep, even wider than the terminal
     width = console.width
     console.width = max(width, Measurement.get(console, console.options.update(width=10_000), table).maximum)
     try:
-        console.print(table)
+        if table.row_count:
+            console.print(table)
     finally:
         console.width = width
     console.print(", ".join(f"[{_STYLES[state]}]{states[state]} {state}[/]" for state in _STYLES if states[state]))

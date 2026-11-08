@@ -313,8 +313,8 @@ def test_development_builds(root: Path, monkeypatch: pytest.MonkeyPatch) -> None
     # compressed faster than the final builds, which may be pushed
     assert compression(root, "with-deps-1.0-1+b2~1.dev.xcpng8.99.noarch.rpm") == "3T"
     assert built() == []  # the same inputs: cached
-    assert re.search(r"^with-deps +1\.0-1\+b2~1\.dev\.xcpng8\.99 +built", xcraft("status")[1], re.MULTILINE)
-    assert re.search(r"^trivial +1\.0-1\+b1\.xcpng8\.99 +built", xcraft("status")[1], re.MULTILINE)
+    assert re.search(r"^with-deps +1\.0-1\+b2~1\.dev\.xcpng8\.99 +built", xcraft("status", "--full")[1], re.MULTILINE)
+    assert re.search(r"^trivial +1\.0-1\+b1\.xcpng8\.99 +built", xcraft("status", "--full")[1], re.MULTILINE)
     edit(root, "changed again", name="with-deps")
     assert re.search(r"^with-deps +1\.0-1\+b2~2\.dev\.xcpng8\.99 +outdated", xcraft("status")[1], re.MULTILINE)
     assert built() == ["with-deps-1.0-1+b2~2.dev.xcpng8.99.noarch.rpm"]
@@ -405,7 +405,7 @@ def test_development_builds_changed_by_others(root: Path) -> None:
         "trivial-1.0-2+b1~1.dev.xcpng8.99.noarch.rpm",
         "with-deps-1.0-1+b2~1.dev.xcpng8.99.noarch.rpm",
     ]
-    assert re.search(r"^with-deps +1\.0-1\+b2~1\.dev\.xcpng8\.99 +built", xcraft("status")[1], re.MULTILINE)
+    assert re.search(r"^with-deps +1\.0-1\+b2~1\.dev\.xcpng8\.99 +built", xcraft("status", "--full")[1], re.MULTILINE)
     assert built() == []
     # without what the builds recorded: the cached builds record it again, before the keys of those built against them
     git(root, "checkout", "--", "xcraft.builds")
