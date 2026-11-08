@@ -1768,7 +1768,7 @@ def test_publish_of_a_pull_request(
     # where it is, how to use it, and the files of the development builds, by source package
     summary = (tmp_path / "summary").read_text()
     assert "latest" not in summary
-    assert f"curl -o /etc/yum.repos.d/xcraft-{stage}.repo {tree}/xcraft-{stage}-{ARCH}.repo\n" in summary
+    assert f"dnf config-manager --add-repo {tree}/xcraft-{stage}-{ARCH}.repo\n" in summary
     name = "with-deps-1.0-1+b2~7.pr7.xcpng8.99"
     assert (
         f"- with-deps\n  - [{name}.noarch.rpm]({tree}/base/{ARCH}/{quote(name)}.noarch.rpm)\n"

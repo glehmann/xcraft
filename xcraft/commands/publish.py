@@ -115,7 +115,7 @@ def _write_summary(
     platforms `built`, if any, and the ISOs with `isos`, how a host uses the repositories, and the files of the
     development builds, with their links.
     """
-    url, stage = storage.url.rstrip("/"), project.config.publish.stage
+    url = storage.url.rstrip("/")
 
     def link(tree: str, file: str) -> str:
         return f"[{file}]({url}/{quote(f'{tree}/{file}')})"
@@ -132,7 +132,7 @@ def _write_summary(
             "",
             f"On the {platform.arch} hosts, to install its packages:",
             "```sh",
-            f"curl -o /etc/yum.repos.d/xcraft-{stage}.repo {url}/{tree}/{_repo_file(platform)}",
+            f"dnf config-manager --add-repo {url}/{tree}/{_repo_file(platform)}",
             "dnf upgrade --refresh",
             "```",
         ]
