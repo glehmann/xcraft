@@ -141,10 +141,14 @@ def ssh_copy_id(
 ) -> None:
     """Install your SSH public key for root in the running VM, asking for its password once: ssh, and xcraft repo --vm,
     then need none, until the next installation. Its host key is not checked, as each installation changes it.
+
+    The keys are installed without logging in with each of them first, to skip those the VM has, like ssh-copy-id does
+    by default: sshd penalizes the address of failed logins, 127.0.0.1, and would then close the connection asking for
+    the password. Installing them again adds them again.
     """
     port = vm.ssh_port(directory(ctx))
     keys = ["-i", str(identity)] if identity else []
-    process.run(["ssh-copy-id", *keys, *vm.ssh_options(port), vm.SSH_DESTINATION])
+    process.run(["ssh-copy-id", "-f", *keys, *vm.ssh_options(port), vm.SSH_DESTINATION])
 
 
 @app.command()
