@@ -85,18 +85,18 @@ def _repo_file(project: Project) -> str:
     return f"xcraft-{project.config.publish.stage}-{project.arch}.repo"
 
 
-def _write_repo_files(platforms: list[Project], dest: Path, storage: Remote, *, keep: bool) -> None:
-    """Write in the snapshot `dest` the .repo file of each of the `platforms`, for the hosts: the repository of the
-    latest snapshot of the stage, trusting the keys of the snapshot, and with `keep`, those of the repositories of
-    xcraft.toml, whose packages keep their signatures.
+def _write_repo_files(platforms: list[Project], dest: Path, storage: Remote, name: str, *, keep: bool) -> None:
+    """Write in the snapshot `dest`, to publish as `name`, the .repo file of each of the `platforms`, for the hosts: its
+    repository, trusting its keys, and with `keep`, those of the repositories of xcraft.toml, whose packages keep their
+    signatures. The latest snapshot of the stage has the copy of those of the last one.
     """
     project = platforms[0]
-    latest = f"{storage.url.rstrip('/')}/{snapshot_tree(project, 'repos', 'latest')}"
-    keys = [f"{latest}/{f.name}" for f in sorted(dest.glob(f"{KEY_FILE}*"))] + (repo_keys(project) if keep else [])
+    tree = f"{storage.url.rstrip('/')}/{snapshot_tree(project, 'repos', name)}"
+    keys = [f"{tree}/{f.name}" for f in sorted(dest.glob(f"{KEY_FILE}*"))] + (repo_keys(project) if keep else [])
     release, stage = project.config.publish.release, project.config.publish.stage
     for platform in platforms:
         (dest / _repo_file(platform)).write_text(
-            f"[xcraft-{stage}]\nname={release} {stage}\nbaseurl={latest}/{REPO}/{platform.arch}/\nenabled=1\n"
+            f"[xcraft-{stage}]\nname={release} {stage} {name}\nbaseurl={tree}/{REPO}/{platform.arch}/\nenabled=1\n"
             f"gpgcheck=1\nrepo_gpgcheck=1\ngpgkey={' '.join(keys)}\nmetadata_expire=0\n"
         )
 
@@ -122,27 +122,26 @@ def _write_summary(
 
     lines = []
     if built:
-        tree, latest = snapshot_tree(project, "repos", name), snapshot_tree(project, "repos", "latest")
-        lines += [f"- Repositories: {url}/{tree}/, and as the latest snapshot of the stage: {url}/{latest}/"]
+        lines += [f"- Repositories: {url}/{snapshot_tree(project, 'repos', name)}/"]
     if isos:
         tree = snapshot_tree(project, "isos", name)
         lines += [f"- ISO: {link(tree, f.name)}" for f in sorted((dest / ISO_DIR).glob("*.iso"))]
     for platform, keys in built:
-        tree, latest = snapshot_tree(platform, "repos", name), snapshot_tree(platform, "repos", "latest")
+        tree = snapshot_tree(platform, "repos", name)
         lines += [
             "",
-            f"On the {platform.arch} hosts, to install the packages, and those of the next snapshots of the stage:",
+            f"On the {platform.arch} hosts, to install its packages:",
             "```sh",
-            f"curl -o /etc/yum.repos.d/xcraft-{stage}.repo {url}/{latest}/{_repo_file(platform)}",
+            f"curl -o /etc/yum.repos.d/xcraft-{stage}.repo {url}/{tree}/{_repo_file(platform)}",
             "dnf upgrade --refresh",
             "```",
         ]
         if dev := {n: cached_build(platform, n, k) for n, k in sorted(keys.items()) if "~" in release_suffix(k)}:
-            lines += ["", f"Development builds, {platform.arch}:"]
+            lines += ["", f"Development builds, {platform.arch}, by source package:", ""]
         for package, build in dev.items():
             files = [(f"{REPO}/{platform.arch}", f.name) for f in sorted(build.glob("RPMS/*/*.rpm"))]
             files += [(f"{REPO}/Source", f.name) for f in sorted(build.glob("SRPMS/*.rpm"))]
-            lines += [f"- {package}: " + ", ".join(link(f"{tree}/{repo}", f) for repo, f in files)]
+            lines += [f"- {package}", *(f"  - {link(f'{tree}/{repo}', f)}" for repo, f in files)]
     path.write_text("\n".join(lines) + "\n")
 
 
@@ -232,7 +231,7 @@ def _publish(  # noqa: C901, PLR0912
             }
             name = uploader.snapshot_name()
             if only != "isos":
-                _write_repo_files(platforms, dest, uploader.storage, keep=dev is not None)
+                _write_repo_files(platforms, dest, uploader.storage, name, keep=dev is not None)
                 uploader.upload_snapshot(built, dest, name, stored=stored)
             if with_isos:
                 uploader.upload_isos(dest, name, stored=isos)

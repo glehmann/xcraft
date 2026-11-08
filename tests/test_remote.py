@@ -1759,20 +1759,22 @@ def test_publish_of_a_pull_request(
     check_signatures(Project.find(), snapshot, [ours[0]], what="master's", public_key=ci.public_key())
     check_signatures(Project.find(), snapshot, [ours[1]], what="the pull request's", public_key=developer.public_key())
     assert {"RPM-GPG-KEY", f"RPM-GPG-KEY-{ci.key}"} <= set(manifest)
-    # the repository of the latest snapshot of the stage for the hosts, trusting all the signers of its packages
-    url = f"{dev.url.rstrip('/')}/{latest}"
-    repo = (snapshot / f"xcraft-{stage}-{ARCH}.repo").read_text()
-    assert f"baseurl={url}/base/{ARCH}/\n" in repo
-    assert f"gpgkey={url}/RPM-GPG-KEY {url}/RPM-GPG-KEY-{ci.key}" in repo
-    assert f"xcraft-{stage}-{ARCH}.repo" in manifest
-    # where it is, how to use it, and the files of the development builds
-    summary = (tmp_path / "summary").read_text()
-    assert f"curl -o /etc/yum.repos.d/xcraft-{stage}.repo {url}/xcraft-{stage}-{ARCH}.repo\n" in summary
-    name = "with-deps-1.0-1+b2~7.pr7.xcpng8.99"
+    # the repository of the snapshot for the hosts, trusting all the signers of its packages
     tree = f"{dev.url.rstrip('/')}/repos/9.0/{stage}/{datetime.now(UTC).date().isoformat()}"
-    assert f"- with-deps: [{name}.noarch.rpm]({tree}/base/{ARCH}/{quote(name)}.noarch.rpm), " in summary
-    assert f"[{name}.src.rpm]({tree}/base/Source/{quote(name)}.src.rpm)\n" in summary
-    assert "- trivial:" not in summary  # master's
+    repo = (snapshot / f"xcraft-{stage}-{ARCH}.repo").read_text()
+    assert f"baseurl={tree}/base/{ARCH}/\n" in repo
+    assert f"gpgkey={tree}/RPM-GPG-KEY {tree}/RPM-GPG-KEY-{ci.key}" in repo
+    assert f"xcraft-{stage}-{ARCH}.repo" in manifest
+    # where it is, how to use it, and the files of the development builds, by source package
+    summary = (tmp_path / "summary").read_text()
+    assert "latest" not in summary
+    assert f"curl -o /etc/yum.repos.d/xcraft-{stage}.repo {tree}/xcraft-{stage}-{ARCH}.repo\n" in summary
+    name = "with-deps-1.0-1+b2~7.pr7.xcpng8.99"
+    assert (
+        f"- with-deps\n  - [{name}.noarch.rpm]({tree}/base/{ARCH}/{quote(name)}.noarch.rpm)\n"
+        f"  - [{name}.src.rpm]({tree}/base/Source/{quote(name)}.src.rpm)\n"
+    ) in summary
+    assert "- trivial" not in summary  # master's
     # the development builds are files of the stage only
     assert not remote.listing(dev, f".xcraft/builds/{developer.key}/")
     # removed with the pull request

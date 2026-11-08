@@ -96,8 +96,8 @@ the signatures of their builds, the development ones by the key of the command, 
 the stage has the public key of each signer, `RPM-GPG-KEY-<fingerprint>`, next to its own, `RPM-GPG-KEY`, and its ISOs
 import them all. Its snapshots are never reused, as each run builds its development builds again.
 Each snapshot published to the storage has a `.repo` file for the hosts of each architecture,
-`xcraft-<stage>-<arch>.repo`: the repository of the latest snapshot of the stage, with the keys of the stage, and in
-dev mode, those of the repositories of `xcraft.toml` too, whose packages keep their signatures. `--summary FILE` writes
+`xcraft-<stage>-<arch>.repo`: its repository, with its keys, and in dev mode, those of the repositories of
+`xcraft.toml` too, whose packages keep their signatures; the latest snapshot of the stage has those of the last one. `--summary FILE` writes
 in `FILE`, as Markdown, where the snapshot and its ISOs are published, how a host uses its repository, and the links
 of the files of its development builds, like for the comment of a pull request.
 `xcraft unpublish --stage s` removes a stage, all its snapshots and ISOs, and what xcraft keeps of them, like the CI
