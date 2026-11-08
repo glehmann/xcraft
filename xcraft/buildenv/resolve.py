@@ -20,8 +20,9 @@ The input has:
 The output has the locked binary ``packages``, the ``image``, the upstream ``buildroots`` and the ``ours`` binary
 packages of each build root, the ``requires`` and ``provides`` of the recorded binary packages, the ``errors``, by
 package, ``image`` for the image, the upstream packages of the ``runtime``, with its ``runtime_errors``, and of the
-``tools``, besides the image's, with their ``tools_error``, the ``unlocked`` source packages needed, and the
-``versions`` of those and of the given ones, oldest first.
+``tools``, besides the image's, with their ``tools_error``, the ``unlocked`` source packages needed, the
+``versions`` of those and of the given ones, oldest first, the packages of the ``sets`` of the ISO, ``iso`` and
+``install.img``, and ``why`` each package is in each set, see Resolver.why().
 """
 
 from __future__ import annotations
@@ -43,7 +44,10 @@ try:
 except ImportError:  # out of the build environment, for the tests of the helpers
     pass
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from dnf.package import Package
+    from dnf.query import Query
 
 OPS = {"<": "LT", "<=": "LE", "=": "EQ", ">=": "GE", ">": "GT"}
 OURS = ["xcraft-ours", "@commandline"]
@@ -137,6 +141,19 @@ def versioned_names(dep: str) -> list[str]:
     return names
 
 
+def _providers(query: Query, dep: str) -> list[Package]:
+    """Return the packages of `query` providing `dep`: by name, capability, or file; none of rpmlib, nor for a rich
+    dependency, which is not walked.
+    """
+    if dep.startswith("rpmlib("):
+        return []
+    try:
+        found = query.filter(name=dep) or query.filter(provides=dep)
+        return list(found or (query.filter(file=dep) if dep.startswith("/") else []))
+    except hawkey.Exception:
+        return []
+
+
 class Resolver:
     """dnf, on the repositories of the architecture of `data`, with the upstream packages of the locked versions only,
     and ours.
@@ -201,7 +218,7 @@ class Resolver:
             raise dnf.exceptions.Error(msg)
         self.base._goal.install(select=selector)  # noqa: SLF001, like dnf builddep
 
-    def unmet_weak(self, packages: list) -> list:
+    def unmet_weak(self, packages: list[Package]) -> list[Package]:
         """Return the providers of the weak dependencies of `packages` they do not have, like
         exclude_from_weak_autodetect of dnf: they are not installed as weak dependencies after them.
         """
@@ -216,13 +233,13 @@ class Resolver:
 
     def resolve(
         self,
-        packages: list,
+        packages: list[Package],
         deps: list[str],
         *,
         weak: bool,
-        installed: list | tuple = (),
-        exclude_from_weak: list | tuple = (),
-    ) -> list:
+        installed: Sequence[Package] = (),
+        exclude_from_weak: Sequence[Package] = (),
+    ) -> list[Package]:
         """Return the packages to install for `packages`, and the requirements `deps`, on the `installed` ones, which
         those replacing them, by obsoleting them, can leave out, like xcp-ng-release almalinux-release.
         """
@@ -243,7 +260,7 @@ class Resolver:
         self.needed.update(self.canonical(p.sourcerpm)[0] for p in result if p.reponame not in OURS)
         return result
 
-    def image(self, errors: dict[str, str]) -> list:
+    def image(self, errors: dict[str, str]) -> list[Package]:
         """Return the packages of the image, like the Containerfile installs them: without weak dependencies, and
         without ours.
         """
@@ -262,7 +279,9 @@ class Resolver:
         finally:
             self.base.sack.remove_excludes(ours)
 
-    def buildroot(self, image: list, build: dict, unmet_weak: list, swappable: set[str]) -> tuple[list, set[str]]:
+    def buildroot(
+        self, image: list[Package], build: dict, unmet_weak: list[Package], swappable: set[str]
+    ) -> tuple[list[Package], set[str]]:
         """Return the build root of the `build` of a package of ours, on the `image`, like dnf builddep, with the weak
         dependencies, but the `unmet_weak` ones of the image, and with ours rather than the upstream packages of their
         names, of the image or of the build root, but those of ours not `swappable`, which need the package; and the
@@ -292,7 +311,14 @@ class Resolver:
                 continue
             allowed, swapped, packages = allowed | new, swapped | new, more
 
-    def _buildroot(self, packages: list, deps: list[str], installed: list, allowed: set[str], unmet_weak: list) -> list:
+    def _buildroot(
+        self,
+        packages: list[Package],
+        deps: list[str],
+        installed: list[Package],
+        allowed: set[str],
+        unmet_weak: list[Package],
+    ) -> list[Package]:
         """Return the packages to install for `packages` and `deps` on the `installed` ones, with only the `allowed`
         packages of ours.
         """
@@ -303,11 +329,14 @@ class Resolver:
         finally:
             self.base.sack.remove_excludes(others)
 
-    def runtime(self, extra: list[str], installer: list[str], iso: list[str], errors: dict[str, str]) -> list[str]:
+    def runtime(
+        self, extra: list[str], installer: list[str], iso: list[str], errors: dict[str, str]
+    ) -> tuple[list[str], dict[str, tuple[list[Package], list[str]]]]:
         """Return the upstream packages our binary packages, the extra upstream RPMs, and the `extra` upstream packages
         need, each resolved alone, on an empty system, without weak dependencies, as some of ours conflict with others,
         and the packages of the `installer`, and those of the `iso` repository, each together: some only need others
-        along with another, like (libsss_sudo if sudo).
+        along with another, like (libsss_sudo if sudo); and the packages of each group resolved, with its packages, by
+        its name: the package, install.img or ISO.
         """
         packages = {**self.binaries, **self.ours, **self.built}  # like dnf install, ours rather than upstream ones
         roots = [n for n in {*self.ours, *self.built} if not n.endswith(("-debuginfo", "-debugsource"))]
@@ -315,18 +344,47 @@ class Resolver:
             *((n, [n]) for n in sorted({*roots, *extra})),
             *((name, group) for name, group in (("install.img", installer), ("ISO", iso)) if group),
         ]
-        needed = set()
+        needed, resolved = set(), {}
         for name, group in groups:
             try:
                 installed = self.resolve(
                     [packages[n] for n in group if n in packages], [n for n in group if n not in packages], weak=False
                 )
                 needed |= {p.name for p in installed if p.reponame not in OURS}
+                resolved[name] = (installed, group)
             except dnf.exceptions.Error as e:
                 errors[name] = str(e)
-        return sorted(needed)
+        return sorted(needed), resolved
 
-    def tools(self, image: list, tools: list[str]) -> tuple[list[str], str]:
+    def why(
+        self, packages: list[Package], roots: list[tuple[str, str, list[str]]], *, weak: bool
+    ) -> dict[str, list[str]]:
+        """Return why each of the `packages` is there, by name, as [kind, by, requirement]: by a breadth-first walk
+        from the `roots`, of their kind, like ours, extra or image, or buildrequires by a package of ours, and of their
+        requirements, then of the requirements of the packages reached, kind requires, by their names, and with
+        `weak`, of their recommendations, kind recommends, to their providers among the `packages`. The first way found
+        only: those required by several get one.
+        """
+        query = self.base.sack.query().filterm(pkg=packages)
+        found: dict[str, list[str]] = {}
+        reached: list[Package] = []
+
+        def reach(dep: str, how: list[str]) -> None:
+            for p in _providers(query, dep):
+                if p.name not in found:
+                    found[p.name] = how
+                    reached.append(p)
+
+        for kind, by, deps in roots:
+            for dep in deps:
+                reach(dep, [kind, by, dep])
+        for p in reached:  # growing as it goes: breadth-first
+            for kind, deps in (("requires", p.requires), ("recommends", p.recommends if weak else [])):
+                for dep in map(str, deps):
+                    reach(dep, [kind, p.name, dep])
+        return found
+
+    def tools(self, image: list[Package], tools: list[str]) -> tuple[list[str], str]:
         """Return the upstream packages installed with the `tools` on the `image`, without weak dependencies, but the
         image's, or why they cannot be.
         """
@@ -343,7 +401,7 @@ class Resolver:
             self.base.sack.remove_excludes(ours)
         return sorted({p.name for p in installed} - {p.name for p in image}), ""
 
-    def generated(self, image: list, name: str, declared: dict) -> tuple[list[str], list[str]]:
+    def generated(self, image: list[Package], name: str, declared: dict) -> tuple[list[str], list[str]]:
         """Return the packages the generated requirements of the built package `name` resolve to, on the `image`, with
         its packages too, which the published repositories need, and its generated capabilities and files the specs
         require, but those it `declared`.
@@ -397,6 +455,39 @@ def _sha256(package: Package) -> str:
     return package.chksum[1].hex()
 
 
+def _why_build(
+    resolver: Resolver, data: dict, image: list[Package], roots: dict[str, list[Package]]
+) -> dict[str, dict]:
+    """Return why each package of the image and of the build `roots`, by package of ours, is there, as the set build."""
+    packages = {p.name: p for p in [*image, *(p for root in roots.values() for p in root)]}
+    starts = [("image", "", [p.name for p in image])]
+    starts += [("buildrequires", name, data["builds"][name]["buildrequires"]) for name in sorted(roots)]
+    return {"build": resolver.why(list(packages.values()), starts, weak=True)}
+
+
+def _published_sets(
+    resolver: Resolver, groups: dict[str, tuple[list[Package], list[str]]], extra: list[str]
+) -> tuple[dict[str, list[str]], dict[str, dict]]:
+    """Return the packages of the sets of the ISO, from the `groups` of the runtime, and why each package of the
+    published sets is there: base, of all the groups, of ours, the `extra` upstream packages, and of the ISO, and iso
+    and install.img.
+    """
+    kinds = {"ISO": ("iso", "iso"), "install.img": ("install.img", "installer")}
+    published = {p.name: p for packages, _ in groups.values() for p in packages}
+    starts = [
+        (kinds[g][1] if g in kinds else "extra" if g in extra else "ours", "", group)
+        for g, (_, group) in groups.items()
+    ]
+    why = {"base": resolver.why(list(published.values()), starts, weak=False)}
+    sets = {}
+    for group, (name, kind) in kinds.items():
+        if group in groups:
+            packages, roots = groups[group]
+            sets[name] = sorted(p.name for p in packages)
+            why[name] = resolver.why(packages, [(kind, "", roots)], weak=False)
+    return sets, why
+
+
 def main() -> None:
     """Resolve the input of the command line into its output."""
     data = json.loads(Path(sys.argv[1]).read_text())
@@ -408,6 +499,7 @@ def main() -> None:
     owners = {b["name"]: b["package"] for b in data["ours"]}
     # the packages of ours each build may get: those of its dependencies, built before it
     needed = {name: {owners[b] for b in build["allowed"] if b in owners} for name, build in data["builds"].items()}
+    roots = {}  # the packages of the build roots, for why
     for name, build in data["builds"].items():
         # ours of other packages than those needing it
         swappable = {b for b, owner in owners.items() if owner != name and name not in needed.get(owner, set())}
@@ -416,6 +508,7 @@ def main() -> None:
         except dnf.exceptions.Error as e:
             result["errors"][name] = str(e)
             continue
+        roots[name] = installed
         # with the upstream packages ours replace, like the image has those ours replace in the builds
         result["buildroots"][name] = sorted({*(p.name for p in installed if p.reponame not in OURS), *swapped})
         result["ours"][name] = sorted(p.name for p in installed if p.reponame in OURS)
@@ -424,10 +517,13 @@ def main() -> None:
             result["requires"][name], result["provides"][name] = resolver.generated(image, name, declared)
         except dnf.exceptions.Error as e:
             result["errors"][name] = str(e)
+    result["why"] = _why_build(resolver, data, image, roots) if roots else {}
     if runtime := data.get("runtime"):
-        result["runtime"] = resolver.runtime(
+        result["runtime"], groups = resolver.runtime(
             runtime["extra"], runtime["installer"], runtime["iso"], result["runtime_errors"]
         )
+        result["sets"], why = _published_sets(resolver, groups, runtime["extra"])
+        result["why"] |= why
         if runtime["tools"]:
             result["tools"], result["tools_error"] = resolver.tools(image, runtime["tools"])
     locked = data["sources"]

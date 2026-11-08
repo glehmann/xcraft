@@ -88,6 +88,12 @@ class Resolved(BaseModel):
     versioned: dict[str, str] = {}
     """The binary packages of ours a package refers to with a version, or in a rich dependency, with their
     epoch-version-releases when resolved: another of them may resolve otherwise, see _unversioned()."""
+    sets: dict[str, list[str]] = {}
+    """The binary packages, ours and upstream, of the repository of the ISO, iso, and of install.img."""
+    why: dict[str, dict[str, list[str]]] = {}
+    """By set, base, build, iso and install.img, why each package is there, by name: its kind, ours, extra, installer,
+    iso or image for the roots, requires or recommends by the package of `by`, or buildrequires by the package of ours
+    of `by`, and the requirement, as [kind, by, requirement]; see xcraft.contents."""
 
     def image_packages(self) -> dict[str, Locked]:
         """Return the upstream packages of the image."""

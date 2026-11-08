@@ -18,6 +18,7 @@ from xcraft.commands import (
     build,
     bump,
     clean,
+    contents,
     doctor,
     fetch,
     graph,
@@ -51,7 +52,16 @@ app = typer.Typer(
     context_settings={"help_option_names": ["-h", "--help"]},
 )
 for panel, commands in {
-    "Building": [build.build, repo.repo, shell.shell, log.log, graph.graph, status.status, clean.clean],
+    "Building": [
+        build.build,
+        repo.repo,
+        shell.shell,
+        log.log,
+        graph.graph,
+        contents.contents,
+        status.status,
+        clean.clean,
+    ],
     "Packages": [bump.bump, patchset.patchset, history.history],
     "Upstream packages": [lock.lock, reuse.reuse],
     "Publishing": [iso.iso, boot.boot, unpublish.unpublish],

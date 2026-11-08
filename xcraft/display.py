@@ -15,9 +15,10 @@ from typing import TYPE_CHECKING
 
 from rich.console import Console
 from rich.highlighter import Highlighter
+from rich.measure import Measurement
 from rich.progress import Progress, ProgressColumn, SpinnerColumn, Task, TextColumn
 from rich.progress_bar import ProgressBar
-from rich.table import Column
+from rich.table import Column, Table
 from rich.text import Text
 
 from xcraft import process
@@ -52,6 +53,18 @@ def known_commands(names: Iterable[str]) -> None:
 # no wrapping, for logs and pipes; the progress and the pager on a terminal only, even when FORCE_COLOR makes the
 # output of CI coloured, like a terminal's: its logs would have each frame of the progress, with cursor movements
 console = Console(highlighter=_commands, soft_wrap=True, force_interactive=None if sys.stdout.isatty() else False)
+
+
+def print_wide(table: Table) -> None:
+    """Print `table` with one line by row, for grep, even wider than the terminal."""
+    width = console.width
+    console.width = max(width, Measurement.get(console, console.options.update(width=10_000), table).maximum)
+    try:
+        console.print(table)
+    finally:
+        console.width = width
+
+
 _LOG_INTERVAL = 30
 _STILL_INTERVAL = 60
 

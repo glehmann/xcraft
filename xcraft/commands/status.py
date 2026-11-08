@@ -7,7 +7,6 @@ from collections import Counter
 from typing import TYPE_CHECKING, Annotated
 
 import typer
-from rich.measure import Measurement
 from rich.table import Table
 
 from xcraft import build as builder
@@ -16,7 +15,7 @@ from xcraft.cache import cached_build, has_normal_build, release_suffix
 from xcraft.commands import Arch, Dev, Final, Packages, dev_ident, prepared_project
 from xcraft.container import image_tag
 from xcraft.devbuilds import dev_keys
-from xcraft.display import console
+from xcraft.display import console, print_wide
 
 if TYPE_CHECKING:
     from xcraft.project import Project
@@ -115,12 +114,6 @@ def status(
             continue
         detail = f" {queue.index(name) + 1}/{len(queue)}" if state == "queued" else ""
         table.add_row(name, evr, f"[{_STYLES[state]}]{state}{detail}[/]")
-    # one line per package, for grep, even wider than the terminal
-    width = console.width
-    console.width = max(width, Measurement.get(console, console.options.update(width=10_000), table).maximum)
-    try:
-        if table.row_count:
-            console.print(table)
-    finally:
-        console.width = width
+    if table.row_count:
+        print_wide(table)
     console.print(", ".join(f"[{_STYLES[state]}]{states[state]} {state}[/]" for state in _STYLES if states[state]))

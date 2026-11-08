@@ -1,6 +1,9 @@
 # Design: the contents of a snapshot, `xcraft contents`
 
-Status: proposed.
+Status: implemented, `xcraft contents`, with `--set`, `--json`, `--why`, `--diff`, `--diff-stage` and `--markdown`, and
+the `contents.json` of the published snapshots; to do: the diff in the comment of a pull request, in `pull-request.yml` of
+xcp-ng-dist. `why` costs nothing measurable: the resolution of xcp-ng-dist takes 12 s with or without it, and its cache
+of an architecture grows from 575 KiB to 890 KiB.
 
 ## The need
 
@@ -113,9 +116,10 @@ checking out one of them.
 `[remote.<name>]` of `xcraft.toml`, `main` or `dev`, and the latest snapshot of the stage by default, like
 `main@incoming`, `main@incoming/latest`, or `main@incoming/2026-11-08.2`: what a release would change, compared with
 the last one. A snapshot has its sets, as published: `contents.json`, which `xcraft publish` writes next to its
-manifest, signed with it, from the resolution, with the NEVRAs of its packages. A snapshot published before has no such
-file: its sets of repositories, `base`, `build` and their sources, are read from their metadata, and it has no `iso`
-nor `install.img`.
+manifest, signed with it, from the resolution, with the versions of its packages, those of its builds: the development
+ones of a stage of dev mode. Its manifest must be signed by a key the storage trusts, `build_keys` of its
+`[remote.<name>]`, or the key of the command, or the developer's. A snapshot published before has no such file: the
+command says so, as the stages are published again with each change.
 
 `--markdown` writes the diff as Markdown, for the comment of a pull request: `pull-request.yml` adds it to the summary
 of `xcraft publish --summary`, comparing with `HEAD^1`, so that the reviewers see what a pull request changes in what

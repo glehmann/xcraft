@@ -11,6 +11,7 @@ from urllib.parse import quote
 import typer
 from pydantic import ValidationError
 
+from xcraft import contents
 from xcraft import publish as publisher
 from xcraft.build import update_build_ids
 from xcraft.cache import cached_build, release_suffix
@@ -85,11 +86,17 @@ def _repo_file(project: Project) -> str:
     return f"xcraft-{project.config.publish.stage}-{project.arch}.repo"
 
 
-def _write_repo_files(platforms: list[Project], dest: Path, storage: Remote, name: str, *, keep: bool) -> None:
-    """Write in the snapshot `dest`, to publish as `name`, the .repo file of each of the `platforms`, for the hosts: its
-    repository, trusting its keys, and with `keep`, those of the repositories of xcraft.toml, whose packages keep their
-    signatures. The latest snapshot of the stage has the copy of those of the last one.
+def _write_snapshot_files(
+    built: list[tuple[Project, dict[str, str]]], dest: Path, storage: Remote, name: str, *, keep: bool
+) -> None:
+    """Write in the snapshot `dest`, to publish as `name`, its contents, of the platforms `built`, with the keys of
+    their builds, see xcraft contents, and the .repo file of each platform, for the hosts: its repository, trusting its
+    keys, and with `keep`, those of the repositories of xcraft.toml, whose packages keep their signatures. The latest
+    snapshot of the stage has the copy of those of the last one.
     """
+    published = contents.Published(arches={p.arch: contents.contents(p, keys) for p, keys in built})
+    (dest / contents.FILE).write_text(published.model_dump_json())
+    platforms = [p for p, _ in built]
     project = platforms[0]
     tree = f"{storage.url.rstrip('/')}/{snapshot_tree(project, 'repos', name)}"
     keys = [f"{tree}/{f.name}" for f in sorted(dest.glob(f"{KEY_FILE}*"))] + (repo_keys(project) if keep else [])
@@ -231,7 +238,7 @@ def _publish(  # noqa: C901, PLR0912
             }
             name = uploader.snapshot_name()
             if only != "isos":
-                _write_repo_files(platforms, dest, uploader.storage, name, keep=dev is not None)
+                _write_snapshot_files(built, dest, uploader.storage, name, keep=dev is not None)
                 uploader.upload_snapshot(built, dest, name, stored=stored)
             if with_isos:
                 uploader.upload_isos(dest, name, stored=isos)

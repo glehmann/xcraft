@@ -293,6 +293,16 @@ class Project:
             if "XCRAFT_PROJECT" not in os.environ:
                 msg += f", or the parents of {Path(sys.argv[0]).resolve()}"
             raise ProjectNotFoundError(msg)
+        project = cls.at(root, arch)
+        if use:
+            project.use()
+        return project
+
+    @classmethod
+    def at(cls, root: Path, arch: str | None = None) -> Project:
+        """Return the project of the directory `root`, on the platform of the RPM architecture `arch`, $XCRAFT_ARCH, or
+        the host's, or else on the first one of the configuration: see find().
+        """
         with (root / "xcraft.toml").open("rb") as f:
             config = Config.model_validate(tomllib.load(f))
         platforms: dict[str, Platform] = {ARCHES[p]: p for p in config.platforms}
@@ -300,14 +310,8 @@ class Project:
             if arch not in platforms:
                 msg = f"{arch} is not an architecture of the project: {', '.join(platforms)}"
                 raise RuntimeError(msg)
-            project = cls(root, config, platforms[arch])
-        else:
-            project = next(
-                (p for p in cls(root, config).all_platforms() if p.native), cls(root, config, config.platforms[0])
-            )
-        if use:
-            project.use()
-        return project
+            return cls(root, config, platforms[arch])
+        return next((p for p in cls(root, config).all_platforms() if p.native), cls(root, config, config.platforms[0]))
 
     @property
     def arch(self) -> str:

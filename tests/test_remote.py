@@ -1775,6 +1775,12 @@ def test_publish_of_a_pull_request(
         f"  - [{name}.src.rpm]({tree}/base/Source/{quote(name)}.src.rpm)\n"
     ) in summary
     assert "- trivial" not in summary  # master's
+    # its contents, which the checkout is compared with: its development build, final in the checkout
+    assert "contents.json" in manifest
+    code, output = xcraft("contents", "--diff-stage", f"dev@{stage}")
+    assert code == 0, output
+    assert "  ~ with-deps 1.0-1+b2~7.pr7.xcpng8.99 → 1.0-1+b2.xcpng8.99" in output.splitlines()
+    assert xcraft("contents", "--diff-stage", f"dev@{stage}/no-such-snapshot")[0] == 1
     # the development builds are files of the stage only
     assert not remote.listing(dev, f".xcraft/builds/{developer.key}/")
     # removed with the pull request
