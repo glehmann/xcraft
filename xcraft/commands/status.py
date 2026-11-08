@@ -25,7 +25,7 @@ _STYLES = {
     "error": "red",
     "building": "yellow",
     "queued": "cyan",
-    "built": "green",
+    "ready": "green",
     "outdated": "magenta",
     "missing": "dim",
 }
@@ -39,7 +39,7 @@ Inputs = Annotated[
     ),
 ]
 
-Full = Annotated[bool, typer.Option("--full", help="Show the built packages too.")]
+Full = Annotated[bool, typer.Option("--full", help="Show the ready packages too.")]
 
 
 def _show_inputs(project: Project, names: list[str]) -> None:
@@ -76,12 +76,12 @@ def status(
     with_inputs: Inputs = False,
     full: Full = False,
 ) -> None:
-    """Show the version of the given packages, or of all those not built, or of all with --full, and whether it is
-    built; and how many are in each state.
+    """Show the version of the given packages, or of all those not ready, or of all with --full, and whether its build
+    is ready; and how many are in each state.
 
     The version has the build number, and the development build suffix of those whose build ID is not the main
     branch's, unless --final. The states: error (the spec cannot be parsed), building, queued (by a running build),
-    built, outdated (only older versions are built), and missing.
+    ready (built or fetched, in the cache), outdated (only older versions are), and missing.
     """
     ident = dev_ident(ctx, dev, final=final)
     project = prepared_project(packages, arch=arch)
@@ -107,11 +107,11 @@ def status(
         elif name in queue:
             state = "queued"
         elif cached_build(project, name, keys[name]).exists():
-            state = "built"
+            state = "ready"
         else:
             state = "outdated" if has_normal_build(project, name) else "missing"
         states[state] += 1
-        if state == "built" and not (full or packages):
+        if state == "ready" and not (full or packages):
             continue
         detail = f" {queue.index(name) + 1}/{len(queue)}" if state == "queued" else ""
         table.add_row(name, evr, f"[{_STYLES[state]}]{state}{detail}[/]")

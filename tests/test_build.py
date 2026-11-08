@@ -87,7 +87,7 @@ def test_build_uses_local_builds_and_cache(root: Path) -> None:
     code, output = xcraft("build", "with-deps")
     assert code == 0, output
     assert output.splitlines()[-1] == "2 built"
-    assert states() == {"trivial": "built", "with-deps": "built"}
+    assert states() == {"trivial": "ready", "with-deps": "ready"}
 
 
 def test_build_all_by_default(root: Path) -> None:
@@ -308,7 +308,7 @@ def test_build_back_to_a_cached_key(root: Path) -> None:
     code, output = xcraft("build", "trivial")
     assert code == 0, output
     assert results(output) == [results(output)[0], "1 built"]
-    assert states() == {"trivial": "built", "with-deps": "missing"}
+    assert states() == {"trivial": "ready", "with-deps": "missing"}
     assert not list(root.glob(f".xcraft/cache/builds/*/{ARCH}/trivial/.*"))
 
 
