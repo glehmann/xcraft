@@ -24,6 +24,7 @@
 | `xcraft vm destroy [--yes]` | Stop the VM and delete its session, with its disk, for a new installation |
 | `xcraft vm ssh [<command>...]` / `xcraft vm ssh-copy-id` | Log in as root in the VM, or run a command in it; install your SSH key there |
 | `xcraft key create` / `xcraft key show [--export]` | The developer's key, which signs the builds of dev mode, made by the first one otherwise |
+| `xcraft login [main\|dev]` / `xcraft logout [main\|dev]` | Store, once checked, or remove the S3 credentials of the server of the remote storage, `dev` by default, in the desktop keyring, for all its buckets |
 | `xcraft push` | Upload everything the remote storage misses: the source archives and the builds of all packages, with the `index.html` pages of their directories, and the resolutions |
 | `xcraft push sources [<pkg>...] [--check] [--to main\|dev]` | Upload cached sources, or check the selected bucket; defaults to dev |
 | `xcraft push builds [<pkg>...]` | Upload the current builds missing from the remote storage, for CI |

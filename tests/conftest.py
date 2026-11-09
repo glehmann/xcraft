@@ -26,6 +26,8 @@ from xcraft.sources import sha256_of
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
 
+os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"  # never the developer's
+
 
 def make_toys(root: Path) -> None:
     """Build the upstream packages of the tests into their repository, TOYS, unless it is there already, in the base

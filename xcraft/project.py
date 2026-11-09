@@ -92,8 +92,8 @@ signed builds, the compiler caches, the keys and the ISOs, apart from the publis
 class Remote(BaseModel):
     """The shared storage of the source archives and the builds: public reads, authenticated S3 writes.
 
-    The S3 credentials come from the AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY
-    environment variables.
+    The S3 credentials come from the AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables, or else from
+    the desktop keyring, by S3 endpoint (see xcraft login).
     """
 
     model_config = ConfigDict(extra="forbid")

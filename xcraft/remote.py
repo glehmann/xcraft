@@ -194,27 +194,78 @@ def _s3(endpoint: str, region: str, access_key: str, secret_key: str, session_to
     )
 
 
-def _client(storage: Remote) -> S3Client:
-    """Return the S3 client of `storage`, with the credentials of the environment."""
+KEYRING = "xcraft"
+"""The service of the S3 credentials in the keyring, by S3 endpoint: a key has its rights on the buckets of its server,
+like writing the dev bucket and reading the main one, for the server-side copies from one to the other."""
+
+
+class Credentials(NamedTuple):
+    """S3 credentials, and where they come from: the environment or the keyring."""
+
+    key: str
+    secret: str
+    token: str = ""
+    source: str = "keyring"
+
+
+def credentials(endpoint: str) -> Credentials | None:
+    """Return the S3 credentials of the server of `endpoint`: those of the environment, else those of the keyring, if
+    any.
+    """
+    if (key := os.environ.get("AWS_ACCESS_KEY_ID")) and (secret := os.environ.get("AWS_SECRET_ACCESS_KEY")):
+        return Credentials(key, secret, os.environ.get("AWS_SESSION_TOKEN", ""), "environment")
+    import keyring  # noqa: PLC0415, slow to import
+    from keyring.errors import KeyringError  # noqa: PLC0415
+
+    try:
+        stored = keyring.get_password(KEYRING, endpoint)
+    except KeyringError as e:  # like without a Secret Service, over SSH
+        log.debug("no keyring: %s", e)
+        return None
+    return Credentials(*stored.split(":", 1)) if stored and ":" in stored else None
+
+
+def _client(storage: Remote, given: Credentials | None = None) -> S3Client:
+    """Return the S3 client of `storage`, with the `given` credentials, or else those of its server."""
     if not (storage.s3_endpoint and storage.bucket):
         msg = "pushing needs the s3_endpoint and bucket of the storage, in xcraft.toml"
         raise RemoteError(msg)
-    if not (os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY")):
-        msg = "pushing needs the S3 credentials, in AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY"
+    if not (found := given or credentials(storage.s3_endpoint)):
+        msg = (
+            f"pushing needs the S3 credentials of {storage.s3_endpoint}: xcraft login, "
+            "or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY"
+        )
         raise RemoteError(msg)
-    return _s3(
-        storage.s3_endpoint,
-        storage.region,
-        os.environ["AWS_ACCESS_KEY_ID"],
-        os.environ["AWS_SECRET_ACCESS_KEY"],
-        os.environ.get("AWS_SESSION_TOKEN", ""),
-    )
+    return _s3(storage.s3_endpoint, storage.region, found.key, found.secret, found.token)
+
+
+def login(storage: Remote, given: Credentials) -> None:
+    """Store the `given` credentials in the keyring, for the server of `storage`, once checked on its bucket."""
+    import keyring  # noqa: PLC0415
+
+    with writing(storage, f"access {storage.bucket}", given) as client:
+        client.head_bucket(Bucket=storage.bucket)
+    keyring.set_password(KEYRING, storage.s3_endpoint, f"{given.key}:{given.secret}")
+
+
+def logout(endpoint: str) -> bool:
+    """Remove the credentials of the server of `endpoint` from the keyring: whether it had them."""
+    import keyring  # noqa: PLC0415
+    from keyring.errors import PasswordDeleteError  # noqa: PLC0415
+
+    try:
+        keyring.delete_password(KEYRING, endpoint)
+    except PasswordDeleteError:
+        return False
+    return True
 
 
 @contextlib.contextmanager
-def writing(storage: Remote, action: str) -> Generator[S3Client]:
-    """Return the S3 client of `storage`, reporting the S3 errors of `action` as RemoteError."""
-    client = _client(storage)
+def writing(storage: Remote, action: str, given: Credentials | None = None) -> Generator[S3Client]:
+    """Return the S3 client of `storage`, with the `given` credentials, or else those of its server, reporting the S3
+    errors of `action` as RemoteError.
+    """
+    client = _client(storage, given)
     try:
         yield client
     except Exception as e:

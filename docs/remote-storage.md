@@ -18,7 +18,13 @@ bucket = "xcraft-dev"
 region = "garage"
 ```
 
-The writes use the credentials of `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. The top of the storage only has
+The writes use the S3 credentials of `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, for CI, or else those of the
+S3 server, `s3_endpoint`, in the desktop keyring, from the Secret Service, like GNOME Keyring or KWallet, or the macOS
+Keychain: `xcraft login [main|dev]` asks for them, checks them on the bucket of that remote, and stores them, for all
+the buckets of the server, and `xcraft logout` removes them. They are by server rather than by bucket, as a key has
+its rights on each bucket of its server, and a server-side copy is one request, with one key, reading the source
+bucket and writing the destination one. Without a keyring, like over SSH without a desktop session, only the
+environment gives them. `xcraft doctor` shows where those of each server come from. The top of the storage only has
 the published repositories, in `repos/`, the published ISOs, in `isos/`, and what xcraft keeps for itself, in
 `.xcraft/`, like the local state of a checkout: `.xcraft/sources/<sha256>/<filename>`,
 `.xcraft/builds/<fingerprint>/<arch>/<package>/<key>+b<n>/`, by the key signing its packages and its `manifest.asc`,
@@ -62,7 +68,8 @@ of `build_keys`, or the command's own.
 
 Without network, or when the storage is unavailable, everything still works with what is local.
 
-Developers have individual S3 keys with rights only on `xcraft-dev`. CI has a separate key with read/write rights on
+Developers have individual S3 keys, writing `xcraft-dev`, and reading `xcraft`, for the server-side copies of its
+files into theirs, like when publishing. CI has a separate key with read/write rights on
 the main bucket. Both buckets allow public reads and have independent configured URLs. Source downloads check the
 local cache, main bucket, developer bucket, then the spec URL against the committed manifest. Either bucket can be
 omitted. Uploads to an unconfigured bucket fail with a configuration error.

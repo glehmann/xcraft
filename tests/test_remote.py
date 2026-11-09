@@ -23,10 +23,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
+import keyring.core
 import pytest
+from keyring.backend import KeyringBackend
+from keyring.errors import PasswordDeleteError
 
 from tests import ARCH, PLATFORM, TOML, copy_project, needs_gpg
-from tests.test_build import results, write_spec, xcraft
+from tests.test_build import results, runner, write_spec, xcraft
 from tests.test_buildid import commit_base, edit, git
 from tests.test_iso import cache_image
 from xcraft import (
@@ -43,6 +46,7 @@ from xcraft import (
     upstream_copy,
 )
 from xcraft import publish as publisher
+from xcraft.__main__ import app
 from xcraft.iso import cached_iso, checkout_iso, fetch_isos, iso_key, iso_name, iso_path, push_isos
 from xcraft.lock import load_lock
 from xcraft.project import Project, Remote
@@ -992,6 +996,55 @@ def test_ccache_of_the_last_build(root: Path, tmp_path: Path) -> None:
     shutil.rmtree(cache)
     assert xcraft("fetch", "ccache", "compiled") == (0, "↓ compiled\n1 fetched\n")
     assert not (cache / "compiled.ccache").exists()
+
+
+class _Keyring(KeyringBackend):
+    """A keyring in memory, rather than the developer's."""
+
+    priority = 1
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.passwords: dict[tuple[str, str], str] = {}
+
+    def get_password(self, service: str, username: str) -> str | None:
+        return self.passwords.get((service, username))
+
+    def set_password(self, service: str, username: str, password: str) -> None:
+        self.passwords[service, username] = password
+
+    def delete_password(self, service: str, username: str) -> None:
+        if not self.passwords.pop((service, username), None):
+            raise PasswordDeleteError(username)
+
+
+def test_login(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(keyring.core, "_keyring_backend", stored := _Keyring())
+    given = remote.Credentials(os.environ["AWS_ACCESS_KEY_ID"], os.environ["AWS_SECRET_ACCESS_KEY"])
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID")
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY")
+    config = Project.find().config.remote
+    archive = tmp_path / f"source-{secrets.token_hex(4)}"
+    archive.write_text("source archive")
+    path = source_path(archive.name, sha256_of(archive))
+    with pytest.raises(remote.RemoteError, match="xcraft login"):
+        remote.upload(config["dev"], path, archive)
+    assert "no S3 credentials of http://localhost" in xcraft("doctor")[1]
+    # checked before being stored
+    result = runner.invoke(app, ["login"], input=f"{given.key}\nwrong\n")
+    assert result.exit_code == 1
+    assert not stored.passwords
+    result = runner.invoke(app, ["login"], input=f"{given.key}\n{given.secret}\n")
+    assert result.exit_code == 0, result.output
+    assert f"credentials of {config['dev'].s3_endpoint} in the keyring" in result.output
+    # those of the server, for its buckets: the dev one, and the main one, with the rights of the key
+    remote.upload(config["dev"], path, archive)
+    remote.upload(config["main"], path, archive)
+    assert "S3 credentials of http://localhost:" in xcraft("doctor")[1]
+    assert ", from the keyring" in xcraft("doctor")[1]
+    assert xcraft("logout")[1].endswith(" removed\n")
+    assert "no credentials of" in xcraft("logout")[1]
+    assert not stored.passwords
 
 
 def test_unavailable_remote_storage(root: Path) -> None:

@@ -48,17 +48,20 @@ def _podman() -> tuple[list[tuple[str, str]], list[str], list[host.Fix]]:
 
 
 def _storage(project: Project) -> list[tuple[str, str]]:
-    """Return the checks of the remote storage, if any."""
-    if not (storage := project.config.remote.get("main")):
-        return []
-    try:
-        remote.exists(storage, "index.html")
-        checks = [("ok", f"remote storage: {storage.url}")]
-    except remote.RemoteError as e:
-        checks = [("warning", f"remote storage unavailable: {e}")]
-    if os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"):
-        return [*checks, ("ok", "S3 credentials of the remote storage")]
-    return [*checks, ("warning", "no S3 credentials in AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, for xcraft push")]
+    """Return the checks of the remote storage, if any: the main one, and the credentials of the S3 servers."""
+    checks = []
+    if storage := project.config.remote.get("main"):
+        try:
+            remote.exists(storage, "index.html")
+            checks.append(("ok", f"remote storage: {storage.url}"))
+        except remote.RemoteError as e:
+            checks.append(("warning", f"remote storage unavailable: {e}"))
+    for endpoint in sorted({s.s3_endpoint for s in project.config.remote.values() if s.s3_endpoint}):
+        if found := remote.credentials(endpoint):
+            checks.append(("ok", f"S3 credentials of {endpoint}, from the {found.source}"))
+        else:
+            checks.append(("warning", f"no S3 credentials of {endpoint}, for xcraft push: see xcraft login"))
+    return checks
 
 
 def _vm() -> tuple[list[tuple[str, str]], list[str]]:

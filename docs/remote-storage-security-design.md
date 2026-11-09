@@ -85,7 +85,8 @@ Both public URLs are explicit. The developer bucket is optional for projects whi
 without it, source downloads use the main bucket and spec URLs, and developer uploads fail with a configuration
 error. Neither bucket's URL or name is derived from the other.
 
-Each command uses the S3 credentials of its caller, from the environment. The two buckets can use independent S3
+Each command uses the S3 credentials of its caller, from the environment, or else from the desktop keyring, by S3
+endpoint. The two buckets can use independent S3
 services. `build_keys` belongs only to the trusted remote: a developer upload does not require CI's signing key.
 
 ### Upload destination
