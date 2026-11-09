@@ -90,7 +90,7 @@ def status(
     keys = dev_keys(project, ident, buildkey.directories(project))[0]
     queue = [name for name in builder.queued(project) if not cached_build(project, name, keys[name]).exists()]
     shown = sorted(set(packages or project.packages))
-    table = Table("package", "version", "state", box=None, pad_edge=False, header_style="bold")
+    table = Table(box=None, pad_edge=False, show_header=False)
     states = Counter[str]()
     for name in shown:
         package = project.packages[name]
