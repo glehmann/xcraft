@@ -124,10 +124,18 @@ def _copy_to_host(host: _Host, output: Path, ident: str, binaries: list[str], *,
         process.run(host.ssh(f"install -m 644 {remote}/xcraft-{ident}.repo /etc/yum.repos.d/"), capture=True)
     console.print(f"[bold green]✓[/] repository on {host.name}, in {remote}")
     if upgrade:
-        # only those installed: dnf upgrade fails on the others
+        # those installed, upgraded, dnf upgrade failing on the others, and those obsoleting installed packages,
+        # installed, replacing them, like openvswitch3.7 replacing openvswitch, which dnf upgrade does not
+        ours = " ".join(f"-e {shlex.quote(b)}" for b in binaries)
         script = (
             f"names=$(rpm -q --qf '%{{NAME}}\\n' {shlex.join(binaries)} | grep -v ' ' || true)\n"
-            'if [ -n "$names" ]; then dnf -y upgrade --refresh $names; else echo "none of them is installed"; fi\n'
+            f"new=$(for p in {remote}/*.rpm; do\n"
+            "  rpm -qp --qf '[%{OBSOLETENAME}\\n]' \"$p\" 2>/dev/null |\n"
+            "    xargs -r rpm -q --qf '%{NAME}\\n' | grep -qv ' ' && rpm -qp --qf '%{NAME}\\n' \"$p\" 2>/dev/null\n"
+            f"done | grep -xF {ours} || true)\n"
+            'if [ -z "$names$new" ]; then echo "none of them is installed, nor obsoletes an installed package"; fi\n'
+            'if [ -n "$names" ]; then dnf -y upgrade --refresh $names || exit; fi\n'
+            'if [ -n "$new" ]; then dnf -y install --refresh $new; fi\n'
         )
         process.run(host.ssh(script))
         query = f"rpm -q --qf '%{{NAME}}-%{{VERSION}}-%{{RELEASE}}.%{{ARCH}}\\n' {shlex.join(binaries)} || true"
@@ -193,7 +201,11 @@ def repo(
         ),
     ] = False,
     upgrade: Annotated[
-        bool, typer.Option("--upgrade", help="Also upgrade, on the hosts, the packages they have installed.")
+        bool,
+        typer.Option(
+            "--upgrade",
+            help="Also upgrade, on the hosts, the packages they have installed, or replace those obsoleted.",
+        ),
     ] = False,
     dev: Dev = None,
     final: Final = False,

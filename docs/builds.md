@@ -136,7 +136,8 @@ dependencies are checked with our other current builds. `--dependents` adds the 
 With `--host`, as given to ssh, or as `ssh://[user@]host[:port]` for another port, and repeatable, xcraft copies the
 repository to each host with rsync, through one SSH connection per host, which asks for its password once, if any, in
 `/var/local/xcraft/ID/`, and installs its `.repo` file, and with `--upgrade`, it also upgrades the packages the host
-has installed, warning about those it keeps in other builds than the repository's, like newer ones of another
+has installed, and installs those obsoleting an installed package, replacing it, like `openvswitch3.7` replacing
+`openvswitch`, warning about those it keeps in other builds than the repository's, like newer ones of another
 identifier:
 
 ```
