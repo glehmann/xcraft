@@ -81,4 +81,5 @@ Design notes: [build keys](docs/build-keys.md), [the locks](docs/lock-design.md)
 [layout of the published repositories](docs/publishing-layout-design.md),
 [the upstream mirror](docs/upstream-mirror-design.md), [compiler caches](docs/ccache-sync-design.md),
 [the remote storage's security](docs/remote-storage-security-design.md),
-[CI secrets](docs/ci-secret-management-design.md), and [faster development iterations](docs/dev-iteration.md).
+[CI secrets](docs/ci-secret-management-design.md), [security fixes under embargo](docs/embargo-design.md),
+and [faster development iterations](docs/dev-iteration.md).

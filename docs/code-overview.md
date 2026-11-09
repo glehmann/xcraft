@@ -77,7 +77,8 @@ reuse, and [lock design](lock-design.md) for preparation and findings. For stora
 [remote storage security](remote-storage-security-design.md), [upstream mirroring](upstream-mirror-design.md) and
 [compiler cache syncing](ccache-sync-design.md), and for publishing, [the layout of the published
 repositories](publishing-layout-design.md). For CI, read [pull request CI](pr-ci-design.md),
-[CI secrets](ci-secret-management-design.md) and [rebuild releases](rebuild-release-workflow-design.md). Preserve
+[CI secrets](ci-secret-management-design.md), [rebuild releases](rebuild-release-workflow-design.md) and
+[security fixes under embargo](embargo-design.md). Preserve
 `--locked`, checksum/signature checks, and existing lock boundaries. The `Containerfile`, `build.sh`, `offline.py`,
 `record.py`, `made.py` and `rpmdeps.py` of `buildenv/` are in [the recipe](build-keys.md#the-recipe) of every build
 key. Changes to these files normally invalidate every build key. For equivalent changes to the hashed build
