@@ -1,6 +1,8 @@
 # Design: security fixes under embargo
 
-Status: proposed.
+Status: implemented in xcraft: the maintenance branches and their numbers, the private remote storage, the copies of
+`xcraft push --from private`, the commit of the snapshots and `xcraft maint start`. To do: the release tags of the CI
+of xcp-ng-dist, its workflows for the maintenance branches, and finding the commit of a release by its contents.
 
 ## The problem
 
@@ -38,16 +40,39 @@ The branches whose names match `maintenance_branches` of `xcraft.toml`, `maint/*
 `origin/<name>` or else `<name>`, as for `main_branch`. The setting is the same on all the branches, so merging a
 maintenance branch into master changes nothing to it.
 
-Not the current branch's name: with jj, the HEAD of git is detached, and CI checks out a commit. The place of the
-commit in the history tells, as `_on_main()` and `_fork()` of `xcraft/buildid.py` do for the main branch:
+Not the current branch's name: with jj, the HEAD of git is detached, and CI checks out a commit. The history tells.
 
-- a commit which is an ancestor of a maintenance branch is on it: final builds, numbered as below, checked by
-  `--locked` as on the main branch. This is checked before the main branch: once the branch is merged into master, its
-  commits are ancestors of master too;
-- a commit whose fork point with a maintenance branch descends from its fork point with master, like a developer's
-  branch of the fix, is numbered against the maintenance branch, with development builds, `+b42.1~1.dev`, below the
-  final `+b42.1`;
-- otherwise, as today, against master.
+A maintenance branch starts with a commit of its own, which `xcraft maint start` makes, empty: without, it would only
+have master's commits, and a branch of it would be told apart from a branch of master forked at the release by
+nothing.
+
+### Whose commit it is
+
+Being an ancestor of a branch does not tell: the commits before R are ancestors of the maintenance branch too, and
+once it is merged, its commits are ancestors of master. A commit belongs to the branch whose **first-parent chain**
+brought it:
+
+- master's commits are those of its first-parent chain, R included, as it was released from master;
+- a maintenance branch's commits are those of its first-parent chain which are not on master's: from after R to its
+  tip. Below R, its chain is master's;
+- once merged into master, they stay maintenance commits: master reaches them through the second parent of the merge,
+  not through its first-parent chain. A ref must still reach them once the branch is removed: the release tags, see
+  [The released commit](#the-released-commit).
+
+A commit of a maintenance branch gets final builds, numbered as below, and checked by `--locked` as on the main
+branch.
+
+A commit of no official branch, like one of a developer's branch, is numbered against the most recent of its fork
+points with master and the maintenance branches: the one which descends from the others. It is a maintenance commit
+for a branch of a maintenance branch, else a commit of master, as today.
+
+So the merges of a maintenance branch into master must be merge commits, even when master did not move: a
+fast-forward would put the maintenance commits on master's first-parent chain, and a squash would replace them by one
+of master's, both with dotted numbers master never gives. On GitHub: "Create a merge commit". `--locked`, on master,
+checks it: a dotted number only comes from the second parent of a merge.
+
+Each official branch's first-parent chain is one `git rev-list --first-parent`, once by command. Master's is short,
+even with the imported histories, which come through merges.
 
 ### Numbering
 
@@ -64,6 +89,27 @@ branch with master is not R anymore once it is merged.
 Each official number must be given once: one maintenance branch at a time for a release, which all its fixes go to,
 under embargo or not. Two embargoes at the same time share the branch.
 
+### Development builds
+
+A branch of a maintenance branch gets development builds, as a branch of master does: the number its package would
+get once merged, and the suffix, `~<c>.<ident>`. With xen at `+b42.2` on `maint/9.0`, without the `%{dist}`:
+
+```
+1+b42.2         the latest build of maint/9.0
+1+b42.3~1.dev   the developer's builds
+1+b42.3~2.dev
+1+b42.3         once merged into maint/9.0
+1+b43           the next build of master
+```
+
+RPM sorts them in this order: `42.3~1` is above `42.2`, 3 above 2, below `42.3`, as `~` sorts before anything, and
+below `43`. So a test host upgrades from each to the next one. The counter of `.xcraft/dev-builds.json` is by package
+and number, `42.3` as any other, and `$XCRAFT_DEV_COUNTER` holds for the CI of the pull requests of the private
+repository, `+b42.3~<run>.pr<M>`. A new epoch-version-release gives `+b0.1~1.dev`. The packages the branch does not
+change keep the final builds of the maintenance branch, fetched from the private bucket. Two branches of `maint/9.0`
+changing xen both get `42.3`, as two branches of master both get `43`: merging the second one conflicts, and
+computing the build IDs again gives it `42.4`. Development builds are never published, so their numbers do not count.
+
 ## The life of a maintenance branch
 
 The branch only moves through its own fixes, merged into it like pull requests into master, never through releases.
@@ -75,8 +121,8 @@ The branch only moves through its own fixes, merged into it like pull requests i
   their final builds to the private bucket. The others keep the release's keys, and builds, fetched from the main
   bucket. A snapshot published to the private bucket, or `xcraft repo --host`, gives them to the hosts of
   xcp-ng-tests: the builds tested are those released.
-- **Its end.** See [The release](#the-release), then the branch is merged into master and removed. The next embargo
-  creates another one, from the release current then.
+- **Its end.** See [The release](#the-release), then the branch is merged into master, with a merge commit, and
+  removed. The next embargo creates another one, from the release current then.
 
 A branch living longer, for a release still supported while master is on the next major one, like `maint/8.3` next to
 a 9.0 master, works the same way: created when master moves to the next major release, it gets all the fixes of that
@@ -87,30 +133,120 @@ release, and is merged into master from time to time.
 taken to a new maintenance branch, created from that release, and the previous one is dropped. Its numbers were never
 published, so they do not count: a number must only be unique once published.
 
+**A branch started from master's tip** is the usual case when that tip is the release. When it is not, the numbers
+still hold: with xen at `+b43` there, not released, the fix gets `+b43.1`, and master's next build `+b44`. But the
+security release then has all that master had and had not released, under master's numbers: a release of master with
+the fix, rather than a fix of the release, which xcp-ng-tests tests as such. Fine when the tip was about to be released
+anyway: `xcraft maint start` starts from the commit of the latest snapshot, a published release, unless `--at`.
+
+**Without a maintenance branch**, a private branch of master numbers its builds against its fork point, as any branch:
+`+b43`, which master may give to another xen meanwhile. Published as the security release, they would have the NEVRAs
+of other packages, and merging the branch would only renumber it once those are out. So the fix needs a maintenance
+branch, even started from master.
+
+## The cases
+
+The commits go from left to right, R is the released commit, and the numbers are those of xen.
+
+**During the embargo.** The first-parent chain of `maint/9.0` is M2, M1, R, B, A: only M1 and M2 are not master's, so
+they alone are maintenance commits.
+
+```
+master       A ── B ── R ── C ── D                 R: xen +b42, released; C: +b43, another change
+                        \
+maint/9.0                M1 ── M2                  M1: xen +b42.1, the fix; M2: +b42.2, the fix revised
+```
+
+**A branch of master.** Its fork points are D with master, and R with `maint/9.0`: D descends from R, and is master's,
+so the branch is numbered against master, `+b44~1.dev`.
+
+```
+master       A ── B ── R ── C ── D
+                        \         \
+maint/9.0                M1 ── M2  X1 ── X2
+```
+
+**A branch of the maintenance branch.** Its fork points are R with master, and M2 with `maint/9.0`: M2 descends from
+R, and is a maintenance commit, so the branch is numbered against `maint/9.0`, `+b42.3~1.dev`, then `+b42.3` once
+merged into it.
+
+```
+master       A ── B ── R ── C ── D
+                        \
+maint/9.0                M1 ── M2
+                                \
+                                 Y1 ── Y2
+```
+
+**The merge into master.** The first-parent chain of master is E, D, C, R, B, A: M1 and M2 come through the second
+parent of E, and stay maintenance commits. xen keeps `+b42.2` on E if its key is M2's, when master changed none of its
+inputs since R: not here, C changed xen, so it gets `+b44`.
+
+```
+master       A ── B ── R ── C ── D ─────── E       E: the merge, first parent D, second parent M2
+                        \                 /
+maint/9.0                M1 ── M2 ───────
+```
+
+**A fast-forward**, master having not moved since R, puts M1 and M2 on master's first-parent chain, with dotted
+numbers master never gives: so the merge commits are mandatory.
+
+```
+master       A ── B ── R ── M1 ── M2               M1 and M2 on master's first-parent chain
+```
+
+**After the merge, the branch removed.** The release tag of M2, published, keeps M1 and M2 reachable, as a chain of
+their own: a rebuild of M2 is a maintenance build, checked as `+b42.2`.
+
+```
+master       A ── B ── R ── C ── D ─────── E ── F
+                        \                 /
+release/9.0/stable/…     M1 ── M2 ───────
+```
+
+**A release of master during the embargo.** The users on R2 are above `+b42.1`: the fix is taken to a new maintenance
+branch, from R2, and the previous one dropped, never published.
+
+```
+master       A ── R ── C ── R2 ── D                R2: xen +b43, released, without the fix
+                   \         \
+maint/9.0 (dropped) M1        N1                   N1: the fix, xen +b43.1, the new maint/9.0
+```
+
+**A branch living longer.** Each merge into master, D and E, is a merge commit, and M1 to M5 stay on the chain of
+`maint/8.3` only; M4 numbers after M3's `+b<n>.<m>`, on its own chain.
+
+```
+master       A ── R ── C ──────── D ──────── E ── F
+                   \             /          /
+maint/8.3           M1 ── M2 ── M3 ── M4 ── M5
+```
+
 ## Keeping the embargo private
 
 The private repository is a full repository, with CI runners and secrets: the temporary private forks of the GitHub
-security advisories run no Actions.
+security advisories run no Actions. Its CI fetches master with the maintenance branch, and that of master fetches the
+maintenance branches and the release tags: the first-parent chains tell whose commit it is, see above.
 
-**The private remote.** The private bucket is on the same S3 server as the public ones, so the copies are server-side.
-It must not be in the committed `xcraft.toml`: the change would be merged into master with the rest. So the remotes
-also come from a configuration out of git, `.xcraft/config.toml`, or the file of `$XCRAFT_CONFIG` for CI, whose
-`[remote.<name>]` tables are added to those of `xcraft.toml`:
+**The private remote.** The private bucket is on the same S3 server as the public ones, so the copies are server-side,
+with a key reading it and writing the main one: the credentials are by server, see
+[Remote storage](remote-storage.md). It must not be in the committed `xcraft.toml`, which refuses it: the change would
+be merged into master with the rest. So it comes from a configuration out of git, `.xcraft/config.toml`, or the file of
+`$XCRAFT_CONFIG` for CI:
 
 ```toml
-[remote.embargo]
-url = "https://xcraft-embargo.example/"
+[remote.private]
 s3_endpoint = "https://s3.example/"
-bucket = "xcraft-embargo"
+bucket = "xcraft-private"
 region = "garage"
-private = true
 build_keys = ["<fingerprint of the key of the private CI>"]
 ```
 
-The private bucket is read with credentials, rather than over public http(s).
+The private bucket is read through S3, with the credentials of its server, rather than over public http(s): it has no
+`url`.
 
-**No leak.** A private remote makes the others read-only: `push` and `publish` to them fail, like `--final` builds
-pushed to the dev bucket, while the private remote is configured. The builds, the compiler caches and the
+**No leak.** While the private remote is configured, the commands write to no other bucket: `push`, `publish` and
+`unpublish` to main or dev fail, but the copies of `xcraft push --from private`. The builds, the compiler caches and the
 resolutions are fetched from the main bucket first, then from the private one. So are the sources: a new upstream
 archive, like the release fixing the vulnerability, is pushed to the private bucket only.
 
@@ -121,14 +257,15 @@ there.
 ## The release
 
 1. **The copy.** The builds of the maintenance branch's commit which the private bucket has, and the source archives of
-   its manifests, are copied to the main bucket, server-side, as they are: `xcraft push --from embargo --to main`.
+   its manifests, are copied to the main bucket, server-side, as they are: `xcraft push --from private --to main`,
+   for each architecture, those signed by a key main trusts.
    A job of a protected environment does it, with the credentials reading the private bucket and writing the main
    one.
 2. **The branch, public.** The maintenance branch is pushed to the public repository. Its CI, `xcraft build --locked`,
    fetches all its builds: nothing is built.
 3. **The publication.** `xcraft publish` of the branch's commit to the stable stage, as for a release of master: the
    snapshot has the fixed builds, and the release's for the rest, copied server-side, without a rebuild.
-4. **The merge into master**, through a pull request, see below.
+4. **The merge into master**, through a pull request, with a merge commit, see below.
 
 ## Merging into master
 
@@ -155,26 +292,38 @@ it, once merged.
 ## The released commit
 
 A maintenance branch starts from the commit of the release users have, which xcraft does not record today: the
-inputs of a snapshot, `inputs.json`, have the build keys, not the commit. `xcraft publish` records the commit in the
-signed inputs of the snapshot, and the CI publishing to the stable stage tags it, `release/<release>/<stage>/<date>`,
-to create the branch from.
+inputs of a snapshot, `inputs.json`, have the build keys, the locked upstream packages and the configuration, not the
+commit. Three ways, together:
+
+- **The signed inputs.** `xcraft publish` records the commit in the inputs of the snapshot, signed with the rest: the
+  key of the stage vouches for it, for all the stages: that of the publication, a snapshot reused too, without
+  changes in the checkout. The commit users have is then that of the latest snapshot of the stable stage, its
+  signature checked: `xcraft maint start [9.0] [--stage stable]` creates the branch from it, with its own commit, or
+  from the commit of `--at`, for the snapshots published before.
+- **The release tags.** The CI publishing to the stable stage tags the commit, `release/<release>/stable/<date>`: for
+  git and people, to branch from, and to keep the commits of a maintenance branch reachable once it is removed. A tag
+  can be moved or removed: it is a convenience, checked against the inputs, unless signed and protected.
+- **The contents.** A commit is the release when it makes the same snapshot: the same input key of `inputs.json`,
+  which `xcraft publish` already computes to reuse a snapshot. Computed for the commits of master, it finds those of
+  the snapshots published before, and checks the two above when creating a branch. Several commits can match, like
+  those changing the documentation only: any of them makes the same packages, the first one is taken.
 
 ## The changes
 
-| Change | Where |
-|---|---|
-| `maintenance_branches`, the place of a commit: maintenance branch, branch of one, or master | `project.py`, `buildid.py` |
-| The numbers `+b<n>.<m>`, in `xcraft.builds`, `%{autorev}` and the build paths | `buildid.py`, `buildkey.py`, `build.py` |
-| Master keeping the build IDs of other parents with the same key, and `--locked` checking them | `buildid.py` |
-| The remotes out of git, `private`, the other remotes read-only then, credentials for reading | `project.py`, `remote.py` |
-| `xcraft push --from <remote>`: server-side copies of the builds and sources of the commit | `commands/push.py`, `remote.py` |
-| The commit of a snapshot in its inputs, and the release tag of CI | `publish.py`, xcp-ng-dist's workflow |
+| Change | Where | Status |
+|---|---|---|
+| `maintenance_branches`, whose commit it is by the first-parent chains, the most recent fork point of the others | `project.py`, `buildid.py` | done |
+| The numbers `+b<n>.<m>`, and `+b<n>.<m>~<c>.<ident>`, in `xcraft.builds`, `%{autorev}` and the build paths | `builds.py`, `buildid.py` | done |
+| Master keeping the build IDs of other parents with the same key, and `--locked` checking them and the merge commits | `buildid.py` | done |
+| `[remote.private]` out of git, read through S3, the other remotes not written then | `project.py`, `remote.py`, `commands/__init__.py` | done |
+| `xcraft push --from private`: server-side copies of the builds and sources of the commit | `commands/push.py`, `remote.py` | done |
+| The commit of a snapshot in its inputs | `upload.py` | done |
+| `xcraft maint start [<release>]`: the branch from the commit of the latest stable snapshot, with its own commit | `commands/maint.py` | done |
+| The release tags of CI, the workflows of the maintenance branches, fetching master and the maintenance branches | xcp-ng-dist's workflows | to do |
+| The commit of a release by its contents, for the snapshots published before | `commands/maint.py` | to do |
 
 ## Open questions
 
-- Rebuilding an old commit of a maintenance branch, once the branch is merged and removed: its commits are only
-  master's ancestors then. Their builds are in the storage, by their keys, but `--locked` would number them as master's.
-  The release tags of the maintenance branch's releases, as maintenance branches, would keep them apart.
 - The compiler caches of the private builds: pushed to the private bucket, and not copied, or copied with the builds.
 - What the hosts of xcp-ng-tests need to read the private bucket: a snapshot copied to them with `xcraft repo --host`,
   or the credentials of the bucket.
