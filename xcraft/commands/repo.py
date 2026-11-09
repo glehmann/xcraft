@@ -114,7 +114,7 @@ def _connected(host: _Host) -> Generator[_Host]:
 
 def _copy_to_host(host: _Host, output: Path, ident: str, binaries: list[str], *, upgrade: bool) -> None:
     """Copy the repository of development builds in `output` to `host`, with its .repo file, and maybe upgrade
-    `binaries`.
+    `binaries`, removing the .repo file then.
     """
     remote = f"{REMOTE}/{ident}"
     with activity(f"copying the repository to {host.name}"):
@@ -125,9 +125,11 @@ def _copy_to_host(host: _Host, output: Path, ident: str, binaries: list[str], *,
     console.print(f"[bold green]✓[/] repository on {host.name}, in {remote}")
     if upgrade:
         # those installed, upgraded, dnf upgrade failing on the others, and those obsoleting installed packages,
-        # installed, replacing them, like openvswitch3.7 replacing openvswitch, which dnf upgrade does not
+        # installed, replacing them, like openvswitch3.7 replacing openvswitch, which dnf upgrade does not; then the
+        # .repo file removed, whatever happened, for the host to keep its usual repositories only
         ours = " ".join(f"-e {shlex.quote(b)}" for b in binaries)
         script = (
+            f"trap 'rm -f /etc/yum.repos.d/xcraft-{ident}.repo' EXIT\n"
             f"names=$(rpm -q --qf '%{{NAME}}\\n' {shlex.join(binaries)} | grep -v ' ' || true)\n"
             f"new=$(for p in {remote}/*.rpm; do\n"
             "  rpm -qp --qf '[%{OBSOLETENAME}\\n]' \"$p\" 2>/dev/null |\n"

@@ -138,7 +138,7 @@ repository to each host with rsync, through one SSH connection per host, which a
 `/var/local/xcraft/ID/`, and installs its `.repo` file, and with `--upgrade`, it also upgrades the packages the host
 has installed, and installs those obsoleting an installed package, replacing it, like `openvswitch3.7` replacing
 `openvswitch`, warning about those it keeps in other builds than the repository's, like newer ones of another
-identifier:
+identifier, and removes the `.repo` file then, for the host to keep its usual repositories only:
 
 ```
 xcraft repo xen --dependents --host root@testhost --upgrade
