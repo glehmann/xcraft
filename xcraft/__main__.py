@@ -8,9 +8,10 @@ import os
 import socket
 import subprocess
 import sys
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, ClassVar
 
 import typer
+from rich.text import Text
 from typer import _completion_shared
 
 from xcraft import process
@@ -126,10 +127,15 @@ _reflow(app)
 
 
 class _Handler(logging.Handler):
-    """Show the log messages on whole lines, above the progress of the activities, like the other messages."""
+    """Show the log messages on whole lines, above the progress of the activities, like the other messages, after
+    their level, in its color, like `debug:` in blue.
+    """
+
+    _COLORS: ClassVar = {logging.DEBUG: "blue", logging.WARNING: "yellow", logging.ERROR: "red"}
 
     def emit(self, record: logging.LogRecord) -> None:
-        messages.print(self.format(record), markup=False)
+        level = Text(f"{record.levelname.lower()}:", self._COLORS.get(record.levelno, ""))
+        messages.print(Text.assemble(level, " ", self.format(record)))
 
 
 def _names(typer_app: typer.Typer) -> Iterator[str]:
