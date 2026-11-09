@@ -25,6 +25,9 @@
 | `xcraft vm ssh [<command>...]` / `xcraft vm ssh-copy-id` | Log in as root in the VM, or run a command in it; install your SSH key there |
 | `xcraft key create` / `xcraft key show [--export]` | The developer's key, which signs the builds of dev mode, made by the first one otherwise |
 | `xcraft login [main\|dev]` / `xcraft logout [main\|dev]` | Store, once checked, or remove the S3 credentials of the server of the remote storage, `dev` by default, in the desktop keyring, for all its buckets |
+| `xcraft --maintenance <branch> <command>` | Number the builds against the branch, the main one or a maintenance one, like the target of a pull request, in CI, rather than by where the current branch forks; `$XCRAFT_MAINTENANCE` too |
+| `xcraft maint start [<release>] [--stage stable] [--at <commit>] [--name <branch>]` | Make the maintenance branch of a release, `maint/<release>` or `--name`, at the commit of its latest snapshot, see [Maintenance branches](builds.md#maintenance-branches) |
+| `xcraft push --from private --to main` | Copy from the private storage, server-side, the source archives and the final builds of the checkout main does not have, for a release under embargo |
 | `xcraft push` | Upload everything the remote storage misses: the source archives and the builds of all packages, with the `index.html` pages of their directories, and the resolutions |
 | `xcraft push sources [<pkg>...] [--check] [--to main\|dev]` | Upload cached sources, or check the selected bucket; defaults to dev |
 | `xcraft push builds [<pkg>...]` | Upload the current builds missing from the remote storage, for CI |

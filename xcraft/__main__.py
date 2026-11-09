@@ -31,6 +31,7 @@ from xcraft.commands import (
     lock,
     log,
     login,
+    maint,
     patchset,
     publish,
     push,
@@ -94,6 +95,7 @@ app.command(rich_help_panel="Sharing")(login.logout)
 app.add_typer(fetch.app, name="fetch", rich_help_panel="Sharing")
 app.add_typer(publish.app, name="publish", rich_help_panel="Publishing")
 app.add_typer(key.app, name="key", rich_help_panel="Publishing")
+app.add_typer(maint.app, name="maint", rich_help_panel="Publishing")
 app.add_typer(vm.app, name="vm", rich_help_panel="Host")
 
 
@@ -101,12 +103,22 @@ app.add_typer(vm.app, name="vm", rich_help_panel="Host")
 def options(
     trace: Annotated[bool, typer.Option("--trace", help="Show stack traces on errors.")] = False,  # noqa: ARG001
     debug: Annotated[bool, typer.Option("--debug", help="Show the commands xcraft runs.")] = False,  # noqa: ARG001
+    maintenance: Annotated[
+        str | None,
+        typer.Option(
+            "--maintenance",
+            metavar="BRANCH",
+            help="Number the builds against this branch, the main one or a maintenance one, like the target of a pull "
+            "request in CI, rather than by where the current one forks. $XCRAFT_MAINTENANCE, by default.",
+        ),
+    ] = None,
 ) -> None:
     """Build the XCP-ng distribution."""
     # --trace and --debug are handled in main(), they are declared here for --help
-    from xcraft import remote  # noqa: PLC0415, with urllib3: not for the completions
+    from xcraft import buildid, remote  # noqa: PLC0415, with urllib3: not for the completions
 
     remote.forget()  # what another command, in the same process like the tests, read
+    buildid.target = maintenance
 
 
 def _reflowed(doc: str | None) -> str | None:

@@ -36,15 +36,24 @@ the next build of master upgrades them. Master's numbers have no dot, so they ne
 
 ### Which branches
 
-The branches whose names match `maintenance_branches` of `xcraft.toml`, `maint/*` by default, like `maint/9.0`, as
-`origin/<name>` or else `<name>`, as for `main_branch`. The setting is the same on all the branches, so merging a
-maintenance branch into master changes nothing to it.
+The branches whose names match the patterns of `maintenance_branches` of `xcraft.toml`, `["maint/*"]` by default,
+like `maint/9.0`, or `embargo/xsa-123` with `embargo/*` too, as `origin/<name>` or else `<name>`, as for
+`main_branch`. The setting is the same on all the branches, so merging a maintenance branch into master changes nothing
+to it.
 
 Not the current branch's name: with jj, the HEAD of git is detached, and CI checks out a commit. The history tells.
 
-A maintenance branch starts with a commit of its own, which `xcraft maint start` makes, empty: without, it would only
-have master's commits, and a branch of it would be told apart from a branch of master forked at the release by
-nothing.
+A maintenance branch just made, at the release, has no commit of its own yet: only master's. A fork point which is its
+tip is one of its commits, while master went on since: a branch of it is then a maintenance one, but an old branch of
+master forked at the release too, whose pull request numbers it again, see below. While master is still at the
+release, both are the same commit, which only the branch tells apart:
+- on a maintenance branch, git's current branch, or with jj, the nearest bookmark of the main and maintenance branches
+  on `@` and its ancestors, like while editing the revision of `maint/xsa-123`, which git sees as changes on master,
+  the builds are numbered against it;
+- `xcraft --maintenance <branch>`, or `$XCRAFT_MAINTENANCE`, numbers them against the branch it names, the main one or
+  a maintenance one, rather than by the fork points: CI gives it the target of the pull request, or the branch pushed.
+
+Once the maintenance branch has a fix, its commits tell it apart anyway.
 
 ### Whose commit it is
 
@@ -296,10 +305,11 @@ inputs of a snapshot, `inputs.json`, have the build keys, the locked upstream pa
 commit. Three ways, together:
 
 - **The signed inputs.** `xcraft publish` records the commit in the inputs of the snapshot, signed with the rest: the
-  key of the stage vouches for it, for all the stages: that of the publication, a snapshot reused too, without
-  changes in the checkout. The commit users have is then that of the latest snapshot of the stable stage, its
-  signature checked: `xcraft maint start [9.0] [--stage stable]` creates the branch from it, with its own commit, or
-  from the commit of `--at`, for the snapshots published before.
+  key of the stage vouches for it, for all the stages: that of the publication, a snapshot reused too,
+  `<commit>-dirty` with changes in the checkout, and with jj, the commit of its working copy, or its parent's while it
+  is empty. The commit users have is then that of the latest snapshot of the stable stage, its
+  signature checked: `xcraft maint start [9.0] [--stage stable]` creates the branch at it, or at the commit of `--at`,
+  for the snapshots published before.
 - **The release tags.** The CI publishing to the stable stage tags the commit, `release/<release>/stable/<date>`: for
   git and people, to branch from, and to keep the commits of a maintenance branch reachable once it is removed. A tag
   can be moved or removed: it is a convenience, checked against the inputs, unless signed and protected.
@@ -318,7 +328,8 @@ commit. Three ways, together:
 | `[remote.private]` out of git, read through S3, the other remotes not written then | `project.py`, `remote.py`, `commands/__init__.py` | done |
 | `xcraft push --from private`: server-side copies of the builds and sources of the commit | `commands/push.py`, `remote.py` | done |
 | The commit of a snapshot in its inputs | `upload.py` | done |
-| `xcraft maint start [<release>]`: the branch from the commit of the latest stable snapshot, with its own commit | `commands/maint.py` | done |
+| `xcraft maint start [<release>]`: the branch at the commit of the latest stable snapshot | `commands/maint.py` | done |
+| `xcraft --maintenance <branch>`, `$XCRAFT_MAINTENANCE`: the builds numbered against the target of the branch | `buildid.py`, `__main__.py` | done |
 | The release tags of CI, the workflows of the maintenance branches, fetching master and the maintenance branches | xcp-ng-dist's workflows | to do |
 | The commit of a release by its contents, for the snapshots published before | `commands/maint.py` | to do |
 

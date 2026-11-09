@@ -47,6 +47,7 @@ from xcraft import (
 )
 from xcraft import publish as publisher
 from xcraft.__main__ import app
+from xcraft.cache import build_keys, build_path
 from xcraft.iso import cached_iso, checkout_iso, fetch_isos, iso_key, iso_name, iso_path, push_isos
 from xcraft.lock import load_lock
 from xcraft.project import Project, Remote
@@ -578,6 +579,52 @@ def test_builds_shared_by_checkouts(
     assert output.splitlines()[0].startswith("made the developer's key")  # of this checkout, for its builds
     assert output.splitlines()[1] == "↓ trivial fetched"
     assert output.splitlines()[-1] == "1 built, 1 fetched"
+
+
+def test_private_remote_storage(
+    root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_signer: tuple[str, Path]
+) -> None:
+    garage("bucket", "create", bucket := f"xcraft-private-{secrets.token_hex(4)}")
+    garage("bucket", "allow", "--read", "--write", bucket, "--key", "test")
+    # out of git: in it, it would be merged with the rest
+    private = f'[remote.private]\ns3_endpoint = "http://localhost:{S3_PORT}"\nbucket = "{bucket}"\n'
+    (root / "xcraft.toml").write_text(f"{REMOTE}{private}")
+    code, output = xcraft("status")
+    assert code == 1
+    assert "remote.private must be out of git" in output
+    (root / "xcraft.toml").write_text(re.sub(r"\[sign\]\n.*?(?=\[remote.main\])", "", REMOTE, flags=re.DOTALL))
+    (config := tmp_path / "private.toml").write_text(f'{private}build_keys = ["{build_signer[0]}"]\n')
+    monkeypatch.setenv("XCRAFT_CONFIG", str(config))
+    monkeypatch.setenv("GNUPGHOME", str(build_signer[1]))
+    assert xcraft("build", "trivial")[0] == 0
+    # nothing goes to the public buckets
+    code, output = xcraft("push", "builds", "trivial", "--key", build_signer[0], "--to", "main")
+    assert code == 2
+    # in the box of the error, wrapped
+    assert "the private remote storage is configured: nothing goes to the main one" in " ".join(
+        re.sub("[│╭╮╰╯─]", " ", output).split()
+    )
+    code, output = xcraft("push", "builds", "trivial", "--key", build_signer[0], "--to", "private")
+    assert code == 0, output
+    # fetched by another checkout of the same configuration, through S3
+    other = tmp_path / "elsewhere" / "xcraft"
+    shutil.copytree(root, other, ignore=shutil.ignore_patterns(".xcraft"))
+    monkeypatch.setenv("XCRAFT_PROJECT", str(other))
+    code, output = xcraft("build", "with-deps")
+    assert code == 0, output
+    assert "↓ trivial fetched" in output.splitlines()
+    # released: copied to the main bucket, server-side, as it is
+    project = Project.find()
+    path = build_path(project, "trivial", build_keys(project)["trivial"], build_signer[0])
+    assert not remote.tree_exists(project.config.remote["main"], path)
+    code, output = xcraft("push", "--from", "private", "--to", "main")
+    assert code == 0, output
+    assert output.splitlines()[-1] == "0 source archives and 1 builds copied"
+    assert remote.tree_exists(project.config.remote["main"], path)
+    assert (
+        xcraft("push", "--from", "private", "--to", "main")[1].splitlines()[-1]
+        == "0 source archives and 0 builds copied"
+    )
 
 
 def test_fetched_builds_recorded_once(
@@ -1238,6 +1285,37 @@ def test_signed_publish(root: Path) -> None:  # noqa: PLR0915
         )
     finally:
         subprocess.run(["gpgconf", "--homedir", str(signer.gnupghome), "--kill", "gpg-agent"], check=False)
+
+
+def test_maintenance_branch_of_the_release(root: Path) -> None:
+    (root / ".gitignore").write_text(".xcraft/\n")
+    code, output = xcraft("publish", "repos", "--to", "main")  # of the platforms of the test, locking them
+    assert code == 0, output
+    commit_base(root)
+    release = git(root, "rev-parse", "HEAD").stdout.strip()
+    # published again, from the commit: the same snapshot, reused, with the commit
+    code, output = xcraft("publish", "repos", "--to", "main", "--locked")
+    assert code == 0, output
+    assert "(reused the matching snapshot)" in output
+    edit(root, "after the release")
+    git(root, "commit", "-qam", "after the release")
+    # at the commit of its latest snapshot
+    code, output = xcraft("maint", "start", "--stage", STAGE)
+    assert code == 0, output
+    assert f"maint/9.0, from {release[:12]}" in output
+    assert git(root, "rev-parse", "maint/9.0").stdout.strip() == release
+    assert "maint/9.0 exists already" in xcraft("maint", "start", "--stage", STAGE)[1]
+    # of another pattern
+    config = root / "xcraft.toml"
+    config.write_text(f'maintenance_branches = ["maint/*", "embargo/*"]\n{config.read_text()}')
+    code, output = xcraft("maint", "start", "--stage", STAGE, "--name", "embargo/xsa-123")
+    assert code == 0, output
+    assert git(root, "rev-parse", "embargo/xsa-123").stdout.strip() == release
+    code, output = xcraft("maint", "start", "--stage", STAGE, "--name", "fix/xsa-123")
+    assert code == 1
+    assert "fix/xsa-123 is of none of the maintenance_branches: maint/*, embargo/*" in output
+    assert git(root, "rev-parse", "-q", "--verify", "fix/xsa-123").returncode != 0
+    assert "no published snapshot in repos/9.0/nothing/latest" in xcraft("maint", "start", "--stage", "nothing")[1]
 
 
 def test_publish_rebuilt_package(root: Path, tmp_path: Path) -> None:

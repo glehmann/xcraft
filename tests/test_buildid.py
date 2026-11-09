@@ -72,11 +72,11 @@ def commit_base(root: Path, branch: str = "master") -> None:
     git(root, "commit", "-qm", "base")
 
 
-def update() -> dict[str, int]:
-    """Update the build IDs, and return their numbers."""
+def update() -> dict[str, int | str]:
+    """Update the build IDs, and return their numbers, like 2, or "1.1" for maintenance ones."""
     project = Project.find()
     buildid.update(project)
-    return {name: i.number for name, i in buildid.read(project).items()}
+    return {name: i.build for name, i in buildid.read(project).items()}
 
 
 def edit(root: Path, line: str, *, name: str = "trivial", top: bool = True) -> None:
@@ -263,6 +263,160 @@ def test_main_branch_setting(root: Path) -> None:
     assert update() == {"trivial": 2, "with-deps": 2}
     edit(root, "feature again")
     assert update() == {"trivial": 2, "with-deps": 2}
+
+
+def locked() -> None:
+    """Check the build IDs as CI does, with --locked."""
+    project = Project.find()
+    project.frozen = True
+    buildid.update(project)
+
+
+def version(name: str) -> str:
+    """Return the version of the build of `name` xcraft status shows."""
+    return next(line.split()[1] for line in xcraft("status", "--full")[1].splitlines() if line.split()[0] == name)
+
+
+def test_maintenance_branches(root: Path) -> None:
+    commit_base(root)
+    release = git(root, "rev-parse", "HEAD").stdout.strip()
+    edit(root, "master", name="with-deps")
+    assert update() == {"trivial": 1, "with-deps": 2}
+    git(root, "commit", "-qam", "master")
+    # a fix of the release, on a maintenance branch: above the release's numbers, below master's next ones
+    # made at the release, master having moved since: its branches are maintenance ones
+    git(root, "checkout", "-qb", "maint/9.0", release)
+    git(root, "checkout", "-qb", "fix")
+    edit(root, "fix")
+    assert update() == {"trivial": "1.1", "with-deps": "1.1"}
+    assert version("trivial") == "1.0-1+b1.1~1.dev.xcpng8.99"
+    git(root, "commit", "-qam", "fix")
+    git(root, "checkout", "-q", "maint/9.0")
+    assert git(root, "merge", "-q", "--no-ff", "fix").returncode == 0
+    # final builds there, checked as on master
+    locked()
+    assert version("trivial") == "1.0-1+b1.1.xcpng8.99"
+    # the fix revised, on another branch of it
+    git(root, "checkout", "-qb", "revised")
+    edit(root, "revised")
+    assert update() == {"trivial": "1.2", "with-deps": "1.2"}
+    assert version("with-deps") == "1.0-1+b1.2~1.dev.xcpng8.99"
+    git(root, "commit", "-qam", "revised")
+    git(root, "checkout", "-q", "maint/9.0")
+    git(root, "merge", "-q", "--no-ff", "revised")
+    locked()
+    # merged into master: trivial keeps its build, master changed none of its inputs; with-deps, which master changed,
+    # gets master's next number
+    git(root, "checkout", "-q", "master")
+    assert git(root, "merge", "-q", "--no-ff", "maint/9.0").returncode != 0
+    assert update() == {"trivial": "1.2", "with-deps": 3}
+    assert version("trivial") == "1.0-1+b1.2.xcpng8.99"
+    git(root, "commit", "-qam", "merge")
+    locked()
+    # and the next one, after
+    edit(root, "after the merge")
+    assert update() == {"trivial": 2, "with-deps": 4}
+    # still maintenance commits, the branch removed, with the release tag of its last release
+    git(root, "tag", "release/9.0/stable/1", "maint/9.0")
+    git(root, "branch", "-qD", "maint/9.0")
+    git(root, "stash", "-q")
+    git(root, "checkout", "-q", "release/9.0/stable/1")
+    locked()
+    assert version("trivial") == "1.0-1+b1.2.xcpng8.99"
+
+
+def test_commit_of_the_checkout(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project = Project.find()
+    assert buildid.commit(project) is None  # out of git
+    (root / ".gitignore").write_text(".xcraft/\n")
+    commit_base(root)
+    head = git(root, "rev-parse", "HEAD").stdout.strip()
+    assert buildid.commit(project) == head
+    edit(root, "changed")
+    assert buildid.commit(project) == f"{head}-dirty"
+    if not shutil.which("jj"):
+        return
+    # with jj, the commit of its working copy, which git sees as changes, or its parent's while it is empty
+    (config := tmp_path / "jj.toml").write_text('user.name = "test"\nuser.email = "test@example.com"\n')
+    monkeypatch.setenv("JJ_CONFIG", str(config))
+    git(root, "checkout", "-q", "--", ".")
+    assert (
+        subprocess.run(["jj", "git", "init", "--colocate"], cwd=root, capture_output=True, check=False).returncode == 0
+    )
+    assert buildid.commit(project) == head
+    edit(root, "changed with jj")
+    working = buildid.commit(project)
+    assert working not in (head, f"{head}-dirty")
+    log = ["jj", "log", "-r", "@", "--no-graph", "-T", "commit_id"]
+    assert working == subprocess.run(log, cwd=root, capture_output=True, text=True, check=True).stdout
+
+
+def test_maintenance_branches_of_several_patterns(root: Path) -> None:
+    config = root / "xcraft.toml"
+    config.write_text(f'maintenance_branches = ["maint/*", "embargo/*"]\n{config.read_text()}')
+    commit_base(root)
+    release = git(root, "rev-parse", "HEAD").stdout.strip()
+    edit(root, "master")
+    update()
+    git(root, "commit", "-qam", "master")
+    git(root, "checkout", "-qb", "embargo/xsa-123", release)
+    edit(root, "fix")
+    assert update() == {"trivial": "1.1", "with-deps": "1.1"}
+
+
+@pytest.mark.skipif(not shutil.which("jj"), reason="needs jj")
+def test_maintenance_branch_of_jj(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (config := tmp_path / "jj.toml").write_text('user.name = "test"\nuser.email = "test@example.com"\n')
+    monkeypatch.setenv("JJ_CONFIG", str(config))
+
+    def jj(*args: str) -> None:
+        subprocess.run(["jj", *args], cwd=root, capture_output=True, check=True)
+
+    (root / ".gitignore").write_text(".xcraft/\n")
+    commit_base(root)
+    jj("git", "init", "--colocate")
+    # editing the revision of the bookmark of a maintenance branch, which git sees as changes on master
+    jj("bookmark", "create", "maint/xsa-123", "-r", "@")
+    edit(root, "fix")
+    assert update() == {"trivial": "1.1", "with-deps": "1.1"}
+    assert version("trivial") == "1.0-1+b1.1~1.dev.xcpng8.99"
+    # on top of it, like jj new maint/xsa-123 makes: the next build of the branch, whose tip has 1.1
+    jj("new")
+    edit(root, "fix again")
+    assert update() == {"trivial": "1.2", "with-deps": "1.2"}
+    assert version("trivial") == "1.0-1+b1.2~1.dev.xcpng8.99"
+    # not on a maintenance branch anymore
+    jj("bookmark", "delete", "maint/xsa-123")
+    assert update() == {"trivial": 2, "with-deps": 2}
+
+
+def test_maintenance_branch_merged_by_fast_forward(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    commit_base(root)
+    git(root, "checkout", "-qb", "maint/9.0")
+    git(root, "checkout", "-qb", "fix")
+    edit(root, "fix")
+    # master still at the release: the branch is told a maintenance one by its target only, like in CI
+    assert update() == {"trivial": 2, "with-deps": 2}
+    monkeypatch.setenv("XCRAFT_MAINTENANCE", "nothing")
+    with pytest.raises(buildid.BuildIdError, match="no maintenance branch nothing, of maint/"):
+        update()
+    monkeypatch.setenv("XCRAFT_MAINTENANCE", "maint/9.0")
+    assert update() == {"trivial": "1.1", "with-deps": "1.1"}
+    monkeypatch.setenv("XCRAFT_MAINTENANCE", "master")
+    assert update() == {"trivial": 2, "with-deps": 2}
+    assert xcraft("--maintenance", "maint/9.0", "build", "--ids")[0] == 0
+    assert buildid.read(Project.find())["trivial"].build == "1.1"
+    monkeypatch.delenv("XCRAFT_MAINTENANCE")
+    git(root, "commit", "-qam", "fix")
+    git(root, "checkout", "-q", "maint/9.0")
+    git(root, "merge", "-q", "--no-ff", "fix")
+    # its commits on master's first-parent chain, with numbers master never gives
+    git(root, "checkout", "-q", "master")
+    git(root, "merge", "-q", "--ff-only", "maint/9.0")
+    with pytest.raises(
+        buildid.BuildIdError, match=r"not from the maintenance branches it merges: trivial, with-deps; "
+    ):
+        locked()
 
 
 def test_development_builds_without_the_tests_of_the_specs(root: Path) -> None:

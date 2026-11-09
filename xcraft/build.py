@@ -212,7 +212,7 @@ def update_build_ids(project: Project) -> list[str]:
     """
     if changed := buildid.update(project):
         ids = buildid.read(project)
-        console.print("build IDs: " + ", ".join(f"{name} {ids[name].number}" for name in changed if name in ids))
+        console.print("build IDs: " + ", ".join(f"{name} {ids[name].build}" for name in changed if name in ids))
     return changed
 
 

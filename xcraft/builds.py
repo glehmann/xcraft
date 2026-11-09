@@ -13,7 +13,7 @@ import re
 import tomllib
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from xcraft.display import changes
 from xcraft.lock import Recorded
@@ -34,7 +34,10 @@ _HEADER = "# written by xcraft: the builds of our packages, and what they found 
 class BuildId(BaseModel):
     """The build ID of a package."""
 
-    number: int = Field(ge=1)
+    number: int = Field(ge=0)
+    sub: int = Field(default=0, ge=0)
+    """The number of a build of a maintenance branch, after the number of the release it forks from: +b<n>.<sub>,
+    between +b<n> and +b<n+1>. 0 for the other builds."""
     key: str = Field(pattern=r"^[0-9a-f]{64}$")
     """The build key, the same on all the architectures."""
     accepts: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
@@ -43,9 +46,26 @@ class BuildId(BaseModel):
     """The epoch-version-release of the package, without %dist: the numbers start again at 1 when it goes up. None for
     the build IDs given before it was recorded."""
 
+    @model_validator(mode="after")
+    def _numbered(self) -> BuildId:
+        if not self.number and not self.sub:
+            msg = "number: 0, the release suffix +b0, before the first build, but for a maintenance build, 0.<sub>"
+            raise ValueError(msg)
+        return self
+
+    @property
+    def build(self) -> int | str:
+        """Return its number, as in the release suffix, +b<build>, and in xcraft.builds: ``42``, or ``"42.1"``."""
+        return f"{self.number}.{self.sub}" if self.sub else self.number
+
+    @property
+    def order(self) -> tuple[int, int]:
+        """Return what its number sorts by."""
+        return self.number, self.sub
+
     def text(self) -> str:
         """Return it on one line: ``<number> <key>``, and ``accepts <key>`` for a reused build."""
-        return f"{self.number} {self.key}" + (f" accepts {self.accepts}" if self.accepts else "")
+        return f"{self.build} {self.key}" + (f" accepts {self.accepts}" if self.accepts else "")
 
     def matches(self, key: str) -> bool:
         """Return whether a package of build `key` has this build ID: built from it, or reusing it for it."""
@@ -53,7 +73,7 @@ class BuildId(BaseModel):
 
     def same(self, other: BuildId | None) -> bool:
         """Return whether `other` is the same build: of the same number and key."""
-        return other is not None and (self.number, self.key) == (other.number, other.key)
+        return other is not None and (self.order, self.key) == (other.order, other.key)
 
 
 class Builds(BaseModel):
@@ -105,8 +125,13 @@ def parse_builds(text: str) -> Builds:
     builds = Builds()
     for package, entries in tomllib.loads(_unconflicted(text)).items():
         if "build" in entries:
+            number, _, sub = str(entries["build"]).partition(".")
             builds.ids[package] = BuildId(
-                number=entries["build"], key=entries["key"], accepts=entries.get("accepts"), evr=entries.get("evr")
+                number=int(number),
+                sub=int(sub or 0),
+                key=entries["key"],
+                accepts=entries.get("accepts"),
+                evr=entries.get("evr"),
             )
         for arch, found in [
             ("", entries),
@@ -154,7 +179,7 @@ def render(project: Project, builds: Builds) -> str:
         lines.setdefault(package, []).append(f"{toml_key(package)}.{key} = {json.dumps(value)}")
 
     for name, i in builds.ids.items():
-        add(name, "build", i.number)
+        add(name, "build", i.build)
         add(name, "key", i.key)
         if i.accepts:
             add(name, "accepts", i.accepts)

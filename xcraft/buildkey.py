@@ -175,7 +175,7 @@ class Inputs:
                 self.hashes[name],
                 self.recipe,
                 lock_inputs(self.platforms, self.lock, self.builds, name),
-                [[dep, ids[dep].number, ids[dep].key] for dep in sorted(self.deps[name] - component)],
+                [[dep, ids[dep].build, ids[dep].key] for dep in sorted(self.deps[name] - component)],
             ]
             for name in sorted(component)
         }

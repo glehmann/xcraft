@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 from rich.markup import escape
 
-from xcraft import remote, remote_pages
+from xcraft import buildid, remote, remote_pages
 from xcraft.cache import BuildError, build_keys, build_path
 from xcraft.display import activity, console
 from xcraft.iso import iso_inputs
@@ -42,6 +42,10 @@ class SnapshotInputs(BaseModel):
 
     keys: dict[str, str]
     files: dict[str, str]
+    commit: str | None = None
+    """The git commit of its publication, a maintenance branch of the release starts from, see xcraft maint start:
+    <commit>-dirty for a checkout with changes, see xcraft.buildid.commit(), none for the snapshots published before it
+    was recorded."""
 
 
 def inputs_tree(latest: str) -> str:
@@ -120,12 +124,13 @@ class Uploader:
         """Publish the latest snapshot of the `platforms` again, as a new one, by copies in the storage, when it is
         trusted and made of the same, and return whether it was.
         """
-        manifests = {kind: self._reusable(kind, keys) for kind, keys in self._inputs(platforms, only, isos).items()}
+        wanted = self._inputs(platforms, only, isos)
+        manifests = {kind: self._reusable(kind, keys) for kind, keys in wanted.items()}
         if not manifests or not all(manifests.values()):
             return False
         name = self.snapshot_name()
         for i, (kind, manifest) in enumerate(manifests.items()):
-            if not self._copy_latest(kind, name, manifest):  # all assembled again, as `name`
+            if not self._copy_latest(kind, name, manifest, wanted[kind]):  # all assembled again, as `name`
                 for copied in list(manifests)[: i + 1]:
                     _delete_stale(self.storage, snapshot_tree(self.project, copied, name), set())
                 return False
@@ -159,8 +164,17 @@ class Uploader:
         manifest = remote.read_manifest(self.storage, latest, trusted=self._trusted)
         return manifest if manifest and inputs.keys == keys and inputs.files == manifest else {}
 
-    def _copy_latest(self, kind: str, name: str, manifest: dict[str, str]) -> bool:
-        """Copy the latest snapshot of `kind`, with its `manifest`, as `name`, and return whether it could."""
+    def _write_inputs(self, latest: str, keys: dict[str, str], manifest: dict[str, str]) -> None:
+        """Write what the latest snapshot `latest` was made from: its input `keys`, its `manifest`, and the commit."""
+        with self.project.tmp_dir("snapshot-inputs") as work:
+            snapshot = SnapshotInputs(keys=keys, files=manifest, commit=buildid.commit(self.project))
+            (work / INPUTS).write_text(snapshot.model_dump_json())
+            remote.upload_tree(self.storage, inputs_tree(latest), work, [INPUTS], signer=self._signing)
+
+    def _copy_latest(self, kind: str, name: str, manifest: dict[str, str], keys: dict[str, str]) -> bool:
+        """Copy the latest snapshot of `kind`, with its `manifest`, made from the input `keys`, as `name`, with the
+        commit of this publication, and return whether it could.
+        """
         latest, target = snapshot_tree(self.project, kind, "latest"), snapshot_tree(self.project, kind, name)
         with activity(f"reusing the published {kind} as {target}", log=True) as on_line:
             try:
@@ -171,6 +185,7 @@ class Uploader:
                 return False
             remote.write_manifest(self.storage, target, manifest, signer=self._signing)
             _delete_stale(self.storage, target, {*manifest, remote.MANIFEST})
+            self._write_inputs(latest, keys, manifest)
             remote_pages.update_pages(self.project, self.storage, [f"{target}/", f"{latest}/"])
         console.print(f"[bold green]✓[/] published {target}, and as {latest} (reused the matching snapshot)")
         return True
@@ -266,9 +281,7 @@ class Uploader:
             remote.delete(self.storage, [f"{latest}/{remote.MANIFEST}"])
             changed = {f: f"{tree}/{f}" for f in manifest if previous.get(f) != manifest[f]}
             self._write(latest, manifest, changed, on_line)
-            with self.project.tmp_dir("snapshot-inputs") as work:
-                (work / INPUTS).write_text(SnapshotInputs(keys=inputs, files=manifest).model_dump_json())
-                remote.upload_tree(self.storage, inputs_tree(latest), work, [INPUTS], signer=self._signing)
+            self._write_inputs(latest, inputs, manifest)
             on_line("the pages of the directories")
             pages = [f"{tree}/", f"{latest}/", f"{inputs_tree(latest)}/", *(pages or [])]
             remote_pages.update_pages(self.project, self.storage, pages)

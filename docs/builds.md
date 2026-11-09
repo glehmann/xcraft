@@ -108,6 +108,33 @@ in theirs, so they keep their builds too, unless they changed otherwise. A reuse
 one of the main branch, cached, or in the remote storage, on each architecture. Reusing builds needs the main branch,
 in a git repository.
 
+## Maintenance branches
+
+A fix of a release, like a security fix under embargo, is made on a maintenance branch, of the patterns of
+`maintenance_branches` of `xcraft.toml`, `["maint/*"]` by default, like `["maint/*", "embargo/*"]`: from the commit
+of the release, while master went on. Its builds are
+final ones, numbered `+b<n>.<m>`: the number of the release's build, `n`, and a counter of the builds of the branch,
+`m`, from 1: `1+b42.1.xcpng8.99` upgrades the release's `1+b42`, and master's next build, `1+b43`, upgrades it. A
+greater epoch-version-release gives `+b0.1`. The branches of a maintenance branch get development builds of these
+numbers, `+b42.3~1.dev`.
+
+`xcraft maint start [<release>]` makes the branch at the commit of the latest snapshot of the stable stage of the
+release, `--stage` for another one, or at that of `--at`: `maint/<release>`, of the first pattern, or the name of
+`--name`, like `embargo/xsa-123`, of one of them. The builds are numbered against it on it, git's current
+branch, or with jj, when it is the nearest bookmark of `@` and its ancestors, like while editing the revision of
+`maint/xsa-123`, or after `jj new maint/9.0`; and on its branches, whose fork point with it is more recent than with
+master, or is its tip, while master went on since the release. Otherwise, like while master is still at the release,
+`xcraft --maintenance maint/9.0`, or `$XCRAFT_MAINTENANCE`, numbers the builds against the branch it names, the main
+one or a maintenance one: CI gives it the target of a pull request, or the branch pushed.
+A commit is a maintenance branch's when it is on its
+first-parent chain, but not on master's: so the maintenance branches must be merged into master with merge commits,
+not fast-forwarded nor squashed, which `--locked` checks on master. Master then keeps their build IDs when the key is
+the same, and its number greater, as when master changed none of the inputs of the package since the release: the
+users get the same build at the next release of master. The release tags, `release/...`, keep the commits of a
+maintenance branch removed since.
+
+See [the design](embargo-design.md), for the private storage of the builds under embargo, and their release.
+
 ## Development builds
 
 While working on a package, a developer installs several builds of it on the same test host. Each one must upgrade

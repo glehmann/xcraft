@@ -18,7 +18,7 @@ def login(storage: Storage = "dev") -> None:
     """Store the S3 credentials of the server of a remote storage in the desktop keyring, for all its buckets, once
     checked on that one's: those of the environment, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, take precedence.
     """
-    selected = remote_storage(Project.find(), storage)
+    selected = remote_storage(Project.find(), storage, write=False)
     remote.login(
         selected, remote.Credentials(typer.prompt("Access key ID").strip(), typer.prompt("Secret key", hide_input=True))
     )
@@ -27,7 +27,7 @@ def login(storage: Storage = "dev") -> None:
 
 def logout(storage: Storage = "dev") -> None:
     """Remove the S3 credentials of the server of a remote storage from the desktop keyring."""
-    endpoint = remote_storage(Project.find(), storage).s3_endpoint
+    endpoint = remote_storage(Project.find(), storage, write=False).s3_endpoint
     console.print(
         f"credentials of {endpoint} removed" if remote.logout(endpoint) else f"no credentials of {endpoint} to remove"
     )

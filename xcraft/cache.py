@@ -57,7 +57,7 @@ def build_keys(
     keys: dict[str, str] = {}
 
     def final(name: str) -> str:
-        return f"{ids[name].key}+b{ids[name].number}"
+        return f"{ids[name].key}+b{ids[name].build}"
 
     for component in components(deps):  # the dependencies first
         outside = {dep: keys[dep] for name in component for dep in deps[name] - component}
@@ -67,7 +67,7 @@ def build_keys(
             continue
         builds = {name: [ids[name].key, autorev.get(name, "")] for name in component}
         for name in component:
-            keys[name] = f"{buildkey.development_key(builds, outside, name)}+b{ids[name].number}{builds[name][1]}"
+            keys[name] = f"{buildkey.development_key(builds, outside, name)}+b{ids[name].build}{builds[name][1]}"
         # but a reused build, the main branch's, built against its builds
         keys |= {name: final(name) for name in component if ids[name].accepts}
     return keys

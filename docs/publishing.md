@@ -78,7 +78,10 @@ checkout, while the latest snapshot has these files still, `xcraft publish` reus
 dated snapshot, without downloading RPMs, assembling repositories or rebuilding ISOs. Its input keys cover package
 builds, locked upstream packages, assembly recipes, architecture, signing identity and relevant repository/ISO
 configuration. Changed inputs take the normal assembly path. Older snapshots need one full publication to acquire the
-input record.
+input record. It has the commit of the publication too, a reused snapshot's as well: `<commit>-dirty` from a checkout
+with changes, and with jj, the commit of its working copy, which git sees as changes, or its parent's while it is
+empty. `xcraft maint start` makes the maintenance branch of a release from that of its latest stable snapshot, see
+[Maintenance branches](builds.md#maintenance-branches).
 `--local` and an explicit `--output` still materialize the snapshot locally.
 
 `xcraft publish repos` only publishes the repositories, and `xcraft publish isos` the ISOs, under a snapshot name

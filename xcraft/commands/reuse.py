@@ -30,8 +30,8 @@ def reuse(packages: Packages = None, dep: Dep = None) -> None:
         ids = buildid.read(project)
         for name in sorted({*changed, *packages}):
             if name in ids and ids[name].accepts:
-                console.print(f"[bold]{name}[/]: reuses its build {ids[name].number}")
+                console.print(f"[bold]{name}[/]: reuses its build {ids[name].build}")
             elif name in packages:
                 console.print(f"[yellow]{name}[/]: changed itself, built again")
             elif name in ids:
-                console.print(f"{name}: build {ids[name].number}")
+                console.print(f"{name}: build {ids[name].build}")

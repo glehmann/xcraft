@@ -14,7 +14,7 @@ from xcraft.commands import Arch, Final, Key, Packages, To, prepared_project, re
 from xcraft.devbuilds import developed
 from xcraft.display import activity, console
 from xcraft.iso import push_isos
-from xcraft.project import Project, Remote
+from xcraft.project import Destination, Project, Remote
 from xcraft.resolution import remote_tree, resolutions_read
 from xcraft.signing import Signer, key_signer
 from xcraft.sources import has_cached_source, read_manifest, sha256_of, source_path
@@ -90,6 +90,45 @@ def _push_builds(
     return not_built
 
 
+def _copy(project: Project, source: Remote, storage: Remote) -> None:
+    """Copy from `source` to `storage`, server-side, the source archives and the final builds of the packages of the
+    checkout `storage` does not have, those signed by a key it trusts: the builds of a maintenance branch, made in
+    private, released as they are, see docs/embargo-design.md.
+    """
+    archives = sorted(
+        source_path(filename, digest)
+        for directory in project.package_dirs.values()
+        if (manifest := directory / "sources").exists()
+        for filename, digest in read_manifest(manifest).items()
+    )
+    with activity("checking the remote storages"):
+        archives = sorted(remote.existing(source, sorted(set(archives) - remote.existing(storage, archives))))
+    if archives:
+        with activity(f"copying {len(archives)} source archives"):
+            remote.transfer(storage, {path: remote.Located(source, path) for path in archives})
+    keys, trusted = build_keys(project), source.model_copy(update={"build_keys": storage.build_keys})
+    paths = {
+        (name, fingerprint): build_path(project, name, keys[name], fingerprint)
+        for name in sorted(project.packages)
+        for fingerprint in storage.build_keys
+    }
+    with activity("checking the remote storages"), ThreadPoolExecutor(remote.REQUESTS) as pool:
+        present = set(pool.map(lambda p: p if remote.tree_exists(storage, p) else None, paths.values()))
+    copied = []
+    for (name, fingerprint), path in paths.items():
+        if path not in present:
+            with activity(f"copying the build of {name}"):
+                if remote.copy_tree(trusted, storage, path, signer=fingerprint):
+                    copied.append(path)
+                    console.print(f"[green]↑[/] {name}")
+    if archives or copied:
+        with activity("making the pages of the directories"):
+            remote_pages.update_pages(
+                project, storage, [*(f"{p.rsplit('/', 1)[0]}/" for p in archives), *(f"{p}/" for p in copied)]
+            )
+    console.print(f"{len(archives)} source archives and {len(copied)} builds copied")
+
+
 def _push_resolutions(project: Project, storage: Remote, *, signer: Signer | None) -> None:
     """Upload the resolutions this process read, those of the project as it is once loaded, which `storage` misses, or
     has others of: resolved again here, as the versions of the packages of ours they depend on changed, see
@@ -123,7 +162,21 @@ def _push_upstream(project: Project, storage: Remote) -> list[str]:
 
 
 @app.callback(invoke_without_command=True)
-def everything(ctx: typer.Context, final: Final = False, arch: Arch = None, key: Key = None, to: To = "dev") -> None:
+def everything(
+    ctx: typer.Context,
+    final: Final = False,
+    arch: Arch = None,
+    key: Key = None,
+    to: To = "dev",
+    from_: Annotated[
+        Destination | None,
+        typer.Option(
+            "--from",
+            help="Copy from this bucket instead, server-side, the source archives and the final builds of the "
+            "checkout the other one misses: those of a maintenance branch, made in private, for their release.",
+        ),
+    ] = None,
+) -> None:
     """Upload to the remote storage what it does not have yet.
 
     Without a command: the sources and the builds of all the packages, but the development ones, unless --final, which
@@ -135,9 +188,15 @@ def everything(ctx: typer.Context, final: Final = False, arch: Arch = None, key:
     """
     if ctx.invoked_subcommand:
         # all the options given before the subcommand are its defaults: those given after it win
-        ctx.default_map = {ctx.invoked_subcommand: {k: v for k, v in ctx.params.items() if v is not None}}
+        params = {k: v for k, v in ctx.params.items() if v is not None and k != "from_"}
+        ctx.default_map = {ctx.invoked_subcommand: params}
         return
     project = prepared_project(arch=arch)
+    if from_:
+        _copy(
+            project, remote_storage(project, from_, write=False), remote_storage(project, to, write=from_ != "private")
+        )
+        return
     storage = remote_storage(project, to)
     absent = _push_sources(project, storage, None)
     signer = key_signer(project, key)
@@ -163,7 +222,7 @@ def sources(
 ) -> None:
     """Upload cached sources to the selected bucket, or only check it with --check."""
     project = unprepared_project(packages, arch=arch)
-    if absent := _push_sources(project, remote_storage(project, to), packages, check=check):
+    if absent := _push_sources(project, remote_storage(project, to, write=not check), packages, check=check):
         msg = f"not in the source cache: {', '.join(absent)}"
         raise RuntimeError(msg)
 

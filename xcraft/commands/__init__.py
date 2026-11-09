@@ -86,10 +86,16 @@ def prepared_project(names: list[str] | None = None, *, locked: bool = False, ar
     return project
 
 
-def remote_storage(project: Project, to: Destination = "main") -> Remote:
-    """Return the remote storage of the project, which the command needs."""
+def remote_storage(project: Project, to: Destination = "main", *, write: bool = True) -> Remote:
+    """Return the remote storage of the project, which the command needs, to `write` to it: only the private one while
+    it is configured, for nothing under embargo to go to the others.
+    """
     if not (storage := project.config.remote.get(to)):
-        msg = f"no {to} remote storage: see [remote.{to}] in xcraft.toml"
+        where = ".xcraft/config.toml, or $XCRAFT_CONFIG" if to == "private" else "xcraft.toml"
+        msg = f"no {to} remote storage: see [remote.{to}] in {where}"
+        raise typer.BadParameter(msg)
+    if write and to != "private" and "private" in project.config.remote:
+        msg = f"the private remote storage is configured: nothing goes to the {to} one, but with xcraft push --from"
         raise typer.BadParameter(msg)
     return storage
 

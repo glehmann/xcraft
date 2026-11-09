@@ -109,10 +109,30 @@ def _absent_or_raise(storage: Remote, path: str, error: OSError) -> bool:
     raise RemoteError(msg) from error
 
 
+def _read_privately(storage: Remote, path: str, dest: Path | None) -> bool:
+    """Return whether the private storage has `path`, downloaded to `dest`, if given, through S3."""
+    from botocore.exceptions import ClientError  # noqa: PLC0415
+
+    log.debug("%s %s", "downloading" if dest else "checking", _s3_url(storage, path))
+    with writing(storage, f"read {path}") as s3:
+        try:
+            if dest:
+                s3.download_file(storage.bucket, path, str(dest))
+            else:
+                s3.head_object(Bucket=storage.bucket, Key=path)
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):
+                return False
+            raise
+    return True
+
+
 def exists(storage: Remote, path: str) -> bool:
     """Return whether the shared storage has `path`."""
     import urllib.request  # noqa: PLC0415
 
+    if storage.private:
+        return _read_privately(storage, path, None)
     url = _url(storage, path)
     log.debug("checking %s", url)
     try:
@@ -164,6 +184,12 @@ def download(storage: Remote, path: str, dest: Path, on_line: Callable[[str], No
     """Download `path` to `dest`, and return whether the shared storage has it."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_name(f"{dest.name}.part")
+    if storage.private:
+        if not _read_privately(storage, path, part):
+            part.unlink(missing_ok=True)
+            return False
+        part.rename(dest)
+        return True
     try:
         if _pooled(url := _url(storage, path)):
             _get(url, part, download_progress(on_line))
@@ -553,11 +579,13 @@ def tree_exists(storage: Remote, prefix: str, *, trusted: Signer | None = None, 
 
 
 def storages(project: Project) -> list[Remote]:
-    """Return the storages, main then dev, each trusting the keys of both: a tree is as trusted in either."""
+    """Return the storages, main, dev, then the private one, each trusting the keys of all: a tree is as trusted in
+    any.
+    """
     keys = sorted({key for storage in project.config.remote.values() for key in storage.build_keys})
     return [
         storage.model_copy(update={"build_keys": keys})
-        for name in ("main", "dev")
+        for name in ("main", "dev", "private")
         if (storage := project.config.remote.get(name))
     ]
 
@@ -568,8 +596,8 @@ def _own(project: Project) -> Signer | None:
 
 
 def _first[T](project: Project, attempt: Callable[[Remote], T]) -> T | None:
-    """Return the first result of `attempt` on main, then dev, that is not empty, or else raise the error of one, if
-    any.
+    """Return the first result of `attempt` on main, dev, then the private storage, that is not empty, or else raise
+    the error of one, if any.
     """
     error = None
     for storage in storages(project):
@@ -584,8 +612,8 @@ def _first[T](project: Project, attempt: Callable[[Remote], T]) -> T | None:
 
 
 def tree_available(project: Project, prefix: str, fingerprint: str | None = None) -> bool:
-    """Return whether main, or else dev, has the trusted tree `prefix`, signed by `fingerprint`, with one, from its
-    manifest only.
+    """Return whether main, dev, or else the private storage, has the trusted tree `prefix`, signed by `fingerprint`,
+    with one, from its manifest only.
     """
     trusted = _own(project)
     return bool(_first(project, lambda s: tree_exists(s, prefix, trusted=trusted, signer=fingerprint)))
@@ -634,8 +662,8 @@ def fetch_tree(
     on_line: Callable[[str], None] = lambda _: None,
     fingerprint: str | None = None,
 ) -> bool:
-    """Download the trusted tree `prefix`, signed by `fingerprint`, with one, from main, or else dev, as `dest`, its
-    manifest checked before its files, and return whether one has it.
+    """Download the trusted tree `prefix`, signed by `fingerprint`, with one, from main, dev, or else the private
+    storage, as `dest`, its manifest checked before its files, and return whether one has it.
     """
     trusted = _own(project)
     return bool(_first(project, lambda s: download_tree(s, prefix, dest, on_line, trusted=trusted, signer=fingerprint)))
@@ -715,6 +743,22 @@ def upload_tree(storage: Remote, prefix: str, src: Path, names: list[str], *, si
     transfer(storage, {f"{root}/{name}": src / name for name in manifest})
     write_manifest(storage, prefix, manifest, signer=signer, root=root)
     return manifest
+
+
+def copy_tree(source: Remote, storage: Remote, prefix: str, *, signer: str) -> bool:
+    """Copy the trusted tree `prefix` of `source`, signed by the key `signer`, to `storage`, another bucket of the same
+    S3 service, server-side, as it is: its files, the public key of `signer`, then its manifest, which completes it.
+    Return whether `source` has it.
+    """
+    root, files = read_tree(source, prefix, signer=signer)
+    if not files:
+        return False
+    key = f"{KEYS}/{signer}.asc"
+    transfer(
+        storage, {f"{root}/{name}": Located(source, f"{root}/{name}") for name in files} | {key: Located(source, key)}
+    )
+    transfer(storage, {f"{prefix}/{MANIFEST}": Located(source, f"{prefix}/{MANIFEST}")})
+    return True
 
 
 def read_tree(

@@ -63,7 +63,7 @@ def _suffixes(
     inputs, ids, final, developed = current
     suffixes: dict[str, str] = {}
     for component in components(inputs.deps):  # the dependencies first
-        if not (members := {name: f"{name} {ids[name].number}" for name in sorted(component & developed)}):
+        if not (members := {name: f"{name} {ids[name].build}" for name in sorted(component & developed)}):
             continue
         keys = build_keys(project, suffixes, ids=ids, inputs=inputs)
         outside = {dep: keys[dep] for name in component for dep in inputs.deps[name] - component}

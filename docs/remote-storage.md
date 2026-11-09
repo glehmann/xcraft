@@ -74,7 +74,26 @@ the main bucket. Both buckets allow public reads and have independent configured
 local cache, main bucket, developer bucket, then the spec URL against the committed manifest. Either bucket can be
 omitted. Uploads to an unconfigured bucket fail with a configuration error.
 
-`xcraft push` and `xcraft publish` accept `--to main|dev`, defaulting to `dev`. This applies to their subcommands too.
+**The private storage**, for the fixes under embargo (see [the design](embargo-design.md)), is a bucket of the same
+S3 server, read through S3, with the credentials of the server, rather than publicly, configured out of git, as it
+must not be merged into master with the rest: in `.xcraft/config.toml` of the checkout, or the file of
+`$XCRAFT_CONFIG`, for CI; `xcraft.toml` refuses it.
+
+```toml
+[remote.private]
+s3_endpoint = "https://s3.example/"
+bucket = "xcraft-private"
+region = "garage"
+build_keys = ["<fingerprint of the key of the private CI>"]
+```
+
+The builds, the sources, the resolutions and the compiler caches are fetched from it after main and dev. While it is
+configured, the commands write to it only: `push`, `publish` and `unpublish` to main or dev fail. At the end of the
+embargo, `xcraft push --from private --to main` copies to main, server-side, as they are, the source archives and the
+final builds of the checkout it does not have, those signed by a key it trusts, for each architecture: the release
+of the builds tested in private, without a rebuild.
+
+`xcraft push` and `xcraft publish` accept `--to main|dev|private`, defaulting to `dev`. This applies to their subcommands too.
 CI uses `--to main`; developer commands use their own bucket. Builds and compiler caches are fetched from main first,
 then dev if main is absent, unavailable or invalid. Both locations use the same configured allowed signing keys and
 the checkout's own developer key. Publishing to dev uses the developer's signing key unless `--key` selects another.
