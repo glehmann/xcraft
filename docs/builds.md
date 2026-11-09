@@ -143,6 +143,9 @@ identifier:
 xcraft repo xen --dependents --host root@testhost --upgrade
 ```
 
+For a host, the repository also has the main branch's builds of the given packages without development builds, with
+a warning, to install them on a host which has other builds of them, like older ones.
+
 `--vm` takes the VM `xcraft boot` installed for the project, running, like after `xcraft vm start`, as a host: root on
 its SSH port of localhost, without checking its host key, which each installation changes. `ssh-copy-id` with that port
 spares typing its password each time.

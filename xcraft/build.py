@@ -616,25 +616,23 @@ def build(
     return [Result(r.name, "failed") if r.status == "again" else r for r in results], keys, autorev
 
 
-def make_repo(
-    project: Project, names: list[str], dest: Path, keys: dict[str, str], *, autorev: dict[str, str] | None = None
-) -> None:
+def make_repo(project: Project, names: list[str], dest: Path, keys: dict[str, str], *, alone: bool = False) -> None:
     """Make `dest` a repository with the builds of `names`, with their `keys`, and the extra upstream RPMs.
 
     Check that everything they require is available, from this repository or from the
-    build environment's ones. With the development builds of `autorev`, the repository only has
-    them, to install over a host's packages, and they are checked with our other builds.
+    build environment's ones. With `alone`, the repository only has them, to install over a host's packages, and
+    they are checked with our other builds.
     """
     if missing := [name for name in names if not cached_build(project, name, keys[name]).exists()]:
         msg = f"not built: {', '.join(missing)}"
         raise BuildError(msg)
     repo = LocalRepo(project, dest)
-    repo.reset(extra_upstream=not autorev)
+    repo.reset(extra_upstream=not alone)
     for name in names:
         repo.add(cached_build(project, name, keys[name]))
     repo.index()
     checked, check = repo, f"--check {repo_id(project)}"
-    if autorev:
+    if alone:
         checked = builds_repo(project, keys)
         check += "".join(
             f" --pkg {n}"

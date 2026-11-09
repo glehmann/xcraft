@@ -227,14 +227,14 @@ def repo(
         if failed := [r.name for r in results if r.failed]:
             msg = f"not built: {', '.join(failed)}"
             raise RuntimeError(msg)
-        # the development builds of the given packages, alone, to install over a host's packages
+        # the development builds of the given packages, alone, to install over a host's packages, and for the hosts,
+        # the main branch's builds of the others, which it may have in other builds
         developed = sorted(set(names) & autorev.keys()) if packages else []
-        if targets and not developed:
-            msg = f"no development builds of {', '.join(names)}: they are the main branch's"
-            raise typer.BadParameter(msg)
+        if targets and (main := [n for n in names if n not in autorev]):
+            console.print(f"[yellow]warning[/]: no development builds of {', '.join(main)}: the main branch's ones")
+            developed = sorted(names)
         output = (output or project.root / (f"repo-{ident}" if developed else "repo")).absolute()
-        published = developed or [r.name for r in results]
-        builder.make_repo(project, published, output, keys, autorev=autorev if developed else None)
+        builder.make_repo(project, developed or [r.name for r in results], output, keys, alone=bool(developed))
     console.print(f"[bold green]✓[/] repository in {output}, with all dependencies satisfied")
     if developed and ident:
         url = baseurl or (f"file://{REMOTE}/{ident}" if targets else f"file://{output}")

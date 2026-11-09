@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -354,6 +355,28 @@ def test_development_builds(root: Path, monkeypatch: pytest.MonkeyPatch) -> None
     code, output = xcraft("build", "--verbose")
     assert code == 0, output
     assert re.search(r"^/.*/RPMS/noarch/with-deps-1\.0-1\+b2~5\.qcow2\.xcpng8\.99\.noarch\.rpm$", output, re.MULTILINE)
+
+
+def test_repo_for_hosts(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    commit_base(root)
+    git(root, "checkout", "-qb", "feature")
+    edit(root, "changed", name="with-deps")
+    # ssh and rsync doing nothing, without a host to copy to
+    tools = root / "tools"
+    tools.mkdir()
+    for tool in ("ssh", "rsync"):
+        (tools / tool).write_text("#!/bin/sh\n")
+        (tools / tool).chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tools}:{os.environ['PATH']}")
+    # with the main branch's builds of the given packages too, which a host may have in other builds
+    code, output = xcraft("repo", "with-deps", "trivial", "--host", "h")
+    assert code == 0, output
+    assert "warning: no development builds of trivial: the main branch's ones" in output
+    assert sorted(p.name for p in (root / "repo-dev").glob("*.rpm")) == [
+        "trivial-1.0-1+b1.xcpng8.99.noarch.rpm",
+        "with-deps-1.0-1+b2~1.dev.xcpng8.99.noarch.rpm",
+    ]
+    assert "repository on h, in /var/local/xcraft/dev" in output
 
 
 def test_iso_of_development_builds(root: Path) -> None:
