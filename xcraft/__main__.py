@@ -94,6 +94,7 @@ for panel, commands in {
     for command in commands:
         app.command(rich_help_panel=panel)(command)
 app.command("st", hidden=True)(status.status)
+app.command("keys", hidden=True)(build.keys)
 app.command("import", rich_help_panel="Packages")(import_.import_)
 app.add_typer(push.app, name="push", rich_help_panel="Sharing")
 app.command(rich_help_panel="Sharing")(login.login)

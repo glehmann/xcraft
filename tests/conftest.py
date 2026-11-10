@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
 
 os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"  # never the developer's
+os.environ["XCRAFT_BUILDERS"] = "x86_64_v2=,aarch64="  # nor its builders, see xcraft.builders.builders()
 
 
 def _build_toys(root: Path) -> None:

@@ -4,6 +4,7 @@
 |---|---|
 | `xcraft build [<pkg>...]` | Build packages, all by default, and the packages they need, skipping what is already built |
 | `xcraft build <pkg> --no-deps` | Build only the given packages |
+| `xcraft build [<pkg>...] --local` | Build here, rather than on the builder of the architecture, see [Remote builders](builds.md#remote-builders) |
 | `xcraft build <pkg> --dependents` | Also build the packages built against them |
 | `xcraft build <pkg> --dry-run` (`-n`) | Show what would be built, and how long it took last time |
 | `xcraft build [<pkg>...] --fetch=needed\|none` | Only fetch from the remote storage the builds the packages to build need, like CI, which then only builds what the storage misses; or fetch nothing, and build what is not cached locally |

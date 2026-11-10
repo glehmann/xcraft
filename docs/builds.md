@@ -218,6 +218,26 @@ refuse them.
 See [Iterating on a package](iterating.md) for how to use it, and
 [faster development iterations](dev-iteration.md#incremental-builds-xcraft-develop) for its design and measurements.
 
+## Remote builders
+
+A builder is a remote host building the packages of its architecture, natively, over SSH: another architecture than
+the local one, rather than under emulation, or the local one, from a slow machine. The builders are the developer's,
+configured out of the checkout, in `$XDG_CONFIG_HOME/xcraft/config.toml`, `~/.config/xcraft/config.toml` by default,
+and overridden by `$XCRAFT_BUILDERS`, like `aarch64=ssh://arm64.example,x86_64_v2=`, an empty host for none:
+
+```toml
+[builders]
+aarch64 = "ssh://builder@arm64.example"
+```
+
+`xcraft build --arch aarch64` then copies the checkout to the builder with rsync, uncommitted changes included, with
+the counters of the development builds and the developer's key, runs the same xcraft there, with `uv tool run`, a
+wheel of the local one for a development version, or `$XCRAFT_BUILDER_XCRAFT`, and copies its builds back into the
+cache, with their logs and `xcraft.builds`: the same builds as local ones, of the same keys, which the other commands
+use as they are. The builder keeps its caches, and needs podman, rootless, gpg, git, uv, rsync and flock only, which
+xcraft checks first. `--local` builds locally still. A builder makes development builds, signed by the developer's
+key: `--final` and `--key` build locally. See [the design](remote-builders-design.md).
+
 ## Builds without their tests
 
 `--nocheck`, for `xcraft build`, `repo`, `iso` and `boot`, builds the packages without running the tests of their

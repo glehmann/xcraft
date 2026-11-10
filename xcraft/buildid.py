@@ -169,6 +169,17 @@ target: str | None = None
 the target of a pull request in CI, rather than told by the fork points: see _fork()."""
 
 
+def named(project: Project, branches: dict[str, str] | None = None) -> str | None:
+    """Return the branch the builds are numbered against when one is named: by `target`, $XCRAFT_MAINTENANCE, or the
+    current one, see _current(), when it is a maintenance one, of `branches` (see maintenance()); None to tell it by the
+    fork points.
+    """
+    if name := target or os.environ.get("XCRAFT_MAINTENANCE"):
+        return name
+    branches = maintenance(project) if branches is None else branches
+    return next((b for b in _current(project) if b in branches and not b.startswith(_RELEASE_TAGS)), None)
+
+
 def _fork(project: Project) -> _Fork | None:
     """Return the fork point of the current branch, if any: where it forks from the main branch, or from a
     maintenance branch when that is the most recent of its fork points, which descends from the others; with a merge in
@@ -184,11 +195,7 @@ def _fork(project: Project) -> _Fork | None:
     if not (fork := _git(project, "merge-base", main, *heads)):
         return None
     branches = maintenance(project)
-    name = (
-        target
-        or os.environ.get("XCRAFT_MAINTENANCE")
-        or next((b for b in _current(project) if b in branches and not b.startswith(_RELEASE_TAGS)), None)
-    )
+    name = named(project, branches)
     embargoes = _branches(project, project.config.embargo_branches).keys()
     if name and name != project.config.main_branch:
         if name not in branches or name.startswith(_RELEASE_TAGS):
