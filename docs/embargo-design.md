@@ -2,7 +2,8 @@
 
 Status: implemented in xcraft: the maintenance branches and their numbers, the private remote storage, the copies of
 `xcraft push --from private`, the commit of the snapshots and `xcraft maint start`. To do: the release tags of the CI
-of xcp-ng-dist, its workflows for the maintenance branches, and finding the commit of a release by its contents.
+of xcp-ng-dist, its workflows for the maintenance branches, the ruleset of its public repository denying the embargo
+branches, and finding the commit of a release by its contents.
 
 ## The problem
 
@@ -268,18 +269,50 @@ archive, like the release fixing the vulnerability, is pushed to the private buc
 one, committed on master beforehand: a public key reveals nothing. The builds copied keep their signatures, trusted
 there.
 
+**Git.** xcraft guards the buckets, not the pushes of git: an embargo branch pushed to the public repository, or to a
+fork of it, is public, and so are the logs of its CI. So:
+
+- **The safety net, on GitHub.** A ruleset of the public repository forbids the creation of the `embargo/**`
+  branches: a push of one fails, whoever makes it. At the end of the embargo, the branch is pushed under a maintenance
+  name, see [The release](#the-release): no bypass. It does not cover the forks of the developers, and it is a net for
+  the mistakes, not a barrier: the same commits can be pushed under another name, which the release does on purpose.
+- **A clone of its own.** The work under embargo is made in a clone of the private repository, not in one of the
+  public repository with another remote: a push goes to the private repository by default. The public repository, to
+  fetch master, is added without pushing: `git remote add public <url>`, then
+  `git remote set-url --push public DISABLED`.
+- **With jj.** No `jj git push --all`, nor `--tracked`, which push all the bookmarks; in the public clones,
+  `git.private-commits = "::bookmarks(glob:'embargo/*')"` in the configuration of the repository refuses to push them.
+
+**The checklist of the developers:**
+
+- work in the clone of the private repository only, on an `embargo/*` branch, or a branch of one;
+- never push all the branches, with `--all`;
+- nothing about it in a public issue, pull request, or chat;
+- no log, nor code, given to a service out of the predisclosure agreement, AI tools included, unless it allows them;
+- the release, see below, rather than the branch pushed to the public repository by hand.
+
 ## The release
 
-1. **The copy.** The builds of the maintenance branch's commit which the private bucket has, and the source archives of
-   its manifests, are copied to the main bucket, server-side, as they are: `xcraft push --from private --to main`,
-   for each architecture, those signed by a key main trusts.
-   A job of a protected environment does it, with the credentials reading the private bucket and writing the main
-   one.
-2. **The branch, public.** The maintenance branch is pushed to the public repository. Its CI, `xcraft build --locked`,
-   fetches all its builds: nothing is built.
-3. **The publication.** `xcraft publish` of the branch's commit to the stable stage, as for a release of master: the
-   snapshot has the fixed builds, and the release's for the rest, copied server-side, without a rebuild.
-4. **The merge into master**, through a pull request, with a merge commit, see below.
+The embargo is lifted by a rename: `embargo/xsa-123` is pushed to the public repository as `maint/xsa-123`, a
+maintenance branch of no embargo. Its commits stay the same, and so do their build IDs and keys, which no branch name is
+in: the builds tested in private are those released. From the tested tip of the embargo branch, T:
+
+1. **The copy.** In the clone of the private repository, on the embargo branch, at T: the builds of T which the
+   private bucket has, and the source archives of its manifests, are copied to the main bucket, server-side, as they
+   are, `xcraft push --from private --to main`, for each architecture, those signed by a key main trusts. It is
+   allowed on the embargo branch, as the copy of the release. A job of a protected environment can do it, with the
+   credentials reading the private bucket and writing the main one.
+2. **The branch, public, renamed.** `git push public T:refs/heads/maint/xsa-123`: the push of the public repository,
+   disabled in the clone of the private one, enabled for it, or from a clone of the public one, having fetched T. The
+   ruleset does not deny it, which denies `embargo/**` only. Its CI, `xcraft build --locked`, fetches all its builds
+   from the main bucket: nothing is built. So the copy comes first: on `maint/xsa-123`, the private bucket is not read
+   anymore, and the builds missing in the main one would be built again, rather than those tested.
+3. **The publication.** `xcraft publish --to main --stage stable` of `maint/xsa-123`, at T, as for a release of master,
+   which the embargo branch refuses: the snapshot has the fixed builds, and the release's for the rest, copied
+   server-side, without a rebuild. It records T, which the release tag, `release/<release>/stable/<date>`, gets.
+4. **The merge into master**, through a pull request of `maint/xsa-123`, with a merge commit, see below.
+5. **The cleanup.** `maint/xsa-123` is removed from the public repository once merged, its commits kept by the release
+   tag, and `embargo/xsa-123` from the private one. The private bucket can be emptied later.
 
 ## Merging into master
 
