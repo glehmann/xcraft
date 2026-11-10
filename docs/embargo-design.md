@@ -239,11 +239,15 @@ maintenance branches and the release tags: the first-parent chains tell whose co
 
 **The private remote.** The private bucket is on the same S3 server as the public ones, so the copies are server-side,
 with a key reading it and writing the main one: the credentials are by server, see
-[Remote storage](remote-storage.md). It must not be in the committed `xcraft.toml`, which refuses it: the change would
-be merged into master with the rest. So it comes from a configuration out of git, `.xcraft/config.toml`, or the file of
-`$XCRAFT_CONFIG` for CI:
+[Remote storage](remote-storage.md). Its configuration is in `xcraft.toml`, like the others: it holds no secret, the
+bucket is private, and its credentials are. It is used on the embargo branches only, `embargo_branches`, maintenance
+branches too, and their branches, as told for their numbers, see above: elsewhere, like on master, which has the same
+`xcraft.toml`, it is neither read nor written, as public CI and developers have no credentials for it.
 
 ```toml
+maintenance_branches = ["maint/*", "embargo/*"]
+embargo_branches = ["embargo/*"]
+
 [remote.private]
 s3_endpoint = "https://s3.example/"
 bucket = "xcraft-private"
@@ -254,9 +258,10 @@ build_keys = ["<fingerprint of the key of the private CI>"]
 The private bucket is read through S3, with the credentials of its server, rather than over public http(s): it has no
 `url`.
 
-**No leak.** While the private remote is configured, the commands write to no other bucket: `push`, `publish` and
-`unpublish` to main or dev fail, but the copies of `xcraft push --from private`. The builds, the compiler caches and the
-resolutions are fetched from the main bucket first, then from the private one. So are the sources: a new upstream
+**No leak.** On an embargo branch, the commands write to no other bucket, configured or not: `push`, `publish` and
+`unpublish` to main or dev fail, but the copies of `xcraft push --from private`. So the guard follows the branch: a
+developer cannot forget it. The builds, the compiler caches and the resolutions are fetched from the main bucket first,
+then from the private one. So are the sources: a new upstream
 archive, like the release fixing the vulnerability, is pushed to the private bucket only.
 
 **The signing key.** The private CI signs with a key of its own, in `build_keys` of the private remote, and of the main
@@ -325,7 +330,7 @@ commit. Three ways, together:
 | `maintenance_branches`, whose commit it is by the first-parent chains, the most recent fork point of the others | `project.py`, `buildid.py` | done |
 | The numbers `+b<n>.<m>`, and `+b<n>.<m>~<c>.<ident>`, in `xcraft.builds`, `%{autorev}` and the build paths | `builds.py`, `buildid.py` | done |
 | Master keeping the build IDs of other parents with the same key, and `--locked` checking them and the merge commits | `buildid.py` | done |
-| `[remote.private]` out of git, read through S3, the other remotes not written then | `project.py`, `remote.py`, `commands/__init__.py` | done |
+| `embargo_branches`, `[remote.private]` read through S3 on them only, the other remotes not written there | `project.py`, `buildid.py`, `remote.py`, `commands/__init__.py` | done |
 | `xcraft push --from private`: server-side copies of the builds and sources of the commit | `commands/push.py`, `remote.py` | done |
 | The commit of a snapshot in its inputs | `upload.py` | done |
 | `xcraft maint start [<release>]`: the branch at the commit of the latest stable snapshot | `commands/maint.py` | done |

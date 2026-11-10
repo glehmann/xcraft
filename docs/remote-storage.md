@@ -75,11 +75,14 @@ local cache, main bucket, developer bucket, then the spec URL against the commit
 omitted. Uploads to an unconfigured bucket fail with a configuration error.
 
 **The private storage**, for the fixes under embargo (see [the design](embargo-design.md)), is a bucket of the same
-S3 server, read through S3, with the credentials of the server, rather than publicly, configured out of git, as it
-must not be merged into master with the rest: in `.xcraft/config.toml` of the checkout, or the file of
-`$XCRAFT_CONFIG`, for CI; `xcraft.toml` refuses it.
+S3 server, read through S3, with the credentials of the server, rather than publicly, without `url`. It is used on the
+embargo branches only, `embargo_branches`, maintenance branches too, and on their branches (see
+[Maintenance branches](builds.md#maintenance-branches)): elsewhere, it is neither read nor written.
 
 ```toml
+maintenance_branches = ["maint/*", "embargo/*"]
+embargo_branches = ["embargo/*"]
+
 [remote.private]
 s3_endpoint = "https://s3.example/"
 bucket = "xcraft-private"
@@ -87,8 +90,8 @@ region = "garage"
 build_keys = ["<fingerprint of the key of the private CI>"]
 ```
 
-The builds, the sources, the resolutions and the compiler caches are fetched from it after main and dev. While it is
-configured, the commands write to it only: `push`, `publish` and `unpublish` to main or dev fail. At the end of the
+There, the builds, the sources, the resolutions and the compiler caches are fetched from it after main and dev, and the
+commands write to it only, configured or not: `push`, `publish` and `unpublish` to main or dev fail. At the end of the
 embargo, `xcraft push --from private --to main` copies to main, server-side, as they are, the source archives and the
 final builds of the checkout it does not have, those signed by a key it trusts, for each architecture: the release
 of the builds tested in private, without a rebuild.

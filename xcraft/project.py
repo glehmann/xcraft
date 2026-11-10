@@ -107,7 +107,7 @@ class Remote(BaseModel):
     build_keys: list[str] = []
     """Trusted fingerprints for verifying remote trees, including older release keys. Order does not matter."""
     private: bool = Field(default=False, exclude=True)
-    """Whether it is the private one, read through S3, with credentials: set by xcraft, see Project.at()."""
+    """Whether it is the private one, read through S3, with credentials: set by xcraft, for remote.private."""
 
     @field_validator("build_keys")
     @classmethod
@@ -244,7 +244,11 @@ class Config(BaseModel):
     builds are final ones too, numbered +b<n>.<m> after the release's +b<n>, below the main branch's next one, see
     docs/embargo-design.md. A single pattern can be given as a string."""
 
-    @field_validator("maintenance_branches", mode="before")
+    embargo_branches: list[str] = []
+    """The maintenance branches of fixes under embargo, as patterns of maintenance_branches, like embargo/*: on them,
+    and their branches, the builds go to the private remote storage only, see remote.private."""
+
+    @field_validator("maintenance_branches", "embargo_branches", mode="before")
     @classmethod
     def _patterns(cls, patterns: str | list[str]) -> list[str]:
         return [patterns] if isinstance(patterns, str) else patterns
@@ -252,7 +256,8 @@ class Config(BaseModel):
     import_: Import = Field(default=Import(), alias="import")
     remote: dict[Destination, Remote] = {}
     """The independent main and developer buckets, each with its own public URL and S3 settings, and the private one,
-    configured out of git only, see LocalConfig."""
+    of the embargo branches, read through S3, with credentials, without url: used on them only, where the commands
+    write to no other bucket, but the copies of xcraft push --from private."""
     logo: str | None = None
     """Link to the logo image of the project, shown at the top of the pages of the remote storage."""
     publish: Publish = Field(default_factory=Publish)
@@ -265,29 +270,17 @@ class Config(BaseModel):
     """The key signing the published packages: they are not signed without one."""
 
     @model_validator(mode="after")
-    def _public(self) -> Config:
-        if "private" in self.remote:
-            msg = (
-                "remote.private must be out of git, merged with the rest otherwise: "
-                "in .xcraft/config.toml, or $XCRAFT_CONFIG"
-            )
-            raise ValueError(msg)
-        if missing := [name for name, storage in self.remote.items() if not storage.url]:
+    def _remotes(self) -> Config:
+        if missing := [name for name, storage in self.remote.items() if not storage.url and name != "private"]:
             msg = f"the url of the public reads of remote.{missing[0]} is missing"
             raise ValueError(msg)
+        if unknown := [p for p in self.embargo_branches if p not in self.maintenance_branches]:
+            msg = f"embargo_branches must be maintenance_branches too: {', '.join(unknown)}"
+            raise ValueError(msg)
+        if storage := self.remote.get("private"):
+            url = storage.url or f"{storage.s3_endpoint.rstrip('/')}/{storage.bucket}"  # for the messages
+            self.remote["private"] = storage.model_copy(update={"private": True, "url": url})
         return self
-
-
-class LocalConfig(BaseModel):
-    """Settings of the checkout, out of git, from ``.xcraft/config.toml``, or the file of $XCRAFT_CONFIG: what must not
-    be merged with the rest, like the private remote storage of the fixes under embargo, see docs/embargo-design.md.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    remote: dict[Literal["private"], Remote] = {}
-    """The private bucket: read through S3, with the credentials of its server; while it is configured, the commands
-    write to no other bucket, but the copies of xcraft push --from private."""
 
 
 _held: set[Path] = set()
@@ -343,10 +336,6 @@ class Project:
         """
         with (root / "xcraft.toml").open("rb") as f:
             config = Config.model_validate(tomllib.load(f))
-        if (local := Path(os.environ.get("XCRAFT_CONFIG") or root / INTERNAL / "config.toml")).exists():
-            for name, storage in LocalConfig.model_validate(tomllib.loads(local.read_text())).remote.items():
-                url = storage.url or f"{storage.s3_endpoint.rstrip('/')}/{storage.bucket}"  # for the messages
-                config.remote[name] = storage.model_copy(update={"private": True, "url": url})
         platforms: dict[str, Platform] = {ARCHES[p]: p for p in config.platforms}
         if arch := arch or os.environ.get("XCRAFT_ARCH"):
             if arch not in platforms:

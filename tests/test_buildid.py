@@ -362,6 +362,11 @@ def test_maintenance_branches_of_several_patterns(root: Path) -> None:
     git(root, "checkout", "-qb", "embargo/xsa-123", release)
     edit(root, "fix")
     assert update() == {"trivial": "1.1", "with-deps": "1.1"}
+    # the embargo branches are maintenance ones
+    config.write_text(f'embargo_branches = ["other/*"]\n{config.read_text()}')
+    code, output = xcraft("status")
+    assert code == 1
+    assert "embargo_branches must be maintenance_branches too: other/*" in output
 
 
 @pytest.mark.skipif(not shutil.which("jj"), reason="needs jj")

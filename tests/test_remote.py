@@ -586,27 +586,29 @@ def test_private_remote_storage(
 ) -> None:
     garage("bucket", "create", bucket := f"xcraft-private-{secrets.token_hex(4)}")
     garage("bucket", "allow", "--read", "--write", bucket, "--key", "test")
-    # out of git: in it, it would be merged with the rest
+    branches = 'maintenance_branches = ["maint/*", "embargo/*"]\nembargo_branches = ["embargo/*"]\n'
     private = f'[remote.private]\ns3_endpoint = "http://localhost:{S3_PORT}"\nbucket = "{bucket}"\n'
-    (root / "xcraft.toml").write_text(f"{REMOTE}{private}")
-    code, output = xcraft("status")
-    assert code == 1
-    assert "remote.private must be out of git" in output
-    (root / "xcraft.toml").write_text(re.sub(r"\[sign\]\n.*?(?=\[remote.main\])", "", REMOTE, flags=re.DOTALL))
-    (config := tmp_path / "private.toml").write_text(f'{private}build_keys = ["{build_signer[0]}"]\n')
-    monkeypatch.setenv("XCRAFT_CONFIG", str(config))
+    config = re.sub(r"\[sign\]\n.*?(?=\[remote.main\])", "", REMOTE, flags=re.DOTALL)
+    (root / "xcraft.toml").write_text(f'{branches}{config}{private}build_keys = ["{build_signer[0]}"]\n')
+    (root / ".gitignore").write_text(".xcraft/\n")
+    commit_base(root)
     monkeypatch.setenv("GNUPGHOME", str(build_signer[1]))
+    # not used off the embargo branches
+    assert [s.bucket for s in remote.storages(Project.find())] == ["xcraft", "xcraft-dev"]
+    git(root, "checkout", "-qb", "embargo/xsa-123")
+    remote.forget()  # for a new command
+    assert [s.bucket for s in remote.storages(Project.find())] == ["xcraft", "xcraft-dev", bucket]
     assert xcraft("build", "trivial")[0] == 0
     # nothing goes to the public buckets
     code, output = xcraft("push", "builds", "trivial", "--key", build_signer[0], "--to", "main")
     assert code == 2
     # in the box of the error, wrapped
-    assert "the private remote storage is configured: nothing goes to the main one" in " ".join(
+    assert "on an embargo branch, nothing goes to the main remote storage" in " ".join(
         re.sub("[│╭╮╰╯─]", " ", output).split()
     )
     code, output = xcraft("push", "builds", "trivial", "--key", build_signer[0], "--to", "private")
     assert code == 0, output
-    # fetched by another checkout of the same configuration, through S3
+    # fetched by another checkout of the branch, through S3
     other = tmp_path / "elsewhere" / "xcraft"
     shutil.copytree(root, other, ignore=shutil.ignore_patterns(".xcraft"))
     monkeypatch.setenv("XCRAFT_PROJECT", str(other))

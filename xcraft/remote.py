@@ -492,8 +492,15 @@ def _parse(prefix: str, text: str) -> tuple[str, dict[str, str]]:
     return root, TreeManifest(files=files).files
 
 
+_embargoed: dict[str, bool] = {}
+"""Whether the checkout is on an embargo branch, by root, for the storages of the command."""
+
+
 def forget() -> None:
-    """Forget the manifests and keys read in the storages, for a new command."""
+    """Forget the manifests and keys read in the storages, and whether the checkout is on an embargo branch, for a new
+    command.
+    """
+    _embargoed.clear()
     _checked.clear()
     _manifests.clear()
     _keys.clear()
@@ -579,13 +586,18 @@ def tree_exists(storage: Remote, prefix: str, *, trusted: Signer | None = None, 
 
 
 def storages(project: Project) -> list[Remote]:
-    """Return the storages, main, dev, then the private one, each trusting the keys of all: a tree is as trusted in
-    any.
+    """Return the storages, main, dev, then the private one, on an embargo branch only, each trusting the keys of all:
+    a tree is as trusted in any.
     """
+    from xcraft import buildid  # noqa: PLC0415, which imports what imports this module
+
     keys = sorted({key for storage in project.config.remote.values() for key in storage.build_keys})
+    if "private" in project.config.remote and str(project.root) not in _embargoed:
+        _embargoed[str(project.root)] = buildid.embargoed(project)
+    names = ["main", "dev", *(["private"] if _embargoed.get(str(project.root)) else [])]
     return [
         storage.model_copy(update={"build_keys": keys})
-        for name in ("main", "dev", "private")
+        for name in names
         if (storage := project.config.remote.get(name))
     ]
 

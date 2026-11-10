@@ -133,7 +133,9 @@ the same, and its number greater, as when master changed none of the inputs of t
 users get the same build at the next release of master. The release tags, `release/...`, keep the commits of a
 maintenance branch removed since.
 
-See [the design](embargo-design.md), for the private storage of the builds under embargo, and their release.
+The maintenance branches of `embargo_branches`, like `embargo/*`, and their branches, are those of fixes under
+embargo: their builds go to the private remote storage only, see [Remote storage](remote-storage.md), and
+[the design](embargo-design.md), for their release.
 
 ## Development builds
 

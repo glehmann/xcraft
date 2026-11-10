@@ -7,7 +7,7 @@ from typing import Annotated
 
 import typer
 
-from xcraft import resolution
+from xcraft import buildid, resolution
 from xcraft.project import Destination, Project, Remote
 from xcraft.signing import Signer, SigningError, build_signer, dev_signer, key_signer
 
@@ -87,15 +87,14 @@ def prepared_project(names: list[str] | None = None, *, locked: bool = False, ar
 
 
 def remote_storage(project: Project, to: Destination = "main", *, write: bool = True) -> Remote:
-    """Return the remote storage of the project, which the command needs, to `write` to it: only the private one while
-    it is configured, for nothing under embargo to go to the others.
+    """Return the remote storage of the project, which the command needs, to `write` to it: only the private one on an
+    embargo branch, for nothing under embargo to go to the others.
     """
-    if not (storage := project.config.remote.get(to)):
-        where = ".xcraft/config.toml, or $XCRAFT_CONFIG" if to == "private" else "xcraft.toml"
-        msg = f"no {to} remote storage: see [remote.{to}] in {where}"
+    if write and to != "private" and buildid.embargoed(project):
+        msg = f"on an embargo branch, nothing goes to the {to} remote storage: --to private"
         raise typer.BadParameter(msg)
-    if write and to != "private" and "private" in project.config.remote:
-        msg = f"the private remote storage is configured: nothing goes to the {to} one, but with xcraft push --from"
+    if not (storage := project.config.remote.get(to)):
+        msg = f"no {to} remote storage: see [remote.{to}] in xcraft.toml"
         raise typer.BadParameter(msg)
     return storage
 

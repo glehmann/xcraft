@@ -95,19 +95,23 @@ _RELEASE_TAGS = "refs/tags/release/"
 """The tags of the published releases, which keep the commits of the maintenance branches removed since."""
 
 
-def maintenance(project: Project) -> dict[str, str]:
-    """Return the commits of the maintenance branches, by name: the remote's, as last fetched, or else the local ones,
-    and of the release tags.
+def _branches(project: Project, patterns: list[str], *refs: str) -> dict[str, str]:
+    """Return the commits of the branches of `patterns`, and of the `refs`, by name: the remote's, as last fetched, or
+    else the local ones.
     """
-    patterns = [
-        f"refs/{p}/{pattern}" for pattern in project.config.maintenance_branches for p in ("heads", "remotes/origin")
-    ]
-    refs = _git(project, "for-each-ref", "--format=%(refname) %(*objectname) %(objectname)", *patterns, _RELEASE_TAGS)
-    found = {}
-    for line in (refs or "").splitlines():
+    if not (patterns or refs):
+        return {}
+    named = [*(f"refs/{p}/{pattern}" for pattern in patterns for p in ("heads", "remotes/origin")), *refs]
+    found, listed = {}, _git(project, "for-each-ref", "--format=%(refname) %(*objectname) %(objectname)", *named)
+    for line in (listed or "").splitlines():
         ref, commit = line.split()[:2]  # the commit of an annotated tag, else of the ref
         found[ref.removeprefix("refs/heads/").removeprefix("refs/remotes/origin/")] = commit
     return found
+
+
+def maintenance(project: Project) -> dict[str, str]:
+    """Return the commits of the maintenance branches, and of the release tags, by name, see _branches()."""
+    return _branches(project, project.config.maintenance_branches, _RELEASE_TAGS)
 
 
 _chains: dict[tuple[str, str], frozenset[str]] = {}
@@ -141,6 +145,8 @@ class _Fork(NamedTuple):
     """Whether it is a commit of a maintenance branch, rather than of the main branch."""
     others: tuple[str, ...] = ()
     """The fork points with the maintenance branches the current branch merges, whose build IDs it may keep."""
+    embargoed: bool = False
+    """Whether it is a commit of an embargo branch, see embargo_branches of xcraft.toml."""
 
 
 def _current(project: Project) -> list[str]:
@@ -181,25 +187,33 @@ def _fork(project: Project) -> _Fork | None:
         or os.environ.get("XCRAFT_MAINTENANCE")
         or next((b for b in _current(project) if b in branches and not b.startswith(_RELEASE_TAGS)), None)
     )
+    embargoes = _branches(project, project.config.embargo_branches).keys()
     if name and name != project.config.main_branch:
         if name not in branches or name.startswith(_RELEASE_TAGS):
             msg = f"no maintenance branch {name}, of {', '.join(project.config.maintenance_branches)}, fetched"
             raise BuildIdError(msg)
-        return _Fork(_git(project, "merge-base", branches[name], *heads) or fork, maintenance=True)
-    maintained = {
-        f
-        for ref, c in branches.items()
-        if (f := _git(project, "merge-base", c, *heads))
-        and (
+        forked = _git(project, "merge-base", branches[name], *heads) or fork
+        return _Fork(forked, maintenance=True, embargoed=name in embargoes)
+    maintained: dict[str, set[str]] = {}
+    for ref, c in branches.items():
+        if (f := _git(project, "merge-base", c, *heads)) and (
             _owner(project, f) not in (None, project.config.main_branch)
             or (f == c and c != main and not ref.startswith(_RELEASE_TAGS))
-        )
-    }
+        ):
+            maintained.setdefault(f, set()).add(ref)
     if not name and (after := [f for f in maintained if _ancestor(project, fork, f)]):
-        return _Fork(next(f for f in sorted(after) if all(_ancestor(project, g, f) for g in after)), maintenance=True)
+        forked = next(f for f in sorted(after) if all(_ancestor(project, g, f) for g in after))
+        return _Fork(forked, maintenance=True, embargoed=bool(maintained[forked] & embargoes))
     return _Fork(
         fork, maintenance=False, others=tuple(sorted(f for f in maintained if not _ancestor(project, f, fork)))
     )
+
+
+def embargoed(project: Project) -> bool:
+    """Return whether the current branch is an embargo branch, or one of its branches, see _fork(): its builds go to
+    the private remote storage only.
+    """
+    return bool((fork := _fork(project)) and fork.embargoed)
 
 
 class Base(NamedTuple):
