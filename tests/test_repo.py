@@ -13,7 +13,8 @@ import pytest
 import typer
 
 from tests import xcraft
-from xcraft.commands.repo import _connected, _Host, _host, _kept
+from xcraft.commands.repo import _kept
+from xcraft.hosts import Host, connected, ssh_host
 
 
 def should_report_newer_packages_kept_by_test_hosts() -> None:
@@ -27,12 +28,12 @@ def should_report_newer_packages_kept_by_test_hosts() -> None:
 
 
 def should_accept_test_hosts_with_their_ports() -> None:
-    assert _host("root@h") == _Host("root@h", "root@h")
-    assert _host("ssh://root@127.0.0.1:2222") == _Host("ssh://root@127.0.0.1:2222", "root@127.0.0.1", ["-p", "2222"])
-    assert _host("ssh://h") == _Host("ssh://h", "h")
+    assert ssh_host("root@h") == Host("root@h", "root@h")
+    assert ssh_host("ssh://root@127.0.0.1:2222") == Host("ssh://root@127.0.0.1:2222", "root@127.0.0.1", ["-p", "2222"])
+    assert ssh_host("ssh://h") == Host("ssh://h", "h")
     for bad in ("-oProxyCommand=x", "ssh://-oProxyCommand=x", "ssh://-u@h", "ssh://h:port", "ssh://h/path", "ssh://"):
         with pytest.raises(typer.BadParameter, match="not a host"):
-            _host(bad)
+            ssh_host(bad)
 
 
 @pytest.mark.skipif(not shutil.which("sshd", path="/usr/sbin:/usr/bin"), reason="needs sshd")
@@ -55,7 +56,7 @@ def should_connect_once_to_a_test_host(tmp_path: Path) -> None:
         try:
             options = ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"]
             options += ["-i", str(tmp_path / "user"), "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes"]
-            host = _Host("test", "127.0.0.1", ["-p", str(port), *options])
+            host = Host("test", "127.0.0.1", ["-p", str(port), *options])
             for _ in range(100):  # until it listens
                 if subprocess.run([*host.ssh("true")], capture_output=True, check=False).returncode == 0:
                     break
@@ -63,7 +64,7 @@ def should_connect_once_to_a_test_host(tmp_path: Path) -> None:
             else:
                 pytest.fail(f"sshd did not accept connections in 10s: {log.read_text()}")
             before = log.read_text().count("Accepted publickey")
-            with _connected(host) as shared:
+            with connected(host) as shared:
                 for _ in range(3):
                     subprocess.run(shared.ssh("true"), check=True)
                 control = Path(next(o for o in shared.options if o.startswith("ControlPath=")).split("=", 1)[1])

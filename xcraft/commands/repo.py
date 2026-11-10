@@ -3,12 +3,8 @@
 from __future__ import annotations
 
 import shlex
-import tempfile
-from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
-from urllib.parse import urlsplit
+from typing import Annotated
 
 import typer
 from rich.text import Text
@@ -19,13 +15,11 @@ from xcraft.cache import cached_build, release_suffix
 from xcraft.commands import Arch, Dev, Final, Key, NoCheck, Packages, dev_ident, prepared_project, sign_builds
 from xcraft.display import COMMAND, activity, console
 from xcraft.graph import dependents
+from xcraft.hosts import Host, connected, ssh_host
 from xcraft.packages import is_debug
 from xcraft.project import Project
 from xcraft.signing import KEY_FILE as BUILD_KEY
 from xcraft.signing import check_signatures, run_signer
-
-if TYPE_CHECKING:
-    from collections.abc import Generator
 
 REMOTE = "/var/local/xcraft"
 """Where the repositories of development builds go on the hosts, one per ID."""
@@ -33,46 +27,14 @@ KEY_FILE = "RPM-GPG-KEY-xcraft-test"
 """The developer's key, in the repositories of development builds."""
 
 
-@dataclass
-class _Host:
-    """A test host: its `name`, as given, and how ssh reaches it, with the `options` of ssh, like its port."""
-
-    name: str
-    destination: str
-    options: list[str] = field(default_factory=list)
-
-    def ssh(self, command: str) -> list[str]:
-        return ["ssh", *self.options, self.destination, command]
-
-
-def _host(name: str) -> _Host:
-    """Return the host `name`, as ssh takes it, or as ssh://[user@]host[:port], whose port rsync cannot take."""
-    if name.startswith("-"):  # which ssh and rsync would take for options
-        msg = f"not a host: {name}"
-        raise typer.BadParameter(msg)
-    if not name.startswith("ssh://"):
-        return _Host(name, name)
-    url = urlsplit(name)
-    try:
-        port = url.port
-    except ValueError:
-        port = -1
-    user = f"{url.username}@" if url.username else ""
-    # nor an option once parsed, like ssh://-oProxyCommand=...
-    if not url.hostname or url.path or port == -1 or f"{user}{url.hostname}".startswith("-"):
-        msg = f"not a host: {name}, as ssh://[user@]host[:port]"
-        raise typer.BadParameter(msg)
-    return _Host(name, f"{user}{url.hostname}", ["-p", str(port)] if port else [])
-
-
 def _hosts(hosts: list[str] | None) -> list[str] | None:
-    """Check the hosts, see _host()."""
+    """Check the hosts, see xcraft.hosts.ssh_host()."""
     for host in hosts or []:
-        _host(host)
+        ssh_host(host)
     return hosts
 
 
-def _vm_host(project: Project) -> _Host:
+def _vm_host(project: Project) -> Host:
     """Return the VM xcraft boot started for the project, running, by its SSH port: without checking its host key,
     which each installation changes, on the same port of localhost.
     """
@@ -80,7 +42,7 @@ def _vm_host(project: Project) -> _Host:
         port = vm.ssh_port(project.state / "vm" / project.arch)
     except RuntimeError as e:
         raise typer.BadParameter(str(e), param_hint="--vm") from None
-    return _Host(f"the VM, on port {port}", vm.SSH_DESTINATION, vm.ssh_options(port))
+    return Host(f"the VM, on port {port}", vm.SSH_DESTINATION, vm.ssh_options(port))
 
 
 def _kept(installed: list[str], rpms: list[str]) -> list[tuple[str, str]]:
@@ -97,23 +59,7 @@ def _kept(installed: list[str], rpms: list[str]) -> list[tuple[str, str]]:
     )
 
 
-@contextmanager
-def _connected(host: _Host) -> Generator[_Host]:
-    """Connect to `host` once, asking for its password, if any, before the activity of the copy, and yield it with
-    the options of ssh sharing that connection, which its commands and rsync reuse, closed then.
-    """
-    # a short path: the socket of the connection is longer still, and Unix sockets are limited to about 100 bytes
-    with tempfile.TemporaryDirectory(prefix="xcraft-ssh-") as tmp:
-        shared = replace(host, options=[*host.options, "-o", f"ControlPath={tmp}/%C"])
-        master = ["-o", "ControlMaster=yes", "-o", "ControlPersist=yes", "-f", "-N", host.destination]
-        process.run(["ssh", *shared.options, *master])
-        try:
-            yield shared
-        finally:
-            process.run(["ssh", *shared.options, "-O", "exit", host.destination], check=False, capture=True)
-
-
-def _copy_to_host(host: _Host, output: Path, ident: str, binaries: list[str], *, upgrade: bool) -> None:
+def _copy_to_host(host: Host, output: Path, ident: str, binaries: list[str], *, upgrade: bool) -> None:
     """Copy the repository of development builds in `output` to `host`, with its .repo file, and maybe upgrade
     `binaries`, removing the .repo file then.
     """
@@ -232,7 +178,7 @@ def repo(
         msg = f"with --host or --vm, the hosts find the repository in {REMOTE}/<ID>: no --baseurl"
         raise typer.BadParameter(msg)
     project = prepared_project(packages, arch=arch)
-    targets = [*map(_host, hosts or []), *([_vm_host(project)] if to_vm else [])]  # before building
+    targets = [*map(ssh_host, hosts or []), *([_vm_host(project)] if to_vm else [])]  # before building
     sign_builds(project, key, final=ident is None)
     names = list(packages or sorted(project.packages))
     if with_dependents:
@@ -266,7 +212,7 @@ def repo(
             if not is_debug(n)
         ]
         for host in targets:
-            with _connected(host) as shared:
+            with connected(host) as shared:
                 _copy_to_host(shared, output, ident, binaries, upgrade=upgrade)
         if not targets:
             console.print(f"on the hosts, with this directory at {url}:", markup=False)
