@@ -129,8 +129,14 @@ The branch only moves through its own fixes, merged into it like pull requests i
 - **During the embargo.** The fixes are developed on branches of it, and merged into it. The CI of the private
   repository builds each merge, `xcraft build --locked`: the packages changed and those built against them, pushing
   their final builds to the private bucket. The others keep the release's keys, and builds, fetched from the main
-  bucket. A snapshot published to the private bucket, or `xcraft repo --host`, gives them to the hosts of
-  xcp-ng-tests: the builds tested are those released.
+  bucket. `xcraft repo <pkg>... --host <host>`, without `--upgrade`, gives them to the hosts of xcp-ng-tests: it
+  copies their repository over SSH, in `/var/local/xcraft/<ID>/`, and leaves its `.repo` file, of a `file://` URL,
+  for the tests to install or upgrade the packages from it, next to the usual repositories of the host. Nothing is
+  exposed over HTTP, and the builds tested are those released. `--dependents` adds the packages built against them.
+  A test needing the whole repository of the distribution, rather than the packages of the fix, would need
+  `xcraft publish --local` to copy its snapshot to a host the same way, with `--host`: to do when one does. The
+  private bucket has no public URL; serving it over HTTP to the hosts would need an authenticating proxy in front
+  of Garage, which serves its websites without authentication.
 - **Its end.** See [The release](#the-release), then the branch is merged into master, with a merge commit, and
   removed. The next embargo creates another one, from the release current then.
 
