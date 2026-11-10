@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -90,10 +91,11 @@ def import_(
             resolution.prepare(project, roots=False)  # for the build environment, which unpacks them
         for i, (source, name) in enumerate(zip(sources, names, strict=True), 1):
             pkg_dir = project.package_dirs.get(name, project.root / repo / name)
+            missing: list[str] = []
             with project.tmp_dir("import") as work, activity(f"[{i}/{len(sources)}] importing {source}") as on_line:
                 if not source.endswith(".src.rpm"):
                     branches = [branch] if branch else imported.get(name, imports.branches)
-                    heads = import_history(project.root, pkg_dir, url or DEFAULT_URL.format(name=name), branches)
+                    heads, missing = import_history(project, pkg_dir, url or DEFAULT_URL.format(name=name), branches)
                 elif commit := import_srpm(project, _download(source, work, on_line), pkg_dir, on_line=on_line):
                     heads = {imports.srpm_branch: commit}
                 else:
@@ -103,4 +105,7 @@ def import_(
                     )
             for head, commit in heads.items():
                 console.print(f"[bold]{name}[/]: import/{name}/{head} at {commit[:12]}")
+            for filename in missing:
+                where = "or git LFS" if shutil.which("git-lfs") else "and git-lfs is missing"
+                console.print(f"[yellow]{name}: {filename} is not in the source cache, the remote storage, {where}[/]")
     console.print(f"merge them into the project with [{COMMAND}]git merge import/<pkg>/<branch>[/]")

@@ -99,6 +99,9 @@ def test_import(root: Path, upstream: Path, tmp_path: Path, monkeypatch: pytest.
     assert git(root, "ls-tree", "-r", "--name-only", master).split() == files
     digest = hashlib.sha256(b"2.0\n").hexdigest()
     assert git(root, "show", f"{master}:base/foo/sources") == f"{digest}  foo-1.0.tar.gz"
+    # its archive in the source cache, from git LFS, but not in the LFS objects of the project
+    assert (Project.find().source_cache / digest / "foo-1.0.tar.gz").read_text() == "2.0\n"
+    assert not list(root.glob(f".git/lfs/objects/*/*/{digest}"))
     # without the commits of the README and of the owner, from the first commit of the project
     assert git(root, "log", "--topo-order", "--format=%s", master).splitlines() == [
         "Merge branch 'XS-9.0'",
@@ -118,19 +121,20 @@ def test_import(root: Path, upstream: Path, tmp_path: Path, monkeypatch: pytest.
     # the same commits, with the new ones on top, without a git maintenance for each fetch
     commit_files(upstream, {"SPECS/foo.spec": "Name: foo\nVersion: 2.0\nRelease: 2\n"})
     monkeypatch.setenv("GIT_TRACE", str(tmp_path / "trace"))
-    assert import_history(root, root / "base/foo", url, ["master"]) == {
-        "master": git(root, "rev-parse", "import/foo/master")
-    }
+    assert import_history(Project.find(), root / "base/foo", url, ["master"]) == (
+        {"master": git(root, "rev-parse", "import/foo/master")},
+        [],
+    )
     assert git(root, "rev-parse", "import/foo/master~") == master
     assert "git fetch" in (trace := (tmp_path / "trace").read_text())
     assert "git maintenance run" not in trace
     monkeypatch.delenv("GIT_TRACE")
     with pytest.raises(PackageImportError, match="none of the branches to import"):
-        import_history(root, root / "base/foo", url, ["XS-10"])
+        import_history(Project.find(), root / "base/foo", url, ["XS-10"])
     git(root, "checkout", "-q", "--orphan", "other")
     git(root, "commit", "-qm", "not empty")
     with pytest.raises(PackageImportError, match="must start with an empty commit"):
-        import_history(root, root / "base/foo", url, ["master"])
+        import_history(Project.find(), root / "base/foo", url, ["master"])
 
 
 def source_rpm(tmp_path: Path, name: str, version: str) -> Path:
@@ -221,7 +225,7 @@ def test_import_flat(root: Path, tmp_path: Path) -> None:
     (upstream / "SPECS").mkdir()
     git(upstream, "mv", "bar.spec", "SPECS/bar.spec")
     commit_files(upstream, {"SOURCES/a.patch": "a\n", "SOURCES/b.patch": "b\n"})
-    heads = import_history(root, root / "base/bar", f"file://{upstream}", ["master"])
+    heads, _ = import_history(Project.find(), root / "base/bar", f"file://{upstream}", ["master"])
     commits = git(root, "rev-list", "--reverse", heads["master"]).split()[1:]  # but the first commit of the project
     digest = hashlib.sha256(b"1.0\n").hexdigest()
     assert [git(root, "ls-tree", "-r", "--name-only", c).split() for c in commits] == [
@@ -264,4 +268,15 @@ def test_import_without_files(root: Path, tmp_path: Path) -> None:
     upstream.mkdir(parents=True)
     git(upstream, "init", "-q", "-b", "master")
     git(upstream, "commit", "-q", "--allow-empty", "-m", "nothing yet")
-    assert import_history(root, root / "base/empty", f"file://{upstream}", ["master"]) == {}
+    assert import_history(Project.find(), root / "base/empty", f"file://{upstream}", ["master"]) == ({}, [])
+
+
+def test_import_without_archive(root: Path, upstream: Path) -> None:
+    # an archive whose LFS object is gone, listed, but the others cached
+    commit_files(upstream, {"SOURCES/foo-3.0.tar.gz": "3.0\n"})
+    digest = hashlib.sha256(b"3.0\n").hexdigest()
+    next(upstream.glob(f".git/lfs/objects/*/*/{digest}")).unlink()
+    result = runner.invoke(app, ["import", "foo", "--url", f"file://{upstream}", "--branch", "master"])
+    assert result.exit_code == 0, result.output
+    assert "foo: foo-3.0.tar.gz is not in the source cache, the remote storage, or git LFS" in result.output
+    assert (Project.find().source_cache / hashlib.sha256(b"2.0\n").hexdigest() / "foo-1.0.tar.gz").exists()

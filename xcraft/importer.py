@@ -7,16 +7,18 @@ commits only changing what is left out are skipped, and each one gets an ``Impor
 and the commit it comes from. The rewrite only depends on the imported commits and the first commit of the project,
 empty, which the first ones get as parent: importing again gives the same commits, with the new ones on top, and the
 branches sharing commits, like master merging XS-9.0, share them. Merging a branch into the project, where the package
-is not yet, joins the histories.
+is not yet, joins the histories. The archives of the imported branches which are neither in the source cache nor in the
+remote storage come from git LFS into the source cache, for xcraft push.
 
 Source RPMs, like XenServer's, are imported as new commits of these branches too, laid out the same way: their
 archives go into the source cache.
 
-Only git is used, for the developers who only have git.
+Only git is used, and git-lfs for the archives, rather than the API of a forge like GitHub.
 """
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import shlex
@@ -26,9 +28,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from xcraft import container, process
+from xcraft import container, process, remote
 from xcraft.process import git
-from xcraft.sources import cache_source, write_manifest
+from xcraft.sources import cache_source, has_cached_source, parse_manifest, source_path, write_manifest
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -215,12 +217,44 @@ def _fast_forward(repo: str, ref: str, commit: str) -> None:
     git("-C", repo, "update-ref", ref, commit, old or "")
 
 
-def import_history(root: Path, pkg_dir: Path, url: str, branches: list[str]) -> dict[str, str]:
+def _cache_lfs_archives(project: Project, repo: str, url: str, manifests: dict[str, dict[str, str]]) -> list[str]:
+    """Put into the source cache the archives of the `manifests` of the refs of `repo`, fetched from `url`, which
+    neither the source cache nor the remote storage have, from git LFS, and return those found nowhere.
+    """
+    wanted = {(n, d) for m in manifests.values() for n, d in m.items() if not has_cached_source(project, n, d)}
+    paths = {source_path(n, d): (n, d) for n, d in wanted}
+    for storage in remote.storages(project) if wanted else []:
+        with contextlib.suppress(remote.RemoteError):  # then from git LFS
+            wanted -= {paths[p] for p in remote.existing(storage, list(paths))}
+    if not wanted or not shutil.which("git-lfs"):
+        return sorted(n for n, _ in wanted)
+    env = git("-C", repo, "lfs", "env").splitlines()
+    media = Path(next(line.split("=", 1)[1] for line in env if line.startswith("LocalMediaDir=")))
+    objects = {d: media / d[:2] / d[2:4] / d for _, d in wanted}
+    had = {d for d, obj in objects.items() if obj.exists()}
+    for ref, manifest in manifests.items():
+        if names := sorted(n for n, d in manifest.items() if (n, d) in wanted):
+            process.run(
+                ["git", "-C", repo, "lfs", "fetch", url, ref, f"--include={','.join(names)}"],
+                check=False, capture=True, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            )  # fmt: skip
+    for name, digest in sorted(wanted):
+        if objects[digest].exists():
+            (project.source_cache / digest).mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(objects[digest], project.source_cache / digest / name)
+            wanted.discard((name, digest))
+    for digest in objects.keys() - had:  # in the source cache only
+        objects[digest].unlink(missing_ok=True)
+    return sorted(n for n, _ in wanted)
+
+
+def import_history(project: Project, pkg_dir: Path, url: str, branches: list[str]) -> tuple[dict[str, str], list[str]]:
     """Import the history of the `branches` of `url` into the branches import/<pkg>/<branch> of the git repository of
-    `root`, for the package in `pkg_dir`, and return their commits. Missing branches are skipped, and those having
+    the project, for the package in `pkg_dir`, and return their commits, and the archives of their ``sources`` which
+    are neither in the source cache, the remote storage, nor git LFS. Missing branches are skipped, and those having
     commits that are not imported refused.
     """
-    repo, start = _repository(root)
+    repo, start = _repository(project.root)
     first = start.encode()
     prefix = pkg_dir.resolve().relative_to(repo).as_posix().encode() + b"/"
     source = "/".join(url.removesuffix(".git").rstrip("/").split("/")[-2:]).encode()
@@ -273,6 +307,8 @@ def import_history(root: Path, pkg_dir: Path, url: str, branches: list[str]) -> 
         heads = {b: git("-C", repo, "rev-parse", ref) for b, ref in imported.items()}
         for branch, commit in heads.items():
             _fast_forward(repo, f"refs/heads/import/{pkg_dir.name}/{branch}", commit)
+        manifests = {fetched[b]: parse_manifest(trees[kept[marks[tips[b]]]][1].decode()) for b in imported}
+        missing = _cache_lfs_archives(project, repo, url, manifests)
     finally:
         for ref in [
             *fetched.values(),
@@ -280,7 +316,7 @@ def import_history(root: Path, pkg_dir: Path, url: str, branches: list[str]) -> 
             *(f"refs/xcraft/history/imported/{b}" for b in branches),
         ]:
             process.run(["git", "-C", repo, "update-ref", "-d", ref], check=False, capture=True)
-    return heads
+    return heads, missing
 
 
 def import_srpm(

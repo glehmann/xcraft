@@ -6,16 +6,19 @@
 or `--url`, into the git repository of the project: each branch of `branches` of `[import]` in `xcraft.toml`,
 `["master"]` by default, like `["master", "XS-9.0"]`, or `--branch`, becomes the branch `import/<pkg>/<branch>`. The
 project merges it to bring the package, in `base/` for a new one, or another repository with `--repo`. Only git is
-used.
+used, and git-lfs for the archives.
 
 The commits are rewritten for the project: the files of `SPECS/` and `SOURCES/` in the package directory, the archives
-stored with git LFS in its `sources` manifest, by the SHA-256 of their LFS pointer, so without downloading them, and
-nothing else, like the README and `.github/`. A commit without `SPECS/` nor `SOURCES/`, of a flat layout like
-Fedora's dist-git, has the files at its top instead, but its README, those starting with a dot, and those of the
-dist-git: its `sources`, `Makefile` and `import.log`. The archives of its `sources` are in Fedora's lookaside cache, by
+stored with git LFS in its `sources` manifest, by the SHA-256 of their LFS pointer, and nothing else, like the README
+and `.github/`. A commit without `SPECS/` nor `SOURCES/`, of a flat layout like Fedora's dist-git, has the files at
+its top instead, but its README, those starting with a dot, and those of the dist-git: its `sources`, `Makefile` and `import.log`. The archives of its `sources` are in Fedora's lookaside cache, by
 their SHA-512: they are not in the manifest, which only has those stored with git LFS. Links and submodules are refused, like a link to a file of the host. The
 commits left without a change are skipped, and so are the merges of what another parent already merges. Each commit
 gets the trailer `Imported-from: <owner>/<repository>@<commit>`, and keeps its author, committer, dates and message.
+
+The archives of the imported branches, those of the `sources` of their last commits, come from git LFS into the source
+cache, for `xcraft push sources`, when neither the source cache nor the remote storage has them: only those, not the
+archives of the whole history. Those found nowhere, like when git-lfs is missing, are listed.
 
 The project's history must start with an empty commit: the first imported commits get it as parent. The rewrite only
 depends on the commits imported and on it: importing again gives the same commits, with the new ones on top, and the

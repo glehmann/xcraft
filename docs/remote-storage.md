@@ -35,7 +35,8 @@ of `build_keys`, or the command's own.
 - When an archive of a manifest is not in the source cache, the build, or `xcraft fetch sources`, downloads it, from
   the storage, or else from the source of the spec whose URL has the name of the archive, and checks it against the
   manifest. So anyone can push sources: a bad archive cannot match the sha256 of the manifest, which is in git.
-  `xcraft import` does not push: with `xcraft push sources`, the developer shares the archives with their change, and
+  `xcraft import` does not push, but caches the archives of git LFS the storage does not have: with
+  `xcraft push sources`, the developer shares the archives with their change, and
   CI runs `xcraft fetch sources` to fetch and verify sources, then `xcraft push --to main` to upload the cached files to the main
   bucket. Push never fetches missing sources: it fails if an archive to upload is absent from the local cache.
   `xcraft push sources --to main --check` checks the main bucket and needs no credentials.
