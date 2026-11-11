@@ -709,7 +709,7 @@ def test_resolutions_of_other_contents(root: Path, tmp_path: Path, monkeypatch: 
     shutil.copytree(rpms / "a", repo := tmp_path / "repo")
     config = REMOTE.replace('"bash", "bzip2"', '"toypayload", "bash", "bzip2"')
     config = config.replace("[publish]\n", '[publish]\nextra = ["toyrun"]\n')
-    (root / "xcraft.toml").write_text(f'{config}\n[repos.payload]\nbaseurl = "file://{repo}/"\n')
+    (root / "xcraft.toml").write_text(f'{config}\n[repos.payload]\nbaseurl = "file://{repo}/"\ngpgcheck = false\n')
     assert xcraft("build", "--dry-run")[0] == 0
     sources = load_lock(Project.find()).sources
     assert xcraft("push", "resolutions")[0] == 0

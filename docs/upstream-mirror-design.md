@@ -233,8 +233,10 @@ copying them all costs a few GiB once.
   checks before using it, and the image and the build roots are checked against the lock once installed. Forged
   metadata could make dnf choose other packages, and a lock update pin them, a new dependency or a new version: the
   pinned RPMs are checked against the keys of the repositories of `xcraft.toml` before the builds install them, and
-  before they are copied, so a package no upstream key signs is rejected, unless a repository of the architecture has
-  no key. The source archives are not signed for the same reason. The packages keep their upstream signatures.
+  before they are copied, so a package no upstream key signs is rejected. Only those of the repositories of
+  `gpgcheck = false` are not checked: the resolution lists them in `[unsigned]` of the lock, when such a repository
+  has them, of the same checksums, which forged metadata of the copy cannot change. The source archives are not
+  signed for the same reason. The packages keep their upstream signatures.
 - The originals are kept, with their upstream signatures: the copies signed again by our keys, for incoming and the
   releases, are kept next to them, see [the layout of the published
   repositories](publishing-layout-design.md#the-upstream-originals-and-their-copies-signed-once-by-key).

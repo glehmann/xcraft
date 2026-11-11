@@ -212,17 +212,24 @@ def repository(project: Project, names: Iterable[str] | None = None) -> Path:
     return repo
 
 
+def unsigned(project: Project) -> set[str]:
+    """Return the pinned binary packages of the architecture of `project` whose signatures are not checked: those of
+    the repositories of gpgcheck = false, see resolve.py.
+    """
+    return set(cached_lock(project).unsigned.get(project.arch, []))
+
+
 def check_signed(project: Project, pinned: dict[str, Pin]) -> None:
     """Check the RPMs of the `pinned` packages in the store are signed with the keys of the repositories, see
     signing.check_signatures(): the lock does not tell which repository each one is from, and its SHA-256 may come from
-    metadata no key signs, like that of the upstream copies. Not when a repository of the architecture has no key,
-    whose packages are not checked.
+    metadata no key signs, like that of the upstream copies. Not those of the repositories of gpgcheck = false, see
+    unsigned().
     """
     from xcraft.signing import check_signatures  # noqa: PLC0415, which runs containers
 
-    if all(repo.gpgkey for repo in project.repos.values()):
-        files = {f"{p.sha256}/{file_name(n, p)}": p.sha256 for n, p in pinned.items()}
-        check_signatures(project, _store() / "rpms", sorted(files), what="pinned packages", digests=files)
+    skipped = unsigned(project)
+    files = {f"{p.sha256}/{file_name(n, p)}": p.sha256 for n, p in pinned.items() if n not in skipped}
+    check_signatures(project, _store() / "rpms", sorted(files), what="pinned packages", digests=files)
 
 
 def other_repositories(kept: set[str], used_since: float = math.inf) -> list[str]:

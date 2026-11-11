@@ -18,7 +18,7 @@ from tests.test_build import xcraft
 from xcraft import buildid, pinned, publish
 from xcraft.cache import build_keys, cached_build
 from xcraft.commands import choose_signer
-from xcraft.lock import cached_lock
+from xcraft.lock import cached_lock, load_lock, save_lock
 from xcraft.project import Config, Project, Remote, Repo, Sign
 from xcraft.publish import _signed_build
 from xcraft.signing import Signer, SigningError, check_signatures, create_dev_key, dev_keyring, dev_signer, key_signer
@@ -99,6 +99,10 @@ def _served(directory: Path) -> Generator[str]:
 
 
 def test_repo_keys_of_urls_pinned() -> None:
+    # a repository without key, of packages not signed, only with gpgcheck = false
+    with pytest.raises(ValueError, match="needs a gpgkey, or gpgcheck = false"):
+        Repo(baseurl="file:///repo")
+    assert not Repo(baseurl="file:///repo", gpgcheck=False).gpgcheck
     assert Repo(baseurl="file:///repo", gpgkey="file:///etc/pki/rpm-gpg/key").fingerprints == []
     with pytest.raises(ValueError, match="needs the fingerprints of its keys"):
         Repo(baseurl="file:///repo", gpgkey="file:///etc/pki/rpm-gpg/key https://example.com/key")
@@ -156,7 +160,7 @@ def _check_with_keys_at_urls(root: Path, tmp_path: Path, signer: Signer, signed:
 def test_pinned_packages_are_signed(build_environment: Path, root: Path, tmp_path: Path) -> None:
     project = Project.find().on_host()
     image = {n: p for n, p in pinned.pins(project).items() if n in cached_lock(project).image[project.arch]}
-    pinned.repository(project, image)  # not checked, as the toys have no key
+    pinned.repository(project, image)  # checked, but the toys', of gpgcheck = false
     baseos = project.config.repos["baseos"]
     project.config.repos = {"baseos": baseos}
     pinned.check_signed(project, image)
@@ -167,6 +171,11 @@ def test_pinned_packages_are_signed(build_environment: Path, root: Path, tmp_pat
         project.config.repos = {"baseos": keyed}
         with pytest.raises(SigningError, match="some pinned packages are not signed with the keys of the repositories"):
             pinned.check_signed(project, image)
+        # not those of the repositories of gpgcheck = false, which the lock lists
+        lock = load_lock(project)
+        lock.unsigned[project.arch] = sorted(image)
+        save_lock(project, lock)
+        pinned.check_signed(project, image)
 
 
 @needs_gpg

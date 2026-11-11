@@ -37,8 +37,10 @@ One file, for all the architectures, written by xcraft only, one line by entry f
 | `[runtime]` | by architecture, the upstream binary packages of the published repositories | `prepare()` |
 | `[iso]` | by architecture, those of the tools making the ISO, but the image's | `prepare()` |
 | `[sign]` | by architecture, those of the signing image, but the image's | `prepare()` |
+| `[unsigned]` | by architecture, the pinned packages of the repositories of `gpgcheck = false`, whose signatures are not checked | `prepare()` |
 
-and `version`, the format, `lock.FORMAT`.
+and `version`, the format, `lock.FORMAT`: 2, this xcraft reading the format 1 too, without `[sign]` and `[unsigned]`,
+and writing it in the format 2.
 
 They say what we take from upstream. What the builds of our packages found, which the specs do not say, is in the lock
 of the builds, see [What the builds record](#what-the-builds-record).
@@ -85,6 +87,10 @@ What is installed, by name, each pinned:
   architecture;
 - `[sign]`: rpmsign and gpg, over the image, for the signing image, apart from it so as not to change the build keys:
   rpm-sign of the version of the locked rpm.
+
+`[unsigned]` lists the pins a repository of `gpgcheck = false` has, of the same checksum, as resolved: the others are
+checked against the keys of the repositories before they are installed or copied, see `pinned.check_signed()`. A pin
+the resolutions no longer find keeps what the lock has.
 
 They are resolved by dnf, without installing anything, natively for every architecture, against the upstream
 repositories in the locked versions, our copy of them, and a repository of the metadata of our binary packages,

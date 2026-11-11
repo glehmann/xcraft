@@ -61,7 +61,7 @@ def test_save_and_load(tmp_path) -> None:  # noqa: ANN001
     assert '[roots]  # the upstream binary packages of the build roots, but the image\'s\n"qemu" = [\n' in text
     # the binary packages, pinned by architecture, in a format of its own
     assert text.startswith(
-        "# written by xcraft: the versions of the upstream packages, for all the architectures\n\nversion = 1\n"
+        "# written by xcraft: the versions of the upstream packages, for all the architectures\n\nversion = 2\n"
     )
     assert f'"glibc" = "2.39-145.el10_2 aarch64 {"ab" * 32} glibc"\n' in text
 
@@ -95,19 +95,25 @@ def test_lock_validation(tmp_path: Path) -> None:
         ({"runtime": {"aarch64": ["glibc"]}}, "without pinned binary packages: aarch64"),
         ({"iso": {"aarch64": ["glibc"]}}, "without pinned binary packages: aarch64"),
         ({"sign": {"aarch64": ["glibc"]}}, "without pinned binary packages: aarch64"),
+        ({"unsigned": {"aarch64": ["glibc"]}}, "without pinned binary packages: aarch64"),
         ({"binaries": {"aarch64": {"glibc": pin}}, "image": {"aarch64": ["bash"]}}, "not pinned in the lock: bash"),
         ({"binaries": {"aarch64": {"glibc": pin}}, "roots": Recorded(shared={"qemu": ["bash"]})}, "not pinned"),
         ({"binaries": {"aarch64": {"glibc": pin}}, "runtime": {"aarch64": ["bash"]}}, "not pinned in the lock: bash"),
         ({"binaries": {"aarch64": {"glibc": pin}}, "iso": {"aarch64": ["bash"]}}, "not pinned in the lock: bash"),
         ({"binaries": {"aarch64": {"glibc": pin}}, "sign": {"aarch64": ["bash"]}}, "not pinned in the lock: bash"),
+        ({"binaries": {"aarch64": {"glibc": pin}}, "unsigned": {"aarch64": ["bash"]}}, "not pinned in the lock: bash"),
         ({"binaries": {"aarch64": {"glibc": pin}}, "sources": {}}, "of source packages not locked: glibc"),
     ):
         with pytest.raises(ValueError, match=problem):
             Lock.model_validate({"sources": {"glibc": "1-1"}, **invalid})
     # a lock of another xcraft
-    lock_path(project).write_text('version = 2\n\n[sources]\n"glibc" = "1-1"\n')
-    with pytest.raises(LockFormatError, match="the lock has the format 2, not 1: of another xcraft"):
+    lock_path(project).write_text('version = 3\n\n[sources]\n"glibc" = "1-1"\n')
+    with pytest.raises(LockFormatError, match="the lock has the format 3, not 2: of another xcraft"):
         load_lock(project)
+    # of the format before, without the tables sign and unsigned: read, and written in the current one
+    lock_path(project).write_text('version = 1\n\n[sources]\n"glibc" = "1-1"\n')
+    save_lock(project, load_lock(project))
+    assert lock_path(project).read_text().splitlines()[2] == "version = 2"
 
 
 def test_record() -> None:

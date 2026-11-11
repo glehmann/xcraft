@@ -1154,7 +1154,7 @@ def test_images_of_other_contents(root: Path, tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     shutil.copytree(rpms / "a", repo)
     config = (root / "xcraft.toml").read_text().replace('"bash", "bzip2"', '"toypayload", "bash", "bzip2"')
-    (root / "xcraft.toml").write_text(f'{config}\n[repos.payload]\nbaseurl = "file://{repo}/"\n')
+    (root / "xcraft.toml").write_text(f'{config}\n[repos.payload]\nbaseurl = "file://{repo}/"\ngpgcheck = false\n')
     assert xcraft("build", "--dry-run")[0] == 0
     images = []
     for payload in ("a", "b"):

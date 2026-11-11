@@ -769,6 +769,8 @@ def test_reused_builds_of_upstream_updates(root: Path, monkeypatch: pytest.Monke
     commit_base(root)
     git(root, "checkout", "-qb", "feature")
     assert xcraft("lock", "--update", "toyrun")[0] == 0
+    # of the toys, of gpgcheck = false: their signatures are not checked
+    assert "toyrun" in load_lock(Project.find()).unsigned[ARCH]
     assert update() == {"trivial": 1, "with-deps": 2}
     # not for other updates
     code, output = xcraft("reuse", "--dep", "trivial-upstream")

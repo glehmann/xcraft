@@ -1,14 +1,15 @@
 """Write as JSON the build environment image and the build roots of an architecture, resolved from the lock.
 
 Run as root, natively, with the dnf python API, for any architecture: ``resolve.py <input> <output>``, with the
-repositories of the architecture in /etc/yum.repos.d/. Nothing is installed: dnf only resolves, against the metadata
-of the repositories, with the upstream packages of the locked versions of their sources only, and a repository of our
+repositories of the architecture in /etc/yum.repos.d/. Nothing is installed: dnf only resolves, against the metadata of
+the repositories, with the upstream packages of the locked versions of their sources only, and a repository of our
 binary packages, written from their specs.
 
 The input has:
 - ``arch``, ``suffixes``, the release suffixes of the rebuilds for an architecture, ``sources``, the locked version of
-  each upstream source package, ``base``, the packages of the base image, ``image``, the packages installed over them,
-  and ``rpms``, the paths of binary packages of ours, built, and of extra upstream ones;
+  each upstream source package, ``unchecked``, the repositories whose packages are not signed, ``base``, the packages of
+  the base image, ``image``, the packages installed over them, and ``rpms``, the paths of binary packages of ours,
+  built, and of extra upstream ones;
 - ``ours``, our binary packages, and ``builds``, for each package of ours, its ``buildrequires`` and the ``allowed``
   binary packages of ours, of its dependencies, to resolve its build root;
 - ``record``, for built binary packages of ours, the ``requires`` and ``provides`` their specs declare, and ``wanted``,
@@ -18,13 +19,13 @@ The input has:
   ``installer``'s, the ``iso`` packages of the repository of the ISO, and the ``tools`` making the ISO;
 - ``sign``, the packages of the signing image, installed on the image.
 
-The output has the locked binary ``packages``, the ``image``, the upstream ``buildroots`` and the ``ours`` binary
-packages of each build root, the ``requires`` and ``provides`` of the recorded binary packages, the ``errors``, by
-package, ``image`` for the image, the upstream packages of the ``runtime``, with its ``runtime_errors``, and of the
-``tools``, besides the image's, with their ``tools_error``, those of ``sign`` likewise, with their ``sign_error``, the
-``unlocked`` source packages needed, the
-``versions`` of those and of the given ones, oldest first, the packages of the ``sets`` of the ISO, ``iso`` and
-``install.img``, and ``why`` each package is in each set, see Resolver.why().
+The output has the locked binary ``packages``, those of them the ``unchecked`` repositories have, ``unsigned``, the
+``image``, the upstream ``buildroots`` and the ``ours`` binary packages of each build root, the ``requires`` and
+``provides`` of the recorded binary packages, the ``errors``, by package, ``image`` for the image, the upstream packages
+of the ``runtime``, with its ``runtime_errors``, and of the ``tools``, besides the image's, with their ``tools_error``,
+those of ``sign`` likewise, with their ``sign_error``, the ``unlocked`` source packages needed, the ``versions`` of
+those and of the given ones, oldest first, the packages of the ``sets`` of the ISO, ``iso`` and ``install.img``, and
+``why`` each package is in each set, see Resolver.why().
 """
 
 from __future__ import annotations
@@ -490,6 +491,15 @@ def _published_sets(
     return sets, why
 
 
+def _unsigned(resolver: Resolver, unchecked: list[str], packages: dict[str, dict]) -> list[str]:
+    """Return the locked binary `packages` the `unchecked` repositories have, of the same checksums."""
+    if not unchecked:
+        return []
+    found = resolver.base.sack.query().available().filter(reponame=unchecked)
+    same = {(p.name, p.evr, p.arch, p.chksum[1].hex()) for p in found if p.chksum}
+    return sorted(name for name, p in packages.items() if (name, p["evr"], p["arch"], p["sha256"]) in same)
+
+
 def main() -> None:
     """Resolve the input of the command line into its output."""
     data = json.loads(Path(sys.argv[1]).read_text())
@@ -536,6 +546,7 @@ def main() -> None:
         for name, p in resolver.binaries.items()
         if (source := resolver.canonical(p.sourcerpm)[0]) in locked
     }
+    result["unsigned"] = _unsigned(resolver, data.get("unchecked", []), result["packages"])
     if multiarch := sorted(resolver.multiarch & result["packages"].keys()):
         sys.exit(f"upstream packages of several architectures, which the lock cannot pin: {', '.join(multiarch)}")
     result["unlocked"] = sorted(resolver.needed - locked.keys())

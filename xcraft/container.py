@@ -79,7 +79,7 @@ def repo_file(project: Project) -> str:
     """Return the definition of the repositories of the build environment of the platform."""
     return "".join(
         f"[{name}]\nname={name}\nbaseurl={repo.baseurl.format(arch=project.arch)}\n"
-        + (f"gpgcheck=1\ngpgkey={repo.gpgkey}\n" if repo.gpgkey else "gpgcheck=0\n")
+        + (f"gpgcheck=1\ngpgkey={repo.gpgkey}\n" if repo.gpgcheck else "gpgcheck=0\n")
         + (f"includepkgs={' '.join(sorted(repo.includepkgs))}\n" if repo.includepkgs else "")
         # read again each time, when local, like those changed between two commands
         + ("metadata_expire=0\n" if repo.baseurl.startswith("file://") else "")

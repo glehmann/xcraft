@@ -133,8 +133,10 @@ def _download(
                 repos=_source_repos(project) if source else None,
             )
         found = [f for f in missing if (work / f).exists()]
-        if source and found:
-            check_signatures(project, work, found, what="upstream source packages")
+        locked = pinned.pins(project)
+        unsigned = {_nevra(locked, name) for name in pinned.unsigned(project)}
+        if source and (checked := [f for f in found if missing[f] not in unsigned]):
+            check_signatures(project, work, checked, what="upstream source packages")
         cache.mkdir(parents=True, exist_ok=True)
         for f in found:
             (work / f).rename(cache / f)
@@ -509,7 +511,7 @@ class _Assembler:
         those the storage misses: those it has were when added. Signed by `signer` in final mode, unless `keep`: their
         sources keep their signatures.
         """
-        locked = pinned.pins(project)
+        locked, unsigned = pinned.pins(project), pinned.unsigned(project)
         rpms = {name: _rpm_name(locked, name) for name in names}
         (self.dest / repo).mkdir(parents=True, exist_ok=True)
         added = []
@@ -520,7 +522,7 @@ class _Assembler:
             with activity(f"getting the upstream packages for {repo}", log=True) as on_line:
                 for rpm in _upstream_rpms(project, missing, on_line):
                     localrepo.link(rpm, self.dest / repo / rpm.name)
-            added = [f"{repo}/{rpms[name]}" for name in missing]
+            added = [f"{repo}/{rpms[name]}" for name in missing if name not in unsigned]
         srpms = {
             name: repodata.sourcerpm(self.known[digest][0])
             for name in names
@@ -537,7 +539,7 @@ class _Assembler:
             (self.dest / source).mkdir(parents=True, exist_ok=True)
             for srpm in new:
                 localrepo.link(cache / srpm, self.dest / source / srpm)
-                added.append(f"{source}/{srpm}")
+            added += [f"{source}/{srpm}" for name, srpm in srpms.items() if srpm in new and name not in unsigned]
         check_signatures(project, self.dest, added, what="upstream packages")
 
     def _add_signed_upstream(
@@ -555,7 +557,9 @@ class _Assembler:
             if missing := [name for name in names if originals[name] not in copies]:
                 with activity(f"signing the upstream packages of {repo}", log=True) as on_line:
                     found = _upstream_rpms(project, missing, on_line)
-                    check_signatures(project, found[0].parent, [rpm.name for rpm in found], what="upstream packages")
+                    unsigned = {_rpm_name(locked, n) for n in pinned.unsigned(project)}
+                    checked = [rpm.name for rpm in found if rpm.name not in unsigned]
+                    check_signatures(project, found[0].parent, checked, what="upstream packages")
                     made = upstream_signed.signed(
                         project, signer, {originals[n]: rpm for n, rpm in zip(missing, found, strict=True)}
                     )

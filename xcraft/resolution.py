@@ -89,6 +89,8 @@ class Resolved(BaseModel):
     """The upstream packages of the signing image, but the image's."""
     sign_error: str = ""
     """Why the packages of the signing image cannot be installed."""
+    unsigned: list[str] = []
+    """The locked binary packages of the repositories of gpgcheck = false, whose packages are not signed."""
     versioned: dict[str, str] = {}
     """The binary packages of ours a package refers to with a version, or in a rich dependency, with their
     epoch-version-releases when resolved: another of them may resolve otherwise, see _unversioned()."""
@@ -228,6 +230,7 @@ def _image_data(project: Project) -> dict:
         "suffixes": config.release_suffixes,
         "sources": cached_lock(project).sources,
         "image": sorted({*config.packages, *PACKAGES}),
+        "unchecked": sorted(name for name, repo in project.repos.items() if not repo.gpgcheck),
         "ours": [],
         "builds": {},
     }
@@ -445,6 +448,19 @@ def _pins(
     return pins
 
 
+def _record_unsigned(arch: str, recorded: Lock, lock: Lock, resolutions: list[Resolved]) -> None:
+    """Record in the `lock` the pinned binary packages of `arch` of the repositories whose packages are not signed: as
+    the `resolutions` find them, or else as `recorded`.
+    """
+    known = {name for r in resolutions for name in r.packages}
+    unsigned = {name for r in resolutions for name in r.unsigned}
+    kept = set(recorded.unsigned.get(arch, [])) - known
+    if names := sorted((unsigned | kept) & lock.binaries[arch].keys()):
+        lock.unsigned[arch] = names
+    else:
+        lock.unsigned.pop(arch, None)
+
+
 def _record_image(platform: Project, lock: Lock) -> Resolved:
     """Record in the `lock` the upstream binary packages of the image of the `platform`, and return its resolution,
     to pin them from.
@@ -469,6 +485,7 @@ def _record_images(platforms: list[Project], recorded: Lock, lock: Lock, repin: 
         image = _record_image(platform, lock)
         pinned = _pins(platform.arch, recorded, [image], {*image.image, *image.sign}, repin)
         lock.binaries[platform.arch] = {**recorded.binaries.get(platform.arch, {}), **pinned}
+        _record_unsigned(platform.arch, recorded, lock, [image])
 
 
 def _record_published(recorded: Lock, lock: Lock, arch: str, roots: Resolved) -> None:
@@ -494,7 +511,7 @@ def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
     drop_gone(project)
 
     def record(recorded: Lock, lock: Lock) -> None:
-        lock.image, lock.binaries, lock.runtime, lock.iso, lock.sign = {}, {}, {}, {}, {}
+        lock.image, lock.binaries, lock.runtime, lock.iso, lock.sign, lock.unsigned = {}, {}, {}, {}, {}, {}
         lock.roots.keep({*project.package_dirs})
         lock.roots.arches = {}
         for platform in platforms:
@@ -513,9 +530,11 @@ def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
                 *lock.runtime.get(platform.arch, []), *lock.iso.get(platform.arch, []),
             }  # fmt: skip
             lock.binaries[platform.arch] = _pins(platform.arch, recorded, [image, roots], names, repin)
+            _record_unsigned(platform.arch, recorded, lock, [image, roots])
         if (native := project.on_host()).arch not in lock.image:  # the image parsing the specs, see prepare()
             image = _record_image(native, lock)
             lock.binaries[native.arch] = _pins(native.arch, recorded, [image], {*image.image, *image.sign}, repin)
+            _record_unsigned(native.arch, recorded, lock, [image])
         # those of no pin left, like those of a package published no more, in their latest version when needed again
         used = {pin.source for pins in lock.binaries.values() for pin in pins.values()}
         lock.sources = {source: version for source, version in lock.sources.items() if source in used}

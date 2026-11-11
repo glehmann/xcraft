@@ -61,7 +61,10 @@ class Repo(BaseModel):
     baseurl: str
     """URL of the repository, where ``{arch}`` is the RPM architecture."""
     gpgkey: str | None = None
-    """URL of the key signing its packages, which are not checked without one: several, separated by spaces."""
+    """URL of the key signing its packages: several, separated by spaces."""
+    gpgcheck: bool = True
+    """Whether its packages are checked against the keys of `gpgkey`, which it then needs: not for a repository of
+    unsigned packages, whose pins the lock lists in unsigned."""
     fingerprints: list[str] = []
     """The fingerprints of the keys the URLs of `gpgkey` but those of files, of the image, must give, which could give
     any other key otherwise."""
@@ -75,6 +78,9 @@ class Repo(BaseModel):
     @model_validator(mode="after")
     def _pinned_keys(self) -> Repo:
         self.fingerprints = [fingerprint(key) for key in self.fingerprints]
+        if self.gpgcheck and not self.gpgkey:
+            msg = f"{self.baseurl} needs a gpgkey, or gpgcheck = false, for packages not signed"
+            raise ValueError(msg)
         if not self.fingerprints and any(not url.startswith("file://") for url in (self.gpgkey or "").split()):
             msg = f"gpgkey {self.gpgkey} needs the fingerprints of its keys, in fingerprints"
             raise ValueError(msg)
