@@ -71,7 +71,6 @@ def _unpack_srpm(project: Project, srpm: Path, dest: Path, *, on_line: Callable[
             "import",
             f"cd /content && rpm2cpio /srpm/{shlex.quote(srpm.name)} | cpio -idm --quiet",
             volumes=[f"{srpm.parent}:/srpm:ro", f"{content}:/content"],
-            network=False,
         )
         manifest = {}
         for path in sorted(Path(content).iterdir()):

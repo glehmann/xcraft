@@ -109,7 +109,6 @@ def push(project: Project, storage: Remote, name: str, *, signer: Signer | None)
                 f"{INSTALL} && CCACHE_DIR=/ccache ccache --recompress {LEVEL}",
                 volumes=[f"{cache}:/ccache"],
                 show=f"compressing the ccache of {name}",
-                network=False,
                 install=True,
             )
         manifest = {

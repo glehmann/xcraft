@@ -99,7 +99,6 @@ def parse(project: Project, dirs: list[Path]) -> dict[str, Package]:
                 f"python3 /xcraft/parse.py /work/specs.json {rpm_target(project.arch)} {specs}",
                 volumes=[f"{project.root}:/project:ro", f"{work}:/work"],
                 show="parsing the specs",
-                network=False,
             )
             cache.parent.mkdir(parents=True, exist_ok=True)
             (work / "specs.json").rename(cache)

@@ -24,7 +24,8 @@ and the packages builds expect, with those xcraft uses, in their locked versions
 built again when the configuration or the locked versions of its packages change.
 
 **Builds.** Each build runs in a fresh container: `dnf builddep`, then the dynamic `BuildRequires` if any, then
-`rpmbuild`, with stdin from `/dev/null`, and without the network, like koji and mock: only the loopback interface. It runs against a local repository of what was built here, with a priority
+`rpmbuild`, with stdin from `/dev/null`, and without the network, like koji and mock: only the loopback interface,
+in a container without the network either, as the build dependencies come from the repository of the pins. It runs against a local repository of what was built here, with a priority
 over the other repositories, so a package built locally always wins. A build result is cached in
 `.xcraft/cache/builds/<fingerprint>/<arch>/<pkg>/<key>`, by its signer, under its [build key](builds.md#build-keys). A build whose log gets larger than 256 MiB,
 like a test suite looping forever, is stopped.
@@ -70,9 +71,8 @@ the project they copy.
 `aarch64`, or in `$XCRAFT_ARCH`, or else the host's, `x86_64_v2` on an x86_64 host. So `xcraft build foo` builds `foo`
 for one architecture only. Another architecture is built under emulation, with podman and qemu-user-static, whose
 registration needs the `C` flag for `sudo` in the containers, which Fedora's has not: `xcraft doctor` checks it, and
-`xcraft doctor --fix` installs the emulator and registers it in `/etc/binfmt.d/`, with systemd-binfmt, or else directly. The emulation is fine for the small packages, but their builds
-keep the network: qemu-user cannot isolate them, while the large ones are for native builders, which share their builds
-through the [remote storage](remote-storage.md). xcraft solves the metadata of the repositories of an emulated
+`xcraft doctor --fix` installs the emulator and registers it in `/etc/binfmt.d/`, with systemd-binfmt, or else directly. The emulation is fine for the small packages, but slow for
+the large ones, which are for native builders, which share their builds through the [remote storage](remote-storage.md). xcraft solves the metadata of the repositories of an emulated
 architecture natively, in its dnf cache: under emulation, that takes most of the time of dnf. Each architecture has its
 lock, its build environment image, and its builds, in `.xcraft/cache/builds/<fingerprint>/<arch>/`. AlmaLinux rebuilds EPEL for
 `x86_64_v2` only: the other architectures get Fedora's.

@@ -132,7 +132,6 @@ class LocalRepo:
                 "createrepo_c -q /repo",
                 volumes=[f"{self.path}:/repo"],
                 show="indexing the local repository",
-                network=False,
             )
             self.up_to_date = True
         if signer:

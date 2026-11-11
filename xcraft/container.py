@@ -243,13 +243,15 @@ def run_container(
     *,
     container: str,
     volumes: list[str],
-    network: bool = True,
+    network: bool = False,
     log: Path | None = None,
     on_line: Callable[[str], None] | None = None,
     image: str = "",
     install: bool = False,
 ) -> None:
-    """Run a bash `script` in a container called `container`, of the build environment image, or of `image`.
+    """Run a bash `script` in a container called `container`, of the build environment image, or of `image`, without
+    the network, but with `network`: what it installs is on /pinned, and the code of the builds, of the specs and of
+    the hooks, runs with nothing to reach.
 
     The volumes are mounted with the scripts of the build environment, in
     /xcraft, the repository of the pinned packages with `install`, for the
@@ -289,7 +291,7 @@ def run(
     volumes: Sequence[str] = (),
     show: str = "",
     on_line: Callable[[str], None] | None = None,
-    network: bool = True,
+    network: bool = False,
     image: str = "",
     install: bool = False,
 ) -> None:

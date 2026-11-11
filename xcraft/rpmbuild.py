@@ -94,6 +94,7 @@ def run_build(
     nocheck: bool = False,
     fast: bool = False,
     after: str = "",
+    network: bool = False,
     log: Path | None = None,
     on_line: Callable[[str], None] | None = None,
 ) -> None:
@@ -103,7 +104,8 @@ def run_build(
     ours. `suffix` is the release suffix of the build, %autorev: its number, and its development build suffix, if
     any. With `nocheck`, rpmbuild skips %check. With `fast`, for the development builds, the binary packages are
     compressed with zstd at level 3 rather than 19: their packaging takes a third of the time, for packages a third
-    bigger. The output goes to `log`, or to an interactive terminal without log.
+    bigger. The container has no network, but with `network`, for the shell, whose rpmbuild has none still, see
+    offline.py. The output goes to `log`, or to an interactive terminal without log.
     """
     parameters = {
         "spec": main_spec(project.package_dirs[name]).name,
@@ -132,6 +134,7 @@ def run_build(
             DUNE_CACHE + script,
             container=f"xcraft-{project.id}-{name}",
             volumes=volumes,
+            network=network,
             log=log,
             on_line=on_line,
             install=True,
@@ -172,4 +175,4 @@ def shell(project: Project, name: str) -> None:
         )
         + " && exec bash -l"
     )
-    run_build(project, name, repo, "p", replace=replace, after=after)
+    run_build(project, name, repo, "p", replace=replace, after=after, network=True)

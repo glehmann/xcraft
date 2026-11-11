@@ -104,7 +104,6 @@ class Signer:
                     script,
                     volumes=[f"{root}:/signed", f"{work}:/work:ro", f"{socket}:/gpg-agent"],
                     show=f"signing {len(rpms)} packages",
-                    network=False,
                     image=signing_image(project.on_host()),
                 )
             except ContainerError as e:
@@ -264,7 +263,6 @@ def check_signatures(
                 f"{check} > /work/checks 2>&1",
                 volumes=[f"{root}:/checked:ro", f"{work}:/work"],
                 show=f"checking the signatures of the {what}",
-                network=False,
                 image=image,
             )
         except ContainerError:

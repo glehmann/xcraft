@@ -395,7 +395,6 @@ class _Assembler:
                 "createrepo_c -q --general-compress-type=gz /repo",
                 volumes=[f"{path}:/repo"],
                 show=f"indexing the new packages of {repo}",
-                network=False,
             )
             local = repodata.read(path) or {}
             entries |= {rpm.name: local[sha256_of(rpm)] for rpm in rpms}
