@@ -25,30 +25,18 @@ if TYPE_CHECKING:
 FORMAT = 1
 """The version of how xcraft gives the builds what their keys cover, besides the scripts of the builds, like the build
 trees, see rpmbuild.prepare_tree(): changed with it, to build them all again."""
-SCRIPTS = ("build.sh", "offline.py", "record.py", "made.py", "rpmdeps.py")
-"""The scripts of the builds, in xcraft/buildenv/: see The recipe."""
+SCRIPTS = ("Containerfile", "build.sh", "offline.py", "record.py", "made.py", "rpmdeps.py")
+"""The Containerfile of the image and the scripts of the builds, in xcraft/buildenv/: see The recipe."""
 RECIPE = hashlib.sha256("".join([REPO_FILE, *((BUILDENV / s).read_text() for s in SCRIPTS)]).encode()).hexdigest()
-"""What makes the builds, besides the image and the packages: a change to it rebuilds them all, but see _SAME_BUILDS."""
-_SAME_BUILDS: dict[str, str] = {
-    # rpmbuild --nocheck for xcraft build --nocheck, whose builds are not cached nor pushed as the others
-    "a153b6010fc5ce7977bc37ce2a9ae37f61d55c70e7696b24da632ce9f96f4a93": (
-        "29c33cba085b64d826ac79e52005810ad38ef1db16ec3d0d747117564ebe8622"
-    ),
-    # record.py without the type ignore of its import of dnf, which the stubs of stubs/ type
-    "daefda1f7a8921a4f5b3275b779989d0a35ce26a3911cb57b06ab8dc17950c2b": (
-        "29c33cba085b64d826ac79e52005810ad38ef1db16ec3d0d747117564ebe8622"
-    ),
-    # rpmbuild without gaining privileges, which no spec does, with sudo
-    "d3f7ff1e41536e11105be01976805771e90013e3287cba5ff70f84c7ca3b55f2": (
-        "29c33cba085b64d826ac79e52005810ad38ef1db16ec3d0d747117564ebe8622"
-    ),
-}
+"""What makes the builds, besides the settings of the image and the packages: a change to it rebuilds them all, but see
+_SAME_BUILDS."""
+_SAME_BUILDS: dict[str, str] = {}
 """Recipes making the same packages as an earlier one, by their hash, with the earliest one: their builds keep its
 keys."""
 
 
 def recipe_key() -> str:
-    """Return the hash of the scripts of the builds: the earliest one making the same packages."""
+    """Return the hash of the Containerfile and the scripts of the builds: the earliest one making the same packages."""
     return _SAME_BUILDS.get(RECIPE, RECIPE)
 
 
@@ -69,7 +57,6 @@ def recipe(project: Project) -> str:
             [
                 FORMAT,
                 recipe_key(),
-                (BUILDENV / "Containerfile").read_text(),
                 config.base_image,
                 sorted({*config.packages, *PACKAGES}),
                 config.macros,

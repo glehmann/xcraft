@@ -16,8 +16,8 @@ is named by the hash of its key and of the names of the builds of ours it is bui
 
 | Part | What it is | Changed by |
 |---|---|---|
-| The recipe | The build script, `xcraft/buildenv/build.sh`, the `.repo` file of the local repository, and the scripts recording what the builds install and isolating them from the network | A change to how xcraft builds, but one declared making the same packages |
-| The build environment | The base image, pinned by digest, the Containerfile, `packages` of `xcraft.toml`, the repositories, the RPM macros (`%dist`...), the `release_suffixes`, and the names and URLs of `extra_upstream` | Any change to these settings |
+| The recipe | The Containerfile of the image, the build script, `xcraft/buildenv/build.sh`, the `.repo` file of the local repository, and the scripts recording what the builds install and isolating them from the network | A change to how xcraft builds, but one declared making the same packages |
+| The build environment | The base image, pinned by digest, `packages` of `xcraft.toml`, the repositories, the RPM macros (`%dist`...), the `release_suffixes`, and the names and URLs of `extra_upstream` | Any change to these settings |
 | The image | The upstream binary packages of the build environment image of all the architectures, by their pins in the lock: version, architecture and SHA-256 (see [The lock](dependencies.md#the-lock)) | An update of a package of the image, or other contents pinned for it |
 | The package | Its name, and all the files of `<repo>/<pkg>/`, but `origin`: their paths, contents, and whether they are executable. The `sources` manifest covers the archives by their SHA-256 | Any change to the spec, a patch, a source file, or an archive |
 | Its build root | The upstream binary packages of its build root besides the image's, on all the architectures, by their pins, and what it is resolved from besides its `BuildRequires`: its dynamic `BuildRequires`, and what rpm generated for the binary packages of ours it may have, as `xcraft.builds` records them | `xcraft lock --update` of one of them, a change of its `BuildRequires`, or what the builds found |

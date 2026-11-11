@@ -7,8 +7,8 @@ owner of a file to root would fail with EINVAL, which fakeroot, unlike EPERM, do
 outside the new user namespace, which takes CAP_SETUID there, and in it, brings up the loopback interface of a new
 network namespace, then runs the command as the user, with its environment, which sudo would have trimmed.
 
-Under emulation, the command runs in the namespaces of the container, which has no network either: qemu-user,
-multithreaded, cannot create a user namespace.
+Under emulation, the command runs in the namespaces of the container, which has no network either, but for xcraft
+shell: qemu-user, multithreaded, cannot create a user namespace.
 """
 
 import ctypes

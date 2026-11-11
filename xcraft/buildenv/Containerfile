@@ -8,7 +8,7 @@ COPY macros.xcraft /etc/rpm/
 # a layer of the cache of podman
 COPY pins.list /etc/xcraft/
 # only the pinned packages, from their repository on /pinned, checked against their SHA-256 in the lock: the base
-# image packages get their pinned versions, and keep those of its digest otherwise
+# image packages get their pinned versions too
 RUN echo keepcache=1 >> /etc/dnf/dnf.conf \
     && pinned="--disablerepo=* --enablerepo=xcraft-pinned" \
     && dnf -y $pinned distro-sync \
