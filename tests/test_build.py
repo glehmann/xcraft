@@ -666,17 +666,27 @@ def test_recorded_once_all_built(root: Path, *, cached: bool) -> None:
 
 
 def test_dune_cache(root: Path) -> None:
-    # the cache of dune of trivial, which writes in it like dune: kept on this machine, but for the builds without dune
+    from tests.test_buildid import commit_base, git  # noqa: PLC0415, which imports this module
+
+    # the cache of dune of trivial, which writes in it like dune: kept on this machine, for the development builds
+    # only, but for the builds without dune
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(
         spec.read_text().replace(
             'echo "hello" > hello.txt',
-            'echo "hello" > hello.txt\necho "$DUNE_CACHE $DUNE_CACHE_STORAGE_MODE" > "$DUNE_CACHE_ROOT/entry"',
+            'echo "hello" > hello.txt\n'
+            'test -z "${DUNE_CACHE_ROOT:-}" || echo "$DUNE_CACHE $DUNE_CACHE_STORAGE_MODE" > "$DUNE_CACHE_ROOT/entry"',
         )
     )
+    commit_base(root)
     code, output = xcraft("build")
     assert code == 0, output
     caches = root / ".xcraft/dune-cache"
+    assert not caches.exists() or not any(caches.iterdir())
+    git(root, "checkout", "-qb", "feature")
+    spec.write_text(f"# changed\n{spec.read_text()}")
+    code, output = xcraft("build")
+    assert code == 0, output
     assert (caches / "trivial/entry").read_text() == "enabled copy\n"
     assert [p.name for p in caches.iterdir()] == ["trivial"]  # not with-deps, without dune
     assert xcraft("clean", "trivial")[0] == 0

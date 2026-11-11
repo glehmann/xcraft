@@ -71,11 +71,11 @@ def prepare_tree(project: Project, name: str, expected: str | None = None) -> Pa
 
 
 DUNE_CACHE = "export DUNE_CACHE=enabled DUNE_CACHE_ROOT=/dune-cache DUNE_CACHE_STORAGE_MODE=copy\n"
-"""The cache of dune, for the builds with it, like ccache's for the compilers, but kept on this machine only: in the
-build environment, but not in the recipe of the builds, which it does not change. All the rules are cached, those of
-the projects too: enabled-except-user-rules caches none of xapi's. One missing a dependency may get an output of a
-previous build, which xcraft clean --dune-cache forgets; CI, without the cache, never does. The entries are copied,
-from another filesystem than the build tree's."""
+"""The cache of dune, for the development builds with it, like ccache's for the compilers, but kept on this machine
+only: in the build environment, but not in the recipe of the builds, which it does not change. All the rules are
+cached, those of the projects too: enabled-except-user-rules caches none of xapi's. One missing a dependency may get
+an output of a previous build, which xcraft clean --dune-cache forgets; the final builds, without the cache, never do.
+The entries are copied, from another filesystem than the build tree's."""
 
 
 def dune_cache(project: Project, name: str) -> Path:
@@ -100,12 +100,12 @@ def run_build(
 ) -> None:
     """Run rpmbuild `rpmbuild_stage` (a: all, p: prep...) in the build tree of `name`, then the `after` commands.
 
-    The upstream packages of the image named in `replace` are replaced first by
-    ours. `suffix` is the release suffix of the build, %autorev: its number, and its development build suffix, if
-    any. With `nocheck`, rpmbuild skips %check. With `fast`, for the development builds, the binary packages are
-    compressed with zstd at level 3 rather than 19: their packaging takes a third of the time, for packages a third
-    bigger. The container has no network, but with `network`, for the shell, whose rpmbuild has none still, see
-    offline.py. The output goes to `log`, or to an interactive terminal without log.
+    The upstream packages of the image named in `replace` are replaced first by ours. `suffix` is the release suffix
+    of the build, %autorev: its number, and its development build suffix, if any. With `nocheck`, rpmbuild skips
+    %check. With `fast`, for the development builds, the binary packages are compressed with zstd at level 3 rather
+    than 19: their packaging takes a third of the time, for packages a third bigger, and dune has its cache, see
+    DUNE_CACHE. The container has no network, but with `network`, for the shell, whose rpmbuild has none still, see
+    offline.py, but under emulation. The output goes to `log`, or to an interactive terminal without log.
     """
     parameters = {
         "spec": main_spec(project.package_dirs[name]).name,
@@ -131,7 +131,7 @@ def run_build(
     try:
         run_container(
             project,
-            DUNE_CACHE + script,
+            (DUNE_CACHE if fast else "export DUNE_CACHE=disabled\n") + script,
             container=f"xcraft-{project.id}-{name}",
             volumes=volumes,
             network=network,
