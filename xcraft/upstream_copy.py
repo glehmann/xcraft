@@ -14,8 +14,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 from xml.etree import ElementTree as ET
 
-from xcraft import localrepo, pinned, remote, remote_pages, repodata
-from xcraft.container import ContainerError, run_natively
+from xcraft import container, localrepo, pinned, remote, remote_pages, repodata
+from xcraft.container import ContainerError
 from xcraft.display import activity
 from xcraft.lock import load_lock
 from xcraft.project import INTERNAL
@@ -146,10 +146,10 @@ def update(
             localrepo.link(src, local / f)
     new = {f: entry for f, (_, entry) in copies.items() if entry}
     if len(new) < len(copies):
-        run_natively(
-            project.on_host(),
+        container.run(
+            project.on_host(),  # natively: the metadata does not depend on the architecture
             "upstream-repo",
-            ["bash", "-c", "dnf -q -y install createrepo_c && createrepo_c -q --general-compress-type=gz /repo"],
+            "createrepo_c -q --general-compress-type=gz /repo",
             volumes=[f"{local}:/repo"],
             show=f"indexing the new packages of {prefix}",
         )
