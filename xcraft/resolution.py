@@ -30,7 +30,7 @@ from rich.markup import escape
 
 from xcraft import remote
 from xcraft.builds import drop_gone
-from xcraft.container import BUILDENV, PACKAGES, SIGN_PACKAGES, base_packages, repo_file, run_natively
+from xcraft.container import BUILDENV, PACKAGES, SIDE_IMAGES, base_packages, repo_file, run_natively
 from xcraft.display import activity, console
 from xcraft.graph import reachable
 from xcraft.localrepo import extra_rpms
@@ -89,6 +89,10 @@ class Resolved(BaseModel):
     """The upstream packages of the signing image, but the image's."""
     sign_error: str = ""
     """Why the packages of the signing image cannot be installed."""
+    lint: list[str] = []
+    """The upstream packages of the lint image, but the image's."""
+    lint_error: str = ""
+    """Why the packages of the lint image cannot be installed."""
     unsigned: list[str] = []
     """The locked binary packages of the repositories of gpgcheck = false, whose packages are not signed."""
     versioned: dict[str, str] = {}
@@ -104,6 +108,10 @@ class Resolved(BaseModel):
     def image_packages(self) -> dict[str, Locked]:
         """Return the upstream packages of the image."""
         return {name: self.packages[name] for name in self.image}
+
+    def images(self) -> set[str]:
+        """Return the upstream packages of the image and of its side images."""
+        return {*self.image, *self.sign, *self.lint}
 
 
 def _run(project: Project, data: dict, *, show: str, rpms: Sequence[Path] = (), quiet: bool = False) -> Resolved:
@@ -271,8 +279,8 @@ def _locked(resolved: Resolved) -> Resolved:
 
 
 def _image(project: Project) -> Resolved:
-    # with the packages of the signing image, over it
-    data = {**_image_data(project), "sign": SIGN_PACKAGES}
+    # with the packages of the side images, over it
+    data = {**_image_data(project), **SIDE_IMAGES}
     return _cached(project, data, show=f"resolving the image of {project.arch}")
 
 
@@ -469,11 +477,12 @@ def _record_image(platform: Project, lock: Lock) -> Resolved:
     if error := image.errors.get("image"):
         msg = f"the build environment image cannot be resolved for {platform.arch}: {error}"
         raise ResolutionError(msg)
-    if image.sign_error:
-        msg = f"the signing image cannot be resolved for {platform.arch}: {image.sign_error}"
-        raise ResolutionError(msg)
+    for kind in SIDE_IMAGES:
+        if error := getattr(image, f"{kind}_error"):
+            msg = f"the {kind} image cannot be resolved for {platform.arch}: {error}"
+            raise ResolutionError(msg)
+        getattr(lock, kind)[platform.arch] = getattr(image, kind)
     lock.image[platform.arch] = sorted(image.image)
-    lock.sign[platform.arch] = image.sign
     return image
 
 
@@ -483,7 +492,7 @@ def _record_images(platforms: list[Project], recorded: Lock, lock: Lock, repin: 
     """
     for platform in platforms:
         image = _record_image(platform, lock)
-        pinned = _pins(platform.arch, recorded, [image], {*image.image, *image.sign}, repin)
+        pinned = _pins(platform.arch, recorded, [image], image.images(), repin)
         lock.binaries[platform.arch] = {**recorded.binaries.get(platform.arch, {}), **pinned}
         _record_unsigned(platform.arch, recorded, lock, [image])
 
@@ -511,7 +520,7 @@ def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
     drop_gone(project)
 
     def record(recorded: Lock, lock: Lock) -> None:
-        lock.image, lock.binaries, lock.runtime, lock.iso, lock.sign, lock.unsigned = {}, {}, {}, {}, {}, {}
+        lock.image, lock.binaries, lock.runtime, lock.iso, lock.sign, lock.lint, lock.unsigned = ({} for _ in range(7))
         lock.roots.keep({*project.package_dirs})
         lock.roots.arches = {}
         for platform in platforms:
@@ -526,14 +535,14 @@ def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
                 lock.roots.record(platform.arch, project.first, name, values)
             _record_published(recorded, lock, platform.arch, roots)
             names = {
-                *image.image, *image.sign, *(n for values in lock.roots.of(platform.arch).values() for n in values),
+                *image.images(), *(n for values in lock.roots.of(platform.arch).values() for n in values),
                 *lock.runtime.get(platform.arch, []), *lock.iso.get(platform.arch, []),
             }  # fmt: skip
             lock.binaries[platform.arch] = _pins(platform.arch, recorded, [image, roots], names, repin)
             _record_unsigned(platform.arch, recorded, lock, [image, roots])
         if (native := project.on_host()).arch not in lock.image:  # the image parsing the specs, see prepare()
             image = _record_image(native, lock)
-            lock.binaries[native.arch] = _pins(native.arch, recorded, [image], {*image.image, *image.sign}, repin)
+            lock.binaries[native.arch] = _pins(native.arch, recorded, [image], image.images(), repin)
             _record_unsigned(native.arch, recorded, lock, [image])
         # those of no pin left, like those of a package published no more, in their latest version when needed again
         used = {pin.source for pins in lock.binaries.values() for pin in pins.values()}

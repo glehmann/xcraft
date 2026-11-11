@@ -11,6 +11,8 @@
 | `xcraft build <pkg> --locked` | Fail the builds that would change the lock: new upstream packages, or what a build found, for CI |
 | `xcraft build --ids [--locked]` | Only update the build IDs in `xcraft.builds`, without building, or check them |
 | `xcraft build [<pkg>...] --dev ID` / `--final` | Development builds with another identifier than `dev`, or `$XCRAFT_DEV`; or final builds, without development suffixes (see [Development builds](builds.md#development-builds)) |
+| `xcraft build [<pkg>...] --lint` | Also lint the binary packages of the development builds, as those of the final builds are (see [Lint](builds.md#lint)) |
+| `xcraft lint [<pkg>...] [--dev ID \| --final]` | Lint the specs of packages, all by default, and the binary packages of their builds, when built, with rpmlint and Fedora's rules; fails on errors (see [Lint](builds.md#lint)) |
 | `xcraft build [<pkg>...] --nocheck` | Without running the tests of the specs, their `%check`, for faster iterations; also for `repo`, `iso` and `boot`, not with `--final` (see [Builds without their tests](builds.md#builds-without-their-tests)) |
 | `xcraft repo <pkg>... [--dependents]` | When they have development builds, a repository of them alone, for test hosts |
 | `xcraft repo <pkg>... --host h [--upgrade]` | The same, copied to test hosts over ssh, `ssh://[user@]host[:port]` for another port, and upgraded there |

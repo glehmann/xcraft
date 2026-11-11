@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 from rich.markup import escape
 
 from xcraft import container, process
-from xcraft.container import ContainerError, signing_image
+from xcraft.container import ContainerError, side_image
 from xcraft.display import console
 from xcraft.project import fingerprint, write_atomically
 from xcraft.sources import sha256_of
@@ -105,7 +105,7 @@ class Signer:
                     script,
                     volumes=[f"{root}:/signed", f"{work}:/work:ro", f"{socket}:/gpg-agent"],
                     show=f"signing {len(rpms)} packages",
-                    image=signing_image(project.on_host()),
+                    image=side_image(project.on_host(), "sign"),
                 )
             except ContainerError as e:
                 msg = f"cannot sign the packages, see {project.state / 'logs/_sign.log'}"

@@ -49,6 +49,14 @@ def build(
         ),
     ] = "all",
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show the build logs.")] = False,
+    lint_dev: Annotated[
+        bool,
+        typer.Option(
+            "--lint",
+            help="Also lint the binary packages of the development builds, as those of the final builds are: see "
+            "xcraft lint.",
+        ),
+    ] = False,
     locked: Annotated[
         bool, typer.Option("--locked", help="Fail the builds that would change the lock, for CI.")
     ] = False,
@@ -63,6 +71,9 @@ def build(
     The packages whose build ID is not the main branch's get development builds, unless --final, see --dev. The builds
     are signed by --key, or the default key: \[sign], or else the developer's, which xcraft makes for the development
     builds when there is none, but not for --final.
+
+    rpmlint lints the specs of the packages to build first, and the binary packages of the final builds: its errors
+    fail the final builds, and only show for the development builds.
     """
     ident = dev_ident(ctx, dev, final=final, nocheck=nocheck)
     if ids:
@@ -78,7 +89,14 @@ def build(
     sign_builds(project, key, final=ident is None)
     with project.lock():
         results, keys, autorev = builder.build(
-            project, names, with_deps=not no_deps, verbose=verbose, dev=ident, nocheck=nocheck, fetch=fetch
+            project,
+            names,
+            with_deps=not no_deps,
+            verbose=verbose,
+            dev=ident,
+            nocheck=nocheck,
+            fetch=fetch,
+            lint_dev=lint_dev,
         )
     if dev_built := [r.name for r in results if r.name in autorev and r.status == "built"]:
         if verbose:

@@ -56,7 +56,7 @@ Paths below are relative to `xcraft/`.
 | Package metadata or spec parsing | `packages.py`, `specs.py`, `buildenv/parse.py` |
 | Dependency rules, upstream versions, pins | `graph.py`, `resolution.py`, `lock.py`, `pinned.py`, `upstream.py`, `commands/lock.py`; DNF logic in `buildenv/resolve.py` |
 | Build identity, invalidation, reuse | `buildkey.py`, `buildid.py`, `devbuilds.py`, `cache.py`, `commands/reuse.py` |
-| Build scheduling, execution, validation | `build.py`, `rpmbuild.py`, `checks.py`, `container.py`; in `buildenv/`, `build.sh` and the recording scripts `record.py`, `made.py`, `rpmdeps.py`, `requires.py` |
+| Build scheduling, execution, validation | `build.py`, `rpmbuild.py`, `checks.py`, `lint.py`, `container.py`; in `buildenv/`, `build.sh` and the recording scripts `record.py`, `made.py`, `rpmdeps.py`, `requires.py` |
 | Source downloads, imports, version bumps, patches | `sources.py`, `importer.py`, `commands/bump.py`, `release.py`, `patchset.py` |
 | Local RPM repositories or metadata | `localrepo.py`, `repodata.py`, `commands/repo.py` |
 | Snapshot assembly or publication | `publish.py` and `_Assembler`, `upload.py` and `Uploader`; orchestration in `commands/publish.py` |

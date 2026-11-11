@@ -1,0 +1,7 @@
+# the test packages are toys: empty files, scripts of nothing, changelogs without names, and libraries of nothing
+Filters = [
+    ": E: zero-length ",
+    ": E: script-without-shebang ",
+    ": E: no-changelogname-tag$",
+    ": E: shlib-policy-missing-lib$",
+]

@@ -612,6 +612,7 @@ def test_packages_edited_while_building(project: Project, monkeypatch: pytest.Mo
         return build.Result(name, "built")
 
     monkeypatch.setattr(build._Run, "_build_shown", building)
+    monkeypatch.setattr(build._Run, "_lint_specs", lambda *_: None)  # of specs that are not
     (project.state / "build").mkdir(parents=True)  # for the queue, which build() makes
     results = build._Run(project, hashes, keys, {}, fetch="none").build(["a", "c", "b"])
     # the builds work on the packages as they were at the start: b fails, rather than b cached with the old a

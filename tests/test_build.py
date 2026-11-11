@@ -241,7 +241,8 @@ def test_build_root_of_files_of_ours(root: Path) -> None:
     assert code == 1
     assert "its build root cannot be resolved: nothing provides /usr/bin/xcraft-test-tool" in output
     # then the build of tool records it
-    assert xcraft("build", "tool")[0] == 0
+    code, output = xcraft("build", "tool")
+    assert code == 0, output
     code, output = xcraft("build", "tool-user")
     assert code == 0, output
     assert load_builds(Project.find()).provides.of(ARCH) == {"tool": ["/usr/bin/xcraft-test-tool"]}
@@ -587,19 +588,21 @@ def test_iso_tools(root: Path) -> None:
             _check_installed_tools(project, work / "tools.json")
 
 
-def test_signing_image_pinned(root: Path) -> None:
+@pytest.mark.parametrize(("kind", "package"), [("sign", "rpm-sign"), ("lint", "rpmlint")])
+def test_side_image_pinned(root: Path, kind: str, package: str) -> None:
     project = Project.find()
     lock = load_lock(project)
-    # pinned when preparing, on every architecture, with rpm-sign of the locked rpm
-    assert lock.sign.keys() == lock.image.keys()
-    for arch, names in lock.sign.items():
-        assert {"rpm-sign"} <= set(names) <= lock.binaries[arch].keys()
+    # pinned when preparing, on every architecture, without the image's
+    assert getattr(lock, kind).keys() == lock.image.keys()
+    for arch, names in getattr(lock, kind).items():
+        assert {package} <= set(names) <= lock.binaries[arch].keys()
         assert not set(names) & set(lock.image[arch])
-        assert lock.binaries[arch]["rpm-sign"].evr == lock.binaries[arch]["rpm"].evr
+    # rpm-sign of the locked rpm
+    assert lock.binaries[ARCH]["rpm-sign"].evr == lock.binaries[ARCH]["rpm"].evr
     # installed from the pinned packages
-    image = container.signing_image(project)
+    image = container.side_image(project, kind)
     installed = container.image_packages(project, image)
-    assert all(installed[n].evr == lock.binaries[ARCH][n].evr for n in lock.sign[ARCH])
+    assert all(installed[n].evr == lock.binaries[ARCH][n].evr for n in getattr(lock, kind)[ARCH])
 
 
 @pytest.mark.skipif(ARCH != "x86_64_v2", reason="the ISOs are for x86_64")
@@ -988,14 +991,18 @@ def test_image_of_the_host_pinned_for_a_project_of_other_architectures(root: Pat
     lock = load_lock(project)
     assert native.arch not in {p.arch for p in project.all_platforms()}
     assert lock.image[native.arch]
-    # and of its signing image, which signs natively
-    assert lock.binaries[native.arch].keys() == {*lock.image[native.arch], *lock.sign[native.arch]}
+    # and of its side images, which sign and lint natively
+    assert lock.binaries[native.arch].keys() == {
+        *lock.image[native.arch],
+        *lock.sign[native.arch],
+        *lock.lint[native.arch],
+    }
     assert container._image_pins(native)
     # kept by xcraft clean --shared
     assert container.image_tag(native) in container.checkout_images(project)
-    assert container._signing_tag(native) in container.checkout_images(project)
+    assert container._side_tag(native, "lint") in container.checkout_images(project)
     assert pinned.ident(container._image_pins(native)) in container.checkout_repositories(project)
-    assert pinned.ident(container._signing_pins(native)) in container.checkout_repositories(project)
+    assert pinned.ident(container._side_pins(native, "lint")) in container.checkout_repositories(project)
 
 
 def test_build_roots_resolved_again_for_versions_of_rich_dependencies(

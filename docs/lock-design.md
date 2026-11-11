@@ -37,10 +37,11 @@ One file, for all the architectures, written by xcraft only, one line by entry f
 | `[runtime]` | by architecture, the upstream binary packages of the published repositories | `prepare()` |
 | `[iso]` | by architecture, those of the tools making the ISO, but the image's | `prepare()` |
 | `[sign]` | by architecture, those of the signing image, but the image's | `prepare()` |
+| `[lint]` | by architecture, those of the lint image, but the image's | `prepare()` |
 | `[unsigned]` | by architecture, the pinned packages of the repositories of `gpgcheck = false`, whose signatures are not checked | `prepare()` |
 
-and `version`, the format, `lock.FORMAT`: 2, this xcraft reading the format 1 too, without `[sign]` and `[unsigned]`,
-and writing it in the format 2.
+and `version`, the format, `lock.FORMAT`: 3, this xcraft reading the formats 1, without `[sign]` and `[unsigned]`,
+and 2, without `[lint]`, too, and writing them in the format 3.
 
 They say what we take from upstream. What the builds of our packages found, which the specs do not say, is in the lock
 of the builds, see [What the builds record](#what-the-builds-record).
@@ -71,7 +72,7 @@ packages keeps those the repositories drop, see `xcraft.upstream_copy`.
 A table has one pin by name: another architecture of the same name, like a multilib i686 package, needs another
 format.
 
-### What is pinned: `[image]`, `[roots]`, `[runtime]`, `[iso]`, `[sign]`
+### What is pinned: `[image]`, `[roots]`, `[runtime]`, `[iso]`, `[sign]`, `[lint]`
 
 What is installed, by name, each pinned:
 
@@ -86,7 +87,9 @@ What is installed, by name, each pinned:
   xorriso, mtools and dosfstools pinned for aarch64. What the installer installs is in `[runtime]`, on every
   architecture;
 - `[sign]`: rpmsign and gpg, over the image, for the signing image, apart from it so as not to change the build keys:
-  rpm-sign of the version of the locked rpm.
+  rpm-sign of the version of the locked rpm;
+- `[lint]`: rpmlint, with Fedora's configuration, over the image, for the lint image, likewise: its rules change with
+  the lock only, as its errors fail the final builds, see [Lint](builds.md#lint).
 
 `[unsigned]` lists the pins a repository of `gpgcheck = false` has, of the same checksum, as resolved: the others are
 checked against the keys of the repositories before they are installed or copied, see `pinned.check_signed()`. A pin

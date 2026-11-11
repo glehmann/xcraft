@@ -191,3 +191,22 @@ specs: rpmbuild skips `%check`, with the same build roots, for faster iterations
 `nocheck` mark: the builds without `--nocheck` make them again, with their tests, `xcraft push` never pushes them, and
 the ISOs made with them are cached apart. The packages fetched from the remote storage keep their builds, made with
 their tests. It cannot be used with `--final`.
+
+## Lint
+
+rpmlint, with Fedora's rules, lints the specs of the packages to build, before their builds, and the binary packages
+of the final builds, but the debug ones, before they are cached: its errors fail the final builds, its warnings only
+show. The development builds only show what it finds in their specs, and in their binary packages with `--lint`.
+`xcraft lint` lints the specs of packages, and the binary packages of their builds, when they are built, without
+building: the development builds, or the final ones with `--final`.
+
+It runs in the lint image, the build environment image with rpmlint, of the versions pinned in the lock, see
+[lock-design.md](lock-design.md), natively, for all the architectures: what it finds in the binary packages does not
+depend on theirs. The specs are parsed for the host's.
+
+Its configuration is in `lint/`, out of the package directories, which stay as imported:
+
+- `lint/rpmlint.toml`, for all the packages, over Fedora's, like the checks to disable, or other filters;
+- `lint/<package>.rpmlintrc`, the filters of a package, with `addFilter("<regex>")`, after those of its upstream
+  rpmlintrc files, in its directory, if any. rpmlint runs once per package, for its filters not to hide what the
+  others find. The filters unused, like those of the binary packages when linting a spec, are not reported.

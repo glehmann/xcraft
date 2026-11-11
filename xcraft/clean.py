@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field, TypeAdapter
 
 from xcraft import process
-from xcraft.container import BUILD_IMAGE, SIGN_IMAGE
+from xcraft.container import BUILD_IMAGE, SIDE_IMAGES, side_name
 from xcraft.localrepo import OUTPUT_MARKER
 from xcraft.resolution import resolutions_read
 from xcraft.sources import read_manifest
@@ -175,20 +175,20 @@ class _Image(BaseModel):
 
 
 def other_images(kept: set[str], built_since: float = math.inf) -> list[str]:
-    """Return the tags of the build environment and signing images of the machine, but the tags `kept` and those built
+    """Return the tags of the build environment and side images of the machine, but the tags `kept` and those built
     since the time `built_since`.
     """
+    names = [BUILD_IMAGE, *map(side_name, SIDE_IMAGES)]
     listed = process.run(
-        ["podman", "images", "--format", "json", "--filter", f"reference={BUILD_IMAGE}", "--filter",
-         f"reference={SIGN_IMAGE}"],
+        ["podman", "images", "--format", "json", *(a for n in names for a in ("--filter", f"reference={n}"))],
         capture=True,
-    ).stdout  # fmt: skip
+    ).stdout
     return sorted({
         tag
         for image in TypeAdapter(list[_Image]).validate_json(listed)  # an image once by name
         if image.created < built_since
         for tag in image.names
-        if tag.startswith((f"{BUILD_IMAGE}:", f"{SIGN_IMAGE}:")) and tag not in kept
+        if tag.startswith(tuple(f"{n}:" for n in names)) and tag not in kept
     })  # fmt: skip
 
 

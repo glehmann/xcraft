@@ -42,8 +42,9 @@ _LINE = 2**16
 BUILDENV = Path(__file__).parent / "buildenv"
 """The Containerfile of the image, and the scripts run in the containers, which have them in /xcraft."""
 
-BUILD_IMAGE, SIGN_IMAGE = "localhost/xcraft-build", "localhost/xcraft-sign"
-"""The names of the build environment images and of the signing images, tagged by what they are made of."""
+BUILD_IMAGE = "localhost/xcraft-build"
+"""The name of the build environment images, tagged by what they are made of, like the side images, see
+side_image()."""
 
 
 def buildenv_hash() -> str:
@@ -62,8 +63,9 @@ DNF_LOCK = "sudo flock /var/cache/dnf/.xcraft.lock"
 PACKAGES = ["dnf-plugins-core", "createrepo_c", "sudo"]
 """Packages of the build environment used by xcraft, after those of the configuration: dnf builddep and repoclosure,
 the indexes of the local repositories, and dnf as root. The base image has dnf and its rpm python module."""
-SIGN_PACKAGES = ["rpm-sign", "gnupg2"]
-"""Packages of the signing image, after those of the build environment image: rpmsign and gpg."""
+SIDE_IMAGES = {"sign": ["rpm-sign", "gnupg2"], "lint": ["rpmlint"]}
+"""The packages of the side images, by kind, over the build environment image: the signing image, with rpmsign and
+gpg, and the lint image, with rpmlint and Fedora's configuration of it."""
 
 
 class ContainerError(RuntimeError):
@@ -146,17 +148,19 @@ def image_tag(project: Project) -> str:
 
 def checkout_images(project: Project) -> set[str]:
     """Return the tags of the images of the checkout, built or not: the build environment images of its platforms and
-    of the host, and their signing images.
+    of the host, and their side images.
     """
-    return {tag for p in _with_host(project) for tag in (image_tag(p), _signing_tag(p))}
+    return {tag for p in _with_host(project) for tag in (image_tag(p), *(_side_tag(p, k) for k in SIDE_IMAGES))}
 
 
 def checkout_repositories(project: Project) -> set[str]:
     """Return the repositories of pinned packages of the checkout, see pinned.repository(): of all the pinned packages
-    of its platforms and of the host, and of those of their images and signing images.
+    of its platforms and of the host, and of those of their images and side images.
     """
     return {
-        pinned.ident(pins) for p in _with_host(project) for pins in (pinned.pins(p), _image_pins(p), _signing_pins(p))
+        pinned.ident(pins)
+        for p in _with_host(project)
+        for pins in (pinned.pins(p), _image_pins(p), *(_side_pins(p, k) for k in SIDE_IMAGES))
     }
 
 
@@ -491,36 +495,42 @@ def run_natively(
             raise ContainerError(msg)
 
 
-def _signing_pins(project: Project) -> dict[str, Pin]:
-    """Return the pinned binary packages of the signing image of the platform, but those of its build environment
+def side_name(kind: str) -> str:
+    """Return the name of the side images `kind`, tagged by what they are made of."""
+    return f"localhost/xcraft-{kind}"
+
+
+def _side_pins(project: Project, kind: str) -> dict[str, Pin]:
+    """Return the pinned binary packages of the side image `kind` of the platform, but those of its build environment
     image.
     """
     pins = pinned.pins(project)
-    return {name: pins[name] for name in cached_lock(project).sign.get(project.arch, [])}
+    return {name: pins[name] for name in getattr(cached_lock(project), kind).get(project.arch, [])}
 
 
-def _signing_tag(project: Project) -> str:
-    """Return the tag of the signing image of the platform: of its build environment image, and of its pins."""
-    pins = sorted(f"{name} {pin.text()}" for name, pin in _signing_pins(project).items())
-    return f"{SIGN_IMAGE}:{hashlib.sha256(json.dumps([image_tag(project), pins]).encode()).hexdigest()[:16]}"
+def _side_tag(project: Project, kind: str) -> str:
+    """Return the tag of the side image `kind` of the platform: of its build environment image, and of its pins."""
+    pins = sorted(f"{name} {pin.text()}" for name, pin in _side_pins(project, kind).items())
+    digest = hashlib.sha256(json.dumps([image_tag(project), pins]).encode()).hexdigest()[:16]
+    return f"{side_name(kind)}:{digest}"
 
 
-def signing_image(project: Project) -> str:
-    """Return the tag of the signing image, the build environment's with rpmsign and gpg, of their pinned packages,
+def side_image(project: Project, kind: str) -> str:
+    """Return the tag of the side image `kind` of SIDE_IMAGES, the build environment's with its packages, pinned,
     building it if needed.
 
     It is apart from the build environment image, so as not to change it, and the cache keys with it.
     """
-    base, tag = built_image(project), _signing_tag(project)
+    base, tag = built_image(project), _side_tag(project, kind)
     if not _exists(tag):
         containerfile = (
             f"FROM {base}\nUSER root\n"
             f"RUN dnf -y --disablerepo='*' --enablerepo={pinned.REPO_ID} --setopt=install_weak_deps=False install"
-            f" {' '.join(SIGN_PACKAGES)} && dnf clean all\n"
+            f" {' '.join(SIDE_IMAGES[kind])} && dnf clean all\n"
             "USER builder\n"
         )
         _podman_build(
-            project, "sign-image", tag, {"Containerfile": containerfile}, {}, show="the signing image",
-            pinned=pinned.repository(project, _signing_pins(project)),
+            project, f"{kind}-image", tag, {"Containerfile": containerfile}, {}, show=f"the {kind} image",
+            pinned=pinned.repository(project, _side_pins(project, kind)),
         )  # fmt: skip
     return tag

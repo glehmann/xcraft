@@ -17,15 +17,15 @@ The input has:
 - ``versions``, upstream source packages to give the available versions of;
 - ``runtime``, with ours, what the published repositories need: the ``extra`` upstream packages published, the
   ``installer``'s, the ``iso`` packages of the repository of the ISO, and the ``tools`` making the ISO;
-- ``sign``, the packages of the signing image, installed on the image.
+- ``sign`` and ``lint``, the packages of the side images, the signing and lint images, installed on the image.
 
 The output has the locked binary ``packages``, those of them the ``unchecked`` repositories have, ``unsigned``, the
 ``image``, the upstream ``buildroots`` and the ``ours`` binary packages of each build root, the ``requires`` and
 ``provides`` of the recorded binary packages, the ``errors``, by package, ``image`` for the image, the upstream packages
 of the ``runtime``, with its ``runtime_errors``, and of the ``tools``, besides the image's, with their ``tools_error``,
-those of ``sign`` likewise, with their ``sign_error``, the ``unlocked`` source packages needed, the ``versions`` of
-those and of the given ones, oldest first, the packages of the ``sets`` of the ISO, ``iso`` and ``install.img``, and
-``why`` each package is in each set, see Resolver.why().
+those of ``sign`` and ``lint`` likewise, with their ``sign_error`` and ``lint_error``, the ``unlocked`` source
+packages needed, the ``versions`` of those and of the given ones, oldest first, the packages of the ``sets`` of the
+ISO, ``iso`` and ``install.img``, and ``why`` each package is in each set, see Resolver.why().
 """
 
 from __future__ import annotations
@@ -500,6 +500,17 @@ def _unsigned(resolver: Resolver, unchecked: list[str], packages: dict[str, dict
     return sorted(name for name, p in packages.items() if (name, p["evr"], p["arch"], p["sha256"]) in same)
 
 
+def _side_images(resolver: Resolver, image: list[Package], data: dict) -> dict:
+    """Return the upstream packages of the side images of the `data`, installed on the `image`, but the image's, with
+    why they cannot be.
+    """
+    result = {}
+    for kind in ("sign", "lint"):
+        if data.get(kind):
+            result[kind], result[f"{kind}_error"] = resolver.tools(image, data[kind])
+    return result
+
+
 def main() -> None:
     """Resolve the input of the command line into its output."""
     data = json.loads(Path(sys.argv[1]).read_text())
@@ -507,8 +518,8 @@ def main() -> None:
     result: dict = {"buildroots": {}, "ours": {}, "errors": {}, "requires": {}, "provides": {}, "runtime_errors": {}}
     image = resolver.image(result["errors"])
     result["image"] = sorted(p.name for p in image)
-    if data.get("sign") and "image" not in result["errors"]:
-        result["sign"], result["sign_error"] = resolver.tools(image, data["sign"])
+    if "image" not in result["errors"]:
+        result |= _side_images(resolver, image, data)
     unmet_weak = resolver.unmet_weak(image)
     owners = {b["name"]: b["package"] for b in data["ours"]}
     # the packages of ours each build may get: those of its dependencies, built before it

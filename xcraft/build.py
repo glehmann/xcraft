@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Literal
 
 from rich.markup import escape
 
-from xcraft import buildid, buildkey, ccache, remote, resolution
+from xcraft import buildid, buildkey, ccache, lint, remote, resolution
 from xcraft.builds import load_builds
 from xcraft.cache import (
     NOCHECK,
@@ -289,6 +289,7 @@ class _Run:
     verbose: bool = False
     fetch: Fetch = "all"
     build_missing: bool = True
+    lint_dev: bool = False
     results: dict[str, Result] = field(default_factory=dict)
     stored: dict[str, bool] = field(default_factory=dict)
     """Whether the remote storage has the builds, by `<name>/<key>`."""
@@ -301,6 +302,8 @@ class _Run:
     """The packages built so far, for their step numbers."""
     steps: int = field(default=0, init=False)
     """The packages of the plan to build, as known so far, for their step numbers, see _to_build()."""
+    linted: dict[str, lint.Findings] = field(default_factory=dict, init=False)
+    """What rpmlint found in the specs of the packages to build, see _lint_specs()."""
 
     def build(self, plan: list[str]) -> list[Result]:
         """Build the packages of `plan`, in order, and return how it went, see xcraft.build.build()."""
@@ -313,6 +316,8 @@ class _Run:
         self.recorded = _lock_state(project)
         self.step = 0
         self.steps = sum(self._to_build(name) for name in plan)
+        # those surely built, before their builds; the others at their turn, unless fetched
+        self._lint_specs([n for n in plan if self._to_build(n) and (n in self.autorev or not self.use_remote)])
         for i, name in enumerate(plan, 1):
             _queue_file(project).write_text("\n".join([str(os.getpid()), *plan[i:]]) + "\n")
             with _turn(project, name):
@@ -330,6 +335,9 @@ class _Run:
         if result := self._done(name) or self._from_storage(name) or self._not_built(name, reused=reused):
             self.steps -= counted
             return result
+        if result := self._lint_failed(name):
+            self.steps -= counted
+            return result
         self.step += 1
         self.steps = max(self.steps, self.step)  # or more than counted, when the keys changed
         step = f"[{self.step}/{self.steps}]"
@@ -339,6 +347,39 @@ class _Run:
         if (result := self._build_shown(name, None if self.verbose else step)).status == "built":
             keep_built(self.project, self.dev, self.autorev, [name], self.hashes)
         return result
+
+    def _lint_specs(self, names: list[str]) -> None:
+        """Lint the specs of `names`, but those that cannot be parsed, which fail to build, and show what rpmlint
+        found.
+        """
+        project = self.project
+        if names := [n for n in names if n not in self.linted and not project.packages[n].error]:
+            found = lint.findings(project, {n: [lint.spec(project, n)] for n in names}, show="linting the specs")
+            lint.show_findings(found)
+            self.linted |= found
+
+    def _lint_failed(self, name: str) -> Result | None:
+        """Return the result of `name` when rpmlint found errors in its spec, failed for a final build: a development
+        build only shows them.
+        """
+        self._lint_specs([name])
+        if name in self.autorev or not (found := self.linted.get(name)) or not found.failed:
+            return None
+        _show_failure(self.project, name, BuildError("rpmlint found errors in its spec"), verbose=self.verbose)
+        return Result(name, "failed")
+
+    def _lint_binaries(self, name: str, tree: Path) -> None:
+        """Lint the binary packages of the build of `name` in `tree`, those of the final builds, or of all with
+        `lint_dev`, and show what rpmlint found: raise for the errors of a final build, not to cache it.
+        """
+        if name in self.autorev and not self.lint_dev:
+            return
+        files = {name: lint.binaries(tree / "RPMS")}
+        found = lint.findings(self.project, files, show=f"linting the packages of {name}")
+        lint.show_findings(found)
+        if name not in self.autorev and found[name].failed:
+            msg = "rpmlint found errors in its packages"
+            raise BuildError(msg)
 
     def _nocheck(self, name: str) -> bool:
         """Return whether `name` is built without the tests of its spec: a development build with `nocheck`, while
@@ -509,6 +550,7 @@ class _Run:
             raise
         ccache.note_build(project, name, start)
         keys = self._checked(name, tree, suffix)
+        self._lint_binaries(name, tree)
         self._cache(name, keys[name], tree)
         record_rpm_deps(project, [name], keys, quiet=True)  # see _recorded_again()
 
@@ -589,6 +631,7 @@ def build(
     nocheck: bool = False,
     fetch: Fetch = "all",
     build_missing: bool = True,
+    lint_dev: bool = False,
 ) -> tuple[list[Result], dict[str, str], dict[str, str]]:
     """Build `targets` and, unless `with_deps` is false, what they need, skipping what is cached, and return how
     it went, with the keys of all the packages, those of their builds, and the suffixes of the development builds.
@@ -605,6 +648,9 @@ def build(
 
     The build IDs are updated before the builds, and after, with what they found, or checked with --locked: all the
     builds are numbered by them. The lock must be prepared: see resolution.prepare().
+
+    rpmlint lints the specs of the packages to build first, and the binary packages of the final builds, or of all
+    with `lint_dev`, see xcraft.lint: its errors fail the final builds, and only show for the development builds.
     """
     if not dry_run:
         update_build_ids(project)
@@ -625,6 +671,7 @@ def build(
             verbose=verbose,
             fetch=fetch,
             build_missing=build_missing,
+            lint_dev=lint_dev,
         )
         try:
             results = run.build(plan)
