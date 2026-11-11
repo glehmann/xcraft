@@ -46,6 +46,7 @@ from xcraft.display import (
     in_ci,
     log_step,
     print_log_line,
+    print_message_line,
     read_tail,
 )
 from xcraft.graph import build_order, reachable
@@ -140,7 +141,7 @@ def _shown(project: Project, name: str, status: str | None) -> Generator[Callabl
         return
     with activity(status, expected=previous_duration(project, name), still=f"building {name}") as progress:
         # the errors and warnings above the progress, like with the whole log, after the status, which CI shows
-        diagnose = diagnostics(print_log_line, header="" if in_ci() else Text.from_markup(status).plain)
+        diagnose = diagnostics(print_message_line, header="" if in_ci() else Text.from_markup(status).plain)
 
         def on_line(line: str) -> None:
             progress(line)

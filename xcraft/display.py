@@ -13,7 +13,7 @@ import threading
 import time
 from typing import TYPE_CHECKING
 
-from rich.console import Console
+from rich.console import Console, ConsoleDimensions
 from rich.highlighter import Highlighter
 from rich.measure import Measurement
 from rich.progress import Progress, ProgressColumn, SpinnerColumn, Task, TextColumn
@@ -54,7 +54,24 @@ def known_commands(names: Iterable[str]) -> None:
 # output of CI coloured, like a terminal's: its logs would have each frame of the progress, with cursor movements
 console = Console(highlighter=_commands, soft_wrap=True, force_interactive=None if sys.stdout.isatty() else False)
 """The results of the commands, on stdout, for others to read too, like JSON, Markdown or the tables: see messages."""
-messages = Console(
+
+
+class _Messages(Console):
+    """The messages' console, one column narrower than the terminal: some terminals wrap a line of the full width,
+    leaving the progress of the activities behind it, and clearing only the line it started.
+    """
+
+    @property
+    def size(self) -> ConsoleDimensions:
+        size = super().size
+        return ConsoleDimensions(max(1, size.width - 1), size.height)
+
+    @size.setter
+    def size(self, size: tuple[int, int]) -> None:
+        self._width, self._height = size
+
+
+messages = _Messages(
     stderr=True, highlighter=_commands, soft_wrap=True, force_interactive=None if sys.stderr.isatty() else False
 )
 """The messages, on stderr: the progress of the activities, the logs of --debug, and the errors, apart from the
@@ -106,6 +123,13 @@ def in_ci() -> bool:
 def print_log_line(line: str) -> None:
     """Print a line of build log with colors, keeping the ones of the build tools."""
     console.print(_colorize(line))
+
+
+def print_message_line(line: str) -> None:
+    """Print a line of build log with colors, keeping the ones of the build tools, among the messages, above the
+    progress of the activities.
+    """
+    messages.print(_colorize(line))
 
 
 def diagnostics(on_line: Callable[[str], None], header: str = "") -> Callable[[str], None]:

@@ -8,12 +8,13 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
+from rich.console import ConsoleDimensions
 from rich.text import Text
 from typer.testing import CliRunner
 
 from tests import TOML
 from xcraft.__main__ import app
-from xcraft.display import _commands, activity, diagnostics, read_tail
+from xcraft.display import _commands, _Messages, activity, diagnostics, print_message_line, read_tail
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -162,6 +163,22 @@ def test_diagnostics_header() -> None:
     for line in ["error: one", "error: two"]:
         on_line(line)
     assert shown == ["[1/2] building foo", "error: one", "error: two"]
+
+
+def test_messages_leave_the_last_column() -> None:
+    messages = _Messages(width=80, height=24)
+    assert messages.size == ConsoleDimensions(79, 24)
+    messages.size = (40, 30)
+    assert messages.size == ConsoleDimensions(39, 30)
+
+
+def test_diagnostics_are_messages(capsys: pytest.CaptureFixture[str]) -> None:
+    on_line = diagnostics(print_message_line, header="[1/2] building foo")
+    on_line("gcc -O2 -c foo.c")
+    on_line("warning: File listed twice: /boot/grub2")
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err == "[1/2] building foo\nwarning: File listed twice: /boot/grub2\n"
 
 
 def test_progress_in_ci() -> None:
