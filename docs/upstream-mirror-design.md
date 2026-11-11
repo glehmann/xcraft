@@ -168,8 +168,9 @@ of the pull requests are written by their own jobs only.
 xcraft adds the copies of the main and dev buckets to the repositories it resolves and downloads the pins from, itself:
 no change to `xcraft.toml`, nor to the build environment image, which installs from the repository of the pins only, so
 the storage is not an input of the build keys. They are skipped when they cannot be reached, like offline, and are not
-checked for signatures: the pins are checked against their SHA-256, and the resolution installs nothing. A version
-locked and not copied yet, like after a lock update on a developer's machine, is in the upstream repositories still.
+checked for signatures by dnf: the pins are checked against their SHA-256, and their RPMs against the keys of the
+repositories, see below, and the resolution installs nothing. A version locked and not copied yet, like after a lock
+update on a developer's machine, is in the upstream repositories still.
 
 dnf finds a pinned package in the copy when its repository no longer has it, and in both otherwise: the same NEVRA with
 the same checksum, so either is fine. Nothing else changes:
@@ -230,8 +231,10 @@ copying them all costs a few GiB once.
   a month, by the rate of the lock updates of xcp-ng-dist.
 - The metadata of the copy is not signed: the lock is what is trusted, by the SHA-256 of each package, which xcraft
   checks before using it, and the image and the build roots are checked against the lock once installed. Forged
-  metadata could only make dnf choose other packages, which these checks reject. The source archives are not signed
-  for the same reason. The packages keep their upstream signatures, which dnf checks.
+  metadata could make dnf choose other packages, and a lock update pin them, a new dependency or a new version: the
+  pinned RPMs are checked against the keys of the repositories of `xcraft.toml` before the builds install them, and
+  before they are copied, so a package no upstream key signs is rejected, unless a repository of the architecture has
+  no key. The source archives are not signed for the same reason. The packages keep their upstream signatures.
 - The originals are kept, with their upstream signatures: the copies signed again by our keys, for incoming and the
   releases, are kept next to them, see [the layout of the published
   repositories](publishing-layout-design.md#the-upstream-originals-and-their-copies-signed-once-by-key).

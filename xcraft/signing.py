@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 from rich.markup import escape
 
 from xcraft import container, process
-from xcraft.container import ContainerError, image_tag, signing_image
+from xcraft.container import ContainerError, signing_image
 from xcraft.display import console
 from xcraft.project import fingerprint
 from xcraft.sources import sha256_of
@@ -222,10 +222,17 @@ def key_paths(urls: list[str], work: Path) -> list[str]:
 
 
 def check_signatures(
-    project: Project, root: Path, files: list[str], *, what: str, public_key: str | None = None
+    project: Project,
+    root: Path,
+    files: list[str],
+    *,
+    what: str,
+    public_key: str | None = None,
+    digests: dict[str, str] | None = None,
 ) -> None:
     """Check the packages `files`, relative to `root`, are signed with `public_key`, or the keys of the repositories
-    of xcraft.toml, rather than those the build image has, which installs the pinned packages without them.
+    of xcraft.toml, in the base image, rather than the build image, which installs the pinned packages without them,
+    and is made of them. The SHA-256 of the files known already, `digests`, are not computed again.
     """
     if not files:
         return
@@ -240,9 +247,10 @@ def check_signatures(
             imported = key_paths(repo_keys(project), work)
         # the keys themselves, which their URLs may give other ones of: those of the image are of its tag
         keys = [sha256_of(work / k.removeprefix("/work/")) if k.startswith("/work/") else k for k in imported]
-        context = hashlib.sha256(json.dumps([image_tag(native), check, keys]).encode()).hexdigest()
+        image = container.base_image(native)
+        context = hashlib.sha256(json.dumps([image, check, keys]).encode()).hexdigest()
         cache = project.state / "cache/checks/signatures" / context
-        digests = {f: sha256_of(root / f) for f in files}
+        known, digests = bool(digests), digests or {f: sha256_of(root / f) for f in files}
         if not (files := [f for f in files if not (cache / digests[f]).exists()]):
             return
         (work / "packages").write_text("".join(f"/checked/{f}\n" for f in files))
@@ -257,6 +265,7 @@ def check_signatures(
                 volumes=[f"{root}:/checked:ro", f"{work}:/work"],
                 show=f"checking the signatures of the {what}",
                 network=False,
+                image=image,
             )
         except ContainerError:
             for line in (work / "checks").read_text().splitlines():
@@ -266,5 +275,5 @@ def check_signatures(
             raise SigningError(msg) from None
     cache.mkdir(parents=True, exist_ok=True)
     for file in files:
-        if sha256_of(root / file) == digests[file]:
+        if known or sha256_of(root / file) == digests[file]:
             (cache / digests[file]).touch()

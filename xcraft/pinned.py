@@ -178,9 +178,10 @@ def ident(pinned: dict[str, Pin]) -> str:
 
 def repository(project: Project, names: Iterable[str] | None = None) -> Path:
     """Return the repository of the pinned binary packages `names` of the architecture of `project`, all of them by
-    default, made if needed, with RPMs of the SHA-256 of their pins: those missing, or of other contents, in the store
-    are downloaded again, and the repository made again, one command at a time; another one using it then fails, as it
-    would with what was damaged. The RPMs are shared by the repositories, downloaded once.
+    default, made if needed, with RPMs of the SHA-256 of their pins, signed, see check_signed(): those missing, or of
+    other contents, in the store are downloaded again, and the repository made again, one command at a time; another
+    one using it then fails, as it would with what was damaged. The RPMs are shared by the repositories, downloaded
+    once.
     """
     pinned = pins(project)
     if names is not None:
@@ -195,17 +196,33 @@ def repository(project: Project, names: Iterable[str] | None = None) -> Path:
             if not (repo / "repodata/repomd.xml").exists():
                 _make_repository(project, pinned, store, repo.name)
             if not (damaged := {n: p for n, p in pinned.items() if not _intact(repo / file_name(n, p), p)}):
-                _checked.add(repo)
                 os.utime(repo)  # used, see other_repositories()
-                return repo
+                break
             for name, pin in damaged.items():  # in the store, which the repository has them hard-linked from
                 (store / "rpms" / pin.sha256 / file_name(name, pin)).unlink(missing_ok=True)
             shutil.rmtree(repo)
-    msg = (
-        f"{', '.join(sorted(damaged))} of {project.arch} still not of the SHA-256 of their pins once downloaded again, "
-        f"in the store {store}: only xcraft writes there"
-    )
-    raise PinnedError(msg)
+        else:
+            msg = (
+                f"{', '.join(sorted(damaged))} of {project.arch} still not of the SHA-256 of their pins once downloaded"
+                f" again, in the store {store}: only xcraft writes there"
+            )
+            raise PinnedError(msg)
+    check_signed(project, pinned)
+    _checked.add(repo)
+    return repo
+
+
+def check_signed(project: Project, pinned: dict[str, Pin]) -> None:
+    """Check the RPMs of the `pinned` packages in the store are signed with the keys of the repositories, see
+    signing.check_signatures(): the lock does not tell which repository each one is from, and its SHA-256 may come from
+    metadata no key signs, like that of the upstream copies. Not when a repository of the architecture has no key,
+    whose packages are not checked.
+    """
+    from xcraft.signing import check_signatures  # noqa: PLC0415, which runs containers
+
+    if all(repo.gpgkey for repo in project.repos.values()):
+        files = {f"{p.sha256}/{file_name(n, p)}": p.sha256 for n, p in pinned.items()}
+        check_signatures(project, _store() / "rpms", sorted(files), what="pinned packages", digests=files)
 
 
 def other_repositories(kept: set[str], used_since: float = math.inf) -> list[str]:

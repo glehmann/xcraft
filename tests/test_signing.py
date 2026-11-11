@@ -6,6 +6,7 @@ import http.server
 import shutil
 import subprocess
 import threading
+from contextlib import contextmanager
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -14,15 +15,16 @@ import typer
 
 from tests import ARCH, PROJECT, TOYS, copy_project, needs_gpg
 from tests.test_build import xcraft
-from xcraft import buildid, publish
+from xcraft import buildid, pinned, publish
 from xcraft.cache import build_keys, cached_build
 from xcraft.commands import choose_signer
+from xcraft.lock import cached_lock
 from xcraft.project import Project, Sign
 from xcraft.publish import _signed_build
 from xcraft.signing import Signer, SigningError, check_signatures, create_dev_key, dev_keyring, dev_signer, key_signer
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
     from pathlib import Path
 
 
@@ -78,25 +80,35 @@ def test_signer_selection(root: Path) -> None:
             choose_signer(project, local=True, unsigned=unsigned, dev_key=dev_key, key=key)
 
 
+@contextmanager
+def _served(directory: Path) -> Generator[str]:
+    """Serve `directory` over HTTP, and return its URL."""
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+            pass
+
+    with http.server.ThreadingHTTPServer(("localhost", 0), partial(Handler, directory=directory)) as server:
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        try:
+            yield f"http://localhost:{server.server_port}"
+        finally:
+            server.shutdown()
+            thread.join()
+
+
 def _check_with_keys_at_urls(root: Path, tmp_path: Path, signer: Signer, signed: list[Path]) -> None:
     """Check the packages `signed` by `signer` with the keys of the repositories, at URLs which may give other keys:
     checked again then.
     """
     (served := tmp_path / "served").mkdir()
     (served / "key.asc").write_text(signer.public_key())
-
-    class Handler(http.server.SimpleHTTPRequestHandler):
-        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
-            pass
-
-    with http.server.ThreadingHTTPServer(("localhost", 0), partial(Handler, directory=served)) as server:
-        thread = threading.Thread(target=server.serve_forever)
-        thread.start()
+    with _served(served) as url:
         try:
             project = Project.find()
             repo = next(iter(project.config.repos.values()))
-            url = f"http://localhost:{server.server_port}/key.asc"
-            project.config.repos = {"keyed": repo.model_copy(update={"gpgkey": url})}
+            project.config.repos = {"keyed": repo.model_copy(update={"gpgkey": f"{url}/key.asc"})}
             paths = [str(p.relative_to(root)) for p in signed]
             check_signatures(project, root, paths, what="test")
             log = project.log("_signatures")
@@ -110,9 +122,23 @@ def _check_with_keys_at_urls(root: Path, tmp_path: Path, signer: Signer, signed:
             with pytest.raises(SigningError, match="some test are not signed with the keys of the repositories"):
                 check_signatures(project, root, paths, what="test")
         finally:
-            server.shutdown()
-            thread.join()
             subprocess.run(["gpgconf", "--homedir", str(tmp_path / "other"), "--kill", "gpg-agent"], check=False)
+
+
+@needs_gpg
+def test_pinned_packages_are_signed(build_environment: Path, root: Path, tmp_path: Path) -> None:
+    project = Project.find().on_host()
+    image = {n: p for n, p in pinned.pins(project).items() if n in cached_lock(project).image[project.arch]}
+    pinned.repository(project, image)  # not checked, as the toys have no key
+    baseos = project.config.repos["baseos"]
+    project.config.repos = {"baseos": baseos}
+    pinned.check_signed(project, image)
+    other = create_dev_key(project, "Other")
+    (tmp_path / "key.asc").write_text(other.public_key())
+    with _served(tmp_path) as url:
+        project.config.repos = {"baseos": baseos.model_copy(update={"gpgkey": f"{url}/key.asc"})}
+        with pytest.raises(SigningError, match="some pinned packages are not signed with the keys of the repositories"):
+            pinned.check_signed(project, image)
 
 
 @needs_gpg

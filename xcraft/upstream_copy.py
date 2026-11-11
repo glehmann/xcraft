@@ -170,9 +170,9 @@ def update(
 
 def push(project: Project, storage: Remote) -> list[str]:
     """Copy to `storage` the pinned packages of the architecture of `project` its copy misses, and the source packages
-    of those the snapshots publish, from the store of the pinned RPMs of the machine, the latest snapshot, or else the
-    upstream repositories, and return the problems: the packages found nowhere, and those of the file names of others.
-    The pages of the directories of the copy are updated when it changes.
+    of those the snapshots publish, from the store of the pinned RPMs of the machine, signed, the latest snapshot, or
+    else the upstream repositories, and return the problems: the packages found nowhere, and those of the file names of
+    others. The pages of the directories of the copy are updated when it changes.
     """
     from xcraft import publish  # noqa: PLC0415, which uses this module
 
@@ -197,6 +197,7 @@ def push(project: Project, storage: Remote) -> list[str]:
                 f: (rpm, None) for f, (n, p) in wanted.items() if f not in copies and (rpm := pinned.stored(n, p))
             }
         problems += [f"{f}: in no repository, nor in the store of the pinned RPMs" for f in wanted if f not in copies]
+        pinned.check_signed(project, {n: p for f, (n, p) in wanted.items() if f in copies and not copies[f][1]})
         new = update(project, storage, project.arch, work, entries, hrefs, copies)
         changed = bool(new)
         entries |= {wanted[f][1].sha256: entry for f, entry in new.items()}
