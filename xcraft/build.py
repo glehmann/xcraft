@@ -17,7 +17,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 from rich.markup import escape
-from rich.text import Text
 
 from xcraft import buildid, buildkey, ccache, remote, resolution
 from xcraft.builds import load_builds
@@ -132,16 +131,18 @@ def queued(project: Project) -> list[str]:
 
 
 @contextmanager
-def _shown(project: Project, name: str, status: str | None) -> Generator[Callable[[str], None]]:
-    """Show the build log of `name`, given line by line to the function yielded: whole without `status`, or only its
-    errors and warnings, with `status` shown while it runs.
+def _shown(project: Project, name: str, step: str | None) -> Generator[Callable[[str], None]]:
+    """Show the build log of `name`, given line by line to the function yielded: whole without `step`, or only its
+    errors and warnings, with the build at `step` shown while it runs.
     """
-    if not status:
+    if not step:
         yield print_log_line
         return
-    with activity(status, expected=previous_duration(project, name), still=f"building {name}") as progress:
-        # the errors and warnings above the progress, like with the whole log, after the status, which CI shows
-        diagnose = diagnostics(print_message_line, header="" if in_ci() else Text.from_markup(status).plain)
+    description = f"{step} building {name}{_estimate(project, name)}"
+    header = f"{step} building {name}"
+    with activity(description, expected=previous_duration(project, name), still=f"building {name}") as progress:
+        # the errors and warnings above the progress, like with the whole log, after the step, which CI shows
+        diagnose = diagnostics(print_message_line, header="" if in_ci() else header)
 
         def on_line(line: str) -> None:
             progress(line)
@@ -335,8 +336,7 @@ class _Run:
         if self.use_remote:
             self._fetch_for(name)
         self._record_fetched()  # for its build root, with what the builds of its dependencies generated
-        status = None if self.verbose else f"{step} building {name}{_estimate(self.project, name)}"
-        if (result := self._build_shown(name, status)).status == "built":
+        if (result := self._build_shown(name, None if self.verbose else step)).status == "built":
             keep_built(self.project, self.dev, self.autorev, [name], self.hashes)
         return result
 
@@ -450,12 +450,12 @@ class _Run:
             self.unrecorded.clear()
             self._refresh()
 
-    def _build_shown(self, name: str, status: str | None) -> Result:
-        """Build `name` with _build_one(), and show how it went."""
+    def _build_shown(self, name: str, step: str | None) -> Result:
+        """Build `name` at `step` of the builds, with _build_one(), and show how it went."""
         built_image(self.project)  # only when a package is to build, rather than cached, fetched or stored: failing all
         start = time.monotonic()
         try:
-            self._build_one(name, status)
+            self._build_one(name, step)
         except BuildRootChangedError as e:
             console.print(f"[yellow]↻[/] {name}: {escape(str(e))}")
             return Result(name, "again")
@@ -465,8 +465,8 @@ class _Run:
         console.print(f"[bold green]✓[/] {name} [green]built[/] in {duration(time.monotonic() - start)}")
         return Result(name, "built")
 
-    def _build_one(self, name: str, status: str | None) -> None:
-        """Build `name` and cache the result, showing `status` while it runs, or the build log without status.
+    def _build_one(self, name: str, step: str | None) -> None:
+        """Build `name` and cache the result, showing its `step` while it runs, or the build log without step.
 
         It only gets the builds of its dependencies. What its build found is
         recorded in the lock: its dynamic BuildRequires, even when it fails, and
@@ -488,7 +488,7 @@ class _Run:
         suffix = release_suffix(self.keys[name])
         start = time.time()
         try:
-            with _shown(project, name, status) as on_line:
+            with _shown(project, name, step) as on_line:
                 run_build(
                     project,
                     name,

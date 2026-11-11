@@ -12,13 +12,14 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-from tests import ARCH, TOML, TOYS, copy_project
+from tests import ARCH, TOML, TOYS, config, copy_project
 from xcraft import build as builder
 from xcraft import buildid, checks, clean, container, localrepo, pinned, process, publish, resolution
 from xcraft.__main__ import app
@@ -103,6 +104,23 @@ def test_build_steps_count_the_packages_not_cached(root: Path, monkeypatch: pyte
     result = runner.invoke(app, ["build"])
     assert result.exit_code == 0, result.output
     assert "[1/1] building with-deps" in result.stderr
+
+
+def test_build_warnings_header_without_estimate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # out of the build environment, without containers
+    (tmp_path / "xcraft.toml").write_text(TOML)
+    monkeypatch.delenv("CI", raising=False)
+    headers: list[str] = []
+    diagnostics = builder.diagnostics
+
+    def recording(on_line: Callable[[str], None], header: str = "") -> Callable[[str], None]:
+        headers.append(header)
+        return diagnostics(on_line, header=header)
+
+    monkeypatch.setattr(builder, "diagnostics", recording)
+    with builder._shown(Project(tmp_path, config()), "trivial", "[1/1]"):
+        pass
+    assert headers == ["[1/1] building trivial"]
 
 
 def test_spec_changed_during_build_is_not_cached(root: Path) -> None:
