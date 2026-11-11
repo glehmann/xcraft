@@ -1198,7 +1198,9 @@ def test_publish(root: Path) -> None:  # noqa: PLR0915
     code, output = xcraft("publish", "isos", "--to", "main")
     assert code == 2
     assert "no ISO to publish: see [iso] in xcraft.toml" in output
-    # a local one is of the host's architecture, unless asked
+    # a local one is of the host's architecture, unless asked; signed again, from the originals, which the snapshots
+    # do not have, but the upstream copy
+    shutil.rmtree(root / ".xcraft/cache/rpms")
     code, output = xcraft("publish", "--local")
     assert code == 0, output
     assert sorted(p.name for p in (root / ".xcraft/publish/base").iterdir()) == ["Source", ARCH]

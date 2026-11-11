@@ -100,9 +100,10 @@ def _download(
     """Download the upstream packages `files`, as file name: NEVRA, to their cache, and return it: those found only,
     if `available`, without failing for the others.
 
-    Those not in the cache come from the latest snapshot, the upstream copy, see xcraft.upstream_copy, or from
-    the repositories, which may not have them anymore, after an update, while the storage may not be there: natively,
-    for any architecture. The signatures of the source packages are checked before the cache, which would keep a bad
+    Those not in the cache come from the latest snapshot, for the source packages, as published, the upstream copy,
+    see xcraft.upstream_copy, or from the repositories, which may not have them anymore, after an update, while the
+    storage may not be there: natively, for any architecture. The snapshots have the binary packages signed by our key,
+    not the originals. The signatures of the source packages are checked before the cache, which would keep a bad
     one.
     """
     cache = project.state / ("cache/srpms" if source else "cache/rpms")
@@ -112,7 +113,7 @@ def _download(
         if storage := project.config.remote.get("main"):
             latest, directory = snapshot_tree(project, "repos", "latest"), "Source" if source else project.arch
             copy = f"{upstream_copy.PREFIX}/{directory}"
-            paths = [f"{latest}/{REPO}/{directory}", f"{latest}/{BUILD}/{directory}", copy]
+            paths = [*([f"{latest}/{REPO}/{directory}", f"{latest}/{BUILD}/{directory}"] if source else []), copy]
 
             def fetch(f: str) -> None:
                 for path in paths:  # where it is, if anywhere
