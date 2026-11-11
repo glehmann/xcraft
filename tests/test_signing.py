@@ -13,13 +13,13 @@ from typing import TYPE_CHECKING
 import pytest
 import typer
 
-from tests import ARCH, PROJECT, TOYS, copy_project, needs_gpg
+from tests import ARCH, PROJECT, TOYS, config, copy_project, needs_gpg
 from tests.test_build import xcraft
 from xcraft import buildid, pinned, publish
 from xcraft.cache import build_keys, cached_build
 from xcraft.commands import choose_signer
 from xcraft.lock import cached_lock
-from xcraft.project import Project, Repo, Sign
+from xcraft.project import Config, Project, Remote, Repo, Sign
 from xcraft.publish import _signed_build
 from xcraft.signing import Signer, SigningError, check_signatures, create_dev_key, dev_keyring, dev_signer, key_signer
 
@@ -107,6 +107,13 @@ def test_repo_keys_of_urls_pinned() -> None:
     ]
     with pytest.raises(ValueError, match="not the fingerprint of a key"):
         Repo(baseurl="file:///repo", gpgkey="https://example.com/key", fingerprints=["a" * 16])
+
+
+def test_no_build_keys_on_the_dev_bucket() -> None:
+    dev = Remote(url="http://dev", build_keys=["A" * 40])
+    with pytest.raises(ValueError, match=r"remote\.dev cannot have build_keys"):
+        Config.model_validate({**config().model_dump(by_alias=True), "remote": {"dev": dev.model_dump()}})
+    Config.model_validate({**config().model_dump(by_alias=True), "remote": {"main": dev.model_dump()}})
 
 
 def _check_with_keys_at_urls(root: Path, tmp_path: Path, signer: Signer, signed: list[Path]) -> None:

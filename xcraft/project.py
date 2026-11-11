@@ -285,6 +285,9 @@ class Config(BaseModel):
         if missing := [name for name, storage in self.remote.items() if not storage.url and name != "private"]:
             msg = f"the url of the public reads of remote.{missing[0]} is missing"
             raise ValueError(msg)
+        if (dev := self.remote.get("dev")) and dev.build_keys:
+            msg = "remote.dev cannot have build_keys: the keys of all the buckets are trusted, see docs/pr-ci-design.md"
+            raise ValueError(msg)
         if unknown := [p for p in self.embargo_branches if p not in self.maintenance_branches]:
             msg = f"embargo_branches must be maintenance_branches too: {', '.join(unknown)}"
             raise ValueError(msg)

@@ -58,7 +58,7 @@ the same inputs.
 The PR key signs as a developer's key does: the development builds at build, and the metadata of the stage; master's
 builds keep the CI key's signature, and the upstream packages their own. It is trusted by nobody else: not in
 `build_keys` of any remote, which would make master's CI accept, from the dev bucket, a final build a pull request
-planted under a key master builds. The testers
+planted under a key master builds: the configuration refuses them on `remote.dev`. The testers
 install from the stage with the keys of all its signers, the PR key, the CI key and the upstream ones, which it
 publishes in a file each, see [the signatures](publishing-layout-design.md#signatures).
 
