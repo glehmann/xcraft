@@ -38,6 +38,10 @@ _SAME_BUILDS: dict[str, str] = {
     "daefda1f7a8921a4f5b3275b779989d0a35ce26a3911cb57b06ab8dc17950c2b": (
         "29c33cba085b64d826ac79e52005810ad38ef1db16ec3d0d747117564ebe8622"
     ),
+    # rpmbuild without gaining privileges, which no spec does, with sudo
+    "d3f7ff1e41536e11105be01976805771e90013e3287cba5ff70f84c7ca3b55f2": (
+        "29c33cba085b64d826ac79e52005810ad38ef1db16ec3d0d747117564ebe8622"
+    ),
 }
 """Recipes making the same packages as an earlier one, by their hash, with the earliest one: their builds keep its
 keys."""

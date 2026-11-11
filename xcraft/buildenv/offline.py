@@ -1,4 +1,5 @@
-"""Run a command without the network, like koji and mock run the builds: with the loopback interface only, up.
+"""Run a command without the network, like koji and mock run the builds: with the loopback interface only, up, and
+without gaining privileges, so that sudo cannot change the build root once recorded.
 
 Run in the build environment, as the user of the command: ``offline.py <command>...``. It runs again as root, with
 sudo, for a user namespace mapping the same ids as the container, all of them: with only the user's, changing the
@@ -6,10 +7,11 @@ owner of a file to root would fail with EINVAL, which fakeroot, unlike EPERM, do
 outside the new user namespace, which takes CAP_SETUID there, and in it, brings up the loopback interface of a new
 network namespace, then runs the command as the user, with its environment, which sudo would have trimmed.
 
-Under emulation, the command keeps the network, with a warning: qemu-user, multithreaded, cannot create a user
-namespace. The builds of the other architectures only run so on the machines of developers.
+Under emulation, the command runs in the namespaces of the container, which has no network either: qemu-user,
+multithreaded, cannot create a user namespace.
 """
 
+import ctypes
 import errno
 import fcntl
 import json
@@ -21,6 +23,7 @@ import sys
 from pathlib import Path
 
 SIOCGIFFLAGS, SIOCSIFFLAGS, IFF_UP = 0x8913, 0x8914, 0x1
+PR_SET_NO_NEW_PRIVS = 38
 
 if os.getuid():
     command = [str(os.getuid()), str(os.getgid()), json.dumps(dict(os.environ)), *sys.argv[1:]]
@@ -44,7 +47,6 @@ try:
 except OSError as e:
     if e.errno != errno.EINVAL:
         raise
-    print("warning: the network is not isolated, under emulation", file=sys.stderr)  # noqa: T201
     os.write(unshared[1], b"-")
 else:
     os.write(unshared[1], b"x")
@@ -55,6 +57,9 @@ else:
 os.setgroups([])
 os.setgid(int(gid))
 os.setuid(int(uid))
+libc = ctypes.CDLL(None, use_errno=True)
+if libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0):
+    raise OSError(ctypes.get_errno(), "prctl(PR_SET_NO_NEW_PRIVS)")
 # Python ignores them, and the command would inherit it, like rpmbuild does: writing to a closed pipe, like sed in a
 # pipeline whose reader exits first, would fail with EPIPE, and an error, rather than being killed quietly
 for sig in (signal.SIGPIPE, signal.SIGXFSZ):

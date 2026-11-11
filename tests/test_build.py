@@ -175,6 +175,16 @@ def test_build_without_network(root: Path) -> None:
     assert "no network" in (root / ".xcraft/logs/offline.log").read_text()  # but its loopback interface
 
 
+def test_build_without_privileges(root: Path) -> None:
+    write_spec(root, "unprivileged")
+    spec = root / "base/unprivileged/unprivileged.spec"
+    check = "if sudo true; then exit 1; fi\n"
+    spec.write_text(spec.read_text().replace("%install\n", f"%build\n{check}%install\n"))
+    code, output = xcraft("build", "unprivileged")
+    assert code == 0, output
+    assert '"no new privileges" flag is set' in (root / ".xcraft/logs/unprivileged.log").read_text()
+
+
 def test_build_killed_by_closed_pipes(root: Path) -> None:
     write_spec(root, "pipes")
     spec = root / "base/pipes/pipes.spec"
