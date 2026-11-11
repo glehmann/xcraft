@@ -450,8 +450,8 @@ class Resolver:
 
 def _sha256(package: Package) -> str:
     """Return the SHA-256 of the RPM of `package`, which the lock pins it by: the repositories give it."""
-    if not package.chksum:
-        sys.exit(f"no checksum of {package} in the metadata of its repository: the lock cannot pin it")
+    if not package.chksum or package.chksum[0] != hawkey.CHKSUM_SHA256:
+        sys.exit(f"no SHA-256 of {package} in the metadata of its repository: the lock cannot pin it")
     return package.chksum[1].hex()
 
 
