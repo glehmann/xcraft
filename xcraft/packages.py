@@ -26,8 +26,8 @@ class Binary(BaseModel):
     requires: list[str]
     recommends: list[str] = []
     autorev_name: str = ""
-    """Its name with ``%{autorev}`` where the release suffix of the builds goes, for those named after their release,
-    like the livepatch packages of the kernel."""
+    """Its name with ``%{autorev}`` where the release suffix of the builds goes, for those named after their
+    release."""
 
 
 class Package(BaseModel):

@@ -153,8 +153,9 @@ the image, like on its macros, may then have another one.
 
 Packages depending on each other, like a compiler and its runtime, are the strongly connected components of the
 graph of the dependencies. The packages of a component have the same `<inputs>`, those of all of them, and their keys
-differ only by their names: they are built again together. The components are computed in the order of the
-dependencies, each after those it depends on, see `xcraft.graph.components()`.
+differ only by their names: a change to one of them changes all their keys. They cannot be built, though: the build
+order refuses a cycle on an architecture, see `xcraft.graph.build_order()`, which must be broken first. The components
+are computed in the order of the dependencies, each after those it depends on, see `xcraft.graph.components()`.
 
 ## Reuses
 

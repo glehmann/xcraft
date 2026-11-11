@@ -29,7 +29,7 @@ def _load(spec_file: str, target: str, autorev: str | None = None) -> rpm.spec:
 
 def _autorev_names(spec_file: str, target: str) -> list[str]:
     """Return the names of the binary packages of a spec, with %{autorev} where the release suffix of the builds goes,
-    for those named after their release, like the livepatch packages of the kernel, and nothing for the others.
+    for those named after their release, and nothing for the others.
     """
     spec = _load(spec_file, target, MARKER)
     names = [p.header[rpm.RPMTAG_NAME] for p in spec.packages if p.fileList is not None]
