@@ -36,6 +36,7 @@ One file, for all the architectures, written by xcraft only, one line by entry f
 | `[roots]`, `[roots.<arch>]` | by package of ours, the upstream binary packages of its build root, but the image's | `prepare()` |
 | `[runtime]` | by architecture, the upstream binary packages of the published repositories | `prepare()` |
 | `[iso]` | by architecture, those of the tools making the ISO, but the image's | `prepare()` |
+| `[sign]` | by architecture, those of the signing image, but the image's | `prepare()` |
 
 and `version`, the format, `lock.FORMAT`.
 
@@ -68,7 +69,7 @@ packages keeps those the repositories drop, see `xcraft.upstream_copy`.
 A table has one pin by name: another architecture of the same name, like a multilib i686 package, needs another
 format.
 
-### What is pinned: `[image]`, `[roots]`, `[runtime]`, `[iso]`
+### What is pinned: `[image]`, `[roots]`, `[runtime]`, `[iso]`, `[sign]`
 
 What is installed, by name, each pinned:
 
@@ -81,7 +82,9 @@ What is installed, by name, each pinned:
 - `[iso]`: the tools making the ISO, for x86_64 only: the ISO boots with isolinux, on BIOS, and GRUB's x86-64 CD
   image, on UEFI, and has memtest86+, of x86 only. An arm64 ISO would boot GRUB's arm64 one, on UEFI only, with
   xorriso, mtools and dosfstools pinned for aarch64. What the installer installs is in `[runtime]`, on every
-  architecture.
+  architecture;
+- `[sign]`: rpmsign and gpg, over the image, for the signing image, apart from it so as not to change the build keys:
+  rpm-sign of the version of the locked rpm.
 
 They are resolved by dnf, without installing anything, natively for every architecture, against the upstream
 repositories in the locked versions, our copy of them, and a repository of the metadata of our binary packages,

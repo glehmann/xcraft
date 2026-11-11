@@ -15,12 +15,14 @@ The input has:
   the capabilities our specs require, to resolve what rpm generated for them;
 - ``versions``, upstream source packages to give the available versions of;
 - ``runtime``, with ours, what the published repositories need: the ``extra`` upstream packages published, the
-  ``installer``'s, the ``iso`` packages of the repository of the ISO, and the ``tools`` making the ISO.
+  ``installer``'s, the ``iso`` packages of the repository of the ISO, and the ``tools`` making the ISO;
+- ``sign``, the packages of the signing image, installed on the image.
 
 The output has the locked binary ``packages``, the ``image``, the upstream ``buildroots`` and the ``ours`` binary
 packages of each build root, the ``requires`` and ``provides`` of the recorded binary packages, the ``errors``, by
 package, ``image`` for the image, the upstream packages of the ``runtime``, with its ``runtime_errors``, and of the
-``tools``, besides the image's, with their ``tools_error``, the ``unlocked`` source packages needed, the
+``tools``, besides the image's, with their ``tools_error``, those of ``sign`` likewise, with their ``sign_error``, the
+``unlocked`` source packages needed, the
 ``versions`` of those and of the given ones, oldest first, the packages of the ``sets`` of the ISO, ``iso`` and
 ``install.img``, and ``why`` each package is in each set, see Resolver.why().
 """
@@ -495,6 +497,8 @@ def main() -> None:
     result: dict = {"buildroots": {}, "ours": {}, "errors": {}, "requires": {}, "provides": {}, "runtime_errors": {}}
     image = resolver.image(result["errors"])
     result["image"] = sorted(p.name for p in image)
+    if data.get("sign") and "image" not in result["errors"]:
+        result["sign"], result["sign_error"] = resolver.tools(image, data["sign"])
     unmet_weak = resolver.unmet_weak(image)
     owners = {b["name"]: b["package"] for b in data["ours"]}
     # the packages of ours each build may get: those of its dependencies, built before it

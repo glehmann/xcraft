@@ -30,7 +30,7 @@ from rich.markup import escape
 
 from xcraft import remote
 from xcraft.builds import drop_gone
-from xcraft.container import BUILDENV, PACKAGES, base_packages, repo_file, run_natively
+from xcraft.container import BUILDENV, PACKAGES, SIGN_PACKAGES, base_packages, repo_file, run_natively
 from xcraft.display import activity, console
 from xcraft.graph import reachable
 from xcraft.localrepo import extra_rpms
@@ -85,6 +85,10 @@ class Resolved(BaseModel):
     ISO."""
     tools_error: str = ""
     """Why the tools making the ISO cannot be installed."""
+    sign: list[str] = []
+    """The upstream packages of the signing image, but the image's."""
+    sign_error: str = ""
+    """Why the packages of the signing image cannot be installed."""
     versioned: dict[str, str] = {}
     """The binary packages of ours a package refers to with a version, or in a rich dependency, with their
     epoch-version-releases when resolved: another of them may resolve otherwise, see _unversioned()."""
@@ -264,7 +268,9 @@ def _locked(resolved: Resolved) -> Resolved:
 
 
 def _image(project: Project) -> Resolved:
-    return _cached(project, _image_data(project), show=f"resolving the image of {project.arch}")
+    # with the packages of the signing image, over it
+    data = {**_image_data(project), "sign": SIGN_PACKAGES}
+    return _cached(project, data, show=f"resolving the image of {project.arch}")
 
 
 def resolve_image(project: Project) -> Resolved:
@@ -447,7 +453,11 @@ def _record_image(platform: Project, lock: Lock) -> Resolved:
     if error := image.errors.get("image"):
         msg = f"the build environment image cannot be resolved for {platform.arch}: {error}"
         raise ResolutionError(msg)
+    if image.sign_error:
+        msg = f"the signing image cannot be resolved for {platform.arch}: {image.sign_error}"
+        raise ResolutionError(msg)
     lock.image[platform.arch] = sorted(image.image)
+    lock.sign[platform.arch] = image.sign
     return image
 
 
@@ -457,7 +467,7 @@ def _record_images(platforms: list[Project], recorded: Lock, lock: Lock, repin: 
     """
     for platform in platforms:
         image = _record_image(platform, lock)
-        pinned = _pins(platform.arch, recorded, [image], set(image.image), repin)
+        pinned = _pins(platform.arch, recorded, [image], {*image.image, *image.sign}, repin)
         lock.binaries[platform.arch] = {**recorded.binaries.get(platform.arch, {}), **pinned}
 
 
@@ -484,7 +494,7 @@ def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
     drop_gone(project)
 
     def record(recorded: Lock, lock: Lock) -> None:
-        lock.image, lock.binaries, lock.runtime, lock.iso = {}, {}, {}, {}
+        lock.image, lock.binaries, lock.runtime, lock.iso, lock.sign = {}, {}, {}, {}, {}
         lock.roots.keep({*project.package_dirs})
         lock.roots.arches = {}
         for platform in platforms:
@@ -499,13 +509,13 @@ def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
                 lock.roots.record(platform.arch, project.first, name, values)
             _record_published(recorded, lock, platform.arch, roots)
             names = {
-                *image.image, *(n for values in lock.roots.of(platform.arch).values() for n in values),
+                *image.image, *image.sign, *(n for values in lock.roots.of(platform.arch).values() for n in values),
                 *lock.runtime.get(platform.arch, []), *lock.iso.get(platform.arch, []),
             }  # fmt: skip
             lock.binaries[platform.arch] = _pins(platform.arch, recorded, [image, roots], names, repin)
         if (native := project.on_host()).arch not in lock.image:  # the image parsing the specs, see prepare()
             image = _record_image(native, lock)
-            lock.binaries[native.arch] = _pins(native.arch, recorded, [image], set(image.image), repin)
+            lock.binaries[native.arch] = _pins(native.arch, recorded, [image], {*image.image, *image.sign}, repin)
         # those of no pin left, like those of a package published no more, in their latest version when needed again
         used = {pin.source for pins in lock.binaries.values() for pin in pins.values()}
         lock.sources = {source: version for source, version in lock.sources.items() if source in used}

@@ -561,6 +561,21 @@ def test_iso_tools(root: Path) -> None:
             _check_installed_tools(project, work / "tools.json")
 
 
+def test_signing_image_pinned(root: Path) -> None:
+    project = Project.find()
+    lock = load_lock(project)
+    # pinned when preparing, on every architecture, with rpm-sign of the locked rpm
+    assert lock.sign.keys() == lock.image.keys()
+    for arch, names in lock.sign.items():
+        assert {"rpm-sign"} <= set(names) <= lock.binaries[arch].keys()
+        assert not set(names) & set(lock.image[arch])
+        assert lock.binaries[arch]["rpm-sign"].evr == lock.binaries[arch]["rpm"].evr
+    # installed from the pinned packages
+    image = container.signing_image(project)
+    installed = container.image_packages(project, image)
+    assert all(installed[n].evr == lock.binaries[ARCH][n].evr for n in lock.sign[ARCH])
+
+
 @pytest.mark.skipif(ARCH != "x86_64_v2", reason="the ISOs are for x86_64")
 def test_iso_packages_published(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # bc, which nothing else needs, in the repository of the ISO: published, for the snapshot to have it
@@ -947,11 +962,14 @@ def test_image_of_the_host_pinned_for_a_project_of_other_architectures(root: Pat
     lock = load_lock(project)
     assert native.arch not in {p.arch for p in project.all_platforms()}
     assert lock.image[native.arch]
-    assert lock.binaries[native.arch].keys() == {*lock.image[native.arch]}
+    # and of its signing image, which signs natively
+    assert lock.binaries[native.arch].keys() == {*lock.image[native.arch], *lock.sign[native.arch]}
     assert container._image_pins(native)
     # kept by xcraft clean --shared
     assert container.image_tag(native) in container.checkout_images(project)
+    assert container._signing_tag(native) in container.checkout_images(project)
     assert pinned.ident(container._image_pins(native)) in container.checkout_repositories(project)
+    assert pinned.ident(container._signing_pins(native)) in container.checkout_repositories(project)
 
 
 def test_build_roots_resolved_again_for_versions_of_rich_dependencies(

@@ -2,7 +2,7 @@
 
 ``xcraft.lock`` has one version of each upstream source package installed in
 the build environment image, in a build root, with the tools making the ISO, or
-published, for the whole tree: on each architecture, the build environment only
+signing, or published, for the whole tree: on each architecture, the build environment only
 sees the binary packages of that version, but the suffixes of the releases of
 the rebuilds for an architecture, like AlmaLinux's .alma_altarch. Packages not
 locked yet are added to the lock, in the latest version all the architectures
@@ -135,8 +135,8 @@ class Lock(BaseModel):
     sources: dict[str, str] = {}
     """The version-release of each upstream source package, without the suffixes of an architecture."""
     binaries: dict[str, dict[str, Pin]] = {}
-    """The upstream binary packages of the images, of the build roots, of the published repositories and of the tools
-    making the ISO, by architecture, then by name."""
+    """The upstream binary packages of the images, of the build roots, of the published repositories, of the tools
+    making the ISO and of the signing images, by architecture, then by name."""
     image: dict[str, list[str]] = {}
     """The upstream binary packages of the build environment image, by architecture, pinned in binaries."""
     roots: Recorded = Recorded()
@@ -147,20 +147,22 @@ class Lock(BaseModel):
     ones, and the installer's, pinned in binaries."""
     iso: dict[str, list[str]] = {}
     """Upstream packages of the tools making the ISO, besides the image's, by architecture, pinned in binaries."""
+    sign: dict[str, list[str]] = {}
+    """Upstream packages of the signing image, besides the image's, by architecture, pinned in binaries."""
 
     @model_validator(mode="after")
     def _pinned(self) -> Lock:
         """Check that the images, the build roots, the published repositories and the tools making the ISO have
         pinned binary packages only, of locked sources.
         """
-        arches = {*self.image, *self.roots.arches, *self.runtime, *self.iso}
+        arches = {*self.image, *self.roots.arches, *self.runtime, *self.iso, *self.sign}
         if unpinned := sorted(arches - self.binaries.keys()):
             msg = f"architectures without pinned binary packages: {', '.join(unpinned)}"
             raise ValueError(msg)
         for arch, pins in self.binaries.items():
             names = {
                 *self.image.get(arch, []), *(n for names in self.roots.of(arch).values() for n in names),
-                *self.runtime.get(arch, []), *self.iso.get(arch, []),
+                *self.runtime.get(arch, []), *self.iso.get(arch, []), *self.sign.get(arch, []),
             }  # fmt: skip
             if missing := sorted(names - pins.keys()):
                 msg = f"binary packages of {arch} not pinned in the lock: {', '.join(missing)}"
@@ -251,7 +253,7 @@ def _entries(lock: Lock) -> set[str]:
             for package, values in entries.items()
             for value in values or ["(none)"]
         ),
-        *(f"{field}.{arch} {name}" for field in ("image", "runtime", "iso")
+        *(f"{field}.{arch} {name}" for field in ("image", "runtime", "iso", "sign")
           for arch, names in getattr(lock, field).items() for name in names),
     }  # fmt: skip
 
@@ -290,4 +292,5 @@ def save_lock(project: Project, lock: Lock) -> None:
     lines += _tables("image", lock.image, "the upstream binary packages of the build environment image")
     lines += _tables("runtime", lock.runtime, "the upstream binary packages of the published repositories")
     lines += _tables("iso", lock.iso, "the upstream binary packages of the tools making the ISO, but the image's")
+    lines += _tables("sign", lock.sign, "the upstream binary packages of the signing image, but the image's")
     write_atomically(lock_path(project), "\n".join(lines) + "\n")

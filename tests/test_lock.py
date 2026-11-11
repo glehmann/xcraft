@@ -94,10 +94,12 @@ def test_lock_validation(tmp_path: Path) -> None:
         ({"roots": Recorded(arches={"aarch64": {"qemu": ["glibc"]}})}, "without pinned binary packages: aarch64"),
         ({"runtime": {"aarch64": ["glibc"]}}, "without pinned binary packages: aarch64"),
         ({"iso": {"aarch64": ["glibc"]}}, "without pinned binary packages: aarch64"),
+        ({"sign": {"aarch64": ["glibc"]}}, "without pinned binary packages: aarch64"),
         ({"binaries": {"aarch64": {"glibc": pin}}, "image": {"aarch64": ["bash"]}}, "not pinned in the lock: bash"),
         ({"binaries": {"aarch64": {"glibc": pin}}, "roots": Recorded(shared={"qemu": ["bash"]})}, "not pinned"),
         ({"binaries": {"aarch64": {"glibc": pin}}, "runtime": {"aarch64": ["bash"]}}, "not pinned in the lock: bash"),
         ({"binaries": {"aarch64": {"glibc": pin}}, "iso": {"aarch64": ["bash"]}}, "not pinned in the lock: bash"),
+        ({"binaries": {"aarch64": {"glibc": pin}}, "sign": {"aarch64": ["bash"]}}, "not pinned in the lock: bash"),
         ({"binaries": {"aarch64": {"glibc": pin}}, "sources": {}}, "of source packages not locked: glibc"),
     ):
         with pytest.raises(ValueError, match=problem):
