@@ -807,7 +807,7 @@ def test_resolutions_replaced_for_other_versions(root: Path, monkeypatch: pytest
     assert not log.exists()
 
 
-def test_builds(root: Path) -> None:
+def test_builds(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert xcraft("build", "trivial")[0] == 0
     assert (
         xcraft("push", "builds", "trivial", "--to", "main")[1]
@@ -839,10 +839,13 @@ def test_builds(root: Path) -> None:
         "build    trivial",
         "build    with-deps",
     ]
+    monkeypatch.setenv("CI", "true")  # the steps, in the output
     code, output = xcraft("build", "with-deps")
+    monkeypatch.delenv("CI")
     assert code == 0, output
-    assert output.splitlines()[0] == "↓ trivial fetched"
-    assert output.splitlines()[-1] == "1 built, 1 fetched"
+    assert results(output)[0] == "↓ trivial fetched"
+    assert results(output)[-1] == "1 built, 1 fetched"
+    assert "[1/1] building with-deps" in output  # but trivial, fetched rather than built
     (fetched,) = root.glob(f".xcraft/cache/builds/*/{ARCH}/trivial")
     assert list(fetched.glob("*/RPMS/noarch/trivial-1.0-1+b1.xcpng8.99.noarch.rpm"))
     # built, even though the storage has it
@@ -852,7 +855,7 @@ def test_builds(root: Path) -> None:
     assert output.splitlines()[-1] == "1 built"
 
 
-def test_fetch_needed(root: Path) -> None:
+def test_fetch_needed(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # trivial and other in the storage, with-deps, built against trivial, not yet
     lock = (root / "xcraft.lock").read_text()
     write_spec(root, "other")
@@ -872,8 +875,11 @@ def test_fetch_needed(root: Path) -> None:
         "build    with-deps",
         "1 to build, 1 to fetch, 1 in the remote storage",
     ]
+    monkeypatch.setenv("CI", "true")  # the steps, in the output
     code, output = xcraft("build", "--fetch=needed")
+    monkeypatch.delenv("CI")
     assert code == 0, output
+    assert "[1/1] building with-deps" in output  # but those in the storage
     assert [line.split(" in ")[0] for line in results(output)] == [
         "↓ trivial fetched",
         "✓ with-deps built",

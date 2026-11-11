@@ -97,6 +97,14 @@ def test_build_all_by_default(root: Path) -> None:
     assert xcraft("build", "-n") == (code, output)
 
 
+def test_build_steps_count_the_packages_not_cached(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert xcraft("build", "trivial")[0] == 0
+    monkeypatch.setenv("CI", "true")
+    result = runner.invoke(app, ["build"])
+    assert result.exit_code == 0, result.output
+    assert "[1/1] building with-deps" in result.stderr
+
+
 def test_spec_changed_during_build_is_not_cached(root: Path) -> None:
     spec = root / "base/trivial/trivial.spec"
 

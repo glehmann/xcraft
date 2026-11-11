@@ -296,6 +296,10 @@ class _Run:
     """The state of the lock of the `keys`, see _lock_state()."""
     unrecorded: list[str] = field(default_factory=list, init=False)
     """The packages fetched, whose builds are recorded together, see _record_fetched()."""
+    step: int = field(default=0, init=False)
+    """The packages built so far, for their step numbers."""
+    steps: int = field(default=0, init=False)
+    """The packages of the plan to build, as known so far, for their step numbers, see _to_build()."""
 
     def build(self, plan: list[str]) -> list[Result]:
         """Build the packages of `plan`, in order, and return how it went, see xcraft.build.build()."""
@@ -306,20 +310,28 @@ class _Run:
             missing = [name for name in plan if not cached_build(project, name, self.keys[name]).exists()]
             self.stored = _stored(project, missing, self.keys)
         self.recorded = _lock_state(project)
+        self.step = 0
+        self.steps = sum(self._to_build(name) for name in plan)
         for i, name in enumerate(plan, 1):
             _queue_file(project).write_text("\n".join([str(os.getpid()), *plan[i:]]) + "\n")
             with _turn(project, name):
                 self._refresh()
-                self.results[name] = self._one(name, f"[{i}/{len(plan)}]", reused=name in reused)
+                self.results[name] = self._one(name, reused=name in reused)
         self._refresh()
         return self._recorded_again()
 
-    def _one(self, name: str, step: str, *, reused: bool) -> Result:
-        """Return the result of `name`, at `step` of the plan: built, unless it is done, in the remote storage, or not
-        to build, like when `reused`, the build of the main branch, made by CI.
+    def _one(self, name: str, *, reused: bool) -> Result:
+        """Return the result of `name`: built, unless it is done, in the remote storage, or not to build, like when
+        `reused`, the build of the main branch, made by CI. Its step numbers the packages built: those counted to build
+        but not built, like those fetched or skipped, are counted out.
         """
+        counted = self._to_build(name)
         if result := self._done(name) or self._from_storage(name) or self._not_built(name, reused=reused):
+            self.steps -= counted
             return result
+        self.step += 1
+        self.steps = max(self.steps, self.step)  # or more than counted, when the keys changed
+        step = f"[{self.step}/{self.steps}]"
         if self.use_remote:
             self._fetch_for(name)
         self._record_fetched()  # for its build root, with what the builds of its dependencies generated
@@ -356,11 +368,21 @@ class _Run:
             _show_failure(project, name, error, verbose=self.verbose)
             return Result(name, "failed")
         build = cached_build(project, name, self.keys[name])
-        if not self._nocheck(name) and build.exists() and untested(project, name, self.keys[name]):
+        if build.exists():
+            if self._cached(name):
+                return Result(name, "cached")  # nothing to show: only the counts
             shutil.rmtree(build)  # made again, with the tests of its spec
-        if build.exists():  # nothing to show: only the counts
-            return Result(name, "cached")
         return None
+
+    def _to_build(self, name: str) -> bool:
+        """Return whether `name` is to build, as known now: not cached, nor known in the remote storage."""
+        return not self._cached(name) and not self.stored.get(f"{name}/{self.keys[name]}", False)
+
+    def _cached(self, name: str) -> bool:
+        """Return whether `name` has a cached build to use: with the tests its spec asks for, unless --nocheck."""
+        if not cached_build(self.project, name, self.keys[name]).exists():
+            return False
+        return self._nocheck(name) or not untested(self.project, name, self.keys[name])
 
     def _from_storage(self, name: str) -> Result | None:
         """Return the result of `name` when the remote storage has its build: fetched, or only noted there with `fetch`
