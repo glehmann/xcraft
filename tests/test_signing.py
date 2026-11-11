@@ -19,7 +19,7 @@ from xcraft import buildid, pinned, publish
 from xcraft.cache import build_keys, cached_build
 from xcraft.commands import choose_signer
 from xcraft.lock import cached_lock
-from xcraft.project import Project, Sign
+from xcraft.project import Project, Repo, Sign
 from xcraft.publish import _signed_build
 from xcraft.signing import Signer, SigningError, check_signatures, create_dev_key, dev_keyring, dev_signer, key_signer
 
@@ -98,9 +98,20 @@ def _served(directory: Path) -> Generator[str]:
             thread.join()
 
 
+def test_repo_keys_of_urls_pinned() -> None:
+    assert Repo(baseurl="file:///repo", gpgkey="file:///etc/pki/rpm-gpg/key").fingerprints == []
+    with pytest.raises(ValueError, match="needs the fingerprints of its keys"):
+        Repo(baseurl="file:///repo", gpgkey="file:///etc/pki/rpm-gpg/key https://example.com/key")
+    assert Repo(baseurl="file:///repo", gpgkey="https://example.com/key", fingerprints=["a" * 40]).fingerprints == [
+        "A" * 40
+    ]
+    with pytest.raises(ValueError, match="not the fingerprint of a key"):
+        Repo(baseurl="file:///repo", gpgkey="https://example.com/key", fingerprints=["a" * 16])
+
+
 def _check_with_keys_at_urls(root: Path, tmp_path: Path, signer: Signer, signed: list[Path]) -> None:
     """Check the packages `signed` by `signer` with the keys of the repositories, at URLs which may give other keys:
-    checked again then.
+    downloaded again only when the cached one is not of the fingerprints of its repository.
     """
     (served := tmp_path / "served").mkdir()
     (served / "key.asc").write_text(signer.public_key())
@@ -108,7 +119,8 @@ def _check_with_keys_at_urls(root: Path, tmp_path: Path, signer: Signer, signed:
         try:
             project = Project.find()
             repo = next(iter(project.config.repos.values()))
-            project.config.repos = {"keyed": repo.model_copy(update={"gpgkey": f"{url}/key.asc"})}
+            keyed = repo.model_copy(update={"gpgkey": f"{url}/key.asc", "fingerprints": [signer.key]})
+            project.config.repos = {"keyed": keyed}
             paths = [str(p.relative_to(root)) for p in signed]
             check_signatures(project, root, paths, what="test")
             log = project.log("_signatures")
@@ -118,7 +130,15 @@ def _check_with_keys_at_urls(root: Path, tmp_path: Path, signer: Signer, signed:
             (keyring := tmp_path / "other").mkdir(mode=0o700)
             other = Signer("", keyring)
             other.gpg("--passphrase", "", "--quick-generate-key", "Other", "ed25519", "sign", "never")
+            other.key = other.gpg("--with-colons", "--list-keys").split("\nfpr:")[1].split(":")[8]
             (served / "key.asc").write_text(other.gpg("--armor", "--export"))
+            # the key cached, of its fingerprint, without the network
+            check_signatures(project, root, paths, what="test")
+            assert log.stat().st_mtime_ns == checked
+            project.config.repos = {"keyed": keyed.model_copy(update={"fingerprints": ["B" * 40]})}
+            with pytest.raises(SigningError, match=f"key.asc gives the keys {other.key}, not those of fingerprints"):
+                check_signatures(project, root, paths, what="test")
+            project.config.repos = {"keyed": keyed.model_copy(update={"fingerprints": [other.key]})}
             with pytest.raises(SigningError, match="some test are not signed with the keys of the repositories"):
                 check_signatures(project, root, paths, what="test")
         finally:
@@ -136,7 +156,8 @@ def test_pinned_packages_are_signed(build_environment: Path, root: Path, tmp_pat
     other = create_dev_key(project, "Other")
     (tmp_path / "key.asc").write_text(other.public_key())
     with _served(tmp_path) as url:
-        project.config.repos = {"baseos": baseos.model_copy(update={"gpgkey": f"{url}/key.asc"})}
+        keyed = baseos.model_copy(update={"gpgkey": f"{url}/key.asc", "fingerprints": [other.key]})
+        project.config.repos = {"baseos": keyed}
         with pytest.raises(SigningError, match="some pinned packages are not signed with the keys of the repositories"):
             pinned.check_signed(project, image)
 

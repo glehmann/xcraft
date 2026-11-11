@@ -61,13 +61,24 @@ class Repo(BaseModel):
     baseurl: str
     """URL of the repository, where ``{arch}`` is the RPM architecture."""
     gpgkey: str | None = None
-    """URL of the key signing its packages, which are not checked without one."""
+    """URL of the key signing its packages, which are not checked without one: several, separated by spaces."""
+    fingerprints: list[str] = []
+    """The fingerprints of the keys the URLs of `gpgkey` but those of files, of the image, must give, which could give
+    any other key otherwise."""
     includepkgs: list[str] = []
     """The only packages taken from the repository, when given."""
     source_baseurl: str = ""
     """URL of the source packages of the repository, with all their versions, for publishing them."""
     arches: list[str] = []
     """The RPM architectures it is for, all when not given."""
+
+    @model_validator(mode="after")
+    def _pinned_keys(self) -> Repo:
+        self.fingerprints = [fingerprint(key) for key in self.fingerprints]
+        if not self.fingerprints and any(not url.startswith("file://") for url in (self.gpgkey or "").split()):
+            msg = f"gpgkey {self.gpgkey} needs the fingerprints of its keys, in fingerprints"
+            raise ValueError(msg)
+        return self
 
 
 Platform = Literal["linux/amd64/v2", "linux/amd64", "linux/arm64"]

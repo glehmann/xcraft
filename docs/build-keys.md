@@ -82,7 +82,8 @@ of the JSON, keys sorted, of an array of:
 7. `release_suffixes` of `xcraft.toml`.
 8. `extra_upstream` of `xcraft.toml`: the URLs of the extra upstream RPMs, and their SHA-256, which the builds check.
 9. The repositories of `xcraft.toml`, all of them, whatever their architectures: their settings, as in `xcraft.toml`,
-   but `source_baseurl`, where publishing gets their source packages from.
+   but `source_baseurl`, where publishing gets their source packages from, and `fingerprints`, of the keys checking
+   their signatures.
 
 The image has the macros, the repositories and the packages in an order of its own, by name, which their order in
 `xcraft.toml` does not change, like the recipe.

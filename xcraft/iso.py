@@ -25,7 +25,7 @@ from xcraft.display import activity, changes, console
 from xcraft.lock import load_lock
 from xcraft.pinned import REPO_ID
 from xcraft.project import INTERNAL
-from xcraft.signing import Signer, key_paths, key_signer, repo_keys, signer_key_file
+from xcraft.signing import Signer, key_paths, key_signer, signer_key_file
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
@@ -324,7 +324,7 @@ def _assemble_iso(
                 "packages": iso.packages, "netinstall": netinstall, "signed": bool(signer),
                 "keys": [
                     "/work/key.asc", *(f"/work/signer-{i}.asc" for i in range(len(signers))),
-                    *(key_paths(repo_keys(project), work) if keep else []),
+                    *(key_paths(project, work) if keep else []),
                 ] if signer else [],
                 "name": iso.name, "version": iso.version,
             })

@@ -45,12 +45,14 @@ source_baseurl = "https://vault.almalinux.org/10/devel/Source/"
 [repos.epel]
 baseurl = "https://epel.repo.almalinux.org/10/{arch}/"
 gpgkey = "https://repo.almalinux.org/almalinux/RPM-GPG-KEY-AlmaLinux-10-EPEL-AltArch"
+fingerprints = ["68DD137B7690F4735197C4B1B620C02335D447A6"]
 source_baseurl = "https://epel.vault.almalinux.org/10/Source/"
 arches = ["x86_64_v2"]
 
 [repos.epel-fedora]
 baseurl = "https://dl.fedoraproject.org/pub/epel/10/Everything/{arch}/"
 gpgkey = "https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-10"
+fingerprints = ["7D8D15CBFC4E62688591FB2633D98517E37ED158"]
 source_baseurl = "https://dl.fedoraproject.org/pub/epel/10/Everything/source/tree/"
 arches = ["x86_64", "aarch64"]
 

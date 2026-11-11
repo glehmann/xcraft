@@ -115,7 +115,9 @@ def routine_removal(
             for p in (state / "cache" / d / project.arch).glob("*.json")
             if p not in read and p.stat().st_mtime < used_since
         ],
-        "checks and downloads": [state / "cache" / cache for cache in ("checks", "upstream", "rpms", "srpms", "extra")],
+        "checks and downloads": [
+            state / "cache" / cache for cache in ("checks", "upstream", "rpms", "srpms", "extra", "keys")
+        ],
         # but those of the steps, like _resolve.log
         "logs": [log for log in (state / "logs").glob("[!_]*.log") if log.stem not in project.package_dirs],
     })  # fmt: skip

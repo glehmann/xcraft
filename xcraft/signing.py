@@ -13,6 +13,7 @@ import getpass
 import hashlib
 import json
 import os
+import shutil
 import socket
 import subprocess
 from dataclasses import dataclass
@@ -24,7 +25,7 @@ from rich.markup import escape
 from xcraft import container, process
 from xcraft.container import ContainerError, signing_image
 from xcraft.display import console
-from xcraft.project import fingerprint
+from xcraft.project import fingerprint, write_atomically
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
@@ -206,17 +207,53 @@ def repo_keys(project: Project) -> list[str]:
     return sorted({key for repo in project.config.repos.values() for key in (repo.gpgkey or "").split()})
 
 
-def key_paths(urls: list[str], work: Path) -> list[str]:
-    """Return the paths of the keys of `urls` in the containers: those of files of the image as they are, the others
-    downloaded into `work`, mounted on /work, as the checks have no network.
+def _fingerprints(key: Path, work: Path) -> set[str]:
+    """Return the fingerprints of the primary keys of the file `key`, read by gpg in a keyring of `work`."""
+    (home := work / "gnupg").mkdir(mode=0o700, exist_ok=True)
+    try:
+        listing = process.run(
+            ["gpg", "--batch", "--homedir", str(home), "--show-keys", "--with-colons", str(key)], capture=True
+        ).stdout
+    except subprocess.CalledProcessError as e:
+        msg = f"cannot read the key {key.name}: {e.stderr.strip()}"
+        raise SigningError(msg) from e
+    fingerprints, record = set(), ""
+    for line in listing.splitlines():
+        fields = line.split(":")
+        if fields[0] == "fpr" and record == "pub":
+            fingerprints.add(fields[9])
+        if fields[0] in ("pub", "sub"):
+            record = fields[0]
+    return fingerprints
+
+
+def key_paths(project: Project, work: Path) -> list[str]:
+    """Return the paths of the keys of the repositories of xcraft.toml in the containers: those of files of the image
+    as they are, the others in `work`, mounted on /work, as the checks have no network: from the cache, or else
+    downloaded, then cached, once checked against the fingerprints of their repositories, as they are then.
     """
+    pinned: dict[str, set[str]] = {}
+    for repo in project.config.repos.values():
+        for url in (repo.gpgkey or "").split():
+            pinned.setdefault(url, set()).update(repo.fingerprints)
     paths = []
-    for i, url in enumerate(urls):
+    for i, url in enumerate(repo_keys(project)):
         if url.startswith("file://"):
             paths.append(url.removeprefix("file://"))
+            continue
+        key = work / f"key-{i}.asc"
+        cached = project.state / "cache/keys" / hashlib.sha256(url.encode()).hexdigest()
+        if cached.exists() and (found := _fingerprints(cached, work)) and not found - pinned[url]:
+            shutil.copyfile(cached, key)
         else:
-            process.download(url, work / f"key-{i}.asc")
-            paths.append(f"/work/key-{i}.asc")
+            process.download(url, key)
+            if not (found := _fingerprints(key, work)) or found - pinned[url]:
+                keys = ", ".join(sorted(found)) or "none"
+                msg = f"{url} gives the keys {keys}, not those of fingerprints in xcraft.toml"
+                raise SigningError(msg)
+            cached.parent.mkdir(parents=True, exist_ok=True)
+            write_atomically(cached, key.read_text())
+        paths.append(f"/work/{key.name}")
     return paths
 
 
@@ -243,7 +280,7 @@ def check_signatures(
             (work / "key.asc").write_text(public_key)
             imported = ["/work/key.asc"]
         else:
-            imported = key_paths(repo_keys(project), work)
+            imported = key_paths(project, work)
         # the keys themselves, which their URLs may give other ones of: those of the image are of its tag
         keys = [sha256_of(work / k.removeprefix("/work/")) if k.startswith("/work/") else k for k in imported]
         image = container.base_image(native)
