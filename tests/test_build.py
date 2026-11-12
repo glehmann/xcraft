@@ -887,7 +887,7 @@ def test_recorded_once_after_a_change(root: Path, monkeypatch: pytest.MonkeyPatc
 def test_build_roots_kept_for_another_release(root: Path) -> None:
     def key() -> Path:
         project = Project.find()
-        return resolution._cache(project, resolution._unversioned(project, resolution._roots_data(project)))
+        return resolution._cache(project, resolution._unversioned(resolution._roots_data(project)))
 
     def release(name: str, number: int) -> None:
         spec = root / f"base/{name}/{name}.spec"
@@ -902,7 +902,7 @@ def test_build_roots_kept_for_another_release(root: Path) -> None:
 def _roots_key() -> Path:
     """Return the cache of the build roots of the project, as looked up, with the lock as it is."""
     project = Project.find()
-    return resolution._cache(project, resolution._unversioned(project, resolution._roots_data(project)))
+    return resolution._cache(project, resolution._unversioned(resolution._roots_data(project)))
 
 
 def _resolved_again(monkeypatch: pytest.MonkeyPatch, *, new_process: bool = True) -> tuple[Path, resolution.Resolved]:
@@ -948,6 +948,52 @@ def test_build_roots_resolved_again_for_versions_of_build_requirements(
     again, resolved = _resolved_again(monkeypatch)
     assert again == cache
     assert "with-deps" not in resolved.errors
+
+
+def test_build_roots_kept_for_another_release_required_by_its_own(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # pair requires pair-libs of its own version-release, as subpackages do: another release resolves nothing again
+    write_spec(root, "pair")
+    spec = root / "base/pair/pair.spec"
+    text = spec.read_text().replace("%description", "Requires: pair-libs = %{version}-%{release}\n%description", 1)
+    text = text.replace("%files\n", "touch %{buildroot}/usr/share/doc/pair-libs\n%files\n")
+    spec.write_text(
+        f"{text}%package libs\nSummary: test\n%description libs\ntest\n%files libs\n/usr/share/doc/pair-libs\n"
+    )
+    assert "pair-libs" not in _resolved_again(monkeypatch)[1].versioned
+    cache = _roots_key()
+    spec.write_text(spec.read_text().replace("Release: 1%{?dist}", "Release: 2%{?dist}"))
+    resolved: list[str] = []
+    run = resolution._run
+
+    def counted(project: Project, data: dict, **kwargs: object) -> resolution.Resolved:
+        resolved.append(project.arch)
+        return run(project, data, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(resolution, "_run", counted)
+    again = _resolved_again(monkeypatch)[0]
+    assert again == cache
+    assert resolved == []
+
+
+def test_build_roots_of_the_architectures_resolved_again_together(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # with-deps requires a version of trivial: another release of trivial resolves both architectures again, at once
+    spec = root / "base/with-deps/with-deps.spec"
+    spec.write_text(spec.read_text().replace("BuildRequires: trivial", "BuildRequires: trivial >= 1.0"))
+    _resolved_again(monkeypatch)
+    trivial = root / "base/trivial/trivial.spec"
+    trivial.write_text(trivial.read_text().replace("Release: 1%{?dist}", "Release: 2%{?dist}"))
+    shown: list[str] = []
+    activity = resolution.activity
+
+    def recorded(show: str) -> object:
+        shown.append(show)
+        return activity(show)
+
+    monkeypatch.setattr(resolution, "activity", recorded)
+    _resolved_again(monkeypatch)
+    arches = ", ".join(p.arch for p in Project.find().all_platforms())
+    together = [s for s in shown if s.startswith("resolving the build roots of ")]
+    assert together == [f"resolving the build roots of {arches}, and what is published"]
 
 
 def test_build_roots_kept_for_an_epoch_0(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:

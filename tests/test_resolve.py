@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from xcraft.buildenv.resolve import canonical, entry, primary, versioned_names, write_repo
+from xcraft.buildenv.resolve import canonical, entry, evrs_of, follows, primary, versioned_names, write_repo
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -75,3 +75,19 @@ def test_repository_of_ours(tmp_path: Path) -> None:
 )
 def test_versioned_names(dep: str, names: list[str]) -> None:
     assert versioned_names(dep) == names
+
+
+@pytest.mark.parametrize(
+    ("dep", "followed"),
+    [
+        ("pair-libs = 1.0-2.xcpng8.99", True),  # like Requires: pair-libs = %{version}-%{release}
+        ("pkgconfig(pair) >= 1.0-2.xcpng8.99", True),  # by a capability, with the version of the package having it
+        ("pair-libs >= 1.0-1.xcpng8.99", False),  # another version: its key changes with another release
+        ("pair-libs", False),
+        ("upstream = 1.0-2.xcpng8.99", False),
+        ("(pair-libs = 1.0-2.xcpng8.99 or upstream)", False),  # rich
+    ],
+)
+def test_follows(dep: str, followed: bool) -> None:  # noqa: FBT001
+    ours = [{"name": "pair-libs", "evr": "1.0-2.xcpng8.99", "provides": ["pkgconfig(pair) = 1.0"]}]
+    assert follows(dep, evrs_of(ours)) == followed

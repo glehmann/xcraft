@@ -144,6 +144,19 @@ def versioned_names(dep: str) -> list[str]:
     return names
 
 
+def evrs_of(ours: list[dict]) -> dict[str, str]:
+    """Return the epoch-version-releases of the binary packages of ours `ours`, by their names and capabilities."""
+    return {c.split(" ", 1)[0]: b["evr"] for b in ours for c in [b["name"], *b["provides"]]}
+
+
+def follows(dep: str, evrs: dict[str, str]) -> bool:
+    """Return whether the dependency `dep` refers to a capability of ours with the epoch-version-release `evrs` gives
+    it, like ``foo = %{version}-%{release}``: xcraft.resolution._unversioned() keys its version as a placeholder, so
+    another release either changes both alike, which resolves the same, or leaves `dep` in the key as is.
+    """
+    return len(words := dep.split()) == 3 and evrs.get(words[0]) == words[2]  # noqa: PLR2004, name, operator, version
+
+
 def _providers(query: Query, dep: str) -> list[Package]:
     """Return the packages of `query` providing `dep`: by name, capability, or file; none of rpmlib, nor for a rich
     dependency, which is not walked.
@@ -434,9 +447,14 @@ class Resolver:
             for name in [p.name, *(str(c).split(" ", 1)[0] for c in p.provides)]:
                 providers.setdefault(name, set()).add(p.name)
         relations = ("requires", "recommends", "suggests", "supplements", "enhances", "conflicts", "obsoletes")
-        deps = [str(d) for p in self.base.sack.query().available() for r in relations for d in getattr(p, r)]
-        # and the build requirements of ours, and the requests of what is published, not in the metadata of packages
-        deps += [r for build in self.data.get("builds", {}).values() for r in build["buildrequires"]]
+        query = self.base.sack.query().available().filter(reponame__neq="xcraft-ours")
+        deps = [str(d) for p in query for r in relations for d in getattr(p, r)]
+        # and those of ours, with their build requirements, from the specs, but the versions following the packages
+        # referred to, and the requests of what is published, not in the metadata of packages
+        ours, evrs = self.data["ours"], evrs_of(self.data["ours"])
+        deps += [d for b in ours for kind in ("requires", "recommends") for d in b[kind] if not follows(d, evrs)]
+        builds = self.data.get("builds", {}).values()
+        deps += [r for build in builds for r in build["buildrequires"] if not follows(r, evrs)]
         runtime = self.data.get("runtime", {})
         deps += [*runtime.get("extra", []), *runtime.get("installer", []), *runtime.get("iso", [])]
         found = {b for dep in deps for name in versioned_names(dep) for b in providers.get(name, ())}

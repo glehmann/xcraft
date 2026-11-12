@@ -29,6 +29,7 @@ from pydantic import BaseModel
 from rich.markup import escape
 
 from xcraft import remote
+from xcraft.buildenv.resolve import evrs_of, follows
 from xcraft.builds import drop_gone
 from xcraft.container import BUILDENV, PACKAGES, SIDE_IMAGES, base_packages, repo_file, run_natively
 from xcraft.display import activity, console
@@ -97,7 +98,8 @@ class Resolved(BaseModel):
     """The locked binary packages of the repositories of gpgcheck = false, whose packages are not signed."""
     versioned: dict[str, str] = {}
     """The binary packages of ours a package refers to with a version, or in a rich dependency, with their
-    epoch-version-releases when resolved: another of them may resolve otherwise, see _unversioned()."""
+    epoch-version-releases when resolved: another of them may resolve otherwise, see _unversioned(). Not those ours
+    refer to with their own epoch-version-releases, like ``foo = %{version}-%{release}``, which the key covers."""
     sets: dict[str, list[str]] = {}
     """The binary packages, ours and upstream, of the repository of the ISO, iso, and of install.img."""
     why: dict[str, dict[str, list[str]]] = {}
@@ -222,6 +224,13 @@ def _cached(project: Project, data: dict, *, show: str, quiet: bool = False, key
     return _resolved[cache]
 
 
+def _holding(cache: Path, data: dict) -> bool:
+    """Return whether the resolution `cache` is here, and holds for `data`: one not here may be in the remote
+    storage, see _cached().
+    """
+    return cache.exists() and _holds(Resolved.model_validate_json(cache.read_text()), data)
+
+
 def _holds(resolved: Resolved, data: dict) -> bool:
     """Return whether what was `resolved` holds for `data`: with the same epoch-version-releases of the binary packages
     of ours referred to with a version, which _unversioned() leaves out of the key; an epoch 0, which dnf leaves out,
@@ -326,18 +335,18 @@ def _roots_data(project: Project) -> dict:
     return {**_image_data(project), "ours": _ours(project), "builds": builds, "runtime": runtime}
 
 
-def _unversioned(project: Project, data: dict) -> dict:
+def _unversioned(data: dict) -> dict:
     """Return the `data` of the build roots, for their cache key, with the epoch-version-releases of our packages as
     placeholders, in their binary packages and where they are given: a new release of one of them resolves nothing
-    again, but when a package refers to it with a version, which what was resolved tells, see Resolved.versioned.
+    again, but when a package refers to it with another version, or upstream, which what was resolved tells, see
+    Resolved.versioned.
     """
-    owner_evrs = {
-        c.split(" ", 1)[0]: b.evr for p in project.packages.values() for b in p.binaries for c in [b.name, *b.provides]
-    }
+    evrs = evrs_of(data["ours"])
 
     def unversioned(capability: str) -> str:
-        if (words := capability.split()) and len(words) == 3 and owner_evrs.get(words[0]) == words[2]:  # noqa: PLR2004
-            return f"{words[0]} {words[1]} @evr@"
+        if follows(capability, evrs):
+            name, op, _ = capability.split()
+            return f"{name} {op} @evr@"
         return capability
 
     ours = [
@@ -355,17 +364,18 @@ def _unversioned(project: Project, data: dict) -> dict:
 def _roots(project: Project) -> Resolved:
     data = _roots_data(project)
     show = f"resolving the build roots of {project.arch}, and what is published"
-    return _cached(project, data, show=show, key=_unversioned(project, data))
+    return _cached(project, data, show=show, key=_unversioned(data))
 
 
 def _roots_together(platforms: list[Project]) -> None:
-    """Resolve the build roots of the `platforms` not cached yet at the same time, each in its own container, under
-    one activity: they take as long as one of them, rather than as long as all, see prepare().
+    """Resolve the build roots of the `platforms` not cached yet, or cached for other versions of ours, see _holds(),
+    at the same time, each in its own container, under one activity: they take as long as one of them, rather than as
+    long as all, see prepare().
     """
     data = {p.arch: _roots_data(p) for p in platforms}  # parsing the specs, which shows its activity
-    keys = {p.arch: _unversioned(p, data[p.arch]) for p in platforms}
+    keys = {p.arch: _unversioned(data[p.arch]) for p in platforms}
     caches = {p.arch: _cache(p, keys[p.arch]) for p in platforms}
-    if len(pending := [p for p in platforms if not caches[p.arch].exists()]) < 2:  # noqa: PLR2004
+    if len(pending := [p for p in platforms if not _holding(caches[p.arch], data[p.arch])]) < 2:  # noqa: PLR2004
         return
     show = f"resolving the build roots of {', '.join(p.arch for p in pending)}, and what is published"
     with activity(show), ThreadPoolExecutor(len(pending)) as pool:

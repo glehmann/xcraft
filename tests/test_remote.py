@@ -765,7 +765,7 @@ def test_resolutions_from_the_remote_storage(root: Path, monkeypatch: pytest.Mon
     assert sorted(resolved.rglob("*.json")) == caches
     # resolved, when what the storage has is not what was signed: the build roots of this test only
     project = Project.find()
-    roots = resolution._cache(project, resolution._unversioned(project, resolution._roots_data(project)))
+    roots = resolution._cache(project, resolution._unversioned(resolution._roots_data(project)))
     (tampered := root / "tampered.json").write_text("{}")
     storage, tree = remote.storages(project)[0], resolution.remote_tree(roots)
     remote.upload(storage, f"{remote.read_tree(storage, tree)[0]}/{roots.name}", tampered)
