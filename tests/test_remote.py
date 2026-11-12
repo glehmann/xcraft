@@ -1588,9 +1588,15 @@ def test_publish_reuses_remote_snapshot(root: Path, caplog: pytest.LogCaptureFix
     for name in ("publish", "cache/builds", "cache/rpms", "cache/srpms", "cache/checks"):
         shutil.rmtree(project.state / name, ignore_errors=True)
     with caplog.at_level(logging.DEBUG, logger="xcraft"):
-        code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage, "--locked")
+        summary = project.state.parent / "summary.md"
+        code, output = xcraft(
+            "publish", "repos", "--to", "main", "--stage", stage, "--locked", "--summary", str(summary)
+        )
     assert code == 0, output
     assert "reused the matching snapshot" in output
+    target = output.split("✓ published ")[1].split(",")[0]
+    # its summary too, for CI
+    assert f"/{target}/" in summary.read_text()
     assert not (project.state / "publish").exists()
     assert not (project.state / "cache/builds").exists()
     assert not any(
@@ -1598,7 +1604,6 @@ def test_publish_reuses_remote_snapshot(root: Path, caplog: pytest.LogCaptureFix
     )
     storage = project.config.remote["main"]
     prefix = f"repos/9.0/{stage}"
-    target = output.split("✓ published ")[1].split(",")[0]
     manifest = remote.read_manifest(storage, target)
     assert manifest
     assert manifest == remote.read_manifest(storage, f"{prefix}/latest")

@@ -127,23 +127,24 @@ class Uploader:
         only: str | None,
         isos: list[Project],
         repo_files: Callable[[str, dict[str, str]], dict[str, str]] | None = None,
-    ) -> bool:
+    ) -> str | None:
         """Publish the latest snapshot of the `platforms` again, as a new one, by copies in the storage, when it is
-        trusted and made of the same, and return whether it was: its repositories with their own files of `repo_files`,
-        by path, given the name and the manifest, like the .repo files, rather than those of the latest one.
+        trusted and made of the same, and return its name, if it was: its repositories with their own files of
+        `repo_files`, by path, given the name and the manifest, like the .repo files, rather than those of the latest
+        one.
         """
         wanted = self._inputs(platforms, only, isos)
         manifests = {kind: self._reusable(kind, keys) for kind, keys in wanted.items()}
         if not manifests or not all(manifests.values()):
-            return False
+            return None
         name = self.snapshot_name()
         for i, (kind, manifest) in enumerate(manifests.items()):
             own = repo_files(name, manifest) if repo_files and kind == "repos" else {}
             if not self._copy_latest(kind, name, manifest, wanted[kind], own):  # all assembled again, as `name`
                 for copied in list(manifests)[: i + 1]:
                     _delete_stale(self.storage, snapshot_tree(self.project, copied, name), set())
-                return False
-        return True
+                return None
+        return name
 
     def _inputs(self, platforms: list[Project], only: str | None, isos: list[Project]) -> dict[str, dict[str, str]]:
         """Return the input keys of the snapshot to publish, by kind: of the repositories of the `platforms`, but with

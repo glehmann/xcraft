@@ -11,10 +11,10 @@ from urllib.parse import quote
 import typer
 from pydantic import ValidationError
 
-from xcraft import contents
+from xcraft import contents, remote
 from xcraft import publish as publisher
 from xcraft.build import update_build_ids
-from xcraft.cache import cached_build, release_suffix
+from xcraft.cache import build_keys, cached_build, release_suffix
 from xcraft.commands import Key, To, choose_signer, complete_arch, prepared_project, remote_storage, sign_builds
 from xcraft.display import console
 from xcraft.iso import check_iso_config, fetch_isos, push_isos, snapshot_isos
@@ -129,15 +129,13 @@ def _write_summary(
     path: Path,
     project: Project,
     built: list[tuple[Project, dict[str, str]]],
-    dest: Path,
+    isos: list[str],
     storage: Remote,
     name: str,
-    *,
-    isos: bool,
 ) -> None:
-    """Write in `path`, as Markdown, where the snapshot `name` made in `dest` is published: the repositories of the
-    platforms `built`, if any, and the ISOs with `isos`, how a host uses the repositories, and the files of the
-    development builds, with their links.
+    """Write in `path`, as Markdown, where the snapshot `name` is published: the repositories of the platforms
+    `built`, if any, and its ISOs, by file name, how a host uses the repositories, and the files of the development
+    builds, with their links.
     """
     url = storage.url.rstrip("/")
 
@@ -149,7 +147,7 @@ def _write_summary(
         lines += [f"- Repositories: {url}/{snapshot_tree(project, 'repos', name)}/"]
     if isos:
         tree = snapshot_tree(project, "isos", name)
-        lines += [f"- ISO: {link(tree, f.name)}" for f in sorted((dest / ISO_DIR).glob("*.iso"))]
+        lines += [f"- ISO: {link(tree, f)}" for f in sorted(isos)]
     for platform, keys in built:
         tree = snapshot_tree(platform, "repos", name)
         lines += [
@@ -167,6 +165,27 @@ def _write_summary(
             files += [(f"{REPO}/Source", f.name) for f in sorted(build.glob("SRPMS/*.rpm"))]
             lines += [f"- {package}", *(f"  - {link(f'{tree}/{repo}', f)}" for repo, f in files)]
     path.write_text("\n".join(lines) + "\n")
+
+
+def _reused(
+    uploader: Uploader, platforms: list[Project], only: str | None, isos: list[Project], summary: Path | None
+) -> bool:
+    """Publish the latest snapshot again, with its own .repo files, with a `summary`, when it is made of the same, see
+    Uploader.reuse(), and return whether it was.
+    """
+    project, storage = platforms[0], uploader.storage
+
+    def files(name: str, manifest: dict[str, str]) -> dict[str, str]:
+        return _repo_files(platforms, storage, name, _key_files(list(manifest)), keep=False)
+
+    if not (name := uploader.reuse(platforms, only=only, isos=isos, repo_files=files)):
+        return False
+    if summary:
+        trusted = publisher.trusted_key(project, uploader.signer)
+        manifest = remote.read_manifest(storage, snapshot_tree(project, "isos", name), trusted=trusted) if isos else {}
+        built = [] if only == "isos" else [(p, build_keys(p)) for p in platforms]
+        _write_summary(Path(summary), project, built, [f for f in manifest if f.endswith(".iso")], storage, name)
+    return True
 
 
 def _publish(  # noqa: C901, PLR0912
@@ -227,20 +246,8 @@ def _publish(  # noqa: C901, PLR0912
         dest = (Path(output) if output else project.state / "publish").absolute()
         build = only != "isos" and project.config.publish.build
         uploader = Uploader(project, storage, signer, build, dev=dev is not None) if storage else None
-        # the latest snapshot reused, with its own .repo files, but in dev mode: each run makes its development builds
-        if (
-            uploader
-            and output is None
-            and dev is None
-            and uploader.reuse(
-                platforms,
-                only=only,
-                isos=with_isos,
-                repo_files=lambda name, files: _repo_files(
-                    platforms, uploader.storage, name, _key_files(list(files)), keep=False
-                ),
-            )
-        ):
+        # the latest snapshot reused, but in dev mode: each run makes its development builds
+        if uploader and output is None and dev is None and _reused(uploader, platforms, only, with_isos, summary):
             return
         console.print("assembling the snapshot")
         built, stored, checkout = snapshot(
@@ -276,10 +283,9 @@ def _publish(  # noqa: C901, PLR0912
                     Path(summary),
                     project,
                     [] if only == "isos" else built,
-                    dest,
+                    [f.name for f in (dest / ISO_DIR).glob("*.iso")] if with_isos else [],
                     uploader.storage,
                     name,
-                    isos=bool(with_isos),
                 )
 
 
