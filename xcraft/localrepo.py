@@ -58,14 +58,10 @@ OUTPUT_MARKER = ".xcraft-output"
 def fresh_dir(project: Project, path: Path) -> None:
     """Make `path` an empty directory, refusing to empty one with content xcraft did not make.
 
-    xcraft made the directories in .xcraft/, those with its marker, and the
-    repositories made before it had one.
+    xcraft made the directories in .xcraft/, and those with its marker: not any repository, like a mirror given as
+    --output.
     """
-    ours = (
-        path.resolve().is_relative_to(project.state.resolve())
-        or (path / OUTPUT_MARKER).exists()
-        or (path / "repodata").is_dir()
-    )
+    ours = path.resolve().is_relative_to(project.state.resolve()) or (path / OUTPUT_MARKER).exists()
     if path.exists() and any(path.iterdir()) and not ours:
         msg = f"{path} has content xcraft did not make: not emptying it"
         raise RepoError(msg)

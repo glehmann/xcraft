@@ -393,9 +393,11 @@ def test_fresh_dir_only_empties_what_xcraft_made(project: Project, tmp_path: Pat
         (path / "foo.rpm").write_text("")
         fresh_dir(project, path)  # its marker
         assert files(path) == [".xcraft-output"]
-    old = tmp_path / "old"
-    (old / "repodata").mkdir(parents=True)
-    fresh_dir(project, old)  # a repository from before the marker
+    other = tmp_path / "mirror"  # a repository, like a mirror: not xcraft's without its marker
+    (other / "repodata").mkdir(parents=True)
+    (other / "foo.rpm").write_text("")
+    with pytest.raises(RepoError, match="has content xcraft did not make"):
+        fresh_dir(project, other)
 
 
 def test_package_dirs(project: Project) -> None:
