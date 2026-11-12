@@ -147,6 +147,8 @@ class _Fork(NamedTuple):
     """The fork points with the maintenance branches the current branch merges, whose build IDs it may keep."""
     embargoed: bool = False
     """Whether it is a commit of an embargo branch, see embargo_branches of xcraft.toml."""
+    branch: str = ""
+    """The branch it is a commit of: the main one, or a maintenance one, or a release tag."""
 
 
 def _current(project: Project) -> list[str]:
@@ -193,7 +195,7 @@ def _fork(project: Project) -> _Fork | None:
             msg = f"no maintenance branch {name}, of {', '.join(project.config.maintenance_branches)}, fetched"
             raise BuildIdError(msg)
         forked = _git(project, "merge-base", branches[name], *heads) or fork
-        return _Fork(forked, maintenance=True, embargoed=name in embargoes)
+        return _Fork(forked, maintenance=True, embargoed=name in embargoes, branch=name)
     maintained: dict[str, set[str]] = {}
     for ref, c in branches.items():
         if (f := _git(project, "merge-base", c, *heads)) and (
@@ -203,9 +205,13 @@ def _fork(project: Project) -> _Fork | None:
             maintained.setdefault(f, set()).add(ref)
     if not name and (after := [f for f in maintained if _ancestor(project, fork, f)]):
         forked = next(f for f in sorted(after) if all(_ancestor(project, g, f) for g in after))
-        return _Fork(forked, maintenance=True, embargoed=bool(maintained[forked] & embargoes))
+        refs = sorted(maintained[forked], key=lambda ref: (ref.startswith(_RELEASE_TAGS), ref))  # branches first
+        return _Fork(forked, maintenance=True, embargoed=bool(maintained[forked] & embargoes), branch=refs[0])
     return _Fork(
-        fork, maintenance=False, others=tuple(sorted(f for f in maintained if not _ancestor(project, f, fork)))
+        fork,
+        maintenance=False,
+        others=tuple(sorted(f for f in maintained if not _ancestor(project, f, fork))),
+        branch=project.config.main_branch,
     )
 
 
@@ -225,6 +231,13 @@ class Base(NamedTuple):
     """Whether they are of a maintenance branch, numbered +b<n>.<m>."""
     others: tuple[dict[str, BuildId], ...] = ()
     """Those of the maintenance branches merged, kept for the same keys."""
+
+
+def fork_branch(project: Project) -> str | None:
+    """Return the official branch the current one forks from, see _fork(): None out of a git repository, or without
+    the main branch.
+    """
+    return fork.branch if (fork := _fork(project)) else None
 
 
 def base(project: Project) -> Base | None:

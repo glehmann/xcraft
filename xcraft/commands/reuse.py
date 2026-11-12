@@ -27,11 +27,21 @@ def reuse(packages: Packages = None, dep: Dep = None) -> None:
         # first, as it may lock them
         sources = upstream_sources(project, dep) if dep else []
         changed = buildid.reuse(project, packages, sources)
-        ids = buildid.read(project)
+        ids, branch = buildid.read(project), buildid.fork_branch(project)
+        forked = base.ids if (base := buildid.base(project)) else {}
         for name in sorted({*changed, *packages}):
-            if name in ids and ids[name].accepts:
-                console.print(f"[bold]{name}[/]: reuses its build {ids[name].build}")
+            if not (i := ids.get(name)):
+                continue
+            if i.accepts:
+                console.print(f"[bold]{name}[/]: reuses its build {i.build}")
+            elif i.same(forked.get(name)):
+                console.print(f"{name}: has the build of {branch} already, {i.build}")
+            elif name in packages and name not in forked:
+                console.print(f"[yellow]warning[/]: {name}: no build of {branch} to reuse, a new package")
             elif name in packages:
-                console.print(f"[yellow]{name}[/]: changed itself, built again")
-            elif name in ids:
-                console.print(f"{name}: build {ids[name].build}")
+                console.print(
+                    f"[yellow]warning[/]: {name}: its directory changed since {branch}, whose build cannot be reused; "
+                    f"its builds keep the number +b{i.build}, only their key follows what they are built against"
+                )
+            else:
+                console.print(f"{name}: build {i.build}")

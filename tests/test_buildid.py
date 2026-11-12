@@ -697,6 +697,9 @@ def test_reused_builds(root: Path) -> None:
     commit_base(root)
     base = buildid.read(Project.find())
     git(root, "checkout", "-qb", "feature")
+    code, output = xcraft("reuse", "trivial")
+    assert code == 0, output
+    assert output.splitlines()[-1] == "trivial: has the build of master already, 1"
     edit(root, "changed")
     assert update() == {"trivial": 2, "with-deps": 2}
     # with-deps, built against trivial, reuses its build, accepting the change
@@ -732,10 +735,13 @@ def test_reused_builds(root: Path) -> None:
     edit(root, "changed again")
     assert update() == {"trivial": 2, "with-deps": 2}
     assert not buildid.read(Project.find())["with-deps"].accepts
-    # a package changed itself is not reused
+    # a package changed itself is not reused: its number stays, only its key follows
     code, output = xcraft("reuse", "trivial")
     assert code == 0, output
-    assert output.splitlines()[-1] == "trivial: changed itself, built again"
+    assert (
+        "warning: trivial: its directory changed since master, whose build cannot be reused; its builds keep the "
+        "number +b2, only their key follows what they are built against"
+    ) in " ".join(output.split())
 
 
 def test_reused_builds_of_files_changed_through_links(root: Path) -> None:
@@ -747,7 +753,7 @@ def test_reused_builds_of_files_changed_through_links(root: Path) -> None:
     (root / "base/trivial/notes").write_text("changed")
     code, output = xcraft("reuse", "with-deps")
     assert code == 0, output
-    assert output.splitlines()[-1] == "with-deps: changed itself, built again"
+    assert "warning: with-deps: its directory changed since master" in output
 
 
 def test_reused_builds_of_upstream_updates(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
