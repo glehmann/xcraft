@@ -57,10 +57,11 @@ def _host(name: str) -> _Host:
         port = url.port
     except ValueError:
         port = -1
-    if not url.hostname or url.path or port == -1:
+    user = f"{url.username}@" if url.username else ""
+    # nor an option once parsed, like ssh://-oProxyCommand=...
+    if not url.hostname or url.path or port == -1 or f"{user}{url.hostname}".startswith("-"):
         msg = f"not a host: {name}, as ssh://[user@]host[:port]"
         raise typer.BadParameter(msg)
-    user = f"{url.username}@" if url.username else ""
     return _Host(name, f"{user}{url.hostname}", ["-p", str(port)] if port else [])
 
 

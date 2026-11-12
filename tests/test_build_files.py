@@ -719,7 +719,7 @@ def test_test_hosts_with_their_ports() -> None:
     assert _host("root@h") == _Host("root@h", "root@h")
     assert _host("ssh://root@127.0.0.1:2222") == _Host("ssh://root@127.0.0.1:2222", "root@127.0.0.1", ["-p", "2222"])
     assert _host("ssh://h") == _Host("ssh://h", "h")
-    for bad in ("-oProxyCommand=x", "ssh://h:port", "ssh://h/path", "ssh://"):
+    for bad in ("-oProxyCommand=x", "ssh://-oProxyCommand=x", "ssh://-u@h", "ssh://h:port", "ssh://h/path", "ssh://"):
         with pytest.raises(typer.BadParameter, match="not a host"):
             _host(bad)
 
