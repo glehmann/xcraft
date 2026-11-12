@@ -35,6 +35,7 @@ Inputs = Annotated[
     typer.Option(
         "--inputs",
         help="Show instead what the build keys of the packages are computed from, as hashed: see docs/build-keys.md.",
+        hidden=True,  # for checking the keys, not for the packagers
     ),
 ]
 
