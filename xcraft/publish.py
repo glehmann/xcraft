@@ -454,9 +454,6 @@ class _Assembler:
         for public_key, files in local.items():
             if public_key:
                 check_signatures(project, self.dest, files, what="packages of ours", public_key=public_key)
-        for rpm in extra_rpms(project):  # neither ours nor from the repositories: as they are
-            if not self.reuse(arch, rpm.name, sha256_of(rpm)):
-                localrepo.link(rpm, self.dest / arch / rpm.name)
 
     def _add_build(self, project: Project, name: str, key: str) -> tuple[str | None, list[str]]:
         """Add the build of `name` with `key`, of the platform of `project`, and return the public key of its signer,
@@ -525,18 +522,25 @@ class _Assembler:
         )
         return local, {p.relative_to(local).as_posix(): sha256_of(p) for p in local.rglob("*.rpm")}, None
 
-    def add_upstream(self, project: Project, names: list[str], repo: str, source: str) -> None:
+    def add_upstream(
+        self, project: Project, names: list[str], repo: str, source: str, extra: list[Path] | None = None
+    ) -> None:
         """Add the upstream packages `names` to `repo`, and their sources to `source`, checking the signatures of
         those the storage misses: those it has were when added. Signed by `signer` in final mode, unless `keep`: their
-        sources keep their signatures.
+        sources keep their signatures. With the `extra` RPMs, neither ours nor from the repositories, trusted by the
+        SHA-256 of xcraft.toml, without sources, signed too.
         """
         locked, unsigned = pinned.pins(project), pinned.unsigned(project)
         rpms = {name: _rpm_name(locked, name) for name in names}
+        extras = {sha256_of(rpm): rpm for rpm in extra or []}
         (self.dest / repo).mkdir(parents=True, exist_ok=True)
         added = []
         if self.signer and not self.keep:
-            self._add_signed_upstream(project, self.signer, names, repo, rpms)
+            self._add_signed_upstream(project, self.signer, names, repo, rpms, extras)
         else:
+            for digest, rpm in extras.items():
+                if not self.reuse(repo, rpm.name, digest):
+                    localrepo.link(rpm, self.dest / repo / rpm.name)
             missing = [
                 name
                 for name in names
@@ -570,41 +574,50 @@ class _Assembler:
         check_signatures(project, self.dest, added, what="upstream packages")
 
     def _add_signed_upstream(
-        self, project: Project, signer: Signer, names: list[str], repo: str, rpms: dict[str, str]
+        self,
+        project: Project,
+        signer: Signer,
+        names: list[str],
+        repo: str,
+        rpms: dict[str, str],
+        extras: dict[str, Path],
     ) -> None:
-        """Add the upstream packages `names`, named `rpms`, to `repo`, signed by `signer`: the copies of the storage, or
-        else signed now, once, from the originals, whose signatures are checked first, see xcraft.upstream_signed, and
-        pushed there.
+        """Add the upstream packages `names`, named `rpms`, and the extra RPMs `extras`, by SHA-256, to `repo`, signed
+        by `signer`: the copies of the storage, or else signed now, once, from the originals, whose signatures are
+        checked first, but those of the extra RPMs, see xcraft.upstream_signed, and pushed there.
         """
         locked = pinned.pins(project)
         originals = {name: locked[name].sha256 for name in names}
+        files = {originals[name]: rpms[name] for name in names} | {d: rpm.name for d, rpm in extras.items()}
         with project.tmp_dir("upstream-signed-copies") as work:
             known = upstream_signed.read(project, self.storage, signer, work / "metadata") if self.storage else ({}, [])
             named = {original: name for name, original in originals.items()}
             copies = {
                 original: copy
                 for original, copy in upstream_signed.by_original(known[0]).items()
-                if original in named and _pinned(locked, named[original], copy[0])
+                if original in extras or (original in named and _pinned(locked, named[original], copy[0]))
             }
-            if missing := [name for name in names if originals[name] not in copies]:
+            missing = [name for name in names if originals[name] not in copies]
+            todo = {d: rpm for d, rpm in extras.items() if d not in copies}
+            if todo or missing:
                 with activity(f"signing the upstream packages of {repo}", log=True) as on_line:
-                    found = _upstream_rpms(project, missing, on_line)
-                    unsigned = {_rpm_name(locked, n) for n in pinned.unsigned(project)}
-                    checked = [rpm.name for rpm in found if rpm.name not in unsigned]
-                    check_signatures(project, found[0].parent, checked, what="upstream packages")
-                    made = upstream_signed.signed(
-                        project, signer, {originals[n]: rpm for n, rpm in zip(missing, found, strict=True)}
-                    )
+                    if missing:
+                        found = _upstream_rpms(project, missing, on_line)
+                        unsigned = {_rpm_name(locked, n) for n in pinned.unsigned(project)}
+                        checked = [rpm.name for rpm in found if rpm.name not in unsigned]
+                        check_signatures(project, found[0].parent, checked, what="upstream packages")
+                        todo |= {originals[n]: rpm for n, rpm in zip(missing, found, strict=True)}
+                    made = upstream_signed.signed(project, signer, todo)
                 if self.storage:
                     copies |= upstream_signed.push(project, self.storage, signer, made, work, known)
                 else:
-                    for name in missing:
-                        localrepo.link(made[originals[name]], self.dest / repo / rpms[name])
-        for name in names:
-            if (original := originals[name]) in copies:
+                    for original, rpm in made.items():
+                        localrepo.link(rpm, self.dest / repo / files[original])
+        for original, file in files.items():
+            if original in copies:
                 entry, digest = copies[original]
                 self.known.setdefault(digest, (entry, upstream_signed.path(project, signer, repodata.location(entry))))
-                self.reuse(repo, rpms[name], digest)
+                self.reuse(repo, file, digest)
 
 
 def _fetch_metadata(work: Path, repo: str, fetch: Callable[[str], bool]) -> bool:
@@ -724,7 +737,7 @@ def snapshot(
     for platform, keys in built:
         arch = f"{REPO}/{platform.arch}"
         assembler.add_ours(platform, keys)
-        assembler.add_upstream(platform, resolution.published(platform), arch, f"{REPO}/Source")
+        assembler.add_upstream(platform, resolution.published(platform), arch, f"{REPO}/Source", extra_rpms(platform))
         _check_installable(platform, [assembler.index(arch)])
         if build:
             assembler.add_upstream(

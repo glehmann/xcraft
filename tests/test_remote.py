@@ -28,7 +28,7 @@ import pytest
 from keyring.backend import KeyringBackend
 from keyring.errors import PasswordDeleteError
 
-from tests import ARCH, PLATFORM, TOML, copy_project, needs_gpg
+from tests import ARCH, PLATFORM, TOML, TOYS, copy_project, needs_gpg
 from tests.test_build import results, runner, write_spec, xcraft
 from tests.test_buildid import commit_base, edit, git
 from tests.test_iso import cache_image
@@ -1950,7 +1950,12 @@ def test_publish_of_a_pull_request(
 @needs_gpg
 def test_upstream_packages_signed_again_in_final_mode(root: Path, tmp_path: Path) -> None:
     stage = f"signed-{secrets.token_hex(4)}"
-    (root / "xcraft.toml").write_text(f'{REMOTE}extra = ["bc"]\n')  # an upstream package for the hosts
+    # an upstream package for the hosts, and an extra one, unsigned
+    extra = TOYS / ARCH / "toyarch-new-2-1.x86_64.rpm"
+    (root / "xcraft.toml").write_text(
+        f'{REMOTE}extra = ["bc"]\n'
+        f'[extra_upstream.toyarch-new]\nurl = "{extra.as_uri()}"\nsha256 = "{sha256_of(extra)}"\n'
+    )
     code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
     assert code == 0, output
     signer = key_signer(Project.find())  # of [sign]
@@ -1960,7 +1965,7 @@ def test_upstream_packages_signed_again_in_final_mode(root: Path, tmp_path: Path
     latest = f"repos/9.0/{stage}/latest"
     binaries = [f for f in remote.read_manifest(storage, latest, trusted=signer) if f.startswith(f"base/{ARCH}/")]
     upstream = [f for f in binaries if f.endswith(".rpm") and not Path(f).name.startswith(("trivial-", "with-deps-"))]
-    assert upstream
+    assert f"base/{ARCH}/toyarch-new-2-1.x86_64.rpm" in upstream
     for f in upstream:
         assert remote.download(storage, f"{latest}/{f}", tmp_path / f)
     check_signatures(Project.find(), tmp_path, upstream, what="upstream", public_key=signer.public_key())
