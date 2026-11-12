@@ -234,7 +234,9 @@ So a new build of a package of ours resolves again only the records whose requir
 ours starting to provide something a requirement resolved to upstream is not noticed. Before the builds, the records
 the cached builds kept are restored as they are, without resolving them again, while the base context is the same,
 for the build keys: only the builds without a record, or with packages unresolved, are resolved. The builds record
-them all again after.
+them all again after. But the packages unresolved only for capabilities of packages of ours without builds, which the
+record keeps, are resolved again only once one of those is built, or the record no longer holds: resolving them
+before fails the same way.
 
 ## Checking a key
 

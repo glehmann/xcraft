@@ -174,14 +174,14 @@ def _record_new_rpm_deps(
     }
     result = resolve_rpm_deps(project, {b: names[n][b] for n, bs in binaries.items() for b in bs}, current)
     unbuilt = _unbuilt_providers(project, supplied)
-    pending: dict[str, set[str]] = {}  # the binary packages waiting for builds of ours, with those they wait for
     for name, build in builds.items():
         failed = sorted(set(binaries[name]) & result.errors.keys())
-        for binary in [] if quiet else failed:
+        waiting = {}  # the binary packages waiting for builds of ours, with those they wait for
+        for binary in failed:
             missing = re.findall(r"nothing provides (\S+) needed by", result.errors[binary])
             if missing and all(m in unbuilt for m in missing):
-                pending.setdefault(names[name][binary], set()).update(unbuilt[m] for m in missing)
-            else:
+                waiting[names[name][binary]] = sorted({unbuilt[m] for m in missing})
+            elif not quiet:
                 console.print(
                     f"[yellow]cannot record what rpm generated for {binary}[/]: {escape(result.errors[binary])}"
                 )
@@ -203,15 +203,9 @@ def _record_new_rpm_deps(
             "requires": requires,
             "provides": {names[name][b]: result.provides[b] for b in resolved if b in result.provides},
             "unresolved": failed,
+            "waiting": waiting,
         }
         write_atomically(build / "rpm-deps.json", json.dumps(recorded))
-    if pending:
-        waiting, waited = sorted(pending), sorted(set().union(*pending.values()))
-        console.print(
-            f"[yellow]warning[/]: the dependencies rpm generated for {_enumerate(waiting)} are recorded once"
-            f" {_enumerate(waited)}, which {'it needs' if len(waiting) == 1 else 'they need'},"
-            f" {'is' if len(waited) == 1 else 'are'} built"
-        )
 
 
 def _unsuffixed(project: Project, name: str, value: str, suffix: str) -> str:
@@ -248,6 +242,25 @@ def _kept_rpm_deps(build: Path, context: str, base: str, supplied: dict[str, str
     )
 
 
+def _waits(recorded: dict, supplied: dict[str, str]) -> bool:
+    """Return whether all the binary packages `recorded` left unresolved wait for packages of ours without builds, not
+    in `supplied`: resolving them again is useless until one of them is built.
+    """
+    waiting = recorded.get("waiting", {})
+    return len(waiting) == len(recorded["unresolved"]) and not {p for ps in waiting.values() for p in ps} & {*supplied}
+
+
+def _show_waiting(records: list[dict]) -> None:
+    """Show the binary packages of `records` waiting for builds of ours, with those they wait for."""
+    if pending := {binary: waited for recorded in records for binary, waited in recorded.get("waiting", {}).items()}:
+        waiting, waited = sorted(pending), sorted({p for ps in pending.values() for p in ps})
+        console.print(
+            f"[yellow]warning[/]: the dependencies rpm generated for {_enumerate(waiting)} are recorded once"
+            f" {_enumerate(waited)}, which {'it needs' if len(waiting) == 1 else 'they need'},"
+            f" {'is' if len(waited) == 1 else 'are'} built"
+        )
+
+
 def record_rpm_deps(
     project: Project, names: list[str], keys: dict[str, str], *, quiet: bool = False, loose: bool = False
 ) -> bool:
@@ -256,7 +269,9 @@ def record_rpm_deps(
 
     What a build generated is kept with it, for the same version of the recording, RECORDING, and what its requirements
     are resolved with, the builds of ours included: see rpm_deps_context(). The binary packages which cannot be
-    resolved yet are shown, unless `quiet`, and resolved again each time, while the others are recorded.
+    resolved yet are shown, unless `quiet`, and resolved again each time, while the others are recorded; but those
+    waiting for packages of ours without builds, resolved again once one of them is built, or when what they were
+    resolved with changes.
 
     What a build kept is used rather than resolved again while it holds, see _kept_rpm_deps(): a new build of another
     package of ours resolves it again only when its requirements resolved to that package. A build of ours providing
@@ -276,8 +291,14 @@ def record_rpm_deps(
     def found(build: Path) -> dict | None:
         return _kept_rpm_deps(build, context, base, supplied, loose=loose)
 
-    if new := {name: build for name, build in builds.items() if not (kept := found(build)) or kept.get("unresolved")}:
+    if new := {
+        name: build
+        for name, build in builds.items()
+        if not (kept := found(build)) or (kept.get("unresolved") and not _waits(kept, supplied))
+    }:
         _record_new_rpm_deps(project, new, supplied, context, quiet=quiet)
+    if not quiet:
+        _show_waiting([kept for build in builds.values() if (kept := found(build))])
     # what dry runs do too, without the lock of the project otherwise
     with project.lock():
         lock = load_builds(project)

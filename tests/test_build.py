@@ -747,15 +747,29 @@ def test_recorded_once_what_they_require_is_built(root: Path) -> None:
         "Provides: xtool-core\n%description\nA tool.\n%install\nmkdir -p %{buildroot}/usr/share/xtool\n"
         "touch %{buildroot}/usr/share/xtool/core\n%files\n/usr/share/xtool\n"
     )
+    # and another package, unrelated
+    (root / "base/other").mkdir()
+    (other := root / "base/other/other.spec").write_text(
+        "Name: other\nVersion: 1.0\nRelease: 1%{?dist}\nSummary: Another\nLicense: MIT\nBuildArch: noarch\n"
+        "%description\nAnother.\n%install\nmkdir -p %{buildroot}/usr/share/other\n%files\n/usr/share/other\n"
+    )
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace("BuildArch: noarch", "BuildArch: noarch\nRequires: xtool-core"))
-    code, output = xcraft("build", "trivial")
+    code, output = xcraft("build", "trivial", "other")
     assert code == 0, output
     assert (
         "warning: the dependencies rpm generated for trivial are recorded once xtool, which it needs, is built"
         in output
     )
     assert "cannot record" not in output
+    # not resolved again by the new builds of other packages, while xtool has no build
+    (recorded,) = (root / ".xcraft/cache/builds").glob("*/*/trivial/*/rpm-deps.json")
+    resolved = recorded.stat().st_mtime_ns
+    other.write_text(f"# changed\n{other.read_text()}")
+    code, output = xcraft("build", "other")
+    assert code == 0, output
+    assert "recorded once xtool" in output
+    assert recorded.stat().st_mtime_ns == resolved
     code, output = xcraft("build", "trivial", "xtool")
     assert code == 0, output
     assert "recorded once" not in output
