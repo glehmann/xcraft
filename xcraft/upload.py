@@ -143,7 +143,8 @@ class Uploader:
         wanted = {}
         if only != "isos":
             wanted["repos"] = {
-                p.arch: snapshot_key(p, build_keys(p), signer=self.signer, build=self.build) for p in platforms
+                p.arch: snapshot_key(p, build_keys(p), signer=self.signer, build=self.build, dev=self.dev)
+                for p in platforms
             }
         if isos:
             wanted["isos"] = {name: key for p in isos for name, key in iso_inputs(p, signer=self.signer).items()}
@@ -212,7 +213,10 @@ class Uploader:
             src,
             "repos",
             name,
-            inputs={p.arch: snapshot_key(p, keys, signer=self.signer, build=self.build) for p, keys in platforms},
+            inputs={
+                p.arch: snapshot_key(p, keys, signer=self.signer, build=self.build, dev=self.dev)
+                for p, keys in platforms
+            },
             stored=self._built(platforms) | stored,
             pages=signed,
         )

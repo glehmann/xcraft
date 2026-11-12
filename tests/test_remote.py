@@ -1610,6 +1610,10 @@ def test_publish_reuses_remote_snapshot(root: Path, caplog: pytest.LogCaptureFix
         [project], only="repos", isos=[]
     )
     project.config.publish.extra.clear()
+    # nor for dev mode, whose packages keep their signatures, even without development builds
+    assert not upload.Uploader(project, storage, release_signer(project), build=False, dev=True).reuse(
+        [project], only="repos", isos=[]
+    )
     # nor another latest snapshot than the one it was made from
     signer = release_signer(project)
     assert signer

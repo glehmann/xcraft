@@ -46,9 +46,17 @@ ISO_DIR = "iso"
 """The ISOs in a local snapshot, by architecture, published apart from its repositories."""
 
 
-def snapshot_key(project: Project, keys: dict[str, str], *, signer: Signer | None, build: bool) -> str:
+_MODULES = (
+    "publish.py", "localrepo.py", "repodata.py", "upstream_signed.py", "contents.py", "commands/publish.py",
+)  # fmt: skip
+"""The modules making the snapshots, their .repo and contents files: whole, rather than a list of what they use, easy
+to get incomplete."""
+
+
+def snapshot_key(project: Project, keys: dict[str, str], *, signer: Signer | None, build: bool, dev: bool) -> str:
     """Return the key of the snapshot of the platform of `project`, with the cache `keys` of our packages: what it is
-    made of, read without its packages, nor containers.
+    made of, read without its packages, nor containers. Of dev mode with `dev`, whose packages keep their signatures,
+    even without development builds.
     """
     lock = load_lock(project)
     data = [
@@ -57,9 +65,8 @@ def snapshot_key(project: Project, keys: dict[str, str], *, signer: Signer | Non
         {n: e.model_dump() for n, e in project.config.extra_upstream.items()},
         {n: repo.model_dump() for n, repo in project.repos.items()},
         {n: p.text() for n, p in lock.binaries.get(project.arch, {}).items()},
-        signer.key if signer else None, build, buildenv_hash(),
-        # how snapshots are made: whole modules, rather than a list of what they use, easy to get incomplete
-        [Path(__file__).with_name(module).read_text() for module in ("publish.py", "localrepo.py", "repodata.py")],
+        signer.key if signer else None, build, dev, buildenv_hash(),
+        [(Path(__file__).parent / module).read_text() for module in _MODULES],
     ]  # fmt: skip
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
