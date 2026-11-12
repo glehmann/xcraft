@@ -1,16 +1,17 @@
 """rpmlint, with Fedora's rules, on the specs of our packages and on their binary packages, in the lint image.
 
-The configuration of the project is in lint/, out of the package directories, which stay as imported:
-``rpmlint.toml`` for all the packages, and ``<package>.rpmlintrc`` for the filters of one, after those of its upstream
-rpmlintrc files, in its directory, if any. rpmlint runs once per package, for the filters to be its own only, all in
-one container, natively: what it finds in the binary packages does not depend on their architecture. The filters
-unused, like those of the binary packages when linting a spec, are not reported.
+The configuration of the project is in lint/, out of the package directories, which stay as imported: ``rpmlint.toml``
+for all the packages, but ReleaseExtension, xcraft's, and ``<package>.rpmlintrc`` for the filters of one, after those of
+its upstream rpmlintrc files, in its directory, if any. rpmlint runs once per package, for the filters to be its own
+only, all in one container, natively: what it finds in the binary packages does not depend on their architecture. The
+filters unused, like those of the binary packages when linting a spec, are not reported.
 """
 
 from __future__ import annotations
 
 import re
 import shlex
+import shutil
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -54,6 +55,13 @@ def binaries(rpms: Path) -> list[Path]:
     return sorted(p for p in rpms.rglob("*.rpm") if not is_debug(p.name.rsplit("-", 2)[0]))
 
 
+_CONFIG = r"""ReleaseExtension = '\+b\d.*$'
+"""
+"""The configuration of all the projects: the latest changelog entry compared with the version-release of the packages
+without what %{autorev}, the release suffix of their builds, starts: the changelogs do not have it, nor the dist tag
+after it.
+"""
+
 _FILTERS = 'addFilter(": E: unknown-key ")\n'
 """The filters of all the packages: the signatures of the builds, which xcraft checks, by keys rpmlint does not have."""
 
@@ -83,22 +91,22 @@ def findings(project: Project, files: dict[str, list[Path]], *, show: str) -> di
     config = project.root / LINT_DIR / "rpmlint.toml"
     mounts = {d: f"/in/{i}" for i, d in enumerate(sorted({f.parent for paths in files.values() for f in paths}))}
     with project.tmp_dir("lint") as work:
+        # one directory, as rpmlint takes one -c: its files load in no given order, hence xcraft's ReleaseExtension only
+        (work / "config").mkdir()
+        (work / "config/xcraft.toml").write_text(_CONFIG)
+        if config.exists():
+            shutil.copy(config, work / "config/rpmlint.toml")
         script = []
         for name, paths in files.items():
             (work / f"{name}.rpmlintrc").write_text(_rpmlintrc(project, name))
-            cmd = ["rpmlint", "--ignore-unused-rpmlintrc", "-r", f"/work/{name}.rpmlintrc"]
-            cmd += ["-c", "/rpmlint.toml"] if config.exists() else []
+            cmd = ["rpmlint", "--ignore-unused-rpmlintrc", "-r", f"/work/{name}.rpmlintrc", "-c", "/work/config"]
             cmd += [f"{mounts[f.parent]}/{f.name}" for f in paths]
             script.append(f"{shlex.join(cmd)} > /work/{name}.out 2>&1; echo $? > /work/{name}.status")
         container.run(
             native,
             "lint",
             "\n".join(script),
-            volumes=[
-                f"{work}:/work",
-                *(f"{d}:{m}:ro" for d, m in mounts.items()),
-                *([f"{config}:/rpmlint.toml:ro"] if config.exists() else []),
-            ],
+            volumes=[f"{work}:/work", *(f"{d}:{m}:ro" for d, m in mounts.items())],
             show=show,
             image=image,
         )

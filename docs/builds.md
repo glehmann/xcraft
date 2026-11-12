@@ -206,7 +206,9 @@ depend on theirs. The specs are parsed for the host's.
 
 Its configuration is in `lint/`, out of the package directories, which stay as imported:
 
-- `lint/rpmlint.toml`, for all the packages, over Fedora's, like the checks to disable, or other filters;
+- `lint/rpmlint.toml`, for all the packages, over Fedora's, like the checks to disable, or other filters, but
+  `ReleaseExtension`, set by xcraft to what `%{autorev}` starts, `+b<n>`, and what follows it, like the rest of
+  `%{dist}`: the latest changelog entry is compared with the version-release of the packages without it;
 - `lint/<package>.rpmlintrc`, the filters of a package, with `addFilter("<regex>")`, after those of its upstream
   rpmlintrc files, in its directory, if any. rpmlint runs once per package, for its filters not to hide what the
   others find. The filters unused, like those of the binary packages when linting a spec, are not reported.

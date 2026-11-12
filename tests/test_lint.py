@@ -80,11 +80,14 @@ def test_binary_errors(root: Path) -> None:
     code, output = xcraft("lint", "trivial")
     assert code == 1, output
     assert "trivial.noarch: E: dir-or-file-in-usr-local /usr/local/share/x" in output
-    # with --lint, shown when built, without failing them
-    edit(spec, "%files\n", "# built again\n%files\n")
+    # the changelog, 1.0-1, compared without the release suffix, +b1.xcpng8.99
+    assert "incoherent-version-in-changelog" not in output
+    # with --lint, shown when built, without failing them, a release without its changelog entry too
+    edit(spec, "Release: 1%", "Release: 2%")
     code, output = xcraft("build", "--lint", "trivial")
     assert code == 0, output
     assert "E: dir-or-file-in-usr-local" in output
+    assert "W: incoherent-version-in-changelog 1.0-1" in output
     # the final builds fail, not cached
     code, output = xcraft("build", "--final", "trivial")
     assert code == 1, output
