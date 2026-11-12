@@ -212,3 +212,30 @@ Its configuration is in `lint/`, out of the package directories, which stay as i
 - `lint/<package>.rpmlintrc`, the filters of a package, with `addFilter("<regex>")`, after those of its upstream
   rpmlintrc files, in its directory, if any. rpmlint runs once per package, for its filters not to hide what the
   others find. The filters unused, like those of the binary packages when linting a spec, are not reported.
+
+### In the editors
+
+`xcraft lint --spec <file>` lints one spec, of a package, as it is on disk, with the same rules, and only prints what
+rpmlint finds in it, `<spec>:<line>: <E|W>: <check> <details>`, or without the line for the whole spec: in under a
+second, as it neither resolves the packages, nor lints the builds. It fails on errors. With
+[efm-langserver](https://github.com/mattn/efm-langserver), which turns the output of linters into the diagnostics of
+the editors speaking LSP, at each save:
+
+```yaml
+version: 2
+tools:
+  xcraft-lint: &xcraft-lint
+    lint-command: "xcraft lint --spec ${INPUT}"
+    lint-stdin: false  # the spec on disk: when opened and saved
+    lint-after-open: true
+    lint-on-save: true
+    lint-ignore-exit-code: true
+    lint-formats:
+      - "%.%#:%l: %t: %m"
+      - "%.%#: %t: %m"
+    root-markers:
+      - xcraft.toml
+languages:
+  spec:  # the language of the spec files in the editor
+    - <<: *xcraft-lint
+```

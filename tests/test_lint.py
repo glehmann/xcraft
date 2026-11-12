@@ -44,6 +44,14 @@ def test_spec_errors(root: Path) -> None:
     assert code == 1, output
     assert "trivial.spec:16: E: use-of-RPM_SOURCE_DIR" in output
     assert "not built, only their specs linted: trivial" in output
+    # alone, for the editors: its findings only
+    code, output = xcraft("lint", "--spec", str(spec))
+    assert code == 1, output
+    assert "trivial.spec:16: E: use-of-RPM_SOURCE_DIR" in output
+    assert all(line.startswith("trivial.spec") for line in output.splitlines()), output
+    code, output = xcraft("lint", "--spec", str(root / "xcraft.toml"))
+    assert code == 2, output
+    assert "not in the directory of a package" in output
     # shown before the development builds, which go on
     code, output = xcraft("build", "trivial")
     assert code == 0, output
