@@ -120,9 +120,17 @@ class Uploader:
         msg = f"too many snapshots on {day}"
         raise BuildError(msg)
 
-    def reuse(self, platforms: list[Project], *, only: str | None, isos: list[Project]) -> bool:
+    def reuse(
+        self,
+        platforms: list[Project],
+        *,
+        only: str | None,
+        isos: list[Project],
+        repo_files: Callable[[str, dict[str, str]], dict[str, str]] | None = None,
+    ) -> bool:
         """Publish the latest snapshot of the `platforms` again, as a new one, by copies in the storage, when it is
-        trusted and made of the same, and return whether it was.
+        trusted and made of the same, and return whether it was: its repositories with their own files of `repo_files`,
+        by path, given the name and the manifest, like the .repo files, rather than those of the latest one.
         """
         wanted = self._inputs(platforms, only, isos)
         manifests = {kind: self._reusable(kind, keys) for kind, keys in wanted.items()}
@@ -130,7 +138,8 @@ class Uploader:
             return False
         name = self.snapshot_name()
         for i, (kind, manifest) in enumerate(manifests.items()):
-            if not self._copy_latest(kind, name, manifest, wanted[kind]):  # all assembled again, as `name`
+            own = repo_files(name, manifest) if repo_files and kind == "repos" else {}
+            if not self._copy_latest(kind, name, manifest, wanted[kind], own):  # all assembled again, as `name`
                 for copied in list(manifests)[: i + 1]:
                     _delete_stale(self.storage, snapshot_tree(self.project, copied, name), set())
                 return False
@@ -172,21 +181,35 @@ class Uploader:
             (work / INPUTS).write_text(snapshot.model_dump_json())
             remote.upload_tree(self.storage, inputs_tree(latest), work, [INPUTS], signer=self._signing)
 
-    def _copy_latest(self, kind: str, name: str, manifest: dict[str, str], keys: dict[str, str]) -> bool:
+    def _copy_latest(
+        self, kind: str, name: str, manifest: dict[str, str], keys: dict[str, str], own: dict[str, str]
+    ) -> bool:
         """Copy the latest snapshot of `kind`, with its `manifest`, made from the input `keys`, as `name`, with the
-        commit of this publication, and return whether it could.
+        commit of this publication, but its files of `own`, by path, written with their texts, in the latest snapshot
+        too, which is the new one, and return whether it could.
         """
         latest, target = snapshot_tree(self.project, kind, "latest"), snapshot_tree(self.project, kind, name)
-        with activity(f"reusing the published {kind} as {target}", log=True) as on_line:
+        with (
+            self.project.tmp_dir("snapshot-files") as work,
+            activity(f"reusing the published {kind} as {target}", log=True) as on_line,
+        ):
+            for f, text in own.items():
+                (work / f).write_text(text)
+            files = manifest | {f: sha256_of(work / f) for f in own}
             try:
-                for files in _batches(list(manifest)):
-                    remote.transfer(self.storage, {f"{target}/{f}": f"{latest}/{f}" for f in files}, on_line)
+                for batch in _batches(list(files)):
+                    sources = {f"{target}/{f}": work / f if f in own else f"{latest}/{f}" for f in batch}
+                    remote.transfer(self.storage, sources, on_line)
             except remote.RemoteError as e:  # a file missing in the latest snapshot
                 console.print(f"[yellow]the published {kind} cannot be reused[/]: {escape(str(e))}")
                 return False
-            remote.write_manifest(self.storage, target, manifest, signer=self._signing)
-            _delete_stale(self.storage, target, {*manifest, remote.MANIFEST})
-            self._write_inputs(latest, keys, manifest)
+            remote.write_manifest(self.storage, target, files, signer=self._signing)
+            _delete_stale(self.storage, target, {*files, remote.MANIFEST})
+            if files != manifest:  # without its manifest while it changes, see _upload()
+                remote.delete(self.storage, [f"{latest}/{remote.MANIFEST}"])
+                remote.transfer(self.storage, {f"{latest}/{f}": work / f for f in own}, on_line)
+                remote.write_manifest(self.storage, latest, files, signer=self._signing)
+            self._write_inputs(latest, keys, files)
             remote_pages.update_pages(self.project, self.storage, [f"{target}/", f"{latest}/"])
         console.print(f"[bold green]✓[/] published {target}, and as {latest} (reused the matching snapshot)")
         return True

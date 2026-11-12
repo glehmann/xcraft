@@ -1598,9 +1598,14 @@ def test_publish_reuses_remote_snapshot(root: Path, caplog: pytest.LogCaptureFix
     )
     storage = project.config.remote["main"]
     prefix = f"repos/9.0/{stage}"
-    manifest = remote.read_manifest(storage, output.split("✓ published ")[1].split(",")[0])
+    target = output.split("✓ published ")[1].split(",")[0]
+    manifest = remote.read_manifest(storage, target)
     assert manifest
     assert manifest == remote.read_manifest(storage, f"{prefix}/latest")
+    # with its own .repo file, of its tree, in the latest one too
+    for tree in (target, f"{prefix}/latest"):
+        assert remote.download(storage, f"{tree}/xcraft-{stage}-{ARCH}.repo", project.state / "reused.repo")
+        assert f"/{target}/base/{ARCH}/" in (project.state / "reused.repo").read_text()
     # what it was made from is out of it
     assert not [f for f in manifest if "inputs" in f]
     assert remote.read_manifest(storage, upload.inputs_tree(f"{prefix}/latest")).keys() == {upload.INPUTS}

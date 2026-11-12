@@ -86,26 +86,43 @@ def _repo_file(project: Project) -> str:
     return f"xcraft-{project.config.publish.stage}-{project.arch}.repo"
 
 
+def _repo_files(
+    platforms: list[Project], storage: Remote, name: str, key_files: list[str], *, keep: bool
+) -> dict[str, str]:
+    """Return the .repo file of each of the `platforms` of the snapshot `name`, by file name, for the hosts: its
+    repository, trusting the keys of `key_files`, in it, and with `keep`, those of the repositories of xcraft.toml,
+    whose packages keep their signatures.
+    """
+    project = platforms[0]
+    tree = f"{storage.url.rstrip('/')}/{snapshot_tree(project, 'repos', name)}"
+    keys = [f"{tree}/{f}" for f in key_files] + (repo_keys(project) if keep else [])
+    release, stage = project.config.publish.release, project.config.publish.stage
+    return {
+        _repo_file(platform): (
+            f"[xcraft-{stage}]\nname={release} {stage} {name}\nbaseurl={tree}/{REPO}/{platform.arch}/\nenabled=1\n"
+            f"gpgcheck=1\nrepo_gpgcheck=1\ngpgkey={' '.join(keys)}\nmetadata_expire=0\n"
+        )
+        for platform in platforms
+    }
+
+
+def _key_files(files: list[str]) -> list[str]:
+    """Return the public keys of a snapshot of `files`, by path in it."""
+    return sorted(f for f in files if "/" not in f and f.startswith(KEY_FILE))
+
+
 def _write_snapshot_files(
     built: list[tuple[Project, dict[str, str]]], dest: Path, storage: Remote, name: str, *, keep: bool
 ) -> None:
     """Write in the snapshot `dest`, to publish as `name`, its contents, of the platforms `built`, with the keys of
-    their builds, see xcraft contents, and the .repo file of each platform, for the hosts: its repository, trusting its
-    keys, and with `keep`, those of the repositories of xcraft.toml, whose packages keep their signatures. The latest
-    snapshot of the stage has the copy of those of the last one.
+    their builds, see xcraft contents, and the .repo file of each platform, see _repo_files(). The latest snapshot of
+    the stage has the copy of those of the last one.
     """
     published = contents.Published(arches={p.arch: contents.contents(p, keys) for p, keys in built})
     (dest / contents.FILE).write_text(published.model_dump_json())
-    platforms = [p for p, _ in built]
-    project = platforms[0]
-    tree = f"{storage.url.rstrip('/')}/{snapshot_tree(project, 'repos', name)}"
-    keys = [f"{tree}/{f.name}" for f in sorted(dest.glob(f"{KEY_FILE}*"))] + (repo_keys(project) if keep else [])
-    release, stage = project.config.publish.release, project.config.publish.stage
-    for platform in platforms:
-        (dest / _repo_file(platform)).write_text(
-            f"[xcraft-{stage}]\nname={release} {stage} {name}\nbaseurl={tree}/{REPO}/{platform.arch}/\nenabled=1\n"
-            f"gpgcheck=1\nrepo_gpgcheck=1\ngpgkey={' '.join(keys)}\nmetadata_expire=0\n"
-        )
+    keys = _key_files([f.name for f in dest.iterdir()])
+    for file, text in _repo_files([p for p, _ in built], storage, name, keys, keep=keep).items():
+        (dest / file).write_text(text)
 
 
 def _write_summary(
@@ -210,8 +227,20 @@ def _publish(  # noqa: C901, PLR0912
         dest = (Path(output) if output else project.state / "publish").absolute()
         build = only != "isos" and project.config.publish.build
         uploader = Uploader(project, storage, signer, build, dev=dev is not None) if storage else None
-        # of the development builds of the run, made again by each one, rather than reused
-        if uploader and output is None and dev is None and uploader.reuse(platforms, only=only, isos=with_isos):
+        # the latest snapshot reused, with its own .repo files, but in dev mode: each run makes its development builds
+        if (
+            uploader
+            and output is None
+            and dev is None
+            and uploader.reuse(
+                platforms,
+                only=only,
+                isos=with_isos,
+                repo_files=lambda name, files: _repo_files(
+                    platforms, uploader.storage, name, _key_files(list(files)), keep=False
+                ),
+            )
+        ):
             return
         console.print("assembling the snapshot")
         built, stored, checkout = snapshot(
