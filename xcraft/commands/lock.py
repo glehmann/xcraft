@@ -9,6 +9,7 @@ import typer
 from xcraft import resolution
 from xcraft.build import update_build_ids
 from xcraft.builds import builds_path, load_builds
+from xcraft.commands import complete_upstream
 from xcraft.display import console
 from xcraft.lock import choose_versions, load_lock, lock_path, save_lock
 from xcraft.project import Project
@@ -54,7 +55,11 @@ def _update(project: Project, packages: list[str], *, write: bool) -> int:
 def lock(
     packages: Annotated[
         list[str] | None,
-        typer.Argument(help="Upstream packages to update, binary or source names. All by default.", show_default=False),
+        typer.Argument(
+            help="Upstream packages to update, binary or source names. All by default.",
+            show_default=False,
+            autocompletion=complete_upstream,
+        ),
     ] = None,
     update: Annotated[bool, typer.Option("--update", help="Update locked packages to their latest versions.")] = False,
     outdated: Annotated[

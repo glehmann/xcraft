@@ -8,6 +8,7 @@ from typing import Annotated
 import typer
 
 from xcraft import buildid, resolution
+from xcraft.lock import cached_lock
 from xcraft.project import Destination, Project, Remote
 from xcraft.signing import Signer, SigningError, build_signer, dev_signer, key_signer
 
@@ -18,6 +19,18 @@ def complete_package(incomplete: str) -> list[str]:
         return sorted(name for name in Project.find().package_dirs if name.startswith(incomplete))
     except (RuntimeError, OSError):
         return []
+
+
+def complete_upstream(incomplete: str) -> list[str]:
+    """Return the locked upstream packages starting with `incomplete`, source and binary names, for the shell
+    completion.
+    """
+    try:
+        lock = cached_lock(Project.find())
+    except (RuntimeError, OSError, ValueError):
+        return []
+    names = {*lock.sources, *(name for pins in lock.binaries.values() for name in pins)}
+    return sorted(name for name in names if name.startswith(incomplete))
 
 
 Packages = Annotated[

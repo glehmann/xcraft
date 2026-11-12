@@ -6,6 +6,7 @@ import pytest
 
 from tests import TOML, config
 from xcraft import resolution
+from xcraft.commands import complete_upstream
 from xcraft.lock import (
     Lock,
     Locked,
@@ -264,3 +265,17 @@ def test_record_roots_not_resolved(project: Project, monkeypatch: pytest.MonkeyP
     )
     with pytest.raises(ResolutionError, match="cannot be resolved for x86_64_v2: no glibc"):
         resolution._record(project)
+
+
+def test_complete_upstream(project: Project) -> None:
+    assert complete_upstream("") == []  # no lock yet
+    pin = Pin(evr="1:29.4-14.el10_2.4", arch="noarch", sha256="ab" * 32, source="emacs")
+    lock = Lock(
+        sources={"ca-certificates": "2025.2.80_v9.0.305-102.el10_1", "emacs": "29.4-14.el10_2.4"},
+        binaries={"aarch64": {"emacs-filesystem": pin}, "x86_64_v2": {"emacs-filesystem": pin, "emacs-nox": pin}},
+    )
+    save_lock(project, lock)
+    # source and binary names, once each
+    assert complete_upstream("emacs") == ["emacs", "emacs-filesystem", "emacs-nox"]
+    assert complete_upstream("ca-ce") == ["ca-certificates"]
+    assert complete_upstream("nothing") == []
