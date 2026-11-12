@@ -64,6 +64,13 @@ directories 0755, and all of them the same time, `STAGED_TIME`, 1980-01-01. A bu
 have the hash of its key when its tree is made fails, rather than being cached under a key of other files: the same
 key, the same tree, whatever the checkout, its umask, its file times, and its empty directories.
 
+A package developed from a tree, see [Developing from a project's tree](builds.md#developing-from-a-projects-tree), has
+the hash of its directory with the tree: the SHA-256 of the JSON of the array of the hash of the directory, the commit
+`git archive` makes its archive of, `xcraft.develop.FORMAT`, and the SHA-256 of `buildenv/develop.py`, which
+synchronizes the directory of its sources with it. Its build ID is of its directory alone: a tree never changes
+`xcraft.builds`. Its build tree keeps the `BUILD/` of the previous one, which only the files of the tree change, see
+`xcraft.develop`.
+
 ## The recipe
 
 The recipe is what makes the builds of all the packages, besides the upstream packages and the packages: the SHA-256

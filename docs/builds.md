@@ -184,6 +184,34 @@ Without `--host`, `--baseurl` gives where the hosts find the repository, for ins
 directory, to copy at the same place on the hosts. Bringing a host back to an earlier state, like after a change is
 dropped, is up to the developer, like restoring a btrfs snapshot.
 
+## Developing from a project's tree
+
+A patchset applies to the version the package has. To build a package from the tree of its project as it is, like a
+branch of xapi on master, ahead of the packaged version, or of xs-opam-repo with it, `xcraft develop` takes the trees,
+for the development builds of the checkout, until `--stop`:
+
+```
+xcraft develop ../xs-opam-repo ../xen-api   # the packages named after their repositories, like patchset
+xcraft develop ../xen-api --package xapi    # or named
+xcraft develop                              # those developed from trees
+xcraft build xapi                           # xs-opam-repo from its tree, then xapi against it
+xcraft repo xapi --host root@testhost --upgrade
+xcraft develop --stop                       # or --stop xapi
+```
+
+The build of such a package takes the files of the tree, committed or not, untracked ones too, but those git ignores:
+its spec is the package's, but its main archive is the tree, as `git archive` makes it, its patches are those of the
+tree, as commits, and its first `%setup` or `%autosetup` of `%prep` uses the directory of the sources of the previous
+build, that of its `%setup`, kept in the build tree, synchronized with the tree: the files with other contents are
+written, those removed from the tree removed, and the others keep their times, so that `make`, or dune, makes only what
+changed, like a build in the tree. The rest of `%prep` runs as usual. The version and the release are those of the
+spec: the development builds upgrade the hosts, like those of any change, see above.
+
+The tree is an input of the cache key of the builds of the package, but not of its build ID, which never changes
+`xcraft.builds`: they are development builds, and so are those of the packages built against it. The trees are a
+setting of the checkout, in `.xcraft/develop.json`, which every command shows; the final builds, `publish` and `push`
+refuse them.
+
 ## Builds without their tests
 
 `--nocheck`, for `xcraft build`, `repo`, `iso` and `boot`, builds the packages without running the tests of their

@@ -8,6 +8,7 @@ from typing import Annotated
 import typer
 
 from xcraft import buildid, resolution
+from xcraft import develop as developer
 from xcraft.lock import cached_lock
 from xcraft.project import Destination, Project, Remote
 from xcraft.signing import Signer, SigningError, build_signer, dev_signer, key_signer
@@ -84,6 +85,7 @@ def unprepared_project(names: list[str] | None = None, *, arch: str | None = Non
     if unknown := sorted(set(names or []) - project.package_dirs.keys()):
         msg = f"unknown package(s): {', '.join(unknown)}"
         raise typer.BadParameter(msg)
+    developer.show(project)
     return project
 
 

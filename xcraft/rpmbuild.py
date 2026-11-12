@@ -8,7 +8,7 @@ import shlex
 import shutil
 from typing import TYPE_CHECKING
 
-from xcraft import ccache, localrepo, resolution
+from xcraft import ccache, develop, localrepo, resolution
 from xcraft.cache import BuildError, build_keys, deps_repo
 from xcraft.container import DNF_LOCK, run_container
 from xcraft.localrepo import LocalRepo, repo_id
@@ -23,20 +23,40 @@ if TYPE_CHECKING:
     from xcraft.resolution import Resolved
 
 
+def remove_tree(project: Project, name: str) -> None:
+    """Remove the build tree of `name`, but the BUILD/ of a package developed from a tree, which its next build
+    continues, see xcraft.develop.
+    """
+    tree = project.state / "build" / name
+    if name not in develop.trees(project):
+        shutil.rmtree(tree, ignore_errors=True)
+        return
+    for path in tree.iterdir() if tree.is_dir() else []:
+        if path.name == "BUILD":
+            continue
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
+
 def prepare_tree(project: Project, name: str, expected: str | None = None) -> Path:
     """Return a fresh build tree of `name`, laid out as a packaging repository, of the files whose hash, see
-    specs.hash_dir(), is `expected`, if given.
+    buildkey.directory(), is `expected`, if given.
 
     The main spec is in SPECS/, everything else in SOURCES/, with the archives
     from the source cache, downloaded when missing (see fetch_sources). The
     files have the modes 0644, or 0755 for those their owners may run, and
     0444 for the archives, the directories 0755, whatever the umask, and all
-    of them have the time STAGED_TIME: the same trees for the same hash.
+    of them have the time STAGED_TIME: the same trees for the same hash. A package
+    developed from a tree has its spec and its archive, and keeps the BUILD/ of the
+    previous build tree, as it was, see xcraft.develop.
     """
     pkg_dir = project.package_dirs[name]
     spec = main_spec(pkg_dir)
     tree = project.state / "build" / name
-    shutil.rmtree(tree, ignore_errors=True)
+    developed = develop.tree(project, name)
+    remove_tree(project, name)
     for directory in ("SPECS", "SOURCES"):
         (tree / directory).mkdir(parents=True)
 
@@ -51,7 +71,7 @@ def prepare_tree(project: Project, name: str, expected: str | None = None) -> Pa
         dest.write_bytes(data)
         dest.chmod(0o755 if executable else 0o644)
 
-    staged = hash_dir(pkg_dir, project.root, stage)
+    staged = develop.directory_hash(hash_dir(pkg_dir, project.root, stage), developed)
     if expected is not None and staged != expected:
         msg = f"{pkg_dir.relative_to(project.root)} changed since the builds started, build it again"
         raise BuildError(msg)
@@ -63,7 +83,9 @@ def prepare_tree(project: Project, name: str, expected: str | None = None) -> Pa
         # read-only: the build tree has it hard-linked, and could change it
         archive.chmod(0o444)
         localrepo.link(archive, tree / "SOURCES" / filename)
-    for path in [tree, *tree.rglob("*")]:
+    if developed:
+        develop.stage(developed, tree / "SPECS" / spec.name, tree / "SOURCES")
+    for path in [tree, *(p for d in ("SPECS", "SOURCES") for p in [tree / d, *(tree / d).rglob("*")])]:
         if path.is_dir():
             path.chmod(0o755)
         os.utime(path, (STAGED_TIME, STAGED_TIME))
@@ -114,7 +136,11 @@ def run_build(
         "lock": DNF_LOCK,
         "autorev": suffix,
         "replace": " ".join(replace),
-        "nocheck": "--nocheck" if nocheck else "",
+        # the options of rpmbuild of build.sh, whose changes would build everything again: with --noclean, the
+        # directory of the sources of a package developed from a tree is kept, which rpmbuild -ba removes at its end
+        "nocheck": " ".join(
+            filter(None, ["--nocheck" if nocheck else "", "--noclean" if name in develop.trees(project) else ""])
+        ),
     }
     script = "".join(f"{p}={shlex.quote(value)}\n" for p, value in parameters.items()) + f". /xcraft/build.sh\n{after}"
     if fast:

@@ -310,7 +310,7 @@ def update(project: Project, reuse: Callable[[str, dict[str, BuildId]], bool] | 
     than the main branch's, whose numbers may have been given before.
     """
     fork, current = base(project), read(project)
-    ids = compute(project, fork, reuse=reuse)
+    ids = compute(project, fork, buildkey.directories(project, trees=False), reuse=reuse)  # never of the trees
     changed = sorted(name for name in ids.keys() | current.keys() if ids.get(name) != current.get(name))
     forked = fork.ids if fork else {}
     if lowered := sorted(n for n in changed if n in ids and (f := forked.get(n)) and _newer(f.evr, ids[n].evr)):

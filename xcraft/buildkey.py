@@ -10,6 +10,7 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from xcraft import develop
 from xcraft.builds import load_builds, locked_packages
 from xcraft.container import BUILDENV, PACKAGES
 from xcraft.graph import build_deps, reachable
@@ -44,8 +45,19 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-def directories(project: Project) -> dict[str, str]:
-    """Return the hash of the directory of each package: see The package directory."""
+def directory(project: Project, name: str) -> str:
+    """Return the hash of the directory of the package `name`, with the tree it is developed from, if any: see The
+    package directory, and xcraft.develop.
+    """
+    return develop.directory_hash(hash_dir(project.package_dirs[name], project.root), develop.tree(project, name))
+
+
+def directories(project: Project, *, trees: bool = True) -> dict[str, str]:
+    """Return the hash of the directory of each package: see The package directory. With the trees they are developed
+    from, see directory(), unless not `trees`, for the build IDs, which they never change.
+    """
+    if trees:
+        return {name: directory(project, name) for name in project.package_dirs}
     return {name: hash_dir(path, project.root) for name, path in project.package_dirs.items()}
 
 

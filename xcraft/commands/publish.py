@@ -11,7 +11,7 @@ from urllib.parse import quote
 import typer
 from pydantic import ValidationError
 
-from xcraft import contents, remote
+from xcraft import contents, develop, remote
 from xcraft import publish as publisher
 from xcraft.build import update_build_ids
 from xcraft.cache import build_keys, cached_build, release_suffix
@@ -208,7 +208,7 @@ def _publish(  # noqa: C901, PLR0912
     if dev is not None and not re.fullmatch(r"[a-zA-Z0-9]{1,16}", dev):
         msg = f"the development build ID must be 1 to 16 letters and digits: {dev}"
         raise typer.BadParameter(msg, param_hint="--dev")
-    project = prepared_project(locked=locked, arch=None if arch == "all" else arch)
+    develop.check_none(project := prepared_project(locked=locked, arch=None if arch == "all" else arch), "publishing")
     if stage is not None:
         try:
             publish = Publish.model_validate(project.config.publish.model_dump() | {"stage": stage})

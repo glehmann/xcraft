@@ -8,7 +8,7 @@ from typing import Annotated
 import typer
 from rich.markup import escape
 
-from xcraft import ccache, remote, remote_pages, upstream_copy
+from xcraft import ccache, develop, remote, remote_pages, upstream_copy
 from xcraft.cache import BUILD_FILES, build_keys, build_path, cached_build, signed_build, untested
 from xcraft.commands import Arch, Final, Key, Packages, To, prepared_project, remote_storage, unprepared_project
 from xcraft.devbuilds import developed
@@ -60,6 +60,7 @@ def _push_builds(
     and return those not built: the final builds, but of the packages with development builds, unless `final`. The
     builds without the tests of their specs, see xcraft.cache.untested(), are not built for it.
     """
+    develop.check_none(project, "pushing builds")
     signer = remote.required_signer(signer)
     keys, skipped = build_keys(project), set() if final else developed(project)
     if shown := sorted(skipped & {*(packages or project.packages)}):

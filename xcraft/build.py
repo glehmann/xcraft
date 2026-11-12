@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Literal
 
 from rich.markup import escape
 
-from xcraft import buildid, buildkey, ccache, lint, remote, resolution
+from xcraft import buildid, buildkey, ccache, develop, lint, remote, resolution
 from xcraft.builds import load_builds
 from xcraft.cache import (
     NOCHECK,
@@ -52,9 +52,8 @@ from xcraft.graph import build_order, reachable
 from xcraft.localrepo import REPO_FILE, LocalRepo, repo_id
 from xcraft.lock import lock_path
 from xcraft.packages import is_debug
-from xcraft.rpmbuild import image_replacements, prepare_tree, run_build
+from xcraft.rpmbuild import image_replacements, prepare_tree, remove_tree, run_build
 from xcraft.signing import KEY_FILE, run_signer
-from xcraft.specs import hash_dir
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
@@ -401,9 +400,7 @@ class _Run:
         """
         project = self.project
         if edited := [
-            n
-            for n in sorted(reachable(project.deps, [name]))
-            if hash_dir(project.package_dirs[n], project.root) != self.hashes[n]
+            n for n in sorted(reachable(project.deps, [name])) if buildkey.directory(project, n) != self.hashes[n]
         ]:
             error = BuildError(f"{', '.join(edited)} changed since the builds started: build again")
             _show_failure(project, name, error, verbose=self.verbose)
@@ -566,7 +563,7 @@ class _Run:
                     "its dynamic BuildRequires, now in the lock, change its build number: built again with the new one"
                 )
                 raise BuildRootChangedError(msg)
-        if hash_dir(project.package_dirs[name], project.root) != self.hashes[name]:  # those of its key, staged
+        if buildkey.directory(project, name) != self.hashes[name]:  # those of its key, staged
             msg = f"{project.package_dirs[name].relative_to(project.root)} changed during the build, build it again"
             raise BuildError(msg)
         return keys
@@ -597,7 +594,7 @@ class _Run:
             shutil.rmtree(new)
         else:
             new.rename(build_dir)
-        shutil.rmtree(tree)
+        remove_tree(project, name)
 
     def _recorded_again(self) -> list[Result]:
         """Record what rpm generated for the cached builds again, and return the results: packages built or fetched now
@@ -652,6 +649,8 @@ def build(
     rpmlint lints the specs of the packages to build first, and the binary packages of the final builds, or of all
     with `lint_dev`, see xcraft.lint: its errors fail the final builds, and only show for the development builds.
     """
+    if dev is None:
+        develop.check_none(project, "final builds")
     if not dry_run:
         update_build_ids(project)
     for attempt in (0, 1):
