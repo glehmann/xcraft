@@ -159,6 +159,17 @@ def _rpm_name(packages: dict[str, Pin], name: str) -> str:
     return f"{name}-{packages[name].evr.split(':')[-1]}.{packages[name].arch}.rpm"
 
 
+def _pinned(packages: dict[str, Pin], name: str, entry: Entry) -> bool:
+    """Return whether the metadata `entry` is the one of the package `name` as pinned in `packages`: its name,
+    epoch-version-release, architecture and file name, which forged metadata of the upstream copy, unsigned, could
+    change, for a package of the pinned SHA-256.
+    """
+    pin = packages[name]
+    return repodata.nevra(entry) == (name, pin.evr, pin.arch) and (
+        Path(repodata.location(entry)).name == _rpm_name(packages, name)
+    )
+
+
 def _upstream_rpms(project: Project, names: list[str], on_line: Callable[[str], None]) -> list[Path]:
     """Return the RPMs of pinned upstream packages: from the cache, the latest snapshot, or the repositories."""
     locked = pinned.pins(project)
@@ -526,7 +537,15 @@ class _Assembler:
         if self.signer and not self.keep:
             self._add_signed_upstream(project, self.signer, names, repo, rpms)
         else:
-            missing = [name for name in names if not self.reuse(repo, rpms[name], locked[name].sha256)]
+            missing = [
+                name
+                for name in names
+                if not (
+                    (digest := locked[name].sha256) in self.known
+                    and _pinned(locked, name, self.known[digest][0])
+                    and self.reuse(repo, rpms[name], digest)
+                )
+            ]
             with activity(f"getting the upstream packages for {repo}", log=True) as on_line:
                 for rpm in _upstream_rpms(project, missing, on_line):
                     localrepo.link(rpm, self.dest / repo / rpm.name)
@@ -561,7 +580,12 @@ class _Assembler:
         originals = {name: locked[name].sha256 for name in names}
         with project.tmp_dir("upstream-signed-copies") as work:
             known = upstream_signed.read(project, self.storage, signer, work / "metadata") if self.storage else ({}, [])
-            copies = upstream_signed.by_original(known[0])
+            named = {original: name for name, original in originals.items()}
+            copies = {
+                original: copy
+                for original, copy in upstream_signed.by_original(known[0]).items()
+                if original in named and _pinned(locked, named[original], copy[0])
+            }
             if missing := [name for name in names if originals[name] not in copies]:
                 with activity(f"signing the upstream packages of {repo}", log=True) as on_line:
                     found = _upstream_rpms(project, missing, on_line)

@@ -33,6 +33,9 @@ _PKGID = re.compile(r'<checksum type="sha256" pkgid="YES">([0-9a-f]{64})</checks
 _LOCATION = re.compile(r"<location\b[^>]*/>")
 _HREF = re.compile(r'<location\b[^>]*\bhref="([^"]*)"')
 _SOURCE = re.compile(r"<rpm:sourcerpm>([^<]*)</rpm:sourcerpm>")
+_NAME = re.compile(r"<name>([^<]*)</name>")
+_ARCH = re.compile(r"<arch>([^<]*)</arch>")
+_VERSION = re.compile(r'<version epoch="([^"]*)" ver="([^"]*)" rel="([^"]*)"/>')
 _METADATA = re.compile(r"repodata/(?!\.)[\w.+-]+")
 
 type Entry = tuple[str, str, str]
@@ -60,6 +63,28 @@ def _decompress(path: Path) -> bytes | None:
 def location(entry: Entry) -> str:
     """Return the location of a package in its repository."""
     return unescape(found[1], {"&quot;": '"'}) if (found := _HREF.search(entry[0])) else ""
+
+
+def nevra(entry: Entry) -> tuple[str, str, str]:
+    """Return the name, the epoch-version-release, without a zero epoch, like the lock, and the architecture of a
+    package, from its primary entry: the first of each, its own, before those of its dependencies.
+    """
+    name, arch, version = _NAME.search(entry[0]), _ARCH.search(entry[0]), _VERSION.search(entry[0])
+    if not (name and arch and version):
+        return "", "", ""
+    epoch, ver, rel = version.groups()
+    return unescape(name[1]), f"{epoch}:{ver}-{rel}" if epoch not in ("", "0") else f"{ver}-{rel}", arch[1]
+
+
+def checksums(repomd: bytes) -> dict[str, str]:
+    """Return the SHA-256 of the metadata files of a repomd.xml, by location: none for the other checksums."""
+    return {
+        location.get("href", ""): checksum.text or ""
+        for d in ET.fromstring(repomd).iter(f"{_REPO}data")  # noqa: S314
+        if (location := d.find(f"{_REPO}location")) is not None
+        and (checksum := d.find(f"{_REPO}checksum")) is not None
+        and checksum.get("type") == "sha256"
+    }
 
 
 def files(repomd: bytes) -> dict[str, str]:

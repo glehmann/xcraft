@@ -236,7 +236,9 @@ copying them all costs a few GiB once.
   before they are copied, so a package no upstream key signs is rejected. Only those of the repositories of
   `gpgcheck = false` are not checked: the resolution lists them in `[unsigned]` of the lock, when such a repository
   has them, of the same checksums, which forged metadata of the copy cannot change. The source archives are not
-  signed for the same reason. The packages keep their upstream signatures.
+  signed for the same reason. The packages keep their upstream signatures. xcraft publish copies the packages
+  of the copy in the storage, without downloading them: it takes an entry only for its pin, of the pinned
+  SHA-256, name, epoch-version-release, architecture and file name, and downloads the others, checked.
 - The originals are kept, with their upstream signatures: the copies signed again by our keys, for incoming and the
   releases, are kept next to them, see [the layout of the published
   repositories](publishing-layout-design.md#the-upstream-originals-and-their-copies-signed-once-by-key).

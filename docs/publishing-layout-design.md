@@ -122,7 +122,10 @@ the publication of incoming and of the releases only, by our keys.
   publishing knows where to look without reading anything, and other contents never take the path of a package,
   whatever their names.
 - **Metadata by key and architecture,** updated with xcraft.repodata like the upstream copy's: a snapshot takes the
-  entries of the signed files from it, without downloading them, and it lists which pins are signed already.
+  entries of the signed files from it, without downloading them, and it lists which pins are signed already. Its
+  `repomd.xml` is signed by the key, `repomd.xml.asc`, and the metadata files checked against it: what a snapshot
+  signs comes from the key, not from whoever can write to the bucket. Metadata without a signature, made before, is
+  not read: the pins are signed again.
 - **Auditable:** signing rewrites the signature header only, so a signed copy has the main header of its original,
   byte for byte, which anyone can check, from the header ranges of both metadata, a few KiB by package.
 - **Kept without expiry,** like the originals: a few hundred MiB by architecture and key, only those a lock update

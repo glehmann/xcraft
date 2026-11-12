@@ -16,6 +16,7 @@ import os
 import shutil
 import socket
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -122,6 +123,27 @@ class Signer:
         signature.unlink(missing_ok=True)
         self.gpg("--local-user", self.key, "--armor", "--detach-sign", "--output", str(signature), str(file))
         return signature
+
+
+def signed_by(public_key: str, fingerprint: str, file: Path, signature: Path) -> bool:
+    """Return whether `signature` is a valid detached signature of `file` by the key `fingerprint`, of `public_key`,
+    checked in a keyring of its own, with that key only.
+    """
+    with tempfile.TemporaryDirectory(prefix="xcraft-verify-") as tmp:
+        keyring = Path(tmp) / "keys"
+        keyring.mkdir(mode=0o700)
+        (Path(tmp) / "key.asc").write_text(public_key)
+        verifier = Signer(key="", gnupghome=keyring)
+        try:
+            verifier.gpg("--import", str(Path(tmp) / "key.asc"))
+            status = verifier.gpg("--status-fd", "1", "--verify", str(signature), str(file))
+        except SigningError:
+            return False
+    return any(
+        fingerprint.upper() in (line.split()[2], line.split()[-1])  # the signing key, then the primary one
+        for line in status.splitlines()
+        if line.startswith("[GNUPG:] VALIDSIG ")
+    )
 
 
 def release_signer(project: Project) -> Signer | None:

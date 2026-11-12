@@ -14,11 +14,12 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 from xml.etree import ElementTree as ET
 
-from xcraft import container, localrepo, pinned, remote, remote_pages, repodata
+from xcraft import container, localrepo, pinned, remote, remote_pages, repodata, signing
 from xcraft.container import ContainerError
 from xcraft.display import activity
 from xcraft.lock import load_lock
 from xcraft.project import INTERNAL
+from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
     from xcraft.lock import Pin
     from xcraft.project import Project, Remote
     from xcraft.repodata import Entry
+    from xcraft.signing import Signer
 
 PREFIX = f"{INTERNAL}/upstream"
 SOURCE = "Source"
@@ -60,22 +62,41 @@ def repo_file(project: Project) -> str:
     )
 
 
-def read(storage: Remote, directory: str, work: Path, prefix: str = PREFIX) -> tuple[dict[str, Entry], list[str]]:
+def read(
+    storage: Remote, directory: str, work: Path, prefix: str = PREFIX, signer: Signer | None = None
+) -> tuple[dict[str, Entry], list[str]]:
     """Return the metadata entries of the packages of the copy `directory`, by SHA-256, read in `work`, and the paths
-    of its metadata files: nothing without metadata. Of another copy than the upstream one, under `prefix`.
+    of its metadata files: nothing without metadata. Of another copy than the upstream one, under `prefix`, whose
+    metadata is signed by `signer`, if given: none of its entries without a signature, as made before they were, and
+    an error with another one.
     """
     prefix = f"{prefix}/{directory}"
-    if not remote.download(storage, f"{prefix}/repodata/repomd.xml", work / "repodata/repomd.xml"):
+    repomd = work / "repodata/repomd.xml"
+    if not remote.download(storage, f"{prefix}/repodata/repomd.xml", repomd):
         return {}, []
-    try:  # unsigned: its locations are checked before any download
-        hrefs = list(repodata.files((work / "repodata/repomd.xml").read_bytes()).values())
+    try:  # unsigned, but with `signer`: its locations are checked before any download
+        hrefs = list(repodata.files(repomd.read_bytes()).values())
     except (ValueError, ET.ParseError) as e:
         msg = f"{prefix}/repodata/repomd.xml: {e}"
         raise UpstreamError(msg) from e
+    if signer:
+        signature = repomd.with_name("repomd.xml.asc")
+        if not remote.download(storage, f"{prefix}/repodata/repomd.xml.asc", signature):
+            return {}, hrefs
+        if not signing.signed_by(signer.public_key(), signer.key, repomd, signature):
+            msg = f"{prefix}/repodata/repomd.xml is not signed by {signer.key}"
+            raise UpstreamError(msg)
     with ThreadPoolExecutor(remote.REQUESTS) as pool:
         if not all(pool.map(lambda href: remote.download(storage, f"{prefix}/{href}", work / href), hrefs)):
             msg = f"{prefix}/repodata/repomd.xml lists metadata the storage does not have"
             raise UpstreamError(msg)
+    if (
+        signer
+        and (sums := repodata.checksums(repomd.read_bytes()))
+        and any(sha256_of(work / href) != sums.get(href) for href in hrefs)
+    ):
+        msg = f"{prefix}: metadata of other contents than its repomd.xml says"
+        raise UpstreamError(msg)
     if (entries := repodata.read(work)) is None:
         msg = f"cannot read the metadata of {prefix}"
         raise UpstreamError(msg)
@@ -131,10 +152,11 @@ def update(
     hrefs: list[str],
     copies: Copies,
     prefix: str = PREFIX,
+    signer: Signer | None = None,
 ) -> dict[str, Entry]:
     """Add the packages `copies` to the copy `directory`, of metadata `entries` and files `hrefs`, and return their
-    metadata entries, by path in it: the new metadata files first, then repomd.xml, and the metadata files of before
-    the previous update deleted. Of another copy than the upstream one, under `prefix`.
+    metadata entries, by path in it: the new metadata files first, then repomd.xml, signed by `signer`, if any, and the
+    metadata files of before the previous update deleted. Of another copy than the upstream one, under `prefix`.
     """
     if not copies:
         return {}
@@ -162,7 +184,10 @@ def update(
         written = sorted(p.relative_to(metadata).as_posix() for p in (metadata / "repodata").iterdir())
         remote.transfer(storage, {f"{prefix}/{p}": metadata / p for p in written if p != "repodata/repomd.xml"})
         remote.upload(storage, f"{prefix}/repodata/repomd.xml", metadata / "repodata/repomd.xml")
-        keep = {*hrefs, *written}
+        if signer:  # right after: a reader in between fails, rather than trusting it
+            signature = signer.sign_file(metadata / "repodata/repomd.xml")
+            remote.upload(storage, f"{prefix}/repodata/repomd.xml.asc", signature)
+        keep = {*hrefs, *written, *(["repodata/repomd.xml.asc"] if signer else [])}
         if stale := [p for p in remote.listing(storage, f"{prefix}/repodata/") if f"repodata/{p}" not in keep]:
             remote.delete(storage, [f"{prefix}/repodata/{p}" for p in stale])
     return new

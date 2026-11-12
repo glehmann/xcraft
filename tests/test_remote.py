@@ -44,12 +44,13 @@ from xcraft import (
     resolution,
     upload,
     upstream_copy,
+    upstream_signed,
 )
 from xcraft import publish as publisher
 from xcraft.__main__ import app
 from xcraft.cache import build_keys, build_path
 from xcraft.iso import cached_iso, checkout_iso, fetch_isos, iso_key, iso_name, iso_path, push_isos
-from xcraft.lock import load_lock
+from xcraft.lock import Pin, load_lock
 from xcraft.project import Project, Remote
 from xcraft.resolution import resolve_image
 from xcraft.rpmbuild import prepare_tree
@@ -1973,3 +1974,36 @@ def test_upstream_packages_signed_again_in_final_mode(root: Path, tmp_path: Path
     assert code == 0, output
     assert not (root / ".xcraft/cache/upstream-signed").exists()  # none signed again
     assert remote.listing(storage, f".xcraft/upstream-signed/{signer.key}/{ARCH}/") == copies
+    # their metadata signed by the key, as the bucket is not: another signature is refused
+    signature = f".xcraft/upstream-signed/{signer.key}/{ARCH}/repodata/repomd.xml.asc"
+    assert remote.download(storage, signature, tmp_path / "repomd.xml.asc")
+    (tmp_path / "other").write_text("other")
+    remote.upload(storage, signature, signer.sign_file(tmp_path / "other"))
+    try:
+        with pytest.raises(upstream_copy.UpstreamError, match=f"is not signed by {signer.key}"):
+            upstream_signed.read(Project.find(), storage, signer, tmp_path / "read")
+    finally:
+        remote.upload(storage, signature, tmp_path / "repomd.xml.asc")
+
+
+def test_upstream_entries_checked_against_their_pins() -> None:
+    # forged metadata of the unsigned upstream copy, for a package of the pinned SHA-256
+    def entry(version: str, location: str) -> repodata.Entry:
+        return (f'<package><name>bc</name><arch>x86_64</arch>{version}<location href="{location}"/></package>', "", "")
+
+    pins = {
+        "bc": Pin(evr="1.07.1-11.el10", arch="x86_64", sha256="0" * 64, source="bc"),
+        "dbus": Pin(evr="1:1.14.10-5.el10", arch="x86_64", sha256="1" * 64, source="dbus"),
+    }
+    pinned_version = '<version epoch="0" ver="1.07.1" rel="11.el10"/>'
+    assert publisher._pinned(pins, "bc", entry(pinned_version, "bc-1.07.1-11.el10.x86_64.rpm"))
+    assert publisher._pinned(pins, "bc", entry(pinned_version, "0123/bc-1.07.1-11.el10.x86_64.rpm"))  # a signed copy
+    assert not publisher._pinned(pins, "bc", entry(pinned_version, "bc-1.06-1.el10.x86_64.rpm"))
+    assert not publisher._pinned(
+        pins, "bc", entry('<version epoch="0" ver="1.06" rel="1.el10"/>', "bc-1.07.1-11.el10.x86_64.rpm")
+    )
+    assert not publisher._pinned(
+        pins, "bc", entry('<version epoch="1" ver="1.07.1" rel="11.el10"/>', "bc-1.07.1-11.el10.x86_64.rpm")
+    )
+    dbus = entry('<version epoch="1" ver="1.14.10" rel="5.el10"/>', "dbus-1.14.10-5.el10.x86_64.rpm")
+    assert publisher._pinned(pins, "dbus", (dbus[0].replace("<name>bc", "<name>dbus"), "", ""))

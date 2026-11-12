@@ -40,9 +40,10 @@ def path(project: Project, signer: Signer, location: str) -> str:
 
 def read(project: Project, storage: Remote, signer: Signer, work: Path) -> tuple[dict[str, Entry], list[str]]:
     """Return the metadata entries of the copies of the storage signed by `signer`, for the architecture of `project`,
-    by SHA-256, read in `work`, and the paths of their metadata files.
+    by SHA-256, read in `work`, and the paths of their metadata files: their metadata is signed by `signer` too, as
+    the bucket is not, see upstream_copy.read().
     """
-    return upstream_copy.read(storage, project.arch, work, _prefix(signer))
+    return upstream_copy.read(storage, project.arch, work, _prefix(signer), signer)
 
 
 def by_original(entries: dict[str, Entry]) -> dict[str, tuple[Entry, str]]:
@@ -84,7 +85,7 @@ def push(
     """
     entries, hrefs = known
     files: upstream_copy.Copies = {f"{d}/{rpm.name}": (rpm, None) for d, rpm in copies.items()}
-    new = upstream_copy.update(project, storage, project.arch, read_in, entries, hrefs, files, _prefix(signer))
+    new = upstream_copy.update(project, storage, project.arch, read_in, entries, hrefs, files, _prefix(signer), signer)
     with activity("making the pages of the directories"):
         remote_pages.update_pages(project, storage, [f"{_prefix(signer)}/"])
     return {f.split("/")[0]: (entry, sha256_of(copies[f.split("/")[0]])) for f, entry in new.items()}
