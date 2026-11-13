@@ -57,7 +57,7 @@ def parse_manifest(text: str) -> dict[str, str]:
     """Return the filename to SHA-256 mapping of the content of a ``sources`` manifest, and raise SourceError for
     the lines that are not a SHA-256 and a file name, or name a file twice.
     """
-    lines = [[*line.split(maxsplit=1), ""][:2] for line in text.splitlines() if line]
+    lines = [[*line.split(maxsplit=1), ""][:2] for line in text.splitlines() if line.strip()]
     if len(files := {name.rstrip(): digest for digest, name in lines}) != len(lines):
         msg = "a file is twice in the sources manifest"
         raise SourceError(msg)

@@ -99,7 +99,7 @@ def test_stage_no_archive_out_of_the_cache(name: str, project: Project, tmp_path
 
 def test_manifest_lines() -> None:
     digest = "a" * 64
-    assert parse_manifest(f"{digest}  foo.tar.gz\n\n{digest}\tfoo bar.tgz \n") == {
+    assert parse_manifest(f"{digest}  foo.tar.gz\n\n  \n{digest}\tfoo bar.tgz \n") == {
         "foo.tar.gz": digest,
         "foo bar.tgz": digest,
     }
