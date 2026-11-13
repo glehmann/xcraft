@@ -1743,6 +1743,22 @@ def test_manifest_paths_stay_in_their_tree(root: Path, tmp_path: Path) -> None:
     assert not list(tmp_path.glob("**/escaped"))
 
 
+def test_key_file_with_another_key(root: Path, tmp_path: Path) -> None:
+    storage = Project.find().config.remote.get("main")
+    signer = release_signer(Project.find())
+    assert storage
+    assert signer
+    other = create_dev_key(Project.find(), "intruder")
+    key = tmp_path / "key.asc"
+    key.write_text(signer.public_key() + other.public_key())
+    remote.upload(storage, f"{remote.KEYS}/{signer.key}.asc", key)
+    assert remote.public_key(storage, signer.key) is None
+    key.write_text(signer.public_key())
+    remote.upload(storage, f"{remote.KEYS}/{signer.key}.asc", key)
+    remote.forget()
+    assert remote.public_key(storage, signer.key) == signer.public_key()
+
+
 def test_pages_of_nested_directories(root: Path, tmp_path: Path) -> None:
     storage = Project.find().config.remote["main"]
     (tmp_path / "file").write_bytes(b"x" * 1000)

@@ -17,6 +17,7 @@ import contextlib
 import datetime as dt
 import functools
 import hashlib
+import itertools
 import os
 import re
 import tempfile
@@ -507,17 +508,23 @@ def forget() -> None:
 
 
 def public_key(storage: Remote, fingerprint: str) -> str | None:
-    """Return the public key `fingerprint` of the storage, downloaded once, or None when it has not that key."""
+    """Return the public key `fingerprint` of the storage, downloaded once, or None when it has not that key.
+
+    The file must hold that key only, and what is returned is gpg's export of it: the storage's writers could
+    otherwise add their own keys, which the hosts importing it would trust too.
+    """
     if (storage.url, fingerprint) not in _keys:
         with tempfile.TemporaryDirectory(prefix="xcraft-key-") as tmp:
-            key, found = Path(tmp) / "key.asc", None
+            key, found, signer = Path(tmp) / "key.asc", None, Signer(key=fingerprint, gnupghome=Path(tmp))
             try:
                 if download(storage, f"{KEYS}/{fingerprint}.asc", key):
-                    shown = Signer(key="", gnupghome=Path(tmp)).gpg("--with-colons", "--show-keys", str(key))
-                    if [line.split(":")[9] for line in shown.splitlines() if line.startswith("fpr:")][:1] == [
-                        fingerprint
-                    ]:
-                        found = key.read_text()
+                    lines = signer.gpg("--with-colons", "--show-keys", str(key)).splitlines()
+                    primaries = [
+                        b.split(":")[9] for a, b in itertools.pairwise(lines) if a[:4] == "pub:" and b[:4] == "fpr:"
+                    ]
+                    if primaries == [fingerprint]:
+                        signer.gpg("--import", str(key))
+                        found = signer.public_key()
             except SigningError:
                 pass
         _keys[storage.url, fingerprint] = found
