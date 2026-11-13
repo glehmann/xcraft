@@ -14,6 +14,7 @@ from xcraft.display import console
 from xcraft.patchset import guess_package, repo_name
 from xcraft.process import git
 from xcraft.project import Project
+from xcraft.rpmbuild import remove_tree
 
 
 def _package(project: Project, tree: Path, package: str | None) -> str:
@@ -68,6 +69,8 @@ def develop(
             msg = f"{tree} is not a git tree"
             raise typer.BadParameter(msg) from e
         name = _package(project, root, package)
+        if name not in developed:  # what a build left, of other files than the tree's
+            remove_tree(project, name)
         developed[name] = root
         developer.save(project, developed)
         console.print(f"[bold]{name}[/]: developed from {escape(str(root))}")

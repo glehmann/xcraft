@@ -110,6 +110,9 @@ def xcraft(*args: str) -> tuple[int, str]:
 
 def test_develop_from_a_tree(root: Path, tree: Path) -> None:
     builds = (root / "xcraft.builds").read_text()
+    sources = root / ".xcraft/build/trivial/BUILD/trivial-1.0"
+    sources.mkdir(parents=True)
+    (sources / "configure").write_text("left by a failed build\n")
     code, output = xcraft("develop", str(tree))
     assert code == 0, output
     assert f"trivial: developed from {tree}" in output
@@ -118,7 +121,7 @@ def test_develop_from_a_tree(root: Path, tree: Path) -> None:
     assert f"trivial ← {tree} v1.0" in output
     code, output = xcraft("build", "trivial")
     assert code == 0, output
-    sources = root / ".xcraft/build/trivial/BUILD/trivial-1.0"
+    assert not (sources / "configure").exists()
     assert (sources / "hello.txt").read_text() == "hello from the tree\n"
     assert (sources / "kept.txt").read_text() == "first\n"
     unchanged = (sources / "unchanged.in").stat().st_mtime_ns
