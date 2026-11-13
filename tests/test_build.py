@@ -225,11 +225,17 @@ def test_dynamic_buildrequires_on_ours(root: Path) -> None:
     spec.write_text(spec.read_text().replace("BuildRequires: trivial\n", "").replace(
         "%prep", "%generate_buildrequires\necho trivial\n\n%prep"
     ))  # fmt: skip
-    # not known to need trivial: built alone, then again after it
-    code, output = xcraft("build", "with-deps")
+    write_spec(root, "user", "with-deps")
+    # not known to need trivial: built alone, then again after it, and what needs it skipped meanwhile
+    code, output = xcraft("build", "user")
     assert code == 0, output
     assert "↻ with-deps: " in output
-    assert [line.split(" built")[0] for line in results(output) if line[0] == "✓"] == ["✓ trivial", "✓ with-deps"]
+    assert "- user skipped, needs with-deps" in output
+    assert [line.split(" built")[0] for line in results(output) if line[0] == "✓"] == [
+        "✓ trivial",
+        "✓ with-deps",
+        "✓ user",
+    ]
     assert load_builds(Project.find()).buildrequires.of(ARCH) == {"with-deps": ["trivial"]}
 
 

@@ -442,14 +442,10 @@ class _Run:
             return None
 
     def _not_built(self, name: str, *, reused: bool) -> Result | None:
-        """Return the result of `name` when it is not to build: skipped, as dependencies failed, or failed without
-        `build_missing`, or when `reused`.
+        """Return the result of `name` when it is not to build: skipped, as dependencies failed or are to build
+        again, or failed without `build_missing`, or when `reused`.
         """
-        if failed := sorted(
-            dep
-            for dep in self.project.deps[name]
-            if dep in self.results and self.results[dep].status in ("failed", "skipped")
-        ):
+        if failed := sorted(dep for dep in self.project.deps[name] if dep in self.results and self.results[dep].failed):
             console.print(f"[yellow]-[/] {name} [yellow]skipped[/], needs {', '.join(failed)}")
             return Result(name, "skipped")
         if self.build_missing and not reused:
