@@ -1951,7 +1951,7 @@ def test_publish_of_a_pull_request(
 def test_upstream_packages_signed_again_in_final_mode(root: Path, tmp_path: Path) -> None:
     stage = f"signed-{secrets.token_hex(4)}"
     # an upstream package for the hosts, and an extra one, unsigned
-    extra = TOYS / ARCH / "toyarch-new-2-1.x86_64.rpm"
+    extra = TOYS / "x86_64/toyarch-new-2-1.x86_64.rpm"  # of x86_64 only, copied as it is on every architecture
     (root / "xcraft.toml").write_text(
         f'{REMOTE}extra = ["bc"]\n'
         f'[extra_upstream.toyarch-new]\nurl = "{extra.as_uri()}"\nsha256 = "{sha256_of(extra)}"\n'
