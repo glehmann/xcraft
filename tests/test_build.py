@@ -976,17 +976,12 @@ def test_build_roots_kept_for_another_release_required_by_its_own(root: Path, mo
     assert "pair-libs" not in _resolved_again(monkeypatch)[1].versioned
     cache = _roots_key()
     spec.write_text(spec.read_text().replace("Release: 1%{?dist}", "Release: 2%{?dist}"))
-    resolved: list[str] = []
-    run = resolution._run
 
-    def counted(project: Project, data: dict, **kwargs: object) -> resolution.Resolved:
-        resolved.append(project.arch)
-        return run(project, data, **kwargs)  # type: ignore[arg-type]
+    def run(*args: object, **kwargs: object) -> resolution.Resolved:
+        raise AssertionError
 
-    monkeypatch.setattr(resolution, "_run", counted)
-    again = _resolved_again(monkeypatch)[0]
-    assert again == cache
-    assert resolved == []
+    monkeypatch.setattr(resolution, "_run", run)
+    assert _resolved_again(monkeypatch)[0] == cache
 
 
 def test_build_roots_of_the_architectures_resolved_again_together(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
