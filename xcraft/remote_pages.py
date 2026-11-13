@@ -75,10 +75,16 @@ def _stored_total(s3: S3Client, bucket: str, prefix: str) -> tuple[int, dt.datet
         metadata = {
             key.lower(): value for key, value in s3.head_object(Bucket=bucket, Key=prefix + INDEX)["Metadata"].items()
         }
-    except s3.exceptions.ClientError:  # no page yet
-        return 0, None
+    except s3.exceptions.ClientError as e:
+        if e.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):  # no page yet
+            return 0, None
+        raise
     newest = metadata.get("newest")
-    return int(metadata.get("size", 0)), dt.datetime.fromisoformat(newest) if newest else None
+    try:  # unsigned: anyone writing the storage can change it, and it is only shown
+        return int(metadata.get("size", 0)), dt.datetime.fromisoformat(newest) if newest else None
+    except ValueError:
+        log.warning("invalid totals on the page of s3://%s/%s", bucket, prefix)
+        return 0, None
 
 
 _UNITS = ("B", "KiB", "MiB", "GiB", "TiB")
