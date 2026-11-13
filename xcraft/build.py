@@ -494,7 +494,7 @@ class _Run:
         except BuildRootChangedError as e:
             console.print(f"[yellow]↻[/] {name}: {escape(str(e))}")
             return Result(name, "again")
-        except (OSError, RuntimeError) as e:
+        except (OSError, RuntimeError, ValueError) as e:  # ValueError: like invalid JSON the build wrote
             _show_failure(self.project, name, e, verbose=self.verbose)
             return Result(name, "failed")
         console.print(f"[bold green]✓[/] {name} [green]built[/] in {duration(time.monotonic() - start)}")
