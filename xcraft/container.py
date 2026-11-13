@@ -341,11 +341,15 @@ def image_packages(project: Project, image: str) -> dict[str, Locked]:
 
 
 def _build_image(project: Project, tag: str, args: dict[str, str], files: dict[str, str]) -> None:
-
+    """Build the build environment image `tag`, from its build `args` and `files`, and check it has the packages
+    resolved for it: under a tag of its own until then, not to be used unchecked by other commands, even when this one
+    is killed.
+    """
+    unchecked = f"{tag}-{os.getpid()}"
     _podman_build(
         project,
         "image",
-        tag,
+        unchecked,
         files,
         args,
         show="the build environment image",
@@ -353,13 +357,13 @@ def _build_image(project: Project, tag: str, args: dict[str, str], files: dict[s
     )
     try:
         resolved = {f"{n}-{p.evr}.{p.arch}" for n, p in _image_pins(project).items()}
-        if differences := changes(resolved, {f"{n}-{p.evr}.{p.arch}" for n, p in image_packages(project, tag).items()}):
+        installed = image_packages(project, unchecked)
+        if differences := changes(resolved, {f"{n}-{p.evr}.{p.arch}" for n, p in installed.items()}):
             msg = f"the build environment image does not have the packages resolved for it: {', '.join(differences)}"
-            raise ContainerError(msg)  # noqa: TRY301, removed like on any error
-    except BaseException:  # not to be used unchecked by the next commands
-        process.run(["podman", "rmi", tag], capture=True, check=False)
-        _existing.discard(tag)
-        raise
+            raise ContainerError(msg)
+        process.run(["podman", "tag", unchecked, tag], capture=True)
+    finally:  # only the tag once tagged `tag`, the image otherwise
+        process.run(["podman", "rmi", unchecked], capture=True, check=False)
 
 
 def built_image(project: Project) -> str:
