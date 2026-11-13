@@ -84,7 +84,10 @@ def cache_source(cache_dir: Path, path: Path) -> str:
     dest = cache_dir / digest / path.name
     if not dest.exists():
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, dest)
+        # next to it, then renamed: an interrupted copy would never be made again
+        part = dest.with_name(f".{dest.name}.{os.getpid()}.part")
+        shutil.copy2(path, part)
+        part.rename(dest)
     return digest
 
 
