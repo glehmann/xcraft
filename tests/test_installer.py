@@ -68,9 +68,10 @@ def installer_line(root: Path, *args: str) -> str:
     assert "✓ the installer finished and asked to reboot: xcraft vm start boots the installed system" in " ".join(
         output.split()
     )
-    found = re.search(r"^toy installer of .*?\r?$", log, re.MULTILINE)
+    # up to a message of the kernel printed right after it, on the same console
+    found = re.search(r"^toy installer of .*?(?=\[ *\d+\.\d+\]|\r?$)", log, re.MULTILINE)
     assert found, log
-    return found[0].rstrip("\r")
+    return found[0]
 
 
 @pytest.mark.skipif(not shutil.which("qemu-system-x86_64"), reason="needs QEMU")
