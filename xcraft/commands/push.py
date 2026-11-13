@@ -188,8 +188,11 @@ def everything(
     the upstream ones found nowhere, do not keep the others from being pushed, then fail it.
     """
     if ctx.invoked_subcommand:
+        if from_:
+            msg = "copies all that is missing, not with a command"
+            raise typer.BadParameter(msg, param_hint="--from")
         # all the options given before the subcommand are its defaults: those given after it win
-        params = {k: v for k, v in ctx.params.items() if v is not None and k != "from_"}
+        params = {k: v for k, v in ctx.params.items() if v is not None}
         ctx.default_map = {ctx.invoked_subcommand: params}
         return
     project = prepared_project(arch=arch)

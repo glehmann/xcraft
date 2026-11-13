@@ -620,6 +620,7 @@ def test_private_remote_storage(
     project = Project.find()
     path = build_path(project, "trivial", build_keys(project)["trivial"], build_signer[0])
     assert not remote.tree_exists(project.config.remote["main"], path)
+    assert xcraft("push", "--from", "private", "--to", "main", "builds")[0] == 2
     code, output = xcraft("push", "--from", "private", "--to", "main")
     assert code == 0, output
     assert output.splitlines()[-1] == "0 source archives and 1 builds copied"
