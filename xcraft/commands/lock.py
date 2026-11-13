@@ -20,6 +20,7 @@ def _update(project: Project, packages: list[str], *, write: bool) -> int:
     """Update the lock, for the `packages`, all by default, or only show what would change without `write`, and return
     the number of changes.
     """
+    resolution.expire_metadata(project)  # for the versions the repositories have now
     # first, as it may lock them
     sources = upstream_sources(project, packages) if packages else sorted(load_lock(project).sources)
     current = load_lock(project)

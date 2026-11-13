@@ -414,6 +414,14 @@ def _locking(project: Project, resolve: Callable[[Project], Resolved]) -> None:
     raise ResolutionError(msg + ", ".join(resolved.unlocked))
 
 
+def expire_metadata(project: Project) -> None:
+    """Expire the metadata of the repositories of all the platforms, which dnf downloads again when it next reads it."""
+    for platform in project.all_platforms():
+        run_natively(
+            platform, "expire", ["dnf", "-q", "clean", "expire-cache"], volumes=[], show="forgetting the metadata"
+        )
+
+
 def _forget(project: Project) -> None:
     """Forget what was resolved, and the metadata of the repositories, to resolve from the repositories as they are,
     rather than from the resolutions of the remote storage, until the end of the command.
@@ -422,10 +430,7 @@ def _forget(project: Project) -> None:
     _keys.clear()
     _unreachable.add(project.root)
     shutil.rmtree(project.state / "cache/resolved", ignore_errors=True)
-    for platform in project.all_platforms():
-        run_natively(
-            platform, "expire", ["dnf", "-q", "clean", "expire-cache"], volumes=[], show="forgetting the metadata"
-        )
+    expire_metadata(project)
 
 
 def _saved(project: Project, record: Callable[[Lock, Lock], None]) -> None:
