@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
@@ -14,6 +14,9 @@ from xcraft.commands.vm import check_port, show
 from xcraft.display import console
 from xcraft.iso import checkout_iso
 from xcraft.project import Project
+
+if TYPE_CHECKING:
+    import subprocess
 
 
 def _check_host(arch: str, accel: str, *, new_disk: bool) -> None:
@@ -57,6 +60,19 @@ def _show_end(reason: str | None, vm_dir: Path) -> None:
     why = _STOPS.get(reason or "", f"QEMU stopped: {reason}" if reason else "QEMU stopped without telling why")
     console.print(f"[bold red]✗[/] {why}, rather than the installer asking to reboot: see {vm_dir / 'serial.log'}")
     raise typer.Exit(1)
+
+
+def _boot_with(proc: subprocess.Popen[bytes], vm_dir: Path, kernel_args: str) -> None:
+    """Boot the default entry of the GRUB menu of the VM of `proc` with `kernel_args`, or stop it when that fails, not
+    to leave it running, with its disk and its ssh port, in a state nobody asked for.
+    """
+    try:
+        vm.edit_default_entry(vm_dir, kernel_args)
+    except BaseException:
+        proc.terminate()
+        proc.wait(timeout=10)
+        raise
+    console.print(f"booted the default entry with {kernel_args}", markup=False)
 
 
 def boot(
@@ -178,7 +194,6 @@ def boot(
             stack.enter_context(events)
         show(vm_dir, session)
         if kernel_args:
-            vm.edit_default_entry(vm_dir, kernel_args)
-            console.print(f"booted the default entry with {kernel_args}", markup=False)
+            _boot_with(proc, vm_dir, kernel_args)
         if events:
             _show_end(vm.wait(proc, vm_dir, events), vm_dir)
