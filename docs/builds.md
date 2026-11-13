@@ -203,10 +203,11 @@ The build of such a package takes the files of the tree, committed or not, untra
 its spec is the package's, but its main archive is the tree, as `git archive` makes it, its patches are those of the
 tree, as commits, and the `%setup` or `%autosetup` of `%prep` unpacking it, those of each branch of an `%if`, use the
 directory of the sources of the previous build, that of their `%setup`, kept in the build tree, with the other archives
-they unpack, `-a` and `-b`, synchronized with the tree: the files with other contents are
-written, those removed from the tree removed, and the others keep their times, so that `make`, or dune, makes only what
-changed, like a build in the tree. The rest of `%prep` runs as usual. The version and the release are those of the
-spec: the development builds upgrade the hosts, like those of any change, see above.
+they unpack, `-a` and `-b`, synchronized with the tree: the files with other contents are written, those removed from
+the tree removed, and the others keep their times, so that `make`, or dune, makes only what changed, like a build in
+the tree. The rest of `%prep` runs as usual. The version and the release are those of the spec: the development builds
+upgrade the hosts, like those of any change, see above. `git archive` leaves out the submodules of the tree, and the
+files of its `export-ignore` attributes: the builds do not have them, unlike a build in the tree.
 
 The tree is an input of the cache key of the builds of the package, but not of its build ID, which never changes
 `xcraft.builds`: they are development builds, and so are those of the packages built against it. The trees are a

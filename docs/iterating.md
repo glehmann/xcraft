@@ -32,6 +32,8 @@ xcraft develop --stop                      # done: back to the package's sources
 
 The builds take the files of the tree as they are, committed or not, untracked ones too, but those git ignores: no need
 to commit to build. `xcraft develop` alone shows the packages developed from trees, and every command reminds them.
+The builds do not have the submodules of the tree, nor the files its `.gitattributes` mark `export-ignore`, which
+`git archive` leaves out.
 
 What to expect, measured on one developer machine, with a debug log changed at each iteration:
 
