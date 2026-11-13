@@ -114,23 +114,25 @@ def _fetch_source(project: Project, name: str, filename: str, digest: str) -> bo
     urls = (s for s in project.parsed[name].sources if "://" in s and archive_name(s) == filename)
     url, error = next(urls, ""), None
 
-    with activity(f"downloading {filename}") as on_line:
-        # from where it may be, until it matches
-        for origin in [*remote.storages(project), *([url] if url else [])]:
-            try:
-                if isinstance(origin, str):
-                    process.download(origin, part, download_progress(on_line))
-                elif not remote.download(origin, source_path(filename, digest), part, on_line):
+    try:
+        with activity(f"downloading {filename}") as on_line:
+            # from where it may be, until it matches
+            for origin in [*remote.storages(project), *([url] if url else [])]:
+                try:
+                    if isinstance(origin, str):
+                        process.download(origin, part, download_progress(on_line))
+                    elif not remote.download(origin, source_path(filename, digest), part, on_line):
+                        continue
+                except (OSError, remote.RemoteError) as e:
+                    error = e
                     continue
-            except (OSError, remote.RemoteError) as e:
-                error = e
-                continue
-            if sha256_of(part) == digest:
-                part.rename(archive)
-                return True
-            where = origin if isinstance(origin, str) else origin.url
-            error = SourceError(f"{filename} from {where} does not match the sha256 of the manifest")
-    part.unlink(missing_ok=True)
+                if sha256_of(part) == digest:
+                    part.rename(archive)
+                    return True
+                where = origin if isinstance(origin, str) else origin.url
+                error = SourceError(f"{filename} from {where} does not match the sha256 of the manifest")
+    finally:  # or interrupted
+        part.unlink(missing_ok=True)
     with contextlib.suppress(OSError):  # not to leave it empty
         archive.parent.rmdir()
     if error:

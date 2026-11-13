@@ -50,11 +50,18 @@ def popen(
 
 
 def download(url: str, dest: Path, report: Callable[[int, int, int], None] | None = None) -> None:
-    """Download `url` to `dest`, giving the progress to `report`, like urlretrieve."""
-    import urllib.request  # noqa: PLC0415, with http.client: imported once needed, not at each start
+    """Download `url` to `dest`, giving the progress to `report`, like urlretrieve, and raise OSError when it fails,
+    like when the server closes the connection too soon.
+    """
+    import http.client  # noqa: PLC0415, imported once needed, not at each start
+    import urllib.request  # noqa: PLC0415
 
     log.debug("downloading %s to %s", url, dest)
-    urllib.request.urlretrieve(url, dest, reporthook=report)  # noqa: S310
+    try:
+        urllib.request.urlretrieve(url, dest, reporthook=report)  # noqa: S310
+    except http.client.HTTPException as e:
+        msg = f"{url}: {e!r}"
+        raise OSError(msg) from e
 
 
 def git(*args: str) -> str:
