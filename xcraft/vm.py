@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
@@ -123,11 +124,8 @@ def _failure(directory: Path) -> str:
     return f": {lines[-1]}" if lines else f": see {directory / 'qemu.log'}"
 
 
-def launch(directory: Path, session: Session) -> tuple[subprocess.Popen[bytes], Monitor | None]:
-    """Launch QEMU, preserving previous transcripts and waiting for its monitor, and return it with the connection to
-    its monitor of the events, when its command has one, see qemu_command(): QEMU waits for it before starting the
-    guest, so that no event is missed.
-    """
+def _launched(directory: Path, session: Session) -> tuple[subprocess.Popen[bytes], Monitor | None]:
+    """Launch QEMU in `directory`, see launch()."""
     for name in ("qmp.sock", "events.sock"):
         (directory / name).unlink(missing_ok=True)
     fifo = directory / "serial.in"
@@ -268,6 +266,24 @@ def check_stopped(directory: Path) -> None:
     if running(directory):
         msg = f"a VM is already running in {directory}: use xcraft vm to control it"
         raise RuntimeError(msg)
+
+
+def launch(directory: Path, session: Session) -> tuple[subprocess.Popen[bytes], Monitor | None]:
+    """Launch QEMU, preserving previous transcripts and waiting for its monitor, and return it with the connection to
+    its monitor of the events, when its command has one, see qemu_command(): QEMU waits for it before starting the
+    guest, so that no event is missed.
+
+    One command at a time launches a VM in `directory`, which must not run one: another would replace the sockets of
+    the first, leaving it out of reach.
+    """
+    with (directory / "launch.lock").open("w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            msg = f"another command is launching a VM in {directory}"
+            raise RuntimeError(msg) from None
+        check_stopped(directory)
+        return _launched(directory, session)
 
 
 _EVENTS = "unix:events.sock,server=on,wait=on"

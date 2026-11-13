@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import shutil
@@ -254,7 +255,7 @@ def stop_vm(directory: Path) -> None:
 
 
 @pytest.mark.skipif(not (shutil.which("qemu-system-x86_64") and shutil.which("qemu-img")), reason="needs QEMU")
-def test_detached_vm_controls_and_logs(root: Path, tmp_path: Path, echo_disk: Path) -> None:
+def test_detached_vm_controls_and_logs(root: Path, tmp_path: Path, echo_disk: Path) -> None:  # noqa: PLR0915
     directory = root / ("long-session-name-" * 4)
     iso = tmp_path / "installer.iso"
     iso.write_bytes(bytes(2048))
@@ -296,6 +297,9 @@ def test_detached_vm_controls_and_logs(root: Path, tmp_path: Path, echo_disk: Pa
             failed = subprocess.run(again, capture_output=True, text=True, check=False, timeout=20)
             assert failed.returncode != 0
             assert "already running" in failed.stdout + failed.stderr
+        with vm.Monitor(directory):  # which serves one command at a time: running all the same
+            failed = subprocess.run(start, capture_output=True, text=True, check=False, timeout=20)
+            assert "already running" in failed.stdout + failed.stderr
         bundle = tmp_path / "diagnostics"
         result, output = control("logs", str(bundle))
         assert result == 0, output
@@ -313,6 +317,10 @@ def test_detached_vm_controls_and_logs(root: Path, tmp_path: Path, echo_disk: Pa
     result, output = control("status")
     assert result == 0, output
     assert json.loads(output)["status"] == "stopped"
+    with (directory / "launch.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        failed = subprocess.run(start, capture_output=True, text=True, check=False, timeout=20)
+        assert "another command is launching a VM" in failed.stdout + failed.stderr
     assert control("text", "no guest")[0] != 0
     bundle = tmp_path / "stopped-diagnostics"
     assert control("logs", str(bundle))[0] == 0
