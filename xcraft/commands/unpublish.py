@@ -45,6 +45,11 @@ def unpublish(
             for d in PurePosixPath(f).parents
             if any(f"{d}/".startswith(f"{prefix}/") for prefix in prefixes)
         }
-        remote.delete(storage, files + [f"{d}/{remote.INDEX}" for d in sorted(directories)])
+        # the manifests first: an interrupted removal must not leave a tree trusted without all its files
+        manifests = [f for f in files if f.endswith(f"/{remote.MANIFEST}")]
+        remote.delete(storage, manifests)
+        remote.delete(
+            storage, [f for f in files if f not in manifests] + [f"{d}/{remote.INDEX}" for d in sorted(directories)]
+        )
         remote_pages.update_pages(project, storage, [f"{kind}/{release}/" for kind in ("repos", "isos")])
     console.print(f"removed {len(files)} files of the stage {stage}" if files else f"no stage {stage} to remove")
