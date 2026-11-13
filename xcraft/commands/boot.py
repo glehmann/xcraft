@@ -135,6 +135,11 @@ def boot(
     if disk.exists() and not disk.is_file():
         msg = f"virtual disk is not a file: {disk}"
         raise typer.BadParameter(msg)
+    # but its disk: xcraft vm destroy deletes the directory
+    ours = vm_dir.is_relative_to(project.state.absolute()) or (vm_dir / "session.json").exists()
+    if not ours and vm_dir.is_dir() and any(path != disk for path in vm_dir.iterdir()):
+        msg = f"{vm_dir} has content xcraft did not make, which xcraft vm destroy would delete"
+        raise typer.BadParameter(msg, param_hint="--vm-dir")
     _check_host(project.arch, accel, new_disk=not disk.exists())
     if bios and (firmware_code or firmware_vars):
         msg = "--bios cannot be used with --firmware-code or --firmware-vars"

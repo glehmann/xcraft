@@ -154,6 +154,14 @@ def test_boot_invalid_options(root: Path, args: list[str], message: str) -> None
     assert not (root / ".xcraft").exists()
 
 
+def test_boot_in_a_directory_of_other_content(root: Path, tmp_path: Path) -> None:
+    (tmp_path / "mine").write_text("kept")
+    code, output = xcraft("boot", "--vm-dir", str(tmp_path))
+    assert code == 2, output
+    assert "has content xcraft did not make" in " ".join(output.replace("│", "").split())
+    assert (tmp_path / "mine").read_text() == "kept"
+
+
 def test_vm_start_needs_a_session(root: Path) -> None:
     for command in ("start", "ssh", "ssh-copy-id"):
         code, output = xcraft("vm", "--arch", "x86_64_v2", command)
