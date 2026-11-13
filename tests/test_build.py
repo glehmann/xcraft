@@ -984,6 +984,21 @@ def test_build_roots_kept_for_another_release_required_by_its_own(root: Path, mo
     assert _resolved_again(monkeypatch)[0] == cache
 
 
+def test_resolutions_kept_for_the_pins_they_record(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # bc, needed but not locked: locked, then its binary packages pinned, which resolves nothing again
+    _resolved_again(monkeypatch)
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(spec.read_text().replace("%description", "BuildRequires: bc\n%description", 1))
+    assert "bc" in _resolved_again(monkeypatch)[1].buildroots["trivial"]
+    assert "bc" in load_lock(Project.find()).binaries[ARCH]
+
+    def run(*args: object, **kwargs: object) -> resolution.Resolved:
+        raise AssertionError
+
+    monkeypatch.setattr(resolution, "_run", run)
+    _resolved_again(monkeypatch)
+
+
 def test_build_roots_of_the_architectures_resolved_again_together(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # with-deps requires a version of trivial: another release of trivial resolves both architectures again, at once
     spec = root / "base/with-deps/with-deps.spec"

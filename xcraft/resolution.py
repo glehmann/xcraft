@@ -140,6 +140,8 @@ def _run(project: Project, data: dict, *, show: str, rpms: Sequence[Path] = (), 
 
 _resolved: dict[Path, Resolved] = {}
 """The cached resolutions read by this process, by file."""
+_keys: dict[Path, tuple[Project, dict]] = {}
+"""What the cached resolutions read by this process are resolved from, by file, for _rekey()."""
 
 
 def resolutions_read() -> set[Path]:
@@ -163,8 +165,8 @@ def _cache(project: Project, data: dict) -> Path:
     """Return the cache of what resolve.py resolves from `data`, by its key: the script, the repositories, the
     request, with the base image by reference rather than its packages, which _run() reads, the extra upstream
     RPMs, which _run() gives it, like the build keys: by their URLs, and the pinned packages, which another content
-    of the same versions, pinned again by xcraft lock --update, resolves again. The same on all the machines, for
-    the remote storage, see remote_tree().
+    of the same versions, pinned again by xcraft lock --update, resolves again, but which resolve.py does not read,
+    see _rekey(). The same on all the machines, for the remote storage, see remote_tree().
     """
     inputs = [
         _SCRIPT.read_text(),
@@ -219,9 +221,20 @@ def _cached(project: Project, data: dict, *, show: str, quiet: bool = False, key
     found = resolved is None and (cache.exists() or _fetched(project, cache))
     if not found or not _holds(Resolved.model_validate_json(cache.read_text()), data):
         write_atomically(cache, _run(project, data, show=show, quiet=quiet).model_dump_json())  # for the commands too
-    _resolved[cache] = Resolved.model_validate_json(cache.read_text())
+    _resolved[cache], _keys[cache] = Resolved.model_validate_json(cache.read_text()), (project, key or data)
     os.utime(cache)  # used, see xcraft clean --keep-days
     return _resolved[cache]
+
+
+def _rekey(project: Project) -> None:
+    """Keep the resolutions of `project` this process read under their keys with the pins of the lock as it is now,
+    which _record() changed: resolve.py does not read them, so the same inputs resolve to the same, and a new process
+    does not resolve them again.
+    """
+    for cache, (platform, key) in list(_keys.items()):
+        if platform.root == project.root and (new := _cache(platform, key)) != cache and not new.exists():
+            write_atomically(new, cache.read_text())
+            _keys[new] = platform, key
 
 
 def _holding(cache: Path, data: dict) -> bool:
@@ -406,6 +419,7 @@ def _forget(project: Project) -> None:
     rather than from the resolutions of the remote storage, until the end of the command.
     """
     _resolved.clear()
+    _keys.clear()
     _unreachable.add(project.root)
     shutil.rmtree(project.state / "cache/resolved", ignore_errors=True)
     for platform in project.all_platforms():
@@ -559,6 +573,7 @@ def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
         lock.sources = {source: version for source, version in lock.sources.items() if source in used}
 
     _saved(project, record)
+    _rekey(project)
 
 
 def prepare(project: Project, *, roots: bool = True, repin: set[str] | None = None) -> None:
