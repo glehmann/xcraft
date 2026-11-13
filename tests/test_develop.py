@@ -61,6 +61,15 @@ def test_spec_of_a_tree() -> None:
     # in the directory of the builds of the package, for the cache of the compilers
     assert "%setup -q -T -D -n linux-%{usver}\n" in spec_text(SPEC.replace("-p1", "-p1 -n linux-%{usver}"))
     assert "%setup -q -T -D -n src\n" in spec_text(SPEC.replace("%autosetup -p1", "%setup -qn src"))
+    # those of each branch of an %if, with the other archives they unpack, not those of -T, unpacking these only
+    prep = "%if 0%{?commit:1}\n%setup -q -n a -a 1\n%else\n%setup -q -n b -a 1\n%endif\n%setup -q -D -T -n b -a 2"
+    spec = spec_text(SPEC.replace("%autosetup -p1", prep))
+    assert "%setup -q -T -D -n a -a 1\n" in spec
+    assert "%setup -q -T -D -n b -a 1\n" in spec
+    assert "%setup -q -D -T -n b -a 2\n" in spec
+    assert spec.count("python3 /xcraft/develop.py") == 2
+    # the old syntax of %patch too
+    assert "%patch" not in spec_text(SPEC.replace("%autosetup -p1", "%setup -q\n%patch0 -p1"))
     # without %setup: nothing to replace with the tree
     with pytest.raises(DevelopError, match="no %setup nor %autosetup in its %prep"):
         spec_text(SPEC.replace("%autosetup -p1\n", ""))

@@ -35,7 +35,7 @@ ARCHIVE = "xcraft-develop.tar"
 """The main archive of a package developed from a tree, in its SOURCES/: the tree, as git archive makes it."""
 SYNC = "develop.py"
 """The script of BUILDENV synchronizing the directory of the sources with the archive, in %prep."""
-FORMAT = 2
+FORMAT = 3
 """The version of how a tree is staged, in the keys of its builds: changed with it, to build them again."""
 _TREES = TypeAdapter(dict[str, str])
 _SECTION = re.compile(
@@ -140,11 +140,37 @@ def directory_hash(plain: str, developed: Tree | None) -> str:
     return hashlib.sha256(json.dumps([plain, developed.commit, FORMAT, sync]).encode()).hexdigest()
 
 
+def _setup(line: str) -> list[str]:
+    """Return the lines replacing the %setup or %autosetup `line` of a package developed from a tree, unless it does
+    not unpack the main archive, with -T: keeping its directory, synchronized with the archive, see SYNC, and unpacking
+    the other archives it unpacks, with -a and -b.
+    """
+    directory, others, tokens = "%{name}-%{version}", [], line.split()[1:]
+    while tokens:
+        letters = token[1:] if (token := tokens.pop(0)).startswith("-") else ""
+        for i, letter in enumerate(letters):
+            if letter == "T":
+                return []
+            if letter in "abnpS":  # the options with a value, like -n src, -qn src, or -p1
+                value = letters[i + 1 :] or (tokens.pop(0) if tokens else "")
+                if letter == "n":
+                    directory = value
+                elif letter in "ab":
+                    others += [f"-{letter}", value]
+                break
+    return [
+        f"mkdir -p %{{_builddir}}/{directory}",
+        " ".join(["%setup -q -T -D -n", directory, *others]),
+        f"python3 /xcraft/{SYNC} %{{SOURCE0}}",
+    ]
+
+
 def spec_text(text: str) -> str:
     """Return the spec `text` of a package developed from a tree: its main archive the tree's, ARCHIVE, without its
-    patches, and its first %setup or %autosetup of %prep keeping the directory of the sources, synchronized with the
-    archive, see SYNC. The directory is the one of the %setup, of the builds of the package, which compile in it: those
-    of the tree compile in the same, for the cache of the compilers, which tells the directories apart.
+    patches, and the %setup or %autosetup of %prep unpacking it keeping the directory of the sources, synchronized with
+    the archive, see _setup(): all of them, for those of the branches of an %if. The directory is the one of the
+    %setup, of the builds of the package, which compile in it: those of the tree compile in the same, for the cache of
+    the compilers, which tells the directories apart.
     """
     lines, prep, replaced, source = [], False, False, False
     for line in text.splitlines():
@@ -152,18 +178,13 @@ def spec_text(text: str) -> str:
             prep = True
         elif _SECTION.match(line):
             prep = False
-        if re.match(r"Patch\d*\s*:", line, re.IGNORECASE) or (prep and re.match(r"%(auto)?patch\b", line)):
+        if re.match(r"Patch\d*\s*:", line, re.IGNORECASE) or (prep and re.match(r"%(auto)?patch\d*\b", line)):
             continue
         if not source and re.match(r"Source0?\s*:", line, re.IGNORECASE):
             lines.append(f"Source0: {ARCHIVE}")
             source = True
-        elif prep and not replaced and re.match(r"%(auto)?setup\b", line):
-            directory = m[1] if (m := re.search(r"\s-[a-zA-Z]*n\s*(\S+)", line)) else "%{name}-%{version}"
-            lines += [
-                f"mkdir -p %{{_builddir}}/{directory}",
-                f"%setup -q -T -D -n {directory}",
-                f"python3 /xcraft/{SYNC} %{{SOURCE0}}",
-            ]
+        elif prep and re.match(r"%(auto)?setup\b", line) and (setup := _setup(line)):
+            lines += setup
             replaced = True
         else:
             lines.append(line)
