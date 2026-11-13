@@ -21,8 +21,9 @@ writing of the packages; *after* is what xcraft does once rpmbuild is done.
 | openvswitch | 812 | 10 | 541 | 5 | 12 | 213 | 28 | 2 |
 
 xapi and ocaml were compiled without the cache of dune, which an iteration has: with it, a build of xapi compiles in
-4 s, and runs its tests in 2 s. The kernel was not measured: its compiler cache and its build tree do not fit in the
-16 GB of `/tmp` the measurements used.
+4 s, and runs its tests in 2 s. The kernel was not measured there: its compiler cache and its build tree do not fit
+in the 16 GB of `/tmp` the measurements used. It was later, with blktap, built from their trees: see
+[Incremental builds](#incremental-builds-xcraft-develop).
 
 Besides the builds, xcraft resolved the build roots and recorded what rpm generated for the builds before and after
 them, which, for a small package, took several times as long as its build: see below.
@@ -95,7 +96,138 @@ parsing the specs.
 `xcraft boot` and `xcraft iso` also take the ISO CI published, signed with a key of the builds of the storage, rather
 than making one signed with the developer's key, when they are given neither `--key` nor `--unsigned`.
 
+### Incremental builds: `xcraft develop`
+
+Compiling dominates the builds above, even with the compiler cache: 115 s for xen, 136 s for qemu, 541 s for
+openvswitch, while a change of a developer recompiles a few files. `xcraft develop <tree>` builds a package from the git
+tree of its project, as it is, and keeps the directory of its sources from one build to the next, for `make`, or dune,
+to make only what changed, like a build in the tree. The development builds of the checkout only: the builds are not
+reproducible anymore, and the final builds, `publish` and `push` refuse the packages developed from trees. See
+[Builds](builds.md#developing-from-a-projects-tree) for what it does, and [Iterating on a package](iterating.md) for
+how to use it.
+
+**Keeping the directory of the sources.** rpmbuild removes it after a successful build, and xcraft makes a new build
+tree for each build, `.xcraft/build/<pkg>/`. For a package developed from a tree:
+
+- rpmbuild runs with `--noclean`, which skips that removal;
+- xcraft removes and stages the build tree as usual, but keeps its `BUILD/`;
+- the spec's main archive is the tree, `xcraft-develop.tar`, as `git archive` makes it of a commit of its files,
+  untracked ones too, but those git ignores, the same commit for the same files; its patches are dropped, as the tree
+  has them, as commits;
+- its first `%setup` or `%autosetup` of `%prep` becomes `%setup -q -T -D -n <dir>`, which neither unpacks nor removes
+  the directory, then `develop.py` of the build environment synchronizes the directory with the archive: it writes the
+  files whose contents differ, removes those the tree no longer has, and leaves the others as they are, with their
+  times. The rest of `%prep` runs as usual.
+
+**In the directory of the builds of the spec.** The directory is the one of the `%setup` it replaces, with its `-n`,
+like `linux-%{usver}` for the kernel. ccache hashes the working directory of the compilations made with `-g`, which all
+the builds of xcp-ng-dist are: in another directory, the first build of a tree would find nothing in the compiler cache
+of the package. It used `%{name}-%{version}` at first, `kernel-6.12.0` rather than `linux-6.12.0`: the first build of
+the kernel from its tree took 26.5 min, rather than 7.5 min in `linux-6.12.0`, with 10,203 hits and 9 misses.
+
+**Measured** on the kernel, from `kernel/xcpng-6.12.0-206.100.3.1/patched` of xcp-ng/linux, whose files are those of
+the spec's archive and patches, and on blktap, from `dev` of xcp-ng/blktap, ahead of the spec, which needed more
+BuildRequires, glib2, zlib and zstd, and other files installed; all with `--nocheck`, a debug log changed at each
+iteration, in seconds:
+
+| package | first build of the tree | iteration | of which compiling |
+|---|---|---|---|
+| kernel | 452, 1590 when the compiler cache missed | 257 to 276 | 6 |
+| blktap | 45 | 19 | 1.3 |
+
+The first build compiles everything, from the compiler cache, like a build from the spec: an iteration takes about 60 %
+of it for the kernel, 40 % for blktap.
+
+The kernel's iteration, after a change to a module, ixgbe, 257 s, with the build of `uname -v` fixed, see
+[the kernel's vmlinux](#the-kernels-vmlinux-linked-again-at-each-build); a change to xen-blkback, built in vmlinux, took
+272 s without it:
+
+| step | time |
+|---|---|
+| xcraft before the build: `git archive` of the tree, 2.5 s, staging, resolution | 8 |
+| installing the build root | 13 |
+| `%prep`: synchronizing the directory, a 1.6 GB archive | 7.5 |
+| compiling the module, and modpost | 6 |
+| linking vmlinux again, and making bzImage | 31 |
+| the BTF of all the modules, made again against the new vmlinux | 51 |
+| perf | 6 |
+| `%install` | 29 |
+| find-debuginfo, then strip | 21 + 28 |
+| packaging: the binary packages, and the source package, 235 MB of the tree | 52 |
+
+blktap's iteration, 23.5 s before the waiting packages below:
+
+| step | time |
+|---|---|
+| xcraft before the build | 3.8 |
+| starting the container | 0.6 |
+| installing the build root, ~230 packages | 4.2 |
+| `autogen.sh` and `configure`, which `%build` runs at each build | 5.1 |
+| `make`: 2 files compiled | 1.3 |
+| `%install`, debuginfo and packaging | 2 |
+| xcraft after the build, 3.2 s of which resolving again packages waiting for builds of ours | 5.1 |
+
+### Packages waiting for builds of ours
+
+After each build, xcraft resolved again what rpm generated for the packages it could not resolve before, as long as
+those needed packages of ours that were not built yet: 3.2 s of blktap's iteration. It now records, with what the build
+kept, which packages of ours they wait for, and resolves them again only once one of those is built: blktap's
+iteration takes 19 s. See [Build keys](build-keys.md).
+
 ## Not done
+
+### The kernel's vmlinux, linked again at each build
+
+After a change to a module, the kernel's build still links vmlinux again, and makes the BTF of all the modules again
+against it: 82 s of its 257. kbuild makes them again as:
+
+- `include/generated/compile.h` and `utsversion.h` change at each build: the counter of `.version`, the time of the
+  build, as kbuild ignores `SOURCE_DATE_EPOCH`, and the host name, the container's, random. In the spec, before the
+  build, `export KBUILD_BUILD_HOST=xcp-ng KBUILD_BUILD_VERSION=1 KBUILD_BUILD_TIMESTAMP="$(date -u -d
+  @${SOURCE_DATE_EPOCH})"` fixes them, which also makes the final builds closer to
+  [identical rebuilds](identical-rebuilds-design.md): 257 s rather than 276;
+- `certs/x509_certificate_list` is made again at each build, for a reason not found yet, which links vmlinux again
+  anyway.
+
+A change of the kernel's spec, for the kernel team.
+
+### Without debuginfo
+
+find-debuginfo and strip take 49 s of the kernel's iteration, and a few seconds of the others, but the development
+builds are debugged on the test hosts: they keep their debug information. Their packages are already compressed with
+zstd at level 3, see above.
+
+### Caching the build roots
+
+As container images of their packages: installing them takes 4.2 s for blktap, 13 s for the kernel, 5 to 11 s for
+the others. Not worth the images to make, store and remove, for each build root: the build environment images already
+pile up, which `xcraft clean --shared` removes.
+
+### `configure` only when it changed
+
+blktap's `%build` runs `autogen.sh` and `configure` at each build, 5.1 s of its 19, to compile 2 files. Running them
+only when `configure.ac` or a `Makefile.am` changed is up to the spec, or would need a hook of xcraft in `%build`.
+
+### Synchronizing only what git changed
+
+The kernel's tree is archived whole, 2.5 s, then compared whole with the directory of the sources, 7.5 s: 4 % of an
+iteration. Giving `develop.py` the files changed since the commit of the previous build, as `git diff` lists them,
+would save most of it.
+
+### Directories of the sources without their versions
+
+The directory of the sources has the version of the package, and ccache hashes it, see above: the first build after a
+version update finds nothing in the compiler cache. `CCACHE_BASEDIR` alone does not help: it makes the absolute paths
+of the arguments relative, but the working directory stays in the hash with `-g`, unless the compilations are given
+`-fdebug-prefix-map` too, which keeps debugedit from finding the sources of the debug information under the build
+directory.
+
+The specs could unpack into a directory without version instead: `%setup -q -T -c -n src`, then
+`tar --strip-components=1 -xf %{SOURCE0}` and `%autopatch -p1`; `%autosetup -S git` needs its repository made after.
+But the kernel already has `linux-%{usver}`, which stays `linux-6.12.0` across the updates of UEK, and the others with
+large caches, xen, qemu, edk2, openvswitch, grub, change their versions once to three times a year, while their fixes
+come as patches, which keep the directory. Not worth the differences with the specs of XenServer and AlmaLinux to keep
+across their imports, for a cold build per machine and in CI a few times a year.
 
 ### The OCaml dependency generator, with rpm 4.20
 
@@ -128,12 +260,6 @@ to maintain.
 
 ### Other ideas
 
-- **Incremental builds**: rebuilding from the build tree of the previous build, with `rpmbuild --short-circuit`,
-  rather than from scratch. Compiling dominates xen, qemu and openvswitch, even with the compiler cache: 115 s,
-  136 s and 541 s. It is the only idea cutting that, but the builds would not be reproducible anymore, for local
-  iterations only; `xcraft shell` does it by hand.
-- **Caching the build roots**, as container images of their packages: their installation takes 5 to 11 s by build.
-- **Without debuginfo** for the development builds: extracting it takes 4 to 12 s by build, but the packages change.
 - **Parallel builds** of the packages independent of each other, for full rebuilds, or a change of a package many are
   built against, like xen: not for iterating on one package. The builds share the local repository of their
   dependencies, `.xcraft/repo`, which each build would need its own of; the lock of the project is re-entrant in a

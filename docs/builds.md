@@ -212,6 +212,9 @@ The tree is an input of the cache key of the builds of the package, but not of i
 setting of the checkout, in `.xcraft/develop.json`, which every command shows; the final builds, `publish` and `push`
 refuse them.
 
+See [Iterating on a package](iterating.md) for how to use it, and
+[faster development iterations](dev-iteration.md#incremental-builds-xcraft-develop) for its design and measurements.
+
 ## Builds without their tests
 
 `--nocheck`, for `xcraft build`, `repo`, `iso` and `boot`, builds the packages without running the tests of their

@@ -65,6 +65,8 @@ and [DEMO.md](DEMO.md) is a tour of the main features.
 - [How it works](docs/how-it-works.md): the project, its packages, the build environment, the configuration in
   `xcraft.toml`, and the architectures.
 - [Builds](docs/builds.md): the build keys, the build IDs, reusing builds, and the development builds.
+- [Iterating on a package](docs/iterating.md): building and trying changes fast, from the git tree of a
+  project with `xcraft develop`.
 - [Dependencies and the lock](docs/dependencies.md): our packages and the upstream ones, `xcraft.lock`,
   `xcraft.builds`, and upstream updates.
 - [Import and patchsets](docs/import.md): the history of the packages, source RPMs, and patches from git branches.
