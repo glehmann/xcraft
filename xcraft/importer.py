@@ -338,8 +338,10 @@ def import_srpm(
             (dest / f"{f}.deleted-by-XCP-ng.txt").write_text(_DELETED)
         git_dir = git("-C", repo, "rev-parse", "--absolute-git-dir")
         index = {**os.environ, "GIT_INDEX_FILE": str(work / "index")}
+        # all of them, even those ignored by the user's excludes, like *.patch or *.orig
         process.run(
-            ["git", "-C", str(work / "tree"), f"--git-dir={git_dir}", "--work-tree=.", "add", "-A", "."], env=index
+            ["git", "-C", str(work / "tree"), f"--git-dir={git_dir}", "--work-tree=.", "add", "-A", "-f", "."],
+            env=index,
         )
         tree = process.run(["git", "-C", repo, "write-tree"], capture=True, env=index).stdout.strip()
     if tree == git("-C", repo, "rev-parse", f"{parent}^{{tree}}"):

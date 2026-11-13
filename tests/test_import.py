@@ -160,6 +160,9 @@ def test_import_srpm(build_environment: Path, root: Path, upstream: Path, tmp_pa
     assert runner.invoke(app, ["import", "foo", "--url", f"file://{upstream}"]).exit_code == 0
     before = git(root, "rev-parse", "import/foo/XS-9.0")
     srpm = source_rpm(tmp_path, "foo", "3.0")
+    # its files are imported even when git ignores them, like with the user's excludes
+    (root / ".git/info").mkdir(exist_ok=True)
+    (root / ".git/info/exclude").write_text("*.patch\n")
     result = runner.invoke(app, ["import", str(srpm)])
     assert result.exit_code == 0, result.output
     commit = git(root, "rev-parse", "import/foo/XS-9.0")
