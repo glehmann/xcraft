@@ -104,11 +104,15 @@ class Monitor:
 
 
 def running(directory: Path) -> bool:
-    """Return whether QEMU runs in `directory`: its monitor answers, rather than a PID maybe of another process now."""
+    """Return whether QEMU runs in `directory`: its monitor answers, rather than a PID maybe of another process now, or
+    does not answer in time, serving another command, as it serves one at a time.
+    """
     try:
         with Monitor(directory) as monitor:
             monitor.execute("query-status")
-    except (OSError, RuntimeError):
+    except TimeoutError:
+        return True
+    except (OSError, RuntimeError, ValueError):  # ValueError: like the greeting of a QEMU exiting, empty
         return False
     return True
 
