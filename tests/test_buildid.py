@@ -442,11 +442,12 @@ def test_development_builds_without_the_tests_of_the_specs(root: Path) -> None:
     assert "~1.dev" in development.name
     assert (development / "nocheck").exists()
     assert xcraft("build", "with-deps", "--nocheck") == (0, "2 cached\n")
-    # the builds with the tests make it again, which fails
+    # the builds with the tests make it again, which fails, keeping it for those without
+    assert xcraft("build", "with-deps", "-n")[1].startswith("build    with-deps")
     code, output = xcraft("build", "with-deps")
     assert code == 1
     assert "✗ with-deps" in output, output
-    assert not list(root.glob(f".xcraft/cache/builds/*/{ARCH}/*/*/nocheck"))
+    assert xcraft("build", "with-deps", "--nocheck") == (0, "2 cached\n")
     code, output = xcraft("build", "--nocheck", "--final")
     assert code == 2
     assert "--final and --nocheck cannot be used together" in " ".join(output.replace("│", "").split())

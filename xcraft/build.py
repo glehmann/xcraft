@@ -169,10 +169,16 @@ def _stored_build(project: Project, name: str, key: str) -> bool:
 
 
 def _split_plan(
-    project: Project, plan: list[str], keys: dict[str, str], *, fetch: Fetch
+    project: Project, plan: list[str], keys: dict[str, str], nocheck: set[str], *, fetch: Fetch
 ) -> tuple[list[str], set[str], set[str]]:
-    """Return the packages of `plan` to build, those only in the remote storage, and those of them to fetch."""
-    to_build = [name for name in plan if not cached_build(project, name, keys[name]).exists()]
+    """Return the packages of `plan` to build, those only in the remote storage, and those of them to fetch: those
+    cached without the tests of their specs are built again, but those of `nocheck`.
+    """
+    to_build = [
+        n
+        for n in plan
+        if not cached_build(project, n, keys[n]).exists() or (n not in nocheck and untested(project, n, keys[n]))
+    ]
     stored = set()
     if fetch != "none" and project.config.remote:
         try:
@@ -184,11 +190,11 @@ def _split_plan(
     return to_build, stored, stored if fetch == "all" else stored & needed
 
 
-def _show_plan(project: Project, plan: list[str], keys: dict[str, str], *, fetch: Fetch) -> None:
+def _show_plan(project: Project, plan: list[str], keys: dict[str, str], nocheck: set[str], *, fetch: Fetch) -> None:
     """Show what is to build or fetch in `plan`, and how long it took last time, with how many are cached, or only
-    in the remote storage.
+    in the remote storage, see _split_plan().
     """
-    to_build, stored, fetched = _split_plan(project, plan, keys, fetch=fetch)
+    to_build, stored, fetched = _split_plan(project, plan, keys, nocheck, fetch=fetch)
     for name in plan:
         if name in to_build:
             console.print(f"[bold]build[/]    {name}{_estimate(project, name)}")
@@ -405,12 +411,7 @@ class _Run:
             error = BuildError(f"{', '.join(edited)} changed since the builds started: build again")
             _show_failure(project, name, error, verbose=self.verbose)
             return Result(name, "failed")
-        build = cached_build(project, name, self.keys[name])
-        if build.exists():
-            if self._cached(name):
-                return Result(name, "cached")  # nothing to show: only the counts
-            shutil.rmtree(build)  # made again, with the tests of its spec
-        return None
+        return Result(name, "cached") if self._cached(name) else None  # nothing to show: only the counts
 
     def _to_build(self, name: str) -> bool:
         """Return whether `name` is to build, as known now: not cached, nor known in the remote storage."""
@@ -590,6 +591,8 @@ class _Run:
         if self._nocheck(name):
             (new / NOCHECK).touch()
         shutil.copy2(project.log(name), new / "build.log")
+        if (build_dir / NOCHECK).exists() and not (new / NOCHECK).exists():
+            shutil.rmtree(build_dir)  # replaced by the build with the tests of its spec
         if build_dir.exists():  # an earlier build of the same inputs
             shutil.rmtree(new)
         else:
@@ -657,7 +660,7 @@ def build(
         keys, hashes, autorev = _record_cached(project, dev)
         plan = build_order(project.deps, targets, with_deps=with_deps)
         if dry_run:
-            _show_plan(project, plan, keys, fetch=fetch)
+            _show_plan(project, plan, keys, set(autorev) if nocheck else set(), fetch=fetch)
             return [], keys, autorev
         _queue_file(project).parent.mkdir(parents=True, exist_ok=True)
         run = _Run(
