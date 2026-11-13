@@ -74,8 +74,7 @@ def file_name(name: str, pin: Pin) -> str:
 @functools.cache
 def _volume(name: str) -> Path:
     """Return the directory of the podman volume `name`, made if needed, once by process."""
-    if process.run(["podman", "volume", "exists", name], check=False).returncode:
-        process.run(["podman", "volume", "create", name], capture=True)
+    process.run(["podman", "volume", "create", "--ignore", name], capture=True)  # or made by another command
     inspect = ["podman", "volume", "inspect", "--format", "{{.Mountpoint}}", name]
     return Path(process.run(inspect, capture=True).stdout.strip())
 

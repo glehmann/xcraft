@@ -227,8 +227,7 @@ def _podman_build(
         build_args = [arg for name, value in args.items() for arg in ("--build-arg", f"{name}={value}")]
         # the metadata of the dnf cache, which the containers solved, slow to solve again under emulation, in an
         # overlay, in which the build changes nothing
-        if process.run(["podman", "volume", "exists", volume := _dnf_cache(project)], check=False).returncode:
-            process.run(["podman", "volume", "create", volume], capture=True)
+        process.run(["podman", "volume", "create", "--ignore", volume := _dnf_cache(project)], capture=True)
         inspect = ["podman", "volume", "inspect", "--format", "{{.Mountpoint}}", volume]
         cache = process.run(inspect, capture=True).stdout.strip()
         cmd = ["podman", "build", "--platform", project.platform, "--security-opt", "label=disable"]
