@@ -1951,7 +1951,7 @@ def test_publish_of_a_pull_request(
 def test_upstream_packages_signed_again_in_final_mode(root: Path, tmp_path: Path) -> None:
     stage = f"signed-{secrets.token_hex(4)}"
     # an upstream package for the hosts, and an extra one, unsigned
-    extra = TOYS / "x86_64/toyarch-new-2-1.x86_64.rpm"  # of x86_64 only, copied as it is on every architecture
+    extra = TOYS / ARCH / f"toyarch-1-1.{os.uname().machine}.rpm"  # installable on the platform
     (root / "xcraft.toml").write_text(
         f'{REMOTE}extra = ["bc"]\n'
         f'[extra_upstream.toyarch-new]\nurl = "{extra.as_uri()}"\nsha256 = "{sha256_of(extra)}"\n'
@@ -1965,7 +1965,7 @@ def test_upstream_packages_signed_again_in_final_mode(root: Path, tmp_path: Path
     latest = f"repos/9.0/{stage}/latest"
     binaries = [f for f in remote.read_manifest(storage, latest, trusted=signer) if f.startswith(f"base/{ARCH}/")]
     upstream = [f for f in binaries if f.endswith(".rpm") and not Path(f).name.startswith(("trivial-", "with-deps-"))]
-    assert f"base/{ARCH}/toyarch-new-2-1.x86_64.rpm" in upstream
+    assert f"base/{ARCH}/{extra.name}" in upstream
     for f in upstream:
         assert remote.download(storage, f"{latest}/{f}", tmp_path / f)
     check_signatures(Project.find(), tmp_path, upstream, what="upstream", public_key=signer.public_key())
