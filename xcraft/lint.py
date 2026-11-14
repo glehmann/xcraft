@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 import shlex
 import shutil
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rich.text import Text
@@ -23,8 +24,6 @@ from xcraft.packages import is_debug
 from xcraft.specs import main_spec
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from rich.console import Console
 
     from xcraft.project import Project
@@ -32,8 +31,8 @@ if TYPE_CHECKING:
 LINT_DIR = "lint"
 """The directory of the configuration of rpmlint, in the project."""
 
-_FINDING = re.compile(r"\S+: ([EW]): ")
-"""A line of what rpmlint found: an error or a warning, after the package, or the spec and its line."""
+_FINDING = re.compile(r"([^\s:]+)((?::\d+)?: ([EW]): .*)")
+"""A line of what rpmlint found: an error or a warning, after the package, or the name of the spec and its line."""
 
 
 def spec(project: Project, name: str) -> Path:
@@ -67,6 +66,11 @@ _MARK = "@@xcraft-lint "
 """The line of the script before the output of rpmlint for a package, with its name."""
 
 
+def _shown(path: Path) -> str:
+    """Return how to show `path`, to open it from the terminal: relative to the current directory when in it."""
+    return str(path.relative_to(Path.cwd()) if path.is_relative_to(Path.cwd()) else path)
+
+
 def findings(project: Project, files: dict[str, list[Path]], *, show: str) -> dict[str, bool]:
     """Return whether rpmlint finds errors in the `files` of each package, its spec, or its binary packages, or fails
     to run, by package, showing `show` with the package linted while it runs, and the errors in red and the warnings
@@ -76,6 +80,7 @@ def findings(project: Project, files: dict[str, list[Path]], *, show: str) -> di
     image = side_image(native, "lint")
     config = project.root / LINT_DIR / "rpmlint.toml"
     mounts = {d: f"/in/{i}" for i, d in enumerate(sorted({f.parent for paths in files.values() for f in paths}))}
+    specs = {f.name: _shown(f) for paths in files.values() for f in paths if f.suffix == ".spec"}
     with project.tmp_dir("lint") as work, activity(show) as progress:
         # one directory, as rpmlint takes one -c: its files load in no given order, hence xcraft's ReleaseExtension only
         (work / "config").mkdir()
@@ -95,8 +100,9 @@ def findings(project: Project, files: dict[str, list[Path]], *, show: str) -> di
         def on_line(line: str) -> None:
             if line.startswith(_MARK):
                 progress(line.removeprefix(_MARK))
-            elif match := _FINDING.match(line):
-                _out().print(Text(line.rstrip("\n"), style={"E": "red", "W": "yellow"}[match[1]]))
+            elif match := _FINDING.match(line.rstrip("\n")):
+                found = f"{specs.get(match[1], match[1])}{match[2]}"
+                _out().print(Text(found, style={"E": "red", "W": "yellow"}[match[3]]), soft_wrap=True)
 
         container.run(
             native,
