@@ -307,8 +307,8 @@ class _Run:
     """The packages built so far, for their step numbers."""
     steps: int = field(default=0, init=False)
     """The packages of the plan to build, as known so far, for their step numbers, see _to_build()."""
-    linted: dict[str, lint.Findings] = field(default_factory=dict, init=False)
-    """What rpmlint found in the specs of the packages to build, see _lint_specs()."""
+    linted: dict[str, bool] = field(default_factory=dict, init=False)
+    """Whether rpmlint found errors in the specs of the packages to build, see _lint_specs()."""
 
     def build(self, plan: list[str]) -> list[Result]:
         """Build the packages of `plan`, in order, and return how it went, see xcraft.build.build()."""
@@ -359,16 +359,14 @@ class _Run:
         """
         project = self.project
         if names := [n for n in names if n not in self.linted and not project.packages[n].error]:
-            found = lint.findings(project, {n: [lint.spec(project, n)] for n in names}, show="linting the specs")
-            lint.show_findings(found)
-            self.linted |= found
+            self.linted |= lint.findings(project, {n: [lint.spec(project, n)] for n in names}, show="linting the specs")
 
     def _lint_failed(self, name: str) -> Result | None:
         """Return the result of `name` when rpmlint found errors in its spec, failed for a final build: a development
         build only shows them.
         """
         self._lint_specs([name])
-        if name in self.autorev or not (found := self.linted.get(name)) or not found.failed:
+        if name in self.autorev or not self.linted.get(name):
             return None
         _show_failure(self.project, name, BuildError("rpmlint found errors in its spec"), verbose=self.verbose)
         return Result(name, "failed")
@@ -380,9 +378,8 @@ class _Run:
         if name in self.autorev and not self.lint_dev:
             return
         files = {name: lint.binaries(tree / "RPMS")}
-        found = lint.findings(self.project, files, show=f"linting the packages of {name}")
-        lint.show_findings(found)
-        if name not in self.autorev and found[name].failed:
+        failed = lint.findings(self.project, files, show=f"linting the packages of {name}")[name]
+        if name not in self.autorev and failed:
             msg = "rpmlint found errors in its packages"
             raise BuildError(msg)
 

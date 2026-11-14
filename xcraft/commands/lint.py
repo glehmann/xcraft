@@ -31,9 +31,7 @@ def _lint_spec(spec: Path, arch: str | None) -> None:
     if not (names := [n for n, d in project.package_dirs.items() if d.resolve() == spec.resolve().parent]):
         msg = f"{spec} is not in the directory of a package"
         raise typer.BadParameter(msg)
-    found = linter.findings(project, {names[0]: [spec.resolve()]}, show="linting")
-    linter.show_findings(found)
-    if found[names[0]].failed:
+    if linter.findings(project, {names[0]: [spec.resolve()]}, show=f"linting {spec.name}")[names[0]]:
         raise typer.Exit(1)
 
 
@@ -70,10 +68,9 @@ def lint(
         if not build.exists():
             unbuilt.append(name)
     found = linter.findings(project, files, show="linting")
-    linter.show_findings(found)
     if unbuilt:
         console.print(f"[dim]not built, only their specs linted: {', '.join(unbuilt)}[/]")
-    if failed := [n for n, f in found.items() if f.failed]:
+    if failed := [n for n, failed in found.items() if failed]:
         console.print(f"[bold red]✗[/] errors in {', '.join(failed)}")
         raise typer.Exit(1)
     console.print(f"[bold green]✓[/] {len(found)} packages linted, without errors")
