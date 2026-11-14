@@ -78,6 +78,26 @@ def pytest_sessionstart(session: pytest.Session) -> None:
         process.run(["podman", "volume", "rm", "--force", *ended], check=False, capture=True)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def stop_gpg_agents(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Stop at the end the gpg agents of the keyrings of the tests, in the temporary directory of the session, which gpg
+    starts and leaves running.
+    """
+    yield
+    if not shutil.which("gpgconf"):
+        return
+    base = tmp_path_factory.getbasetemp()
+    for cmdline in Path("/proc").glob("[0-9]*/cmdline"):
+        try:
+            args = cmdline.read_bytes().decode(errors="replace").split("\0")
+        except OSError:  # ended
+            continue
+        if Path(args[0]).name == "gpg-agent" and "--homedir" in args[:-1]:
+            home = args[args.index("--homedir") + 1]
+            if Path(home).is_relative_to(base):
+                process.run(["gpgconf", "--homedir", home, "--kill", "gpg-agent"], check=False, capture=True)
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Mark the tests in the build environment as needing podman, and skip those needing it without it, or all of them
     on an architecture the test project does not build for; keep those of the shard $XCRAFT_TEST_SHARD only, like 1/2
