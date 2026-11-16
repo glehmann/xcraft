@@ -10,7 +10,7 @@ from rpm_version import evr_compare  # ty: ignore[unresolved-import]  # pyright:
 
 from xcraft import process
 from xcraft.commands import Packages, prepared_project
-from xcraft.display import activity, console, download_progress
+from xcraft.display import activity, console, download_progress, hint
 from xcraft.process import git
 from xcraft.project import write_atomically
 from xcraft.release import add_changelog_entry, bump_release, reset_release, set_version
@@ -162,4 +162,4 @@ def bump(
         for package in names:
             console.print(f"[bold]{package}[/]: {_evr(before[package])} -> {_evr(after[package])}")
     if version:
-        console.print(f"once built, share the new archives with: xcraft push sources {' '.join(names)}")
+        hint("once built, share the new archives with ", f"xcraft push sources {' '.join(names)}")

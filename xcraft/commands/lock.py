@@ -10,7 +10,7 @@ from xcraft import resolution
 from xcraft.build import update_build_ids
 from xcraft.builds import builds_path, load_builds
 from xcraft.commands import complete_upstream
-from xcraft.display import console
+from xcraft.display import console, hint
 from xcraft.lock import load_lock, lock_path, save_lock
 from xcraft.project import Project
 from xcraft.resolution import latest_versions, upstream_sources
@@ -29,11 +29,13 @@ def _update(project: Project, packages: list[str], *, write: bool) -> int:
     for source, version in changed.items():
         console.print(f"[bold]{source}[/] {current.sources[source]} -> {version}")
     if not write:
-        # not what other contents of the same versions the repositories may have, which only --update pins
-        up_to_date = (
-            "versions up to date, not looking for other contents of the same versions: xcraft lock --update does"
-        )
-        console.print(f"{len(changed)} to update: xcraft lock --update updates them" if changed else up_to_date)
+        if changed:
+            console.print(f"{len(changed)} to update")
+            hint("", "xcraft lock --update", " updates them")
+        else:
+            # not what other contents of the same versions the repositories may have, which only --update pins
+            console.print("versions up to date, not looking for other contents of the same versions")
+            hint("", "xcraft lock --update", " looks for them too")
         return len(changed)
     current = load_lock(project)  # which may have locked new ones
     current.sources |= changed

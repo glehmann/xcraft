@@ -29,6 +29,8 @@ if TYPE_CHECKING:
 
 COMMAND = "cyan"
 """The style of the xcraft commands in the output, which the messages tell to run, see known_commands()."""
+HINT = "bold green"
+"""The style of the prefix of the hints, see hint()."""
 
 
 class _Commands(Highlighter):
@@ -48,6 +50,13 @@ def known_commands(names: Iterable[str]) -> None:
     """Highlight the xcraft commands in the output, those of the subcommands `names`, with their options."""
     alternatives = "|".join(re.escape(n) for n in sorted(set(names), key=len, reverse=True))
     _commands.pattern = re.compile(rf"\bxcraft(?: (?:{alternatives}|--?[a-z][\w-]*)\b)+")
+
+
+def hint(before: str, command: str, after: str = "") -> None:
+    """Print a hint of a command to run next, `command`, whole in the style of the commands, with its arguments,
+    between `before` and `after`.
+    """
+    console.print(Text.assemble(("hint: ", HINT), before, (command, COMMAND), after))
 
 
 # no wrapping, for logs and pipes; the progress and the pager on a terminal only, even when FORCE_COLOR makes the

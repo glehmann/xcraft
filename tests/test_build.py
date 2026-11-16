@@ -157,7 +157,10 @@ def test_spec_changed_before_its_build_is_not_cached(root: Path, monkeypatch: py
 
 HOST_ENTRIES = "" if ARCH == "x86_64_v2" else f"{ARCH}."
 """The prefix of the entries of the lock the builds on the host record, not shared but on the first architecture."""
-UP_TO_DATE = "versions up to date, not looking for other contents of the same versions: xcraft lock --update does"
+UP_TO_DATE = (
+    "versions up to date, not looking for other contents of the same versions\n"
+    "hint: xcraft lock --update looks for them too"
+)
 
 
 def write_spec(root: Path, name: str, requires: str = "", files: str = "/usr/share/doc/%{name}") -> None:
@@ -543,7 +546,7 @@ def test_lock_versions_of_all_the_architectures(root: Path) -> None:
     assert xcraft("lock", "--outdated", "toyarch") == (0, f"{UP_TO_DATE}\n")
     # by binary name, of the locked versions only
     assert xcraft("lock", "--outdated", "toyarch-new")[1].endswith("not locked: toyarch-new")
-    expected = "toyrun 1-1 -> 2-1\n1 to update: xcraft lock --update updates them\n"
+    expected = "toyrun 1-1 -> 2-1\n1 to update\nhint: xcraft lock --update updates them\n"
     assert xcraft("lock", "--outdated", "toyarch", "toyrun") == (1, expected)
     assert load_lock(Project.find()).sources["toyrun"] == "1-1"
     assert xcraft("lock", "--update", "toyarch", "toyrun") == (0, "toyrun 1-1 -> 2-1\n1 updated\n")
@@ -1146,7 +1149,7 @@ def test_lock_update_changing_implicit_deps(root: Path) -> None:
     assert load_builds(Project.find()).requires.of(ARCH)["trivial"] == ["toyrun"]
     assert xcraft("lock", "--outdated", "toyrun") == (
         1,
-        "toyrun 1-1 -> 2-1\n1 to update: xcraft lock --update updates them\n",
+        "toyrun 1-1 -> 2-1\n1 to update\nhint: xcraft lock --update updates them\n",
     )
     # through trivial, with-deps was built against toyrun: its key changes
     assert xcraft("lock", "--update", "toyrun") == (0, "toyrun 1-1 -> 2-1\nbuild IDs: with-deps 1\n1 updated\n")

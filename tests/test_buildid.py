@@ -509,7 +509,7 @@ def test_development_builds(root: Path, monkeypatch: pytest.MonkeyPatch) -> None
     edit(root, "changed once more", name="with-deps")
     code, output = xcraft("build")
     assert code == 0, output
-    assert "development builds: xcraft repo with-deps makes a repository of them, for the hosts" in output
+    assert "hint: xcraft repo with-deps makes a repository of these development builds, for the hosts" in output
     assert ".rpm" not in output
     edit(root, "changed for the last time", name="with-deps")
     code, output = xcraft("build", "--verbose")

@@ -10,7 +10,7 @@ import typer
 from xcraft import build as builder
 from xcraft.cache import cached_build
 from xcraft.commands import Arch, Dev, Final, Key, NoCheck, Packages, dev_ident, prepared_project, sign_builds
-from xcraft.display import console
+from xcraft.display import console, hint
 from xcraft.graph import dependents
 
 
@@ -103,9 +103,7 @@ def build(
             for name in dev_built:
                 for rpm in sorted((cached_build(project, name, keys[name]) / "RPMS").rglob("*.rpm")):
                     console.print(str(rpm), markup=False)
-        console.print(
-            f"development builds: xcraft repo {' '.join(dev_built)} makes a repository of them, for the hosts"
-        )
+        hint("", f"xcraft repo {' '.join(dev_built)}", " makes a repository of these development builds, for the hosts")
     counts = Counter(r.status for r in results)
     statuses = ("built", "fetched", "cached", "stored", "failed", "skipped")
     console.print(", ".join(f"{counts[status]} {status}" for status in statuses if counts[status]))
