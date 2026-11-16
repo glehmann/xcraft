@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -748,7 +749,7 @@ def test_dune_cache(root: Path) -> None:
     assert not (caches / "trivial").exists()
 
 
-def test_recorded_once_what_they_require_is_built(root: Path) -> None:
+def test_recorded_once_what_they_require_is_built(root: Path, caplog: pytest.LogCaptureFixture) -> None:
     # trivial requires what xtool, of ours, provides: recorded once xtool is built, without the problem of dnf
     (root / "base/xtool").mkdir()
     (root / "base/xtool/xtool.spec").write_text(
@@ -764,28 +765,32 @@ def test_recorded_once_what_they_require_is_built(root: Path) -> None:
     )
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace("BuildArch: noarch", "BuildArch: noarch\nRequires: xtool-core"))
-    code, output = xcraft("build", "trivial", "other")
+    with caplog.at_level(logging.DEBUG, logger="xcraft"):
+        code, output = xcraft("build", "trivial", "other")
     assert code == 0, output
-    assert (
-        "warning: the dependencies rpm generated for trivial are recorded once xtool, which it needs, is built"
-        in output
-    )
+    # only in the debug log: recorded once xtool is built, by whatever builds it, with nothing to do
+    assert "the dependencies rpm generated for trivial are recorded once xtool, which it needs, is built" in caplog.text
+    assert "recorded once" not in output
     assert "cannot record" not in output
     # not resolved again by the new builds of other packages, while xtool has no build
     (recorded,) = (root / ".xcraft/cache/builds").glob("*/*/trivial/*/rpm-deps.json")
     resolved = recorded.stat().st_mtime_ns
     other.write_text(f"# changed\n{other.read_text()}")
-    code, output = xcraft("build", "other")
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger="xcraft"):
+        code, output = xcraft("build", "other")
     assert code == 0, output
-    assert "recorded once xtool" in output
+    assert "recorded once xtool" in caplog.text
     assert recorded.stat().st_mtime_ns == resolved
-    code, output = xcraft("build", "trivial", "xtool")
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger="xcraft"):
+        code, output = xcraft("build", "trivial", "xtool")
     assert code == 0, output
-    assert "recorded once" not in output
+    assert "recorded once" not in caplog.text
     assert load_builds(Project.find()).requires.of(ARCH).get("trivial") is None  # what it requires, declared
 
 
-def test_recorded_as_soon_as_resolved(root: Path) -> None:
+def test_recorded_as_soon_as_resolved(root: Path, caplog: pytest.LogCaptureFixture) -> None:
     # trivial, whose script requires tcl, recorded at once, and trivial-extra, which requires what xtool, of ours,
     # provides, once xtool is built: the builds against trivial get tcl before
     (root / "base/xtool").mkdir()
@@ -805,17 +810,20 @@ def test_recorded_as_soon_as_resolved(root: Path) -> None:
                  "%package extra\nSummary: Extra\nRequires: xtool-core\n%description extra\nExtra.\n"
                  "%files extra\n/usr/share/%{name}/extra\n\n%files\n/usr/share/%{name}/hello.tcl")
     )  # fmt: skip
-    code, output = xcraft("build", "trivial")
+    with caplog.at_level(logging.DEBUG, logger="xcraft"):
+        code, output = xcraft("build", "trivial")
     assert code == 0, output
     assert (
-        "warning: the dependencies rpm generated for trivial-extra are recorded once xtool, which it needs, is built"
-        in output
+        "the dependencies rpm generated for trivial-extra are recorded once xtool, which it needs, is built"
+        in caplog.text
     )
     assert load_builds(Project.find()).requires.of(ARCH) == {"trivial": ["tcl"]}
     assert "tcl" in resolution.resolve(Project.find()).buildroots["with-deps"]
-    code, output = xcraft("build", "trivial", "xtool", "with-deps")
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger="xcraft"):
+        code, output = xcraft("build", "trivial", "xtool", "with-deps")
     assert code == 0, output
-    assert "recorded once" not in output
+    assert "recorded once" not in caplog.text
     assert load_builds(Project.find()).requires.of(ARCH) == {"trivial": ["tcl"]}
 
 

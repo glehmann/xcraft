@@ -19,6 +19,7 @@ from xcraft.display import changes, console
 from xcraft.graph import reachable
 from xcraft.lock import Locked, load_lock
 from xcraft.packages import is_debug
+from xcraft.process import log
 from xcraft.project import write_atomically
 from xcraft.resolution import Resolved, resolve_rpm_deps, rpm_deps_context
 
@@ -250,14 +251,18 @@ def _waits(recorded: dict, supplied: dict[str, str]) -> bool:
     return len(waiting) == len(recorded["unresolved"]) and not {p for ps in waiting.values() for p in ps} & {*supplied}
 
 
-def _show_waiting(records: list[dict]) -> None:
-    """Show the binary packages of `records` waiting for builds of ours, with those they wait for."""
+def _log_waiting(records: list[dict]) -> None:
+    """Log the binary packages of `records` waiting for builds of ours, with those they wait for: not shown, as they
+    are recorded once those are built, by whatever builds them, with nothing to do.
+    """
     if pending := {binary: waited for recorded in records for binary, waited in recorded.get("waiting", {}).items()}:
         waiting, waited = sorted(pending), sorted({p for ps in pending.values() for p in ps})
-        console.print(
-            f"[yellow]warning[/]: the dependencies rpm generated for {_enumerate(waiting)} are recorded once"
-            f" {_enumerate(waited)}, which {'it needs' if len(waiting) == 1 else 'they need'},"
-            f" {'is' if len(waited) == 1 else 'are'} built"
+        log.debug(
+            "the dependencies rpm generated for %s are recorded once %s, which %s, %s built",
+            _enumerate(waiting),
+            _enumerate(waited),
+            "it needs" if len(waiting) == 1 else "they need",
+            "is" if len(waited) == 1 else "are",
         )
 
 
@@ -298,7 +303,7 @@ def record_rpm_deps(
     }:
         _record_new_rpm_deps(project, new, supplied, context, quiet=quiet)
     if not quiet:
-        _show_waiting([kept for build in builds.values() if (kept := found(build))])
+        _log_waiting([kept for build in builds.values() if (kept := found(build))])
     # what dry runs do too, without the lock of the project otherwise
     with project.lock():
         lock = load_builds(project)
