@@ -21,14 +21,13 @@ import math
 import os
 import shutil
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from xcraft import process
 from xcraft.display import activity
 from xcraft.lock import cached_lock
-from xcraft.process import log
+from xcraft.process import log, thread_pool
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
@@ -115,7 +114,7 @@ def _from_copies(project: Project, pinned: dict[str, Pin], directory: Path) -> b
                 return True
 
             missing = [(n, p) for n, p in pinned.items() if not (store / p.sha256 / file_name(n, p)).exists()]
-            with activity(f"getting the pinned packages of {project.arch}"), ThreadPoolExecutor(remote.MANY) as pool:
+            with activity(f"getting the pinned packages of {project.arch}"), thread_pool(remote.MANY) as pool:
                 if not all(pool.map(fetch, missing)):
                     continue
         except (remote.RemoteError, upstream_copy.UpstreamError, OSError) as e:

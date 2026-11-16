@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import logging
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -171,9 +172,28 @@ def _names(typer_app: typer.Typer) -> Iterator[str]:
 known_commands(_names(app))
 
 
+_interrupted: list[int] = []
+"""The signal interrupting the command, if any: typer turns Ctrl-C into an exit, like the other ones."""
+
+
+def _interrupt(signum: int, _frame: object) -> None:
+    _interrupted.append(signum)
+    raise KeyboardInterrupt
+
+
+def _exit_interrupted() -> None:
+    """Exit at once, without waiting for the threads still downloading or uploading, see process.thread_pool()."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(130)
+
+
 def main() -> None:
-    """Run the command line, showing errors without a stack trace unless --trace is given."""
+    """Run the command line, showing errors without a stack trace unless --trace is given, and exiting at once on
+    Ctrl-C.
+    """
     socket.setdefaulttimeout(60)  # the downloads, from servers not answering anymore: boto3 has its own
+    signal.signal(signal.SIGINT, _interrupt)
     args = sys.argv[1:]
     end = args.index("--") if "--" in args else len(args)
     if "--debug" in args[:end]:
@@ -182,7 +202,11 @@ def main() -> None:
     try:
         app(args=[arg for arg in args[:end] if arg != "--debug"] + args[end:])
     except KeyboardInterrupt:
-        sys.exit(130)
+        _exit_interrupted()
+    except SystemExit:
+        if _interrupted:
+            _exit_interrupted()
+        raise
     except Exception as exc:
         if "--trace" in sys.argv:
             raise

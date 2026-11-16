@@ -11,7 +11,6 @@ import json
 import os
 import shutil
 import time
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
@@ -52,6 +51,7 @@ from xcraft.graph import build_order, reachable
 from xcraft.localrepo import REPO_FILE, LocalRepo, repo_id
 from xcraft.lock import lock_path
 from xcraft.packages import is_debug
+from xcraft.process import thread_pool
 from xcraft.rpmbuild import image_replacements, prepare_tree, remove_tree, run_build
 from xcraft.signing import KEY_FILE, run_signer
 
@@ -249,7 +249,7 @@ def _stored(project: Project, names: list[str], keys: dict[str, str]) -> dict[st
     concurrently: nothing when it cannot be asked, as each one is asked again then.
     """
     try:
-        with ThreadPoolExecutor(16) as pool:
+        with thread_pool(16) as pool:
             found = pool.map(lambda name: _stored_build(project, name, keys[name]), names)
             return {f"{name}/{keys[name]}": stored for name, stored in zip(names, found, strict=True)}
     except remote.RemoteError:

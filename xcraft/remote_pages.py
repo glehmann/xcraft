@@ -6,13 +6,12 @@ from __future__ import annotations
 
 import datetime as dt
 import math
-from concurrent.futures import ThreadPoolExecutor
 from html import escape
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 from xcraft import remote
-from xcraft.process import log
+from xcraft.process import log, thread_pool
 from xcraft.remote import CCACHE, INDEX, KEYS, REQUESTS, Entry
 
 if TYPE_CHECKING:
@@ -183,6 +182,6 @@ def update_pages(project: Project, storage: Remote, prefixes: list[str]) -> int:
                 Metadata={"size": str(size), **({"newest": newest.isoformat()} if newest else {})},
             )
 
-        with ThreadPoolExecutor(REQUESTS) as pool:
+        with thread_pool(REQUESTS) as pool:
             list(pool.map(write, pages))
     return len(pages)

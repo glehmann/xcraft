@@ -12,7 +12,6 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -27,6 +26,7 @@ from xcraft.container import BUILDENV, buildenv_hash, run_natively
 from xcraft.display import activity, console
 from xcraft.localrepo import extra_rpms, fresh_dir
 from xcraft.lock import load_lock, lock_path
+from xcraft.process import thread_pool
 from xcraft.signing import KEY_FILE, Signer, check_signatures, dev_signer, signer_key_file
 from xcraft.sources import sha256_of
 
@@ -128,7 +128,7 @@ def _download(
                         on_line(f)
                         return
 
-            with contextlib.suppress(remote.RemoteError), ThreadPoolExecutor(remote.REQUESTS) as pool:
+            with contextlib.suppress(remote.RemoteError), thread_pool(remote.REQUESTS) as pool:
                 list(pool.map(fetch, missing))
         if left := sorted({nevra for f, nevra in missing.items() if not (work / f).exists()}):
             options = [*(["--source"] if source else []), *(["--setopt=strict=0"] if available else [])]
@@ -444,7 +444,7 @@ class _Assembler:
             if (storage := self.storage) and (signer := self.signer) and signing:  # their manifests, checked once
                 trusted = trusted_key(project, signer)
                 trees = [build_path(project, n, k, signer.key) for n, k in keys.items()]
-                with ThreadPoolExecutor(remote.REQUESTS) as pool:
+                with thread_pool(remote.REQUESTS) as pool:
                     list(pool.map(lambda tree: remote.read_manifest(storage, tree, trusted=trusted), trees))
             for name in sorted(keys):
                 on_line(name)
@@ -625,7 +625,7 @@ def _fetch_metadata(work: Path, repo: str, fetch: Callable[[str], bool]) -> bool
     if not fetch(repomd := f"{repo}/repodata/repomd.xml"):
         return False
     hrefs = repodata.files((work / repomd).read_bytes()).values()
-    with ThreadPoolExecutor(remote.REQUESTS) as pool:
+    with thread_pool(remote.REQUESTS) as pool:
         return all(pool.map(fetch, [f"{repo}/{href}" for href in hrefs]))
 
 
@@ -763,5 +763,5 @@ def materialize(storage: Remote, dest: Path, files: dict[str, Stored], repo: str
     def fetch(f: str) -> None:
         _put(storage, wanted[f].path, dest / f, wanted[f].digest)
 
-    with activity(f"downloading the packages of {repo}", log=True), ThreadPoolExecutor(remote.REQUESTS) as pool:
+    with activity(f"downloading the packages of {repo}", log=True), thread_pool(remote.REQUESTS) as pool:
         list(pool.map(fetch, wanted))

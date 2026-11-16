@@ -10,7 +10,6 @@ downloads, have it as a repository, see container.run_natively(); xcraft publish
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 from xml.etree import ElementTree as ET
 
@@ -18,6 +17,7 @@ from xcraft import container, localrepo, pinned, remote, remote_pages, repodata,
 from xcraft.container import ContainerError
 from xcraft.display import activity
 from xcraft.lock import load_lock
+from xcraft.process import thread_pool
 from xcraft.project import INTERNAL
 from xcraft.sources import sha256_of
 
@@ -86,7 +86,7 @@ def read(
         if not signing.signed_by(signer.public_key(), signer.key, repomd, signature):
             msg = f"{prefix}/repodata/repomd.xml is not signed by {signer.key}"
             raise UpstreamError(msg)
-    with ThreadPoolExecutor(remote.REQUESTS) as pool:
+    with thread_pool(remote.REQUESTS) as pool:
         if not all(pool.map(lambda href: remote.download(storage, f"{prefix}/{href}", work / href), hrefs)):
             msg = f"{prefix}/repodata/repomd.xml lists metadata the storage does not have"
             raise UpstreamError(msg)

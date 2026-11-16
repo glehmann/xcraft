@@ -22,7 +22,6 @@ import hashlib
 import json
 import os
 import shutil
-from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
@@ -37,6 +36,7 @@ from xcraft.graph import reachable
 from xcraft.localrepo import extra_rpms
 from xcraft.lock import Locked, Pin, cached_lock, choose_versions, load_lock, save_lock
 from xcraft.packages import dep_name
+from xcraft.process import thread_pool
 from xcraft.project import write_atomically
 
 if TYPE_CHECKING:
@@ -280,7 +280,7 @@ def latest_versions(project: Project, sources: list[str]) -> dict[str, str]:
     """
     platforms = project.all_platforms()
     show = f"looking for the versions of the upstream packages of {', '.join(p.arch for p in platforms)}"
-    with activity(show), ThreadPoolExecutor(len(platforms)) as pool:
+    with activity(show), thread_pool(len(platforms)) as pool:
         found = list(pool.map(lambda p: available_versions(p, sources), platforms))
     return choose_versions({p.arch: versions for p, versions in zip(platforms, found, strict=True)})
 
@@ -406,7 +406,7 @@ def _together(platforms: list[Project], data: dict[str, dict], keys: dict[str, d
     if len(pending) < 2:  # noqa: PLR2004
         return
     show = what.format(", ".join(p.arch for p in pending))
-    with activity(show), ThreadPoolExecutor(len(pending)) as pool:
+    with activity(show), thread_pool(len(pending)) as pool:
         list(pool.map(lambda p: _cached(p, data[p.arch], show=show, quiet=True, key=keys[p.arch]), pending))
 
 
@@ -453,7 +453,7 @@ def expire_metadata(project: Project) -> None:
         return
     platforms = project.all_platforms()
     cmd = ["dnf", "-q", "clean", "expire-cache"]
-    with activity("forgetting the metadata"), ThreadPoolExecutor(len(platforms)) as pool:
+    with activity("forgetting the metadata"), thread_pool(len(platforms)) as pool:
         list(pool.map(lambda p: run_natively(p, f"expire-{p.arch}", cmd, volumes=[], show="", quiet=True), platforms))
     _expired.add(project.root)
 

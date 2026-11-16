@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated
 
 import typer
@@ -14,6 +13,7 @@ from xcraft.commands import Arch, Final, Key, Packages, To, prepared_project, re
 from xcraft.devbuilds import developed
 from xcraft.display import activity, console
 from xcraft.iso import push_isos
+from xcraft.process import thread_pool
 from xcraft.project import Destination, Project, Remote
 from xcraft.resolution import remote_tree, resolutions_read
 from xcraft.signing import Signer, key_signer
@@ -68,7 +68,7 @@ def _push_builds(
     names = [name for name in packages or sorted(project.packages) if name not in skipped]
     paths = {name: build_path(project, name, keys[name], signer.key) for name in names}
     # first: a build of xcraft build --fetch=needed may be in the storage only
-    with activity("checking the remote storage"), ThreadPoolExecutor(remote.REQUESTS) as pool:
+    with activity("checking the remote storage"), thread_pool(remote.REQUESTS) as pool:
         found = pool.map(
             lambda path: remote.tree_exists(storage, path, trusted=signer, signer=signer.key), paths.values()
         )
@@ -113,7 +113,7 @@ def _copy(project: Project, source: Remote, storage: Remote) -> None:
         for name in sorted(project.packages)
         for fingerprint in storage.build_keys
     }
-    with activity("checking the remote storages"), ThreadPoolExecutor(remote.REQUESTS) as pool:
+    with activity("checking the remote storages"), thread_pool(remote.REQUESTS) as pool:
         present = set(pool.map(lambda p: p if remote.tree_exists(storage, p) else None, paths.values()))
     copied = []
     for (name, fingerprint), path in paths.items():
@@ -141,7 +141,7 @@ def _push_resolutions(project: Project, storage: Remote, *, signer: Signer | Non
     def stored(tree: str) -> str | None:
         return remote.read_manifest(storage, tree, trusted=signer).get(trees[tree].name)
 
-    with activity("checking the remote storage"), ThreadPoolExecutor(remote.REQUESTS) as pool:
+    with activity("checking the remote storage"), thread_pool(remote.REQUESTS) as pool:
         missing = [t for t, sha in zip(trees, pool.map(stored, trees), strict=True) if sha != sha256_of(trees[t])]
     for tree in missing:
         with activity("uploading the resolutions"):

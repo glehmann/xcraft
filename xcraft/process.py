@@ -8,13 +8,29 @@ from __future__ import annotations
 import logging
 import shlex
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator
     from pathlib import Path
 
 log = logging.getLogger("xcraft")
+
+
+@contextmanager
+def thread_pool(workers: int) -> Generator[ThreadPoolExecutor]:
+    """Return a pool of `workers` threads, which waits for its tasks at the end, but on Ctrl-C: the tasks not started
+    are cancelled, and those running left to the end of the process, which xcraft's main() does not wait for.
+    """
+    pool = ThreadPoolExecutor(workers)
+    try:
+        yield pool
+    except KeyboardInterrupt:
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    pool.shutdown()
 
 
 def run(

@@ -22,7 +22,6 @@ import os
 import re
 import tempfile
 import urllib.error
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, NamedTuple
 from urllib.parse import urlparse
@@ -31,7 +30,7 @@ from pydantic import BaseModel, field_validator
 
 from xcraft import process
 from xcraft.display import download_progress
-from xcraft.process import log
+from xcraft.process import log, thread_pool
 from xcraft.project import INTERNAL
 from xcraft.signing import Signer, SigningError, dev_signer
 from xcraft.sources import sha256_of
@@ -156,7 +155,7 @@ SINGLE = 8 * 2**20
 
 def existing(storage: Remote, paths: list[str]) -> set[str]:
     """Return those of `paths` the shared storage has, asking for them concurrently."""
-    with ThreadPoolExecutor(REQUESTS) as pool:
+    with thread_pool(REQUESTS) as pool:
         return {path for path, found in zip(paths, pool.map(lambda p: exists(storage, p), paths), strict=True) if found}
 
 
@@ -375,7 +374,7 @@ def transfer(
                 )
             return dest
 
-        with ThreadPoolExecutor(requests) as pool:
+        with thread_pool(requests) as pool:
             for dest in pool.map(write, files, files.values()):
                 on_line(dest)
 
@@ -664,7 +663,7 @@ def download_tree(
                 msg = f"{root}/{name} is missing or corrupted in the storage"
                 raise RemoteError(msg)
 
-        with ThreadPoolExecutor(REQUESTS) as pool:
+        with thread_pool(REQUESTS) as pool:
             list(pool.map(fetch, manifest, manifest.values()))
         try:
             tree.rename(dest)
@@ -718,7 +717,7 @@ def update_tree(
                 (dest / name).parent.mkdir(parents=True, exist_ok=True)
                 part.rename(dest / name)
 
-        with ThreadPoolExecutor(MANY) as pool:
+        with thread_pool(MANY) as pool:
             list(pool.map(fetch, [name for name, digest in manifest.items() if wanted(name, digest)]))
     return True
 
