@@ -48,7 +48,9 @@ def _podman() -> tuple[list[tuple[str, str]], list[str], list[host.Fix]]:
 
 
 def _storage(project: Project) -> list[tuple[str, str]]:
-    """Return the checks of the remote storage, if any: the main one, and the credentials of the S3 servers."""
+    """Return the checks of the remote storage, if any: the main one, and the credentials of the S3 servers, missing
+    only for those of buckets the developers push to: not those of `build_keys` only, which CI writes, with its key.
+    """
     checks = []
     if storage := project.config.remote.get("main"):
         try:
@@ -56,10 +58,11 @@ def _storage(project: Project) -> list[tuple[str, str]]:
             checks.append(("ok", f"remote storage: {storage.url}"))
         except remote.RemoteError as e:
             checks.append(("warning", f"remote storage unavailable: {e}"))
-    for endpoint in sorted({s.s3_endpoint for s in project.config.remote.values() if s.s3_endpoint}):
+    storages = project.config.remote.values()
+    for endpoint in sorted({s.s3_endpoint for s in storages if s.s3_endpoint}):
         if found := remote.credentials(endpoint):
             checks.append(("ok", f"S3 credentials of {endpoint}, from the {found.source}"))
-        else:
+        elif any(s.s3_endpoint == endpoint and not s.build_keys for s in storages):
             checks.append(("warning", f"no S3 credentials of {endpoint}, for xcraft push: see xcraft login"))
     return checks
 

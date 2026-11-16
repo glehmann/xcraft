@@ -1104,6 +1104,19 @@ def test_login(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     assert not stored.passwords
 
 
+def test_doctor_credentials_of_ci_only(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(keyring.core, "_keyring_backend", _Keyring())
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID")
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY")
+    # the main bucket, of build_keys, on a server of its own: CI's only, which the developers do not push to
+    toml, main = root / "xcraft.toml", f's3_endpoint = "http://localhost:{S3_PORT}"\nbucket = "xcraft"\n'
+    assert main in toml.read_text()
+    toml.write_text(toml.read_text().replace(main, main.replace("localhost", "127.0.0.1")))
+    output = xcraft("doctor")[1]
+    assert f"no S3 credentials of http://localhost:{S3_PORT}" in output  # the dev bucket's
+    assert "127.0.0.1" not in output
+
+
 def test_unavailable_remote_storage(root: Path) -> None:
     (root / "xcraft.toml").write_text(REMOTE.replace(str(WEB_PORT), "13899"))  # of no worker
     code, output = xcraft("build", "trivial")
