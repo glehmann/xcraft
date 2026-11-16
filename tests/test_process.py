@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from concurrent.futures import Future
 
 import pytest
@@ -39,4 +40,11 @@ def test_thread_pool_waits() -> None:
     with process.thread_pool(2) as pool:
         for i in range(4):
             pool.submit(ran.append, i)
+    assert sorted(ran) == [0, 1, 2, 3]
+    # on an error too, all of them: what follows, like a cleanup, may need them done
+    ran.clear()
+    with pytest.raises(ValueError, match="failed"), process.thread_pool(2) as pool:  # noqa: PT012
+        for i in range(4):
+            pool.submit(lambda i: (time.sleep(0.1), ran.append(i)), i)
+        raise ValueError("failed")  # noqa: EM101
     assert sorted(ran) == [0, 1, 2, 3]
