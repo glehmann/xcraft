@@ -267,9 +267,22 @@ def _image_data(project: Project) -> dict:
 
 
 def available_versions(project: Project, sources: list[str]) -> dict[str, list[str]]:
-    """Return the available versions of the upstream source packages `sources` on the platform, oldest first."""
+    """Return the available versions of the upstream source packages `sources` on the platform, oldest first, under
+    the activity of latest_versions().
+    """
     data = {**_image_data(project), "base": [], "image": [], "versions": sources}
-    return _run(project, data, show=f"looking for the versions of the upstream packages of {project.arch}").versions
+    return _run(project, data, show="", quiet=True).versions
+
+
+def latest_versions(project: Project, sources: list[str]) -> dict[str, str]:
+    """Return the versions to lock of the upstream source packages `sources`, see choose_versions(), looked for on all
+    the architectures at the same time.
+    """
+    platforms = project.all_platforms()
+    show = f"looking for the versions of the upstream packages of {', '.join(p.arch for p in platforms)}"
+    with activity(show), ThreadPoolExecutor(len(platforms)) as pool:
+        found = list(pool.map(lambda p: available_versions(p, sources), platforms))
+    return choose_versions({p.arch: versions for p, versions in zip(platforms, found, strict=True)})
 
 
 def lock_sources(project: Project, sources: list[str]) -> None:
@@ -281,7 +294,7 @@ def lock_sources(project: Project, sources: list[str]) -> None:
     if project.frozen:
         msg = f"upstream packages not locked, which --locked forbids: {', '.join(sorted(sources))}"
         raise ResolutionError(msg)
-    chosen = choose_versions({p.arch: available_versions(p, sources) for p in project.all_platforms()})
+    chosen = latest_versions(project, sources)
     if missing := sorted(set(sources) - chosen.keys()):
         msg = f"upstream source packages found on no architecture: {', '.join(missing)}"
         raise ResolutionError(msg)
@@ -300,10 +313,13 @@ def _locked(resolved: Resolved) -> Resolved:
     return resolved
 
 
-def _image(project: Project) -> Resolved:
+def _image_request(project: Project) -> dict:
     # with the packages of the side images, over it
-    data = {**_image_data(project), **SIDE_IMAGES}
-    return _cached(project, data, show=f"resolving the image of {project.arch}")
+    return {**_image_data(project), **SIDE_IMAGES}
+
+
+def _image(project: Project) -> Resolved:
+    return _cached(project, _image_request(project), show=f"resolving the image of {project.arch}")
 
 
 def resolve_image(project: Project) -> Resolved:
@@ -380,19 +396,29 @@ def _roots(project: Project) -> Resolved:
     return _cached(project, data, show=show, key=_unversioned(data))
 
 
-def _roots_together(platforms: list[Project]) -> None:
-    """Resolve the build roots of the `platforms` not cached yet, or cached for other versions of ours, see _holds(),
-    at the same time, each in its own container, under one activity: they take as long as one of them, rather than as
-    long as all, see prepare().
+def _together(platforms: list[Project], data: dict[str, dict], keys: dict[str, dict], what: str) -> None:
+    """Resolve the `data` of the `platforms`, by architecture, not cached yet by their `keys`, or cached for other
+    versions of ours, see _holds(), at the same time, each in its own container, under one activity showing `what`
+    they are: they take as long as one of them, rather than as long as all, see prepare(). A single one is left to
+    its own activity.
     """
-    data = {p.arch: _roots_data(p) for p in platforms}  # parsing the specs, which shows its activity
-    keys = {p.arch: _unversioned(data[p.arch]) for p in platforms}
-    caches = {p.arch: _cache(p, keys[p.arch]) for p in platforms}
-    if len(pending := [p for p in platforms if not _holding(caches[p.arch], data[p.arch])]) < 2:  # noqa: PLR2004
+    pending = [p for p in platforms if not _holding(_cache(p, keys[p.arch]), data[p.arch])]
+    if len(pending) < 2:  # noqa: PLR2004
         return
-    show = f"resolving the build roots of {', '.join(p.arch for p in pending)}, and what is published"
+    show = what.format(", ".join(p.arch for p in pending))
     with activity(show), ThreadPoolExecutor(len(pending)) as pool:
         list(pool.map(lambda p: _cached(p, data[p.arch], show=show, quiet=True, key=keys[p.arch]), pending))
+
+
+def _images_together(platforms: list[Project]) -> None:
+    data = {p.arch: _image_request(p) for p in platforms}
+    _together(platforms, data, data, "resolving the images of {}")
+
+
+def _roots_together(platforms: list[Project]) -> None:
+    data = {p.arch: _roots_data(p) for p in platforms}  # parsing the specs, which shows its activity
+    keys = {p.arch: _unversioned(data[p.arch]) for p in platforms}
+    _together(platforms, data, keys, "resolving the build roots of {}, and what is published")
 
 
 def resolve(project: Project) -> Resolved:
@@ -414,12 +440,22 @@ def _locking(project: Project, resolve: Callable[[Project], Resolved]) -> None:
     raise ResolutionError(msg + ", ".join(resolved.unlocked))
 
 
+_expired: set[Path] = set()
+"""The projects whose metadata this process expired: what dnf downloaded since is that of the repositories as they
+are."""
+
+
 def expire_metadata(project: Project) -> None:
-    """Expire the metadata of the repositories of all the platforms, which dnf downloads again when it next reads it."""
-    for platform in project.all_platforms():
-        run_natively(
-            platform, "expire", ["dnf", "-q", "clean", "expire-cache"], volumes=[], show="forgetting the metadata"
-        )
+    """Expire the metadata of the repositories of all the platforms, at the same time, which dnf downloads again when
+    it next reads it: once by process.
+    """
+    if project.root in _expired:
+        return
+    platforms = project.all_platforms()
+    cmd = ["dnf", "-q", "clean", "expire-cache"]
+    with activity("forgetting the metadata"), ThreadPoolExecutor(len(platforms)) as pool:
+        list(pool.map(lambda p: run_natively(p, f"expire-{p.arch}", cmd, volumes=[], show="", quiet=True), platforms))
+    _expired.add(project.root)
 
 
 def _forget(project: Project) -> None:
@@ -595,6 +631,7 @@ def prepare(project: Project, *, roots: bool = True, repin: set[str] | None = No
         _forget(project)
     native, repinned = project.on_host(), frozenset(repin or ())
     images = [native] if native == project else [native, project]
+    _images_together(list({p.arch: p for p in [*images, *(project.all_platforms() if roots else [])]}.values()))
     for platform in images:
         _locking(platform, _image)
     # pinned, for the images to be built: the one of the host parses the specs, which the build roots need

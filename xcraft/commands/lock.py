@@ -11,9 +11,9 @@ from xcraft.build import update_build_ids
 from xcraft.builds import builds_path, load_builds
 from xcraft.commands import complete_upstream
 from xcraft.display import console
-from xcraft.lock import choose_versions, load_lock, lock_path, save_lock
+from xcraft.lock import load_lock, lock_path, save_lock
 from xcraft.project import Project
-from xcraft.resolution import available_versions, upstream_sources
+from xcraft.resolution import latest_versions, upstream_sources
 
 
 def _update(project: Project, packages: list[str], *, write: bool) -> int:
@@ -24,7 +24,7 @@ def _update(project: Project, packages: list[str], *, write: bool) -> int:
     # first, as it may lock them
     sources = upstream_sources(project, packages) if packages else sorted(load_lock(project).sources)
     current = load_lock(project)
-    chosen = choose_versions({p.arch: available_versions(p, sources) for p in project.all_platforms()})
+    chosen = latest_versions(project, sources)
     changed = {s: v for s, v in chosen.items() if v != current.sources[s]}
     for source, version in changed.items():
         console.print(f"[bold]{source}[/] {current.sources[source]} -> {version}")

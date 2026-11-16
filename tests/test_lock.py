@@ -181,8 +181,9 @@ def test_choose_versions() -> None:
 
 
 def test_lock_sources_locked_meanwhile(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    def versions(_platform: Project, _sources: list[str]) -> dict[str, list[str]]:
-        save_lock(project, Lock(sources={"foo": "2-1"}))  # by another command, meanwhile
+    def versions(platform: Project, _sources: list[str]) -> dict[str, list[str]]:
+        if platform == project:  # by another command, meanwhile, once: the architectures are looked for together
+            save_lock(project, Lock(sources={"foo": "2-1"}))
         return {"foo": ["1-1"], "bar": ["3-1"]}
 
     monkeypatch.setattr("xcraft.resolution.available_versions", versions)
