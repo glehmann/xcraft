@@ -398,9 +398,10 @@ def test_signed_trees(root: Path, tmp_path: Path) -> None:
     with pytest.raises(remote.RemoteError, match="corrupted"):
         remote.download_tree(storage, prefix, tmp_path / "corrupt")
     assert not (tmp_path / "corrupt").exists()
-    # The manifest is signed in clear: the path of the files of the tree, then its files like sha256sum's.
+    # The manifest is signed in clear: the path of the files of the tree, then its files, with their sizes.
     signed = urllib.request.urlopen(f"{storage.url}/{prefix}/{remote.MANIFEST}").read().decode()  # noqa: S310
-    text = f"{generation}\n{sha256_of(tmp_path / 'valid/file')}  file\n"
+    valid = tmp_path / "valid/file"
+    text = f"{generation}\n{sha256_of(valid)} {valid.stat().st_size} file\n"
     assert signed.startswith("-----BEGIN PGP SIGNED MESSAGE-----\nHash: ")
     assert text in signed
     # Only its signed part is read: lines around it do not add files.
@@ -423,10 +424,10 @@ def test_update_tree_skips_failed_downloads(root: Path, tmp_path: Path, monkeypa
     remote.upload_tree(storage, prefix, tmp_path, ["good", "failing"], signer=release_signer(Project.find()))
     download = remote.download
 
-    def failing(storage: Remote, path: str, dest: Path, on_line: Callable[[str], None] = print) -> bool:
+    def failing(storage: Remote, path: str, dest: Path, **kwargs: Callable[..., None]) -> bool:
         if path.endswith("/failing"):
             raise remote.RemoteError(path)  # transient, which no storage can do on purpose
-        return download(storage, path, dest, on_line)
+        return download(storage, path, dest, **kwargs)
 
     monkeypatch.setattr(remote, "download", failing)
     assert remote.update_tree(Project.find(), prefix, root / "dest", lambda *_: True)
@@ -1453,12 +1454,18 @@ def test_concurrent_uploads_of_a_tree(
 
     # a, its files uploaded, waits for b to complete the tree
     def raced(
-        target: Remote, path: str, manifest: dict[str, str], *, signer: Signer | None, root: str | None = None
+        target: Remote,
+        path: str,
+        manifest: dict[str, str],
+        *,
+        signer: Signer | None,
+        root: str | None = None,
+        sizes: dict[str, int] | None = None,
     ) -> None:
         monkeypatch.setattr(remote, "write_manifest", write)
         remote.upload_tree(storage, prefix, tmp_path / "b", ["build.log"], signer=signer)
         assert read("read-b") == "built on b\n"
-        write(target, path, manifest, signer=signer, root=root)
+        write(target, path, manifest, signer=signer, root=root, sizes=sizes)
 
     monkeypatch.setattr(remote, "write_manifest", raced)
     remote.upload_tree(storage, prefix, tmp_path / "a", ["build.log"], signer=signer)
