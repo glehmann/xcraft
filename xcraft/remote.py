@@ -320,7 +320,9 @@ KEYS = f"{INTERNAL}/keys"
 
 MANIFEST = "manifest.asc"
 """The files of a tree in the storage, with their SHA-256, signed in clear, uploaded last: a tree without it is
-incomplete. Its text is the path of its files, then a ``<sha256>  <file>`` line by file, like sha256sum's, sorted.
+incomplete. Its text is the path of its files, then a line by file, sorted: ``<sha256> <size> <file>``, or without
+its size, ``<sha256>  <file>``, like sha256sum's, for the trees written without, which their downloads show the
+progress of without a total.
 
 The files of the trees made once, like the builds, are in a directory of the tree of their own, its generation, named
 by the SHA-256 of what they are, see upload_tree(): uploads of other files, like those of the same build made on two
@@ -334,6 +336,8 @@ _checked: dict[tuple[str, str, frozenset[str]], tuple[str, dict[str, str], froze
 keys signing them, or None for the trees missing or not trusted, until written, or the next command."""
 
 
+_sizes: dict[tuple[str, str], dict[str, int]] = {}
+"""The sizes of the files of the manifests checked, by storage and tree, those their manifests have."""
 _manifests: dict[tuple[str, str], bytes | None] = {}
 """The manifests downloaded, by storage and tree, or None for those missing, checked with other keys too: until
 written, or the next command."""
@@ -470,9 +474,11 @@ class TreeManifest(BaseModel):
         return files
 
 
-def manifest_text(root: str, files: dict[str, str]) -> str:
-    """Return the text of a MANIFEST of `files`, in `root`, which it signs."""
-    return "".join([f"{root}\n", *(f"{files[name]}  {name}\n" for name in sorted(files))])
+def manifest_text(root: str, files: dict[str, str], sizes: dict[str, int] | None = None) -> str:
+    """Return the text of a MANIFEST of `files`, in `root`, with the `sizes` of those it has, which it signs."""
+    sizes = sizes or {}
+    lines = (f"{files[n]} {sizes[n]} {n}\n" if n in sizes else f"{files[n]}  {n}\n" for n in sorted(files))
+    return "".join([f"{root}\n", *lines])
 
 
 def generation(prefix: str, files: dict[str, str]) -> str:
@@ -480,25 +486,22 @@ def generation(prefix: str, files: dict[str, str]) -> str:
     return f"{prefix}/{hashlib.sha256(manifest_text(prefix, files).encode()).hexdigest()}"
 
 
-def _parse(prefix: str, text: str) -> tuple[str, dict[str, str]]:
-    """Return the directory of the files of the text of the MANIFEST of `prefix`, and those files, or raise
-    ValueError.
+def _parse(prefix: str, text: str) -> tuple[str, dict[str, str], dict[str, int]]:
+    """Return the directory of the files of the text of the MANIFEST of `prefix`, those files, and the sizes of those
+    it has, or raise ValueError.
     """
     root, *lines = text.removesuffix("\n").split("\n")
-    if (
-        not re.fullmatch(rf"{re.escape(prefix)}(/[0-9a-f]{{64}})?", root)
-        or not text.endswith("\n")
-        or any(line[64:66] != "  " for line in lines)
-    ):
+    entries = [re.fullmatch(r"([0-9a-f]{64})(?:  | ([0-9]+) )(.+)", line) for line in lines]
+    if not re.fullmatch(rf"{re.escape(prefix)}(/[0-9a-f]{{64}})?", root) or not text.endswith("\n") or None in entries:
         msg = f"not the manifest of {prefix}"
         raise ValueError(msg)
-    if len(files := {line[66:]: line[:64] for line in lines}) != len(lines):
+    if len(files := {e[3]: e[1] for e in entries if e}) != len(lines):
         msg = f"files listed twice in the manifest of {prefix}"
         raise ValueError(msg)
     if root != prefix and root != generation(prefix, files):
         msg = f"not the generation of the files of the manifest of {prefix}"
         raise ValueError(msg)
-    return root, TreeManifest(files=files).files
+    return root, TreeManifest(files=files).files, {e[3]: int(e[2]) for e in entries if e and e[2]}
 
 
 _embargoed: dict[str, bool] = {}
@@ -511,6 +514,7 @@ def forget() -> None:
     """
     _embargoed.clear()
     _checked.clear()
+    _sizes.clear()
     _manifests.clear()
     _keys.clear()
 
@@ -565,7 +569,7 @@ def _checked_manifest(
             if keys or trusted:
                 verifier.gpg("--import", str(work / "keys.asc"))
             status = verifier.gpg("--status-fd", "1", "--output", str(payload), "--decrypt", str(manifest))
-            parsed = _parse(prefix, payload.read_text())
+            root, files, _sizes[storage.url, prefix] = _parse(prefix, payload.read_text())
         except (SigningError, ValueError):
             log.warning("ignoring invalid remote tree %s", prefix)
             return None
@@ -576,7 +580,7 @@ def _checked_manifest(
         for key in (line.split()[2], line.split()[-1])
         if key in fingerprints
     )
-    return (*parsed, signers) if signers else None
+    return (root, files, signers) if signers else None
 
 
 def _manifest(
@@ -646,6 +650,12 @@ def tree_available(project: Project, prefix: str, fingerprint: str | None = None
     return bool(_first(project, lambda s: tree_exists(s, prefix, trusted=trusted, signer=fingerprint)))
 
 
+def _total(storage: Remote, prefix: str, names: list[str]) -> int | None:
+    """Return the size of the files `names` of the tree `prefix` checked, when its manifest has all of them."""
+    sizes = _sizes.get((storage.url, prefix), {})
+    return sum(sizes[n] for n in names) if all(n in sizes for n in names) else None
+
+
 def download_tree(
     storage: Remote,
     prefix: str,
@@ -666,7 +676,7 @@ def download_tree(
             return False
         root, manifest = found
         tree.mkdir()
-        progress = TreeProgress(on_line, len(manifest))
+        progress = TreeProgress(on_line, len(manifest), _total(storage, prefix, list(manifest)))
 
         def fetch(name: str, digest: str) -> None:
             found = download(storage, f"{root}/{name}", tree / name, report=progress.report(name))
@@ -718,7 +728,7 @@ def update_tree(
     # next to it, to rename them there
     with tempfile.TemporaryDirectory(dir=dest.parent, prefix=f".{dest.name}-") as tmp:
         names = [name for name, digest in manifest.items() if wanted(name, digest)]
-        progress = TreeProgress(on_line, len(names))
+        progress = TreeProgress(on_line, len(names), _total(storage, prefix, names))
 
         def fetch(name: str) -> None:
             part = Path(tmp) / name
@@ -747,17 +757,23 @@ def required_signer(signer: Signer | None) -> Signer:
 
 
 def write_manifest(
-    storage: Remote, prefix: str, manifest: dict[str, str], *, signer: Signer | None, root: str | None = None
+    storage: Remote,
+    prefix: str,
+    manifest: dict[str, str],
+    *,
+    signer: Signer | None,
+    root: str | None = None,
+    sizes: dict[str, int] | None = None,
 ) -> None:
     """Write the manifest of the tree `prefix`, of its files in `root`, its generation, or else in the tree itself,
-    which completes it.
+    with the `sizes` of those given, which completes it.
     """
     signer = required_signer(signer)
     TreeManifest(files=manifest)
     with tempfile.TemporaryDirectory(prefix="xcraft-sign-") as tmp:
         work = Path(tmp)
         payload, file = work / "payload", work / MANIFEST
-        payload.write_text(manifest_text(root or prefix, manifest))
+        payload.write_text(manifest_text(root or prefix, manifest, sizes))
         signer.clearsign(payload, file)
         key = work / "key.asc"
         key.write_text(signer.public_key())
@@ -775,7 +791,8 @@ def upload_tree(storage: Remote, prefix: str, src: Path, names: list[str], *, si
     manifest = {f.relative_to(src).as_posix(): sha256_of(f) for f in files}
     root = generation(prefix, manifest)
     transfer(storage, {f"{root}/{name}": src / name for name in manifest})
-    write_manifest(storage, prefix, manifest, signer=signer, root=root)
+    sizes = {name: (src / name).stat().st_size for name in manifest}
+    write_manifest(storage, prefix, manifest, signer=signer, root=root, sizes=sizes)
     return manifest
 
 

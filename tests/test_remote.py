@@ -433,6 +433,19 @@ def test_update_tree_skips_failed_downloads(root: Path, tmp_path: Path, monkeypa
     assert [p.name for p in (root / "dest").iterdir()] == ["good"]
 
 
+def test_manifest_sizes() -> None:
+    files, sizes = {"a b": "1" * 64, "123 c": "2" * 64}, {"a b": 12}
+    text = remote.manifest_text("p", files, sizes)
+    # the size of those known, the others like sha256sum's lines, which the trees written without have
+    assert text == f"p\n{'2' * 64}  123 c\n{'1' * 64} 12 a b\n"
+    assert remote._parse("p", text) == ("p", files, sizes)
+    # their generation the same with or without the sizes
+    generation = remote.generation("p", files)
+    assert remote._parse("p", remote.manifest_text(generation, files, sizes))[0] == generation
+    with pytest.raises(ValueError, match="not the manifest"):
+        remote._parse("p", f"p\n{'1' * 64} x a\n")
+
+
 @pytest.mark.parametrize("kind", ["builds", "ccache"])
 def test_tree_fallback_checks_signatures(
     root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture, kind: str

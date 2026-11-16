@@ -354,12 +354,13 @@ def activity(
 @dataclass
 class TreeProgress:
     """The progress of the `count` files of a tree, downloaded several at once, given together to `on_line`: the files
-    done, those downloading, and their sizes, those of the files not started yet being unknown.
+    done, and the size downloaded, out of their `total` size, when known.
     """
 
     on_line: Callable[[str], None]
     count: int
-    sizes: dict[str, tuple[int, int]] = field(default_factory=dict)  # downloaded and total, -1 when unknown
+    total: int | None = None
+    downloaded: dict[str, int] = field(default_factory=dict)
     finished: set[str] = field(default_factory=set)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -368,7 +369,7 @@ class TreeProgress:
 
         def report(blocks: int, block_size: int, total: int) -> None:
             with self.lock:
-                self.sizes[name] = (min(blocks * block_size, total) if total > 0 else blocks * block_size, total)
+                self.downloaded[name] = min(blocks * block_size, total) if total > 0 else blocks * block_size
                 self._show()
 
         return report
@@ -380,10 +381,9 @@ class TreeProgress:
             self._show()
 
     def _show(self) -> None:
-        size = sum(done for done, _ in self.sizes.values()) / 2**20
-        total = sum(total if total > 0 else done for done, total in self.sizes.values()) / 2**20
-        running = len(self.sizes.keys() - self.finished)
-        self.on_line(f"{len(self.finished)}/{self.count} files, {running} at once, {size:.1f}/{total:.1f} MiB")
+        size = f"{sum(self.downloaded.values()) / 2**20:.1f}"
+        total = "" if self.total is None else f"/{self.total / 2**20:.1f}"
+        self.on_line(f"{len(self.finished)}/{self.count} files, {size}{total} MiB")
 
 
 def download_progress(on_line: Callable[[str], None], prefix: str = "") -> Callable[[int, int, int], None]:

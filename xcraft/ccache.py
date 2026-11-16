@@ -120,7 +120,8 @@ def push(project: Project, storage: Remote, name: str, *, signer: Signer | None)
                 storage, {f"{prefix}/{entry}": cache / entry for entry in new}, on_line, requests=remote.MANY
             )
             if manifest != stored:
-                remote.write_manifest(storage, prefix, manifest, signer=signer)
+                sizes = {entry: (cache / entry).stat().st_size for entry in manifest}
+                remote.write_manifest(storage, prefix, manifest, signer=signer, sizes=sizes)
             stale = [f for f in remote.listing(storage, f"{prefix}/") if f not in manifest and f != remote.MANIFEST]
             remote.delete(storage, [f"{prefix}/{f}" for f in stale])
     return True

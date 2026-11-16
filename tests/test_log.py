@@ -211,11 +211,16 @@ def test_commands_highlighted() -> None:
 
 def test_tree_progress() -> None:
     lines: list[str] = []
-    progress = TreeProgress(lines.append, 3)
+    progress = TreeProgress(lines.append, 3, 7 * 2**20)
     first, second = progress.report("a"), progress.report("b")
     first(1, 2**20, 4 * 2**20)
     second(1, 2**20, 2 * 2**20)
     first(4, 2**20, 4 * 2**20)
     progress.done("a")
-    # the files downloading at once shown together, not each one in turn
-    assert lines[-2:] == ["0/3 files, 2 at once, 5.0/6.0 MiB", "1/3 files, 1 at once, 5.0/6.0 MiB"]
+    # the files downloading at once shown together, out of the size of all, not each one in turn
+    assert lines[-2:] == ["0/3 files, 5.0/7.0 MiB", "1/3 files, 5.0/7.0 MiB"]
+    # without the sizes of the files, in a manifest without them
+    lines.clear()
+    progress = TreeProgress(lines.append, 2)
+    progress.report("a")(3, 2**20, 4 * 2**20)
+    assert lines == ["0/2 files, 3.0 MiB"]
