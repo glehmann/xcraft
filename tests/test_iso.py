@@ -51,7 +51,7 @@ def test_iso_inputs(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     project.config.remote["main"] = Remote(url="https://example.com")
     project.config.publish.stage = "other"
     project.config.logo = "https://example.com/logo.png"
-    project.config.iso.unattended = "rt_answerfile=file:///answerfile.xml"  # given at boot, not in the ISO
+    project.config.iso.unattended = "unattended.xml"  # given at boot, not in the ISO
     assert key() == original
     project.config.iso.packages = ["other"]
     assert key() != original

@@ -205,8 +205,8 @@ class Iso(BaseModel):
     packages: list[str] = []
     """Packages of the repository of the ISO, with what they need, unless --netinstall."""
     unattended: str = ""
-    """Kernel arguments of an unattended installation, which xcraft boot --unattended adds to the default boot entry of
-    the ISO, like an answer file of the installer: they do not change the ISO."""
+    """Answer file of an unattended installation, relative to the project, which xcraft boot --unattended serves to the
+    installer, with the changes of --answer: it does not change the ISO."""
 
     @model_validator(mode="after")
     def _named(self) -> Iso:

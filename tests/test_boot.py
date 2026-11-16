@@ -14,11 +14,13 @@ import time
 from pathlib import Path
 
 import pytest
+import typer
 from pydantic import BaseModel, Field, TypeAdapter
 
 from tests import PROJECT, TOML
 from tests.test_build import xcraft
 from xcraft import vm
+from xcraft.commands.boot import _answered
 
 
 @pytest.fixture
@@ -189,13 +191,44 @@ def test_boot_kernel_args_need_the_grub_of_the_iso(root: Path, edit: list[str]) 
     assert "--kernel-args and --unattended edit the GRUB menu of the ISO" in " ".join(output.split())
 
 
-def test_boot_unattended_needs_its_kernel_args(root: Path, tmp_path: Path) -> None:
+def test_boot_unattended_needs_its_answer_file(root: Path, tmp_path: Path) -> None:
     iso = tmp_path / "installer.iso"
     iso.touch()
     code, output = xcraft("boot", "--unattended", "--iso", str(iso))
     assert code == 2, output
-    assert "no unattended kernel arguments" in output
+    assert "no unattended answer file" in output
+    code, output = xcraft("boot", "--answer", "keymap=fr", "--iso", str(iso))
+    assert code == 2, output
+    assert "--answer changes the answer file of --unattended" in " ".join(output.split())
     assert not (root / ".xcraft").exists()
+
+
+def test_answered() -> None:
+    text = (
+        '<?xml version="1.0"?>\n<!-- for test VMs -->\n<installation srtype="ext">\n'
+        "  <primary-disk>sda</primary-disk>\n  <keymap>us</keymap>\n</installation>\n"
+    )
+    answered = _answered(text, ["keymap=fr", "primary-disk.fs-type=ext4", "system-snapshot.name=installed"])
+    # the text and the attributes of the elements, those missing added, the comments kept
+    assert "<!-- for test VMs -->" in answered
+    assert '<primary-disk fs-type="ext4">sda</primary-disk>' in answered
+    assert "<keymap>fr</keymap>" in answered
+    assert '<system-snapshot name="installed" />' in answered
+    assert _answered(text, []).count("<keymap>us</keymap>") == 1
+    with pytest.raises(typer.BadParameter, match=r"not NAME=VALUE nor NAME\.ATTR=VALUE"):
+        _answered(text, ["keymap"])
+
+
+def test_answer_served_by_qemu(tmp_path: Path) -> None:
+    response = vm.answer_response(tmp_path, "<installation/>\n")
+    assert response.read_bytes() == (
+        b"HTTP/1.0 200 OK\r\nContent-Type: application/xml\r\nContent-Length: 16\r\n\r\n<installation/>\n"
+    )
+    launch = vm.Launch(name="test", memory=512, cpus=1, accel="tcg", ovmf=None, qemu_args=[])
+    cmd = vm.qemu_command(
+        tmp_path, launch, disk=tmp_path / "disk", iso=None, ssh_port=0, headless=True, answer=response
+    )
+    assert f"guestfwd=tcp:10.0.2.100:80-cmd:cat {response}" in cmd[cmd.index("-nic") + 1]
 
 
 # GRUB's editor, as it shows the default entry of host-installer's grub.cfg

@@ -7,6 +7,7 @@ import json
 import os
 import re
 import select
+import shlex
 import shutil
 import socket
 import subprocess
@@ -286,6 +287,19 @@ def launch(directory: Path, session: Session) -> tuple[subprocess.Popen[bytes], 
         return _launched(directory, session)
 
 
+ANSWER_URL = "http://10.0.2.100/unattended.xml"
+"""Where the installer gets the answer file of xcraft boot --unattended: an address of the user network of QEMU, which
+answers with it, see qemu_command()."""
+
+
+def answer_response(directory: Path, text: str) -> Path:
+    """Write the HTTP response giving the answer file `text` in the session `directory`, and return it."""
+    body = text.encode()
+    head = f"HTTP/1.0 200 OK\r\nContent-Type: application/xml\r\nContent-Length: {len(body)}\r\n\r\n"
+    (response := directory / "unattended.http").write_bytes(head.encode() + body)  # before QEMU starts
+    return response
+
+
 _EVENTS = "unix:events.sock,server=on,wait=on"
 """The monitor of the events of QEMU, which waits for its connection before starting the guest, see launch()."""
 
@@ -299,12 +313,17 @@ def qemu_command(
     ssh_port: int,
     headless: bool,
     events: bool = False,
+    answer: Path | None = None,
 ) -> list[str]:
     """Return the QEMU command of the VM, copying the template of the firmware variables it writes, once, with a
-    monitor of the events with `events`, which launch() connects to.
+    monitor of the events with `events`, which launch() connects to, and the HTTP response `answer` given at
+    ANSWER_URL, by QEMU itself: for as long as the VM runs, even after xcraft boot --background returned.
     """
     accel, ovmf = launch.accel, launch.ovmf
     network = "user,model=e1000" + (f",hostfwd=tcp:127.0.0.1:{ssh_port}-:22" if ssh_port else "")
+    if answer:
+        # commas doubled, which QEMU reads as part of the value
+        network += ",guestfwd=tcp:10.0.2.100:80-cmd:cat " + shlex.quote(str(answer)).replace(",", ",,")
     # OVMF exposes modes that fit in VRAM; limit it so the installer cannot select a huge framebuffer.
     cmd = [
         "qemu-system-x86_64", "-name", f"xcraft-{launch.name}", "-accel", accel, "-machine", "q35",

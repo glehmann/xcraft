@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import contextlib
+import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -29,14 +31,51 @@ def _check_host(arch: str, accel: str, *, new_disk: bool) -> None:
     vm.check_tools(accel, new_disk=new_disk)
 
 
-def _kernel_args(project: Project, kernel_args: str | None, *, unattended: bool) -> str | None:
-    """Return the kernel arguments to add to the default boot entry of the ISO: the unattended ones of xcraft.toml,
-    with --unattended, then `kernel_args`.
+def _answered(text: str, answers: list[str]) -> str:
+    """Return the answer file `text` with the `answers`: NAME=VALUE sets the text of the element NAME of the
+    installation, NAME.ATTR=VALUE an attribute of it, each added when missing.
     """
-    if unattended and not project.config.iso.unattended:
-        msg = "no unattended kernel arguments in [iso] of xcraft.toml"
+    root = ET.fromstring(text, ET.XMLParser(target=ET.TreeBuilder(insert_comments=True)))  # noqa: S314, the project's
+    for answer in answers:
+        if not (match := re.fullmatch(r"([A-Za-z][\w-]*)(?:\.([A-Za-z][\w-]*))?=(.*)", answer, re.DOTALL)):
+            msg = f"{answer}: not NAME=VALUE nor NAME.ATTR=VALUE"
+            raise typer.BadParameter(msg, param_hint="--answer")
+        name, attribute, value = match.groups()
+        element = root.find(name)
+        if element is None:
+            element = ET.SubElement(root, name)
+        if attribute:
+            element.set(attribute, value)
+        else:
+            element.text = value
+    ET.indent(root)
+    # what is before the element of the installation as it is, like the declaration and the comments
+    prolog = text[: text.index(f"<{root.tag}")]
+    return prolog + ET.tostring(root, encoding="unicode") + "\n"
+
+
+def _check_edits(*, bios: bool, kernel_args: str | None, unattended: bool, answer: list[str] | None) -> None:
+    if bios and (kernel_args or unattended):
+        msg = "--kernel-args and --unattended edit the GRUB menu of the ISO: not with --bios"
+        raise typer.BadParameter(msg)
+    if answer and not unattended:
+        msg = "--answer changes the answer file of --unattended"
+        raise typer.BadParameter(msg)
+
+
+def _unattended(project: Project, answers: list[str]) -> str:
+    """Return the answer file of [iso] unattended of xcraft.toml with the `answers`, see _answered()."""
+    if not project.config.iso.unattended:
+        msg = "no unattended answer file in [iso] of xcraft.toml"
         raise typer.BadParameter(msg, param_hint="--unattended")
-    return " ".join(filter(None, [project.config.iso.unattended if unattended else "", kernel_args])) or None
+    if not (path := project.root / project.config.iso.unattended).is_file():
+        msg = f"no answer file {path}, the unattended one of [iso] of xcraft.toml"
+        raise typer.BadParameter(msg, param_hint="--unattended")
+    try:
+        return _answered(path.read_text(), answers)
+    except ET.ParseError as e:
+        msg = f"{path}: {e}"
+        raise typer.BadParameter(msg, param_hint="--unattended") from e
 
 
 _STOPS = {
@@ -113,17 +152,26 @@ def boot(
         str | None,
         typer.Option(
             help="Arguments added to the kernel command line of the ISO's default boot entry, in GRUB's editor, like "
-            "rt_answerfile=file:///opt/xensource/installer/answerfile-vm.xml for an unattended installation."
+            "rt_answerfile=<url> for an installation with another answer file."
         ),
     ] = None,
     unattended: Annotated[
         bool,
         typer.Option(
             "--unattended",
-            help="Install unattended, with the kernel arguments of unattended in [iso] of xcraft.toml, added like with "
-            "--kernel-args.",
+            help="Install unattended, with the answer file of unattended in [iso] of xcraft.toml, which the VM gets "
+            "from QEMU.",
         ),
     ] = False,
+    answer: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--answer",
+            help="NAME=VALUE sets the text of the element NAME of the unattended answer file, NAME.ATTR=VALUE an "
+            "attribute of it, each added when missing, like primary-disk.fs-type=ext4. Repeatable.",
+            show_default=False,
+        ),
+    ] = None,
     locked: Annotated[bool, typer.Option("--locked", help="Fail when making the ISO would change the lock.")] = False,
     unsigned: Annotated[bool, typer.Option("--unsigned", help="Do not sign the ISO's packages or repository.")] = False,
     arch: Arch = None,
@@ -139,13 +187,12 @@ def boot(
     vm start then boots the installed disk, without the ISO. Use xcraft vm to inspect or stop it. In the foreground,
     it fails when the VM stops otherwise, like powered off, or by a kernel panic with the guest's pvpanic driver.
     """
-    if bios and (kernel_args or unattended):
-        msg = "--kernel-args and --unattended edit the GRUB menu of the ISO: not with --bios"
-        raise typer.BadParameter(msg)
+    _check_edits(bios=bios, kernel_args=kernel_args, unattended=unattended, answer=answer)
     check_port(ssh_port)
     ident = dev_ident(ctx, dev, final=final, nocheck=nocheck)
     project = Project.find(arch)
-    kernel_args = _kernel_args(project, kernel_args, unattended=unattended)
+    answers = _unattended(project, answer or []) if unattended else None
+    kernel_args = " ".join(filter(None, [f"rt_answerfile={vm.ANSWER_URL}" if unattended else "", kernel_args])) or None
     vm_dir = (vm_dir or project.state / "vm" / project.arch).absolute()
     disk = (disk or vm_dir / "disk.qcow2").absolute()
     if disk.exists() and not disk.is_file():
@@ -184,6 +231,7 @@ def boot(
             ssh_port=ssh_port,
             headless=headless or background,
             events=not background,
+            answer=vm.answer_response(vm_dir, answers) if answers else None,
         )
         session = vm.Session(
             pid=0, arch=project.arch, disk=disk, iso=iso.absolute(), ssh_port=ssh_port, command=cmd, launch=launch

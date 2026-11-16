@@ -84,17 +84,27 @@ and its SSH port, if still free; `--memory`, `--cpus` and `--ssh-port` change th
 can be edited and rebuilt while the VM runs.
 
 `--kernel-args` adds arguments to the kernel command line of the default entry of the ISO's GRUB menu, in GRUB's
-editor, then waits for the kernel booted with them. `--unattended` adds those of `unattended` in the `[iso]` section of
-`xcraft.toml`, like an answer file of the installer, which do not change the ISO:
+editor, then waits for the kernel booted with them. `--unattended` installs with the answer file of `unattended` in the
+`[iso]` section of `xcraft.toml`, relative to the project, which does not change the ISO:
 
 ```toml
 [iso]
-unattended = "rt_answerfile=file:///opt/xensource/installer/answerfile-vm.xml"
+unattended = "unattended.xml"
 ```
+
+QEMU itself serves it to the installer, at `http://10.0.2.100/unattended.xml` on its user network, which
+`rt_answerfile` on the kernel command line gives: for as long as the VM runs, even after `xcraft boot --background`
+returned. `--answer`, repeatable, changes it first: `NAME=VALUE` sets the text of the element `NAME` of the
+installation, `NAME.ATTR=VALUE` an attribute of it, each added when missing. The names are those of the answer files
+of the installer:
 
 ```bash
 xcraft boot --unattended   # then xcraft vm start
+xcraft boot --unattended --answer primary-disk.fs-type=ext4 --answer keymap=fr
+xcraft boot --unattended --answer system-snapshot.name=installed
 ```
+
+For another answer file entirely, `--kernel-args 'rt_answerfile=<url>'` gives its URL.
 
 The firmware boots the entries of its variables first, like the one of a previous installation: use a new session,
 with `--vm-dir`, to install again.
