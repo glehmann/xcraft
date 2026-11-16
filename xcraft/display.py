@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from rich.console import Console, ConsoleDimensions
@@ -348,6 +349,41 @@ def activity(
     ) as progress:
         task = progress.add_task(description, line="")
         yield lambda line: progress.update(task, line=Text.from_ansi(line).plain.strip()[:100])
+
+
+@dataclass
+class TreeProgress:
+    """The progress of the `count` files of a tree, downloaded several at once, given together to `on_line`: the files
+    done, those downloading, and their sizes, those of the files not started yet being unknown.
+    """
+
+    on_line: Callable[[str], None]
+    count: int
+    sizes: dict[str, tuple[int, int]] = field(default_factory=dict)  # downloaded and total, -1 when unknown
+    finished: set[str] = field(default_factory=set)
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def report(self, name: str) -> Callable[[int, int, int], None]:
+        """Return the ``urlretrieve`` report hook of the file `name`."""
+
+        def report(blocks: int, block_size: int, total: int) -> None:
+            with self.lock:
+                self.sizes[name] = (min(blocks * block_size, total) if total > 0 else blocks * block_size, total)
+                self._show()
+
+        return report
+
+    def done(self, name: str) -> None:
+        """Count the file `name` as done."""
+        with self.lock:
+            self.finished.add(name)
+            self._show()
+
+    def _show(self) -> None:
+        size = sum(done for done, _ in self.sizes.values()) / 2**20
+        total = sum(total if total > 0 else done for done, total in self.sizes.values()) / 2**20
+        running = len(self.sizes.keys() - self.finished)
+        self.on_line(f"{len(self.finished)}/{self.count} files, {running} at once, {size:.1f}/{total:.1f} MiB")
 
 
 def download_progress(on_line: Callable[[str], None], prefix: str = "") -> Callable[[int, int, int], None]:

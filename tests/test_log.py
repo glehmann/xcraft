@@ -14,7 +14,7 @@ from typer.testing import CliRunner
 
 from tests import TOML
 from xcraft.__main__ import app
-from xcraft.display import _commands, _Messages, activity, diagnostics, print_message_line, read_tail
+from xcraft.display import TreeProgress, _commands, _Messages, activity, diagnostics, print_message_line, read_tail
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -207,3 +207,15 @@ def test_commands_highlighted() -> None:
     # not the word xcraft alone, nor in other names
     assert highlighted("another xcraft command is building or changing this project") == []
     assert highlighted("the xcraft-build image") == []
+
+
+def test_tree_progress() -> None:
+    lines: list[str] = []
+    progress = TreeProgress(lines.append, 3)
+    first, second = progress.report("a"), progress.report("b")
+    first(1, 2**20, 4 * 2**20)
+    second(1, 2**20, 2 * 2**20)
+    first(4, 2**20, 4 * 2**20)
+    progress.done("a")
+    # the files downloading at once shown together, not each one in turn
+    assert lines[-2:] == ["0/3 files, 2 at once, 5.0/6.0 MiB", "1/3 files, 1 at once, 5.0/6.0 MiB"]

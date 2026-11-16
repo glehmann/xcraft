@@ -29,7 +29,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, field_validator
 
 from xcraft import process
-from xcraft.display import download_progress
+from xcraft.display import TreeProgress, download_progress
 from xcraft.process import log, thread_pool
 from xcraft.project import INTERNAL
 from xcraft.signing import Signer, SigningError, dev_signer
@@ -180,8 +180,16 @@ def _get(url: str, dest: Path, report: Callable[[int, int, int], None]) -> None:
         response.release_conn()
 
 
-def download(storage: Remote, path: str, dest: Path, on_line: Callable[[str], None] = lambda _: None) -> bool:
-    """Download `path` to `dest`, and return whether the shared storage has it."""
+def download(
+    storage: Remote,
+    path: str,
+    dest: Path,
+    on_line: Callable[[str], None] = lambda _: None,
+    report: Callable[[int, int, int], None] | None = None,
+) -> bool:
+    """Download `path` to `dest`, its progress given to `on_line`, or to the ``urlretrieve`` hook `report`, and return
+    whether the shared storage has it.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_name(f"{dest.name}.part")
     if storage.private:
@@ -191,10 +199,11 @@ def download(storage: Remote, path: str, dest: Path, on_line: Callable[[str], No
         part.rename(dest)
         return True
     try:
+        report = report or download_progress(on_line)
         if _pooled(url := _url(storage, path)):
-            _get(url, part, download_progress(on_line))
+            _get(url, part, report)
         else:
-            process.download(url, part, download_progress(on_line))
+            process.download(url, part, report)
     except OSError as e:
         part.unlink(missing_ok=True)
         return _absent_or_raise(storage, path, e)
@@ -657,11 +666,14 @@ def download_tree(
             return False
         root, manifest = found
         tree.mkdir()
+        progress = TreeProgress(on_line, len(manifest))
 
         def fetch(name: str, digest: str) -> None:
-            if not download(storage, f"{root}/{name}", tree / name, on_line) or sha256_of(tree / name) != digest:
+            found = download(storage, f"{root}/{name}", tree / name, report=progress.report(name))
+            if not found or sha256_of(tree / name) != digest:
                 msg = f"{root}/{name} is missing or corrupted in the storage"
                 raise RemoteError(msg)
+            progress.done(name)
 
         with thread_pool(REQUESTS) as pool:
             list(pool.map(fetch, manifest, manifest.values()))
@@ -705,20 +717,24 @@ def update_tree(
     dest.mkdir(parents=True, exist_ok=True)
     # next to it, to rename them there
     with tempfile.TemporaryDirectory(dir=dest.parent, prefix=f".{dest.name}-") as tmp:
+        names = [name for name, digest in manifest.items() if wanted(name, digest)]
+        progress = TreeProgress(on_line, len(names))
 
         def fetch(name: str) -> None:
             part = Path(tmp) / name
             try:
-                found = download(storage, f"{root}/{name}", part, on_line)
+                found = download(storage, f"{root}/{name}", part, report=progress.report(name))
             except RemoteError as e:  # one of many, which the others need not wait for
                 log.warning("skipping %s/%s: %s", prefix, name, e)
                 return
+            finally:
+                progress.done(name)
             if found and sha256_of(part) == manifest[name]:
                 (dest / name).parent.mkdir(parents=True, exist_ok=True)
                 part.rename(dest / name)
 
         with thread_pool(MANY) as pool:
-            list(pool.map(fetch, [name for name, digest in manifest.items() if wanted(name, digest)]))
+            list(pool.map(fetch, names))
     return True
 
 
