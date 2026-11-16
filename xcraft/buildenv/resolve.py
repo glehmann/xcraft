@@ -217,6 +217,8 @@ class Resolver:
         self.ours = {p.name: p for p in base.sack.query().available().filter(reponame="xcraft-ours")}
         self.needed: set[str] = set()
         """The upstream source packages of what was resolved."""
+        self.excluded_from_weak = base.sack.query().filter(empty=True)
+        base._set_excludes_from_weak_to_goal = self._set_excludes_from_weak  # noqa: SLF001
 
     def canonical(self, sourcerpm: str) -> tuple[str, str]:
         """Return the name and the version-release of a source package, as locked."""
@@ -247,6 +249,16 @@ class Resolver:
                 providers.extend(found)
         return providers
 
+    def _set_excludes_from_weak(self) -> None:
+        """Exclude `excluded_from_weak` from the weak dependencies, as dnf excludes those of exclude_from_weak, but
+        without parsing their names again, by package, which took most of the time of resolving the build roots.
+        """
+        goal = self.base._goal  # noqa: SLF001
+        goal.reset_exclude_from_weak()
+        if self.base.conf.exclude_from_weak_autodetect:
+            goal.exclude_from_weak_autodetect()
+        goal.add_exclude_from_weak(self.excluded_from_weak)
+
     def resolve(
         self,
         packages: list[Package],
@@ -262,7 +274,10 @@ class Resolver:
         base = self.base
         base.reset(goal=True)
         base.conf.install_weak_deps = weak
-        base.conf.exclude_from_weak = [str(p) for p in exclude_from_weak]  # which resolve() takes
+        # those of the same NEVRAs, of any repository, like dnf's exclude_from_weak, see _set_excludes_from_weak()
+        nevras = {str(p) for p in exclude_from_weak}
+        same_names = base.sack.query().available().filter(name=sorted({p.name for p in exclude_from_weak}))
+        self.excluded_from_weak = same_names.filter(pkg=[p for p in same_names if str(p) in nevras])
         # There is no system repository: these packages are available, never already installed.
         for items, optional in ((installed, True), (packages, False)):
             for p in items:

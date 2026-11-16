@@ -9,4 +9,5 @@ class Conf:
     cachedir: str
     install_weak_deps: bool
     exclude_from_weak: list[str]
+    exclude_from_weak_autodetect: bool
     def read(self, filename: str | None = None) -> None: ...

@@ -1,4 +1,4 @@
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from typing import overload
 
 import hawkey
@@ -91,6 +91,9 @@ class ConfigMain:
 
 class Goal:
     def install(self, select: selector.Selector, *, optional: bool = False) -> None: ...
+    def reset_exclude_from_weak(self) -> None: ...
+    def exclude_from_weak_autodetect(self) -> None: ...
+    def add_exclude_from_weak(self, query: Query) -> None: ...
 
 class Transaction:
     install_set: set[Package]
@@ -101,6 +104,7 @@ class Base:
     repos: RepoDict
     transaction: Transaction
     _goal: Goal
+    _set_excludes_from_weak_to_goal: Callable[[], None]
     def __init__(self, conf: conf.Conf | None = None) -> None: ...
     def read_all_repos(self) -> None: ...
     def fill_sack(self, load_system_repo: bool = True, load_available_repos: bool = True) -> None: ...
