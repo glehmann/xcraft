@@ -45,9 +45,24 @@
 
 # Tests
 
+- Write the tests in Dave Farley's style, as executable specifications of xcraft's behavior: check what it does, not
+  how, through its public functions and the CLI rather than private functions, call counts or internal caches, so a
+  refactoring that keeps the behavior breaks no test.
+- Keep the tests deterministic: no network, no wall clock nor sleep racing the code, no `if` skipping a check, and
+  assertions whose failure shows what differs.
 - Avoid mocks when possible: test on the test project, its packages and the upstream ones of `tests/upstream/`, in the
   real build environment. Add toy upstream packages there for the versions or architectures a test needs.
 - Mock only what cannot happen for real in a test, like a race between two commands, or a file edited during a build.
+- Name the tests `should_<behavior>[_when_<condition>]`, after what xcraft does in the words of its domain, not after
+  the functions they call: `should_fetch_pushed_builds_rather_than_building_them`.
+- Check one behavior by test. Keep the steps of a scenario in one test when they need the state of the previous ones,
+  or when separate tests would repeat expensive builds, publications or boots only to separate their checks.
+- Keep the number of tests minimal: extend the test of the same scenario rather than adding one whose checks overlap
+  it. Check a validation on its values directly, with one case through the CLI, and parametrize only the cases going
+  through different code, not the rows of a table.
+- Put a test in the file of its area, which its docstring states, like `test_project.py` or `test_repo.py`. Share the
+  helpers of several files in `tests/__init__.py` and their fixtures in `conftest.py`, like `root`, rather than
+  importing them from another test file.
 
 # Emulation
 
