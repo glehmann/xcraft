@@ -1,10 +1,12 @@
+"""The host: the tools xcraft needs, the emulation of the other architectures, and xcraft doctor."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 import pytest
 
-from tests import PROJECT, xcraft
+from tests import xcraft
 from xcraft import host
 from xcraft.host import Fix
 
@@ -36,9 +38,8 @@ def should_fix_the_emulation_flags_needed_to_run_sudo(binfmt: Path) -> None:
     (binfmt / "binfmt.d/qemu-aarch64-static.conf").write_text(CONF)
     assert host.emulation_problem("aarch64") == "the emulator of aarch64 is not registered in binfmt_misc"
     (proc / "qemu-aarch64").write_text("disabled\ninterpreter /usr/bin/qemu-aarch64-static\nflags: F\n")
-    assert host.binfmt("aarch64") is None
+    assert host.emulation_problem("aarch64") == "the emulator of aarch64 is not registered in binfmt_misc"
     (proc / "qemu-aarch64").write_text("enabled\ninterpreter /usr/bin/qemu-aarch64-static\nflags: F\noffset 0\n")
-    assert host.binfmt("aarch64") == ("qemu-aarch64", "F")
     assert (
         host.emulation_problem("aarch64") == "the emulation of aarch64 cannot run sudo, qemu-aarch64 having no C flag"
     )
@@ -85,8 +86,14 @@ def should_register_the_emulator_when_the_distribution_does_not(binfmt: Path) ->
 @pytest.mark.parametrize(
     ("os_release", "commands"),
     [
-        ('ID=ubuntu\nID_LIKE="debian"\n', ["sudo apt-get install -y podman gnupg qemu-user-static"]),
-        ('ID="almalinux"\nID_LIKE="rhel centos fedora"\n', ["sudo dnf install -y podman gnupg2"]),
+        (
+            'ID=ubuntu\nID_LIKE="debian"\n',
+            ["sudo apt-get install -y podman gnupg qemu-user-static qemu-system-x86 qemu-utils ovmf"],
+        ),
+        (
+            'ID="almalinux"\nID_LIKE="rhel centos fedora"\n',
+            ["sudo dnf install -y podman gnupg2 qemu-img edk2-ovmf"],
+        ),
         ("ID=slackware\n", ["sudo sboinstall -r podman qemu", "sudo slackpkg install gnupg2"]),
         ("ID=nixos\n", []),
     ],
@@ -96,69 +103,35 @@ def should_install_the_missing_tools_with_the_package_manager(
 ) -> None:
     (tmp_path / "os-release").write_text(os_release)
     monkeypatch.setattr(host, "_OS_RELEASE", tmp_path / "os-release")
-    assert [str(fix) for fix in host.install_fixes(["podman", "gpg", "qemu-x86_64_v2", "qemu-aarch64"])] == commands
-
-
-@pytest.mark.parametrize(
-    ("distro", "commands"),
-    [
-        ("debian", ["sudo apt-get install -y qemu-system-x86 qemu-utils ovmf qemu-user-static"]),
-        ("rhel", ["sudo dnf install -y qemu-img edk2-ovmf"]),
-        ("slackware", ["sudo sboinstall -r qemu"]),
-    ],
-)
-def should_install_the_missing_vm_tools_with_the_package_manager(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, distro: str, commands: list[str]
-) -> None:
-    (tmp_path / "os-release").write_text(f"ID={distro}\n")
-    monkeypatch.setattr(host, "_OS_RELEASE", tmp_path / "os-release")
-    tools = ["qemu-system-x86_64", "qemu-img", "ovmf", "qemu-aarch64"]
+    tools = ["podman", "gpg", "qemu-x86_64_v2", "qemu-aarch64", "qemu-system-x86_64", "qemu-img", "ovmf"]
     assert [str(fix) for fix in host.install_fixes(tools)] == commands
 
 
-@pytest.mark.parametrize("missing_tools", [False, True])
-def should_check_the_host_tools_outside_projects(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, missing_tools: bool
-) -> None:
+def should_check_the_host_tools_outside_projects(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("XCRAFT_PROJECT", raising=False)
-    if missing_tools:
-        monkeypatch.setenv("PATH", "")
+    monkeypatch.setenv("PATH", "")  # without the tools, whatever the host has
     code, output = xcraft("doctor")
-    assert code in {0, 1}, output
+    assert code == 1, output
     assert "no xcraft.toml" not in output
-    assert "qemu-system-x86_64:" in output
-    assert "qemu-img:" in output
+    assert "qemu-system-x86_64: not found" in output
+    assert "qemu-img: not found" in output
     assert "UEFI firmware:" in output
     assert "KVM:" in output
     assert "remote storage" not in output
-    if missing_tools:
-        assert "qemu-system-x86_64: not found" in output
-        assert "qemu-img: not found" in output
 
 
 def should_report_an_invalid_project_configuration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path))
     code, output = xcraft("doctor")
-    assert code == 1
+    assert code == 1, output
     assert "no xcraft.toml" in output
+    # see test_project.py for the validations of the configuration
     (tmp_path / "xcraft.toml").write_text("base_image = 123\n")
     code, output = xcraft("doctor")
-    assert code == 1
+    assert code == 1, output
     assert "validation error" in output
     assert "base_image" in output
-    # a tag only, which may name another image later, while the build keys stay the same
-    (tmp_path / "xcraft.toml").write_text('base_image = "ghcr.io/almalinux/10-base:10.2"\n')
-    code, output = xcraft("doctor")
-    assert code == 1
-    assert "base_image" in output
-    assert "sha256" in output
-    # a platform at least
-    toml = (PROJECT / "xcraft.toml").read_text()
-    (tmp_path / "xcraft.toml").write_text(toml.replace('["linux/amd64/v2", "linux/arm64"]', "[]"))
-    code, output = xcraft("doctor")
-    assert code == 1
-    assert "platforms" in output
 
 
 def should_add_subordinate_ids_after_those_of_others(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

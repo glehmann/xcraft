@@ -159,7 +159,7 @@ def _rpm_name(packages: dict[str, Pin], name: str) -> str:
     return f"{name}-{packages[name].evr.split(':')[-1]}.{packages[name].arch}.rpm"
 
 
-def _pinned(packages: dict[str, Pin], name: str, entry: Entry) -> bool:
+def as_pinned(packages: dict[str, Pin], name: str, entry: Entry) -> bool:
     """Return whether the metadata `entry` is the one of the package `name` as pinned in `packages`: its name,
     epoch-version-release, architecture and file name, which forged metadata of the upstream copy, unsigned, could
     change, for a package of the pinned SHA-256.
@@ -546,7 +546,7 @@ class _Assembler:
                 for name in names
                 if not (
                     (digest := locked[name].sha256) in self.known
-                    and _pinned(locked, name, self.known[digest][0])
+                    and as_pinned(locked, name, self.known[digest][0])
                     and self.reuse(repo, rpms[name], digest)
                 )
             ]
@@ -595,7 +595,7 @@ class _Assembler:
             copies = {
                 original: copy
                 for original, copy in upstream_signed.by_original(known[0]).items()
-                if original in extras or (original in named and _pinned(locked, named[original], copy[0]))
+                if original in extras or (original in named and as_pinned(locked, named[original], copy[0]))
             }
             missing = [name for name in names if originals[name] not in copies]
             todo = {d: rpm for d, rpm in extras.items() if d not in copies}

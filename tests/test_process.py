@@ -1,3 +1,5 @@
+"""The processes and threads of xcraft: its pools of threads."""
+
 from __future__ import annotations
 
 import threading

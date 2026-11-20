@@ -1,3 +1,5 @@
+"""xcraft contents: the packages of the snapshot of the checkout, by set, and their changes."""
+
 from __future__ import annotations
 
 import re
@@ -52,7 +54,20 @@ def should_list_the_packages_of_the_hosts_and_the_iso(root: Path) -> None:
     code, output = xcraft("contents", "--why", "no-such-package")
     assert code == 2
     assert "no-such-package is in no set" in output
-    assert xcraft("contents", "--set", "nothing")[0] == 2
+
+
+@pytest.mark.usefixtures("unprepared_root")
+def should_refuse_unknown_sets() -> None:
+    code, output = xcraft("contents", "--set", "nothing")
+    assert code == 2, output
+    assert "unknown set: nothing" in output
+
+
+@pytest.mark.usefixtures("unprepared_root")
+def should_compare_with_one_snapshot_only() -> None:
+    code, output = xcraft("contents", "--diff", "master", "--diff-stage", "main@incoming")
+    assert code == 2, output
+    assert "--diff and --diff-stage compare with one snapshot only" in " ".join(output.replace("│", "").split())
 
 
 def should_show_the_package_changes_since_a_revision(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -77,8 +92,6 @@ def should_show_the_package_changes_since_a_revision(root: Path, monkeypatch: py
     assert re.fullmatch(r"build: \d+ removed", lines[lines.index("") + 1])
     assert "  ~ with-deps 1.0-1+b1.xcpng8.99 → 1.0-1+b2.xcpng8.99" in lines
     assert any(line.startswith("  + bc ") and line.endswith(", required by with-deps (bc)") for line in lines)
-    # one revision only
-    assert xcraft("contents", "--diff", "master", "--diff-stage", "main@incoming")[0] == 2
     code, output = xcraft("contents", "--diff-stage", "incoming")
     assert code == 2
     assert "<remote>@<stage>[/<snapshot>]" in output

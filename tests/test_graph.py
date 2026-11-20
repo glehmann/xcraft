@@ -1,3 +1,5 @@
+"""The graph of the packages: what each build needs, and the order of the builds."""
+
 from __future__ import annotations
 
 import pytest
@@ -55,7 +57,11 @@ def should_order_the_builds_after_their_dependencies() -> None:
     deps = {"a": set(), "b": {"a"}, "c": {"b"}, "d": set()}
     assert build_order(deps, ["c"]) == ["a", "b", "c"]
     assert build_order(deps, ["c"], with_deps=False) == ["c"]
-    assert dependents(deps, ["a"]) == {"b", "c"}
+
+
+def should_find_the_packages_built_against_others() -> None:
+    # directly or not
+    assert dependents({"a": set(), "b": {"a"}, "c": {"b"}, "d": set()}, ["a"]) == {"b", "c"}
 
 
 def should_report_dependency_cycles() -> None:

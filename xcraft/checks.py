@@ -91,7 +91,7 @@ def record_dynamic(project: Project, name: str, tree: Path) -> bool:
     return True
 
 
-def _check_made(project: Project, name: str, tree: Path, *, suffix: str) -> None:
+def check_made(project: Project, name: str, tree: Path, *, suffix: str) -> None:
     """Raise when the build of `name` did not make the binary packages parsed from its spec for the architecture.
 
     Their names, versions and architectures, and the provides and requirements their spec declares, those rpm
@@ -338,5 +338,5 @@ def record_build(project: Project, name: str, tree: Path, *, suffix: str) -> boo
             msg = f"{e}, with the dynamic BuildRequires it asked for, now recorded: built again after what they need"
             raise BuildRootChangedError(msg) from None
         raise
-    _check_made(project, name, tree, suffix=suffix)
+    check_made(project, name, tree, suffix=suffix)
     return changed

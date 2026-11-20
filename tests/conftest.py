@@ -8,19 +8,23 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
+import subprocess
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
-from tests import ARCH, PROJECT, TOML, TOYS, UPSTREAM, config, copy_project
+from tests import ARCH, GARAGE, PROJECT, REMOTE, S3_PORT, TOML, TOYS, UPSTREAM, WEB_PORT, config, copy_project, garage
 from xcraft import container, process, resolution, upstream_copy
 from xcraft.cache import build_keys
 from xcraft.container import BUILDENV, built_image, repo_file, run_natively
 from xcraft.localrepo import extra_rpms
 from xcraft.project import Project, write_atomically
 from xcraft.resolution import Resolved
+from xcraft.signing import Signer
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
@@ -29,7 +33,7 @@ if TYPE_CHECKING:
 os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"  # never the developer's
 
 
-def make_toys(root: Path) -> None:
+def _build_toys(root: Path) -> None:
     """Build the upstream packages of the tests into their repository, TOYS, unless it is there already, in the base
     image of the host, with the repositories of the project but theirs, in `root`.
     """
@@ -148,28 +152,15 @@ def build_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path
     """Build the image of the build environment of the test projects first, and resolve their lock, once for all the
     workers of pytest-xdist, rather than all of them at once, and return that prepared project: the tests in
     containers copy that template, the others do not need it.
+
+    From then on, until the end of the session, the resolutions are shared by all the workers, and each worker has its
+    own dnf caches.
     """
     basetemp = tmp_path_factory.getbasetemp()
-    shared = basetemp.parent if "PYTEST_XDIST_WORKER" in os.environ else basetemp  # of all the workers of the session
+    xdist = "PYTEST_XDIST_WORKER" in os.environ
+    shared = basetemp.parent if xdist else basetemp  # of all the workers of the session
     # of all the sessions, like those of CI, which keeps the ones used
     resolutions = Path(os.environ.get("XCRAFT_TEST_RESOLUTIONS", shared / "resolutions"))
-    with (shared / "build-environment.lock").open("w") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
-        make_toys(shared)
-        root = shared / "template"
-        if not (root / "xcraft.lock").exists():
-            shutil.rmtree(root, ignore_errors=True)
-            shutil.copytree(PROJECT, root)
-            (root / "xcraft.toml").write_text(TOML)
-            native = Project(root, config()).on_host()
-            with pytest.MonkeyPatch.context() as patch:
-                patch.setattr(resolution, "_run", _shared_resolutions(resolutions))
-                resolution.prepare(native)
-                built_image(native)
-                build_keys(native)
-    if "PYTEST_XDIST_WORKER" not in os.environ:
-        yield root
-        return
     # Workers run real dnf transactions, with separate caches so their locks do not serialize the tests: in volumes,
     # with the others, rather than in the temporary files, often in memory, which the copies of all the workers fill
     cache_name = container._dnf_cache
@@ -188,15 +179,28 @@ def build_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path
             )  # fmt: skip
         return volumes[source]
 
-    try:
-        with pytest.MonkeyPatch.context() as patch:
-            patch.setattr(container, "_dnf_cache", worker_cache)
-            patch.setattr(resolution, "_run", _shared_resolutions(resolutions))
-            worker_cache(Project(root, config()).on_host())
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(resolution, "_run", _shared_resolutions(resolutions))
+        with (shared / "build-environment.lock").open("w") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            _build_toys(shared)
+            root = shared / "template"
+            if not (root / "xcraft.lock").exists():
+                shutil.rmtree(root, ignore_errors=True)
+                shutil.copytree(PROJECT, root)
+                (root / "xcraft.toml").write_text(TOML)
+                native = Project(root, config()).on_host()
+                resolution.prepare(native)
+                built_image(native)
+                build_keys(native)
+        try:
+            if xdist:
+                patch.setattr(container, "_dnf_cache", worker_cache)
+                worker_cache(Project(root, config()).on_host())
             yield root
-    finally:
-        for volume in volumes.values():
-            process.run(["podman", "volume", "rm", "-f", volume], check=False, capture=True)
+        finally:
+            for volume in volumes.values():
+                process.run(["podman", "volume", "rm", "-f", volume], check=False, capture=True)
 
 
 @pytest.fixture
@@ -206,5 +210,106 @@ def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_environment: Pat
     """
     root = tmp_path / "project"
     copy_project(root, build_environment)
+    monkeypatch.setenv("XCRAFT_PROJECT", str(root))
+    return root
+
+
+@pytest.fixture(scope="session")
+def s3(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, str]]:
+    """Start a Garage server with a bucket, a key to write it, and public reads; return its settings."""
+    garage_config = tmp_path_factory.mktemp("garage") / "garage.toml"
+    garage_config.write_text(
+        'metadata_dir = "/var/lib/garage/meta"\ndata_dir = "/var/lib/garage/data"\ndb_engine = "sqlite"\n'
+        f'replication_factor = 1\nrpc_bind_addr = "[::]:3901"\nrpc_secret = "{secrets.token_hex(32)}"\n'
+        '[s3_api]\ns3_region = "garage"\napi_bind_addr = "[::]:3900"\nroot_domain = ".s3.garage.localhost"\n'
+        '[s3_web]\nbind_addr = "[::]:3902"\nroot_domain = ".web.garage.localhost"\nindex = "index.html"\n'
+    )
+    subprocess.run(["podman", "rm", "-f", GARAGE], check=True, capture_output=True)
+    subprocess.run(
+        ["podman", "run", "-d", "--rm", "--name", GARAGE, "-p", f"127.0.0.1:{S3_PORT}:3900",
+         "-p", f"127.0.0.1:{WEB_PORT}:3902", "-v", f"{garage_config}:/etc/garage.toml:ro,Z",
+         "docker.io/dxflrs/garage:v2.1.0"],
+        check=True, capture_output=True,
+    )  # fmt: skip
+    try:
+        for _ in range(50):
+            try:
+                node = garage("node", "id", "-q").split("@")[0].strip()
+                break
+            except subprocess.CalledProcessError:
+                time.sleep(0.2)
+        else:
+            pytest.fail("the Garage server did not start")
+        garage("layout", "assign", "-z", "dc1", "-c", "1G", node)
+        garage("layout", "apply", "--version", "1")
+        garage("bucket", "create", "xcraft")
+        key = garage("key", "create", "test")
+        garage("bucket", "allow", "--read", "--write", "--owner", "xcraft", "--key", "test")
+        garage("bucket", "website", "--allow", "xcraft")
+        garage("bucket", "create", "xcraft-dev")
+        garage("bucket", "allow", "--read", "--write", "xcraft-dev", "--key", "test")
+        garage("bucket", "website", "--allow", "xcraft-dev")
+        fields = dict(re.findall(r"^(Key ID|Secret key):\s+(\S+)$", key, re.MULTILINE))
+        yield {"AWS_ACCESS_KEY_ID": fields["Key ID"], "AWS_SECRET_ACCESS_KEY": fields["Secret key"]}
+    finally:
+        subprocess.run(["podman", "rm", "-f", GARAGE], check=True, capture_output=True)
+
+
+@pytest.fixture(scope="session")
+def build_signer(tmp_path_factory: pytest.TempPathFactory) -> tuple[str, Path]:
+    """Return the fingerprint of the key of the builds of the remote storage, like CI's, and its keyring."""
+    if not shutil.which("gpg"):
+        pytest.skip("needs gpg")  # for the manifests of all the trees
+    home = tmp_path_factory.mktemp("build-key")
+    home.chmod(0o700)
+    signer = Signer("", home)
+    signer.gpg("--passphrase", "", "--quick-generate-key", "CI test", "rsa2048", "sign", "never")
+    fingerprint = next(
+        line.split(":")[9]
+        for line in signer.gpg("--with-colons", "--list-secret-keys").splitlines()
+        if line.startswith("fpr:")
+    )
+    return fingerprint, home
+
+
+@pytest.fixture
+def storage_root(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    build_environment: Path,
+    s3: dict[str, str],
+    build_signer: tuple[str, Path],
+) -> Path:
+    """Return a copy of the test project, see root(), with the remote storage, its builds signed by build_signer:
+    with builds and snapshots of its own, not to find those of the other tests in the storage, which they share, in a
+    stage of its own, which the REMOTE and STAGE of the module of the test have.
+    """
+    root = tmp_path / "project"
+    copy_project(root, build_environment)
+    monkeypatch.setenv("XCRAFT_PROJECT", str(root))
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
+    monkeypatch.setattr(request.module, "STAGE", stage := f"test-{secrets.token_hex(4)}")
+    remote = REMOTE.replace(
+        "[remote.main]",
+        f'[sign]\nkey = "{build_signer[0]}"\ngnupghome = "{build_signer[1]}"\n'
+        f'[remote.main]\nbuild_keys = ["{build_signer[0]}"]',
+    ).replace("[publish]\n", f'[publish]\nstage = "{stage}"\n')
+    monkeypatch.setattr(request.module, "REMOTE", remote)
+    (root / "xcraft.toml").write_text(remote)
+    monkeypatch.setenv("GNUPGHOME", str(tmp_path / "unused-keyring"))
+    for name, value in s3.items():
+        monkeypatch.setenv(name, value)
+    return root
+
+
+@pytest.fixture
+def unprepared_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Return a copy of the test project, without its lock nor what xcraft resolved for it: for the tests failing or
+    succeeding before any preparation, which need no build environment.
+    """
+    root = tmp_path / "project"
+    copy_project(root)
     monkeypatch.setenv("XCRAFT_PROJECT", str(root))
     return root

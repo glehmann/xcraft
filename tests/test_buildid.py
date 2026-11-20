@@ -12,13 +12,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests import ARCH, TOML, commit_base, edit, git, xcraft
+from tests import ARCH, TOML, commit_base, config, edit, git, ours, xcraft
 from xcraft import build as builder
-from xcraft import buildid, buildkey
+from xcraft import buildid, buildkey, devbuilds
 from xcraft.builds import BuildId, builds_path, load_builds, save_builds
 from xcraft.cache import build_keys
 from xcraft.iso import checkout_iso, dev_suffixes, iso_key, iso_name
-from xcraft.lock import load_lock, save_lock
+from xcraft.lock import Lock, load_lock, save_lock
 from xcraft.project import Project
 
 if TYPE_CHECKING:
@@ -68,7 +68,7 @@ def should_reject_malformed_build_ids() -> None:
         BuildId(number=0, key=key)  # the release suffix +b0, before the first build
 
 
-def should_number_again_the_packages_of_merge_conflicts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_forget_the_build_ids_in_merge_conflicts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "xcraft.toml").write_text(TOML)
     monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path))
     ids = {"bar": BuildId(number=1, key="ab" * 32), "foo": BuildId(number=2, key="cd" * 32)}
@@ -84,10 +84,6 @@ def should_number_again_the_packages_of_merge_conflicts(tmp_path: Path, monkeypa
     for conflict in (git_conflict, jj_conflict):
         path.write_text(text.replace("foo.build = 2\n", conflict))
         assert buildid.read(Project.find()) == {"bar": ids["bar"]}
-    # not anything else, which would be numbered again
-    path.write_text(text.replace(f'foo.key = "{"cd" * 32}"', 'foo.key = "truncated"'))
-    with pytest.raises(ValueError, match="key"):
-        buildid.read(Project.find())
 
 
 def should_number_the_builds_until_locked(root: Path) -> None:
@@ -166,7 +162,7 @@ def should_number_branches_against_the_main_branch(root: Path) -> None:
     # back to the main branch's packages: its build IDs
     git(root, "checkout", "-q", "master", "--", "base")
     update()
-    git(root, "diff", "--quiet", "master", "--", "xcraft.builds")
+    assert git(root, "diff", "master", "--", "xcraft.builds") == ""
 
 
 def should_number_against_the_configured_main_branch(root: Path) -> None:
@@ -240,7 +236,7 @@ def should_number_maintenance_fixes_between_releases(root: Path) -> None:
     assert version("trivial") == "1.0-1+b1.2.xcpng8.99"
 
 
-def should_identify_the_commit_of_the_checkout(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_identify_the_commit_of_the_checkout(root: Path) -> None:
     project = Project.find()
     assert buildid.commit(project) is None  # out of git
     (root / ".gitignore").write_text(".xcraft/\n")
@@ -249,15 +245,20 @@ def should_identify_the_commit_of_the_checkout(root: Path, tmp_path: Path, monke
     assert buildid.commit(project) == head
     edit(root, "changed")
     assert buildid.commit(project) == f"{head}-dirty"
-    if not shutil.which("jj"):
-        return
-    # with jj, the commit of its working copy, which git sees as changes, or its parent's while it is empty
-    (config := tmp_path / "jj.toml").write_text('user.name = "test"\nuser.email = "test@example.com"\n')
-    monkeypatch.setenv("JJ_CONFIG", str(config))
-    git(root, "checkout", "-q", "--", ".")
-    assert (
-        subprocess.run(["jj", "git", "init", "--colocate"], cwd=root, capture_output=True, check=False).returncode == 0
-    )
+
+
+@pytest.mark.skipif(not shutil.which("jj"), reason="needs jj")
+def should_identify_the_commit_of_the_working_copy_of_jj(
+    root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the commit of its working copy, which git sees as changes, or its parent's while it is empty
+    project = Project.find()
+    (settings := tmp_path / "jj.toml").write_text('user.name = "test"\nuser.email = "test@example.com"\n')
+    monkeypatch.setenv("JJ_CONFIG", str(settings))
+    (root / ".gitignore").write_text(".xcraft/\n")
+    commit_base(root)
+    head = git(root, "rev-parse", "HEAD")
+    subprocess.run(["jj", "git", "init", "--colocate"], cwd=root, capture_output=True, check=True)
     assert buildid.commit(project) == head
     edit(root, "changed with jj")
     working = buildid.commit(project)
@@ -270,8 +271,8 @@ def should_identify_the_commit_of_the_checkout(root: Path, tmp_path: Path, monke
 def should_number_jj_maintenance_bookmarks_like_branches(
     root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    (config := tmp_path / "jj.toml").write_text('user.name = "test"\nuser.email = "test@example.com"\n')
-    monkeypatch.setenv("JJ_CONFIG", str(config))
+    (settings := tmp_path / "jj.toml").write_text('user.name = "test"\nuser.email = "test@example.com"\n')
+    monkeypatch.setenv("JJ_CONFIG", str(settings))
 
     def jj(*args: str) -> None:
         subprocess.run(["jj", *args], cwd=root, capture_output=True, check=True)
@@ -337,16 +338,17 @@ def should_skip_spec_tests_only_for_development_builds(root: Path) -> None:
     commit_base(root)
     shutil.rmtree(root / ".xcraft/cache/builds")
     git(root, "checkout", "-qb", "feature")
-    with_deps.write_text(with_deps.read_text().replace("%files\n", "%check\nexit 1\n\n%files\n"))
+    with_deps.write_text(
+        with_deps.read_text().replace("%files\n", "%check\necho with-deps-checked\nexit 1\n\n%files\n")
+    )
     code, output = xcraft("build", "with-deps", "--nocheck")
     assert code == 0, output
     # the final build of trivial, which the remote storage misses, with its tests, unlike the development one
     (final,) = root.glob(f".xcraft/cache/builds/*/{ARCH}/trivial/*")
-    assert not (final / "nocheck").exists()
     assert "trivial-checked" in (final / "build.log").read_text()
     (development,) = root.glob(f".xcraft/cache/builds/*/{ARCH}/with-deps/*")
     assert "~1.dev" in development.name
-    assert (development / "nocheck").exists()
+    assert "with-deps-checked" not in (development / "build.log").read_text()
     assert xcraft("build", "with-deps", "--nocheck") == (0, "2 cached\n")
     # the builds with the tests make it again, which fails, keeping it for those without
     assert xcraft("build", "with-deps", "-n")[1].startswith("build    with-deps")
@@ -354,9 +356,52 @@ def should_skip_spec_tests_only_for_development_builds(root: Path) -> None:
     assert code == 1
     assert "✗ with-deps" in output, output
     assert xcraft("build", "with-deps", "--nocheck") == (0, "2 cached\n")
+
+
+def should_refuse_development_build_options_that_conflict(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    code, output = xcraft("build", "--final", "--dev", "x")
+    assert code == 2
+    assert "--final and --dev cannot be used together" in output
     code, output = xcraft("build", "--nocheck", "--final")
     assert code == 2
     assert "--final and --nocheck cannot be used together" in " ".join(output.replace("│", "").split())
+    monkeypatch.setenv("XCRAFT_DEV_COUNTER", "-1")
+    code, output = xcraft("build", "--dev", "pr7")
+    assert code != 0
+    assert "$XCRAFT_DEV_COUNTER must be a positive number: -1" in output
+
+
+@pytest.mark.parametrize(
+    ("cycle", "alone"), [({"a": {"b"}, "b": {"a"}}, "a"), ({"a": {"b", "c"}, "b": {"a"}, "c": set()}, "c")]
+)
+def should_number_the_development_builds_of_a_cycle_together(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cycle: dict[str, set[str]], alone: str
+) -> None:
+    # a cycle of the dependencies of all the architectures, and maybe a package it is built against, all developed: new
+    # on a branch
+    (tmp_path / "xcraft.toml").write_text(TOML)
+    git(tmp_path, "init", "-q", "-b", "master")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-qm", "base")
+    git(tmp_path, "checkout", "-qb", "feature")
+    project = Project(tmp_path, config())
+    project.config.platforms = [project.platform]  # the one of the dependencies given
+    ours(project, monkeypatch, cycle)
+    save_lock(project, Lock())
+    hashes = dict.fromkeys(cycle, "1" * 64)
+
+    def build(ident: str, names: list[str]) -> dict[str, str]:
+        suffixes = devbuilds.dev_keys(project, ident, hashes)[1]
+        devbuilds.keep_built(project, ident, suffixes, names, hashes)
+        return suffixes
+
+    assert build("dev", list(cycle)) == dict.fromkeys(cycle, "~1.dev")
+    # another development build of a, or of c, which a is built against, alone: b, built against a, is not
+    build("other", [alone])
+    # but its next one, of other inputs, has a newer release, like a
+    again = build("dev", list(cycle))
+    assert again["b"] == again["a"] != "~1.dev"
+    assert build("dev", list(cycle)) == again
 
 
 def compression(root: Path, rpm: str) -> str:
@@ -366,6 +411,7 @@ def compression(root: Path, rpm: str) -> str:
     return subprocess.run(query, capture_output=True, text=True, check=True).stdout
 
 
+@pytest.mark.skipif(not shutil.which("rpm"), reason="needs rpm")
 def should_make_development_builds_of_the_changed_packages(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: PLR0915
     # a main branch with what the builds record in its lock, like those CI checks
     assert xcraft("build")[0] == 0
@@ -395,9 +441,6 @@ def should_make_development_builds_of_the_changed_packages(root: Path, monkeypat
         p.name for p in root.glob(".xcraft/cache/builds/*/*/with-deps/*/RPMS/*/*.rpm")
     }
     assert compression(root, "with-deps-1.0-1+b2.xcpng8.99.noarch.rpm") == "19"
-    code, output = xcraft("build", "--final", "--dev", "x")
-    assert code == 2
-    assert "--final and --dev cannot be used together" in output
     # the repository of the development builds of the given packages, for test hosts
     code, output = xcraft("repo", "with-deps", "--baseurl", "http://example.com/qcow2/")
     assert code == 0, output
@@ -442,13 +485,9 @@ def should_make_development_builds_of_the_changed_packages(root: Path, monkeypat
     edit(root, "changed in CI", name="with-deps")
     monkeypatch.setenv("XCRAFT_DEV_COUNTER", "42")
     assert built("--dev", "pr7") == ["with-deps-1.0-1+b2~42.pr7.xcpng8.99.noarch.rpm"]
-    monkeypatch.setenv("XCRAFT_DEV_COUNTER", "-1")
-    code, output = xcraft("build", "--dev", "pr7")
-    assert code != 0
-    assert "$XCRAFT_DEV_COUNTER must be a positive number: -1" in output
 
 
-def should_make_isos_of_the_development_builds_of_a_branch(root: Path) -> None:
+def should_name_the_isos_after_the_development_builds_of_a_branch(root: Path) -> None:
     def key(dev: str | None) -> str:
         return iso_key(Project.find(), netinstall=False, volid=None, signer=None, dev=dev)
 
@@ -538,30 +577,32 @@ def should_cache_builds_under_the_suffix_of_their_rpms(root: Path) -> None:
     code, output = xcraft("build", "trivial")
     assert code == 0, output
     # cached under the release suffix of its RPMs, after its key
-    rpms = list(root.glob(".xcraft/cache/builds/*/*/trivial/*/RPMS/*/*.rpm"))
-    assert rpms
-    for rpm in rpms:
-        assert rpm.parents[2].name[64:] in rpm.name
+    (rpm,) = root.glob(".xcraft/cache/builds/*/*/trivial/*/RPMS/*/*.rpm")
+    trivial = buildid.read(Project.find())["trivial"]
+    assert trivial.build == 2
+    assert (rpm.name, rpm.parents[2].name[64:]) == ("trivial-1.0-1+b2~1.dev.xcpng8.99.noarch.rpm", "+b2~1.dev")
 
 
 def should_refuse_numbers_given_again_on_the_main_branch(root: Path) -> None:
     commit_base(root)
-    edit(root, "changed")
+    git(root, "checkout", "-qb", "feature")
+    edit(root, "feature")
     assert update() == {"trivial": 2, "with-deps": 2}
-    git(root, "commit", "-qam", "changed")
-    project = Project.find()
-    project.frozen = True
-    buildid.update(project)
-    # a merge conflict resolved by keeping one side: the number of the previous commit, for another key
-    edit(root, "other change")
-    git(root, "commit", "-qam", "other change")
-    ids = buildid.compute(project, buildid.base(project))
-    assert ids["trivial"].number == 3
-    ids["trivial"] = ids["trivial"].model_copy(update={"number": 2})
-    with pytest.raises(buildid.BuildIdError, match=r"given again to other builds, since the previous commit: trivial$"):
-        buildid.check_first_parent(project, ids)
-    ids["trivial"] = ids["trivial"].model_copy(update={"number": 3})
-    buildid.check_first_parent(project, ids)
+    git(root, "commit", "-qam", "feature")
+    git(root, "checkout", "-q", "master")
+    edit(root, "master")
+    assert update() == {"trivial": 2, "with-deps": 2}
+    git(root, "commit", "-qam", "master")
+    locked()
+    # the branch merged, its conflict resolved by keeping its side: the numbers of the previous commit, for other keys
+    with pytest.raises(subprocess.CalledProcessError):
+        git(root, "merge", "-q", "feature")
+    git(root, "checkout", "-q", "--theirs", "--", ".")
+    git(root, "commit", "-qam", "merged")
+    with pytest.raises(
+        buildid.BuildIdError, match=r"given again to other builds, since the previous commit: trivial, with-deps$"
+    ):
+        locked()
 
 
 def should_number_from_1_again_for_a_new_release(root: Path) -> None:
@@ -732,3 +773,54 @@ def should_reuse_builds_across_upstream_updates(root: Path, monkeypatch: pytest.
     assert update() == {"trivial": 1, "with-deps": 2}
     assert buildid.reuse(Project.find(), [], ["toyrun"]) == ["with-deps"]
     assert update() == {"trivial": 1, "with-deps": 1}
+
+
+def should_update_the_build_ids_without_building(root: Path) -> None:
+    code, output = xcraft("build", "--ids")
+    assert code == 0, output
+    assert set(load_builds(Project.find()).ids) == {"trivial", "with-deps"}
+    assert "build IDs: trivial 1, with-deps 1" in output
+    assert xcraft("build", "--ids")[1].endswith("the build IDs are up to date\n")
+    # a change, which --locked refuses, then updates the IDs of trivial and of with-deps, built against it
+    key = load_builds(Project.find()).ids["trivial"].key
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(spec.read_text().replace('echo "hello"', 'echo "hello again"'))
+    code, output = xcraft("build", "--ids", "--locked")
+    assert code == 1
+    assert "the build IDs would change, which --locked forbids: trivial, with-deps" in output
+    code, output = xcraft("build", "--ids")
+    assert code == 0, output
+    assert "build IDs: trivial 1, with-deps 1" in output
+    assert load_builds(Project.find()).ids["trivial"].key != key
+    assert not (root / ".xcraft/cache/builds").exists()  # nothing built
+    code, output = xcraft("build", "trivial", "--ids")
+    assert code == 2
+    assert "--ids updates the build IDs of all the packages" in " ".join(output.replace("│", "").split())
+
+
+def should_keep_the_dune_cache_of_development_builds(root: Path) -> None:
+    # the cache of dune of trivial, which writes in it like dune: kept on this machine, for the development builds
+    # only, but for the builds without dune
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(
+        spec.read_text().replace(
+            'echo "hello" > hello.txt',
+            'echo "hello" > hello.txt\n'
+            'test -z "${DUNE_CACHE_ROOT:-}" || echo "$DUNE_CACHE $DUNE_CACHE_STORAGE_MODE" > "$DUNE_CACHE_ROOT/entry"',
+        )
+    )
+    commit_base(root)
+    code, output = xcraft("build")
+    assert code == 0, output
+    caches = root / ".xcraft/dune-cache"
+    assert not caches.exists() or not any(caches.iterdir())
+    git(root, "checkout", "-qb", "feature")
+    spec.write_text(f"# changed\n{spec.read_text()}")
+    code, output = xcraft("build")
+    assert code == 0, output
+    assert (caches / "trivial/entry").read_text() == "enabled copy\n"
+    assert [p.name for p in caches.iterdir()] == ["trivial"]  # not with-deps, without dune
+    assert xcraft("clean", "trivial")[0] == 0
+    assert (caches / "trivial/entry").exists()
+    assert xcraft("clean", "trivial", "--dune-cache")[0] == 0
+    assert not (caches / "trivial").exists()

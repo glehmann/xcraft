@@ -1,3 +1,5 @@
+"""The releases of the packages: xcraft bump, their versions, releases and changelogs."""
+
 from __future__ import annotations
 
 import re
@@ -49,12 +51,21 @@ def should_add_the_changelog_entry_first() -> None:
     )
     empty = add_changelog_entry(spec, evr="1.0-2", author="Me <me@example.com>", message="", day=date(2026, 10, 19))
     assert "- 1.0-2\n-\n\n* Mon Jan 05" in empty
-    with pytest.raises(ValueError, match="autochangelog"):
-        add_changelog_entry("%changelog\n%autochangelog\n", **entry)
     # at the end, without a newline
     assert add_changelog_entry("Name: foo\n%changelog", **entry) == (
         "Name: foo\n%changelog\n* Mon Oct 19 2026 Me <me@example.com> - 1.0-2\n- Fix it\n\n"
     )
+
+
+def should_refuse_to_add_a_changelog_entry_to_an_autochangelog() -> None:
+    with pytest.raises(ValueError, match="autochangelog"):
+        add_changelog_entry(
+            "%changelog\n%autochangelog\n",
+            evr="1.0-2",
+            author="Me <me@example.com>",
+            message="",
+            day=date(2026, 10, 19),
+        )
 
 
 @pytest.mark.parametrize(
@@ -80,7 +91,7 @@ def should_name_the_archive_after_its_url() -> None:
     assert archive_name("https://github.com/x/y/archive/v1.0.tar.gz#/y-1.0.tar.gz") == "y-1.0.tar.gz"
 
 
-def should_bump_the_packages_of_the_same_version_together() -> None:
+def should_group_the_packages_of_the_same_version() -> None:
     groups = [["kernel", "kernel-headers"]]
     assert same_version(groups, "kernel-headers") == ["kernel", "kernel-headers"]
     assert same_version(groups, "xen") == ["xen"]

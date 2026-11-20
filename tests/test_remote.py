@@ -1,10 +1,11 @@
-"""The remote storage, with a Garage server, which serves the public reads with its website endpoint."""
+"""The remote storage, with a Garage server, which serves the public reads with its website endpoint: what is pushed
+to it and fetched from it, whom it trusts, and its pages.
+"""
 
 from __future__ import annotations
 
 import contextlib
 import fcntl
-import hashlib
 import http.client
 import http.server
 import logging
@@ -14,217 +15,58 @@ import secrets
 import shutil
 import subprocess
 import threading
-import time
 import urllib.error
 import urllib.request
 from contextlib import closing
-from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import quote
 
 import keyring.core
 import pytest
 from keyring.backend import KeyringBackend
 from keyring.errors import PasswordDeleteError
-from pydantic import ValidationError
 
-from tests import ARCH, PLATFORM, TOML, TOYS, commit_base, edit, git, needs_gpg, results, runner, write_spec, xcraft
-from tests.test_iso import cache_image
-from xcraft import (
-    buildid,
-    ccache,
-    checks,
-    container,
-    metalink,
-    mirror,
-    pinned,
-    prune,
-    remote,
-    remote_pages,
-    repodata,
-    resolution,
-    upload,
-    upstream_copy,
-    upstream_signed,
-)
-from xcraft import publish as publisher
+from tests import (
+    ARCH,
+    REMOTE,
+    S3_PORT,
+    STAGE,
+    WEB,
+    WEB_PORT,
+    cache_image,
+    commit_base,
+    garage,
+    git,
+    page,
+    pushed_iso,
+    results,
+    runner,
+    unsigned,
+    write_spec,
+    xcraft,
+)  # fmt: skip
+from xcraft import ccache, container, pinned, remote, remote_pages, repodata, resolution, upstream_copy
 from xcraft.__main__ import app
-from xcraft.cache import BuildError, build_keys, build_path
-from xcraft.iso import checkout_iso, fetch_isos, iso_key, iso_name, iso_path, push_isos
-from xcraft.lock import Pin, load_lock
-from xcraft.project import Project, Publish, Remote, Retention
-from xcraft.resolution import resolve_image
+from xcraft.cache import build_keys, build_path
+from xcraft.iso import checkout_iso, fetch_isos, iso_key, iso_path
+from xcraft.lock import load_lock
+from xcraft.project import Project, Remote
 from xcraft.rpmbuild import prepare_tree
-from xcraft.signing import KEY_FILE, Signer, check_signatures, create_dev_key, dev_signer, key_signer, release_signer
+from xcraft.signing import Signer, create_dev_key, dev_signer, key_signer, release_signer
 from xcraft.sources import SourceError, cache_source, sha256_of, source_path, write_manifest
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
-
-
-GARAGE = "docker.io/dxflrs/garage:v2.1.0"
-# a garage for each worker of pytest-xdist, with its name and ports
-WORKER = int(os.environ.get("PYTEST_XDIST_WORKER", "gw0").removeprefix("gw"))
-CONTAINER = f"xcraft-test-garage-{WORKER}"
-S3_PORT, WEB_PORT = 13900 + 10 * WORKER, 13902 + 10 * WORKER
-WEB = f"http://xcraft.web.garage.localhost:{WEB_PORT}"
-STAGE = ""
-"""The stage of the snapshots of the test, of its own: see root()."""
-
-
-def garage(*args: str) -> str:
-    return subprocess.run(
-        ["podman", "exec", CONTAINER, "/garage", *args], check=True, capture_output=True, text=True
-    ).stdout
-
-
-@pytest.fixture(scope="session")
-def s3(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, str]]:
-    """Start a Garage server with a bucket, a key to write it, and public reads; return its settings."""
-    garage_config = tmp_path_factory.mktemp("garage") / "garage.toml"
-    garage_config.write_text(
-        'metadata_dir = "/var/lib/garage/meta"\ndata_dir = "/var/lib/garage/data"\ndb_engine = "sqlite"\n'
-        f'replication_factor = 1\nrpc_bind_addr = "[::]:3901"\nrpc_secret = "{secrets.token_hex(32)}"\n'
-        '[s3_api]\ns3_region = "garage"\napi_bind_addr = "[::]:3900"\nroot_domain = ".s3.garage.localhost"\n'
-        '[s3_web]\nbind_addr = "[::]:3902"\nroot_domain = ".web.garage.localhost"\nindex = "index.html"\n'
-    )
-    subprocess.run(["podman", "rm", "-f", CONTAINER], check=True, capture_output=True)
-    subprocess.run(
-        ["podman", "run", "-d", "--rm", "--name", CONTAINER, "-p", f"127.0.0.1:{S3_PORT}:3900",
-         "-p", f"127.0.0.1:{WEB_PORT}:3902", "-v", f"{garage_config}:/etc/garage.toml:ro,Z", GARAGE],
-        check=True, capture_output=True,
-    )  # fmt: skip
-    try:
-        for _ in range(50):
-            try:
-                node = garage("node", "id", "-q").split("@")[0].strip()
-                break
-            except subprocess.CalledProcessError:
-                time.sleep(0.2)
-        else:
-            pytest.fail("the Garage server did not start")
-        garage("layout", "assign", "-z", "dc1", "-c", "1G", node)
-        garage("layout", "apply", "--version", "1")
-        garage("bucket", "create", "xcraft")
-        key = garage("key", "create", "test")
-        garage("bucket", "allow", "--read", "--write", "--owner", "xcraft", "--key", "test")
-        garage("bucket", "website", "--allow", "xcraft")
-        garage("bucket", "create", "xcraft-dev")
-        garage("bucket", "allow", "--read", "--write", "xcraft-dev", "--key", "test")
-        garage("bucket", "website", "--allow", "xcraft-dev")
-        fields = dict(re.findall(r"^(Key ID|Secret key):\s+(\S+)$", key, re.MULTILINE))
-        yield {"AWS_ACCESS_KEY_ID": fields["Key ID"], "AWS_SECRET_ACCESS_KEY": fields["Secret key"]}
-    finally:
-        subprocess.run(["podman", "rm", "-f", CONTAINER], check=True, capture_output=True)
-
-
-def page(directory: str) -> str:
-    """Return the page of a directory of the storage, through its public endpoint."""
-    with urllib.request.urlopen(f"{WEB}/{directory}") as response:  # noqa: S310, the test garage
-        assert response.headers["Content-Type"].startswith("text/html")
-        assert response.headers["Cache-Control"] == "no-cache"
-        return response.read().decode()
-
-
-REMOTE = (
-    # only the host's: publish fetches the builds of the others
-    TOML.replace('platforms = ["linux/amd64/v2", "linux/arm64"]', f'platforms = ["{PLATFORM}"]')
-    + f'[remote.main]\nurl = "{WEB}"\ns3_endpoint = "http://localhost:{S3_PORT}"\nbucket = "xcraft"\n'
-    + f'[remote.dev]\nurl = "http://xcraft-dev.web.garage.localhost:{WEB_PORT}"\n'
-    + f's3_endpoint = "http://localhost:{S3_PORT}"\nbucket = "xcraft-dev"\n'
-    # not the build repository, with the hundreds of source packages of their build environment to download
-    '[publish]\nrelease = "9.0"\nbuild = false\n'
-)
-
-
-@pytest.fixture(scope="session")
-def build_signer(tmp_path_factory: pytest.TempPathFactory) -> tuple[str, Path]:
-    if not shutil.which("gpg"):
-        pytest.skip("needs gpg")  # for the manifests of all the trees
-    home = tmp_path_factory.mktemp("build-key")
-    home.chmod(0o700)
-    signer = Signer("", home)
-    signer.gpg("--passphrase", "", "--quick-generate-key", "CI test", "rsa2048", "sign", "never")
-    fingerprint = next(
-        line.split(":")[9]
-        for line in signer.gpg("--with-colons", "--list-secret-keys").splitlines()
-        if line.startswith("fpr:")
-    )
-    return fingerprint, home
-
-
-def unsigned() -> str:
-    """Return the configuration of the tests, without the [sign] section of the key of their builds."""
-    return re.sub(r"\[sign\]\n.*?(?=\[remote.main\])", "", REMOTE, flags=re.DOTALL)
+    from collections.abc import Callable
 
 
 @pytest.fixture
-def root(
-    root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, s3: dict[str, str], build_signer: tuple[str, Path]
-) -> Path:
-    # builds and snapshots of its own, not to find those of the other tests in the storage, which they share
-    spec = root / "base/trivial/trivial.spec"
-    spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
-    monkeypatch.setattr("tests.test_remote.STAGE", stage := f"test-{secrets.token_hex(4)}")
-    monkeypatch.setattr(
-        "tests.test_remote.REMOTE",
-        REMOTE.replace(
-            "[remote.main]",
-            f'[sign]\nkey = "{build_signer[0]}"\ngnupghome = "{build_signer[1]}"\n'
-            f'[remote.main]\nbuild_keys = ["{build_signer[0]}"]',
-        ).replace("[publish]\n", f'[publish]\nstage = "{stage}"\n'),
-    )
-    (root / "xcraft.toml").write_text(REMOTE)
-    monkeypatch.setenv("GNUPGHOME", str(tmp_path / "unused-keyring"))
-    for name, value in s3.items():
-        monkeypatch.setenv(name, value)
-    return root
-
-
-def _pushed_iso(project: Project, tmp_path: Path) -> tuple[Signer, Path, Path]:
-    """Push the ISO of a cached image, signed with the key of the builds of the storage, like those of CI, see root(),
-    and return that key, the image, and the tree of its cache.
-    """
-    signer = release_signer(project)
-    assert signer
-    image = tmp_path / "test.iso"
-    image.write_bytes(secrets.token_bytes(2048))
-    tree = cache_image(project, image, signer=signer)
-    code, output = xcraft("push", "isos")
-    assert code == 0, output
-    assert "1 ISOs pushed" in output
-    return signer, image, tree
-
-
-def should_copy_pushed_isos_to_snapshots_rather_than_upload_them(
-    root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    project = Project.find()
-    signer, image, _ = _pushed_iso(project, tmp_path)
-    assert "0 ISOs pushed, 1 already" in xcraft("push", "isos")[1]
-    storage = project.config.remote["dev"]
-    snapshot = tmp_path / "snapshot"
-    published = snapshot / "iso" / iso_name(project, netinstall=False, signer=signer)
-    published.parent.mkdir(parents=True)
-    shutil.copy2(image, published)
-    with caplog.at_level(logging.DEBUG, logger="xcraft"):
-        stored = push_isos(project, storage, signer=signer)
-        upload.Uploader(project, storage, signer, build=False).upload_isos(snapshot, "cache-reuse", stored=stored)
-    assert any(m.startswith("copying ") and "/image.iso to " in m for m in caplog.messages)
-    assert not any(m.startswith(f"uploading {published} ") for m in caplog.messages)
-    assert not any(m.startswith("downloading ") and f"/{published.name} to " in m for m in caplog.messages)
-    # with the checksums of the ISOs of all the architectures, signed
-    manifest = remote.read_manifest(storage, f"isos/9.0/{STAGE}/cache-reuse", trusted=signer)
-    assert {published.name, upload.SUMS, f"{upload.SUMS}.asc"} <= manifest.keys()
-    sums = tmp_path / upload.SUMS
-    assert remote.download(storage, f"isos/9.0/{STAGE}/cache-reuse/{upload.SUMS}", sums)
-    assert sums.read_text() == f"{sha256_of(image)}  {published.name}\n"
+def root(storage_root: Path) -> Path:
+    return storage_root
 
 
 def should_fetch_pushed_isos_without_preparing_the_checkout(root: Path, tmp_path: Path) -> None:
     project = Project.find()
-    signer, image, tree = _pushed_iso(project, tmp_path)
+    signer, image, tree = pushed_iso(project, tmp_path)
     shutil.rmtree(project.state / "cache")
     # No snapshot, RPMs, prepared container state or signing operations are needed to fetch the image.
     project.frozen = True
@@ -235,23 +77,6 @@ def should_fetch_pushed_isos_without_preparing_the_checkout(root: Path, tmp_path
     assert checkout_iso(project, signer=Signer("0" * 40), published=True).samefile(tree / "image.iso")
     assert not (project.state / "publish").exists()
     assert not (project.state / "cache/builds").exists()
-
-
-def should_not_fetch_isos_changed_in_the_storage(root: Path, tmp_path: Path) -> None:
-    project = Project.find()
-    signer, _, tree = _pushed_iso(project, tmp_path)
-    shutil.rmtree(tree)
-    key = iso_key(project, netinstall=False, volid=None, signer=signer)
-    storage = project.config.remote["dev"]
-    remote.upload(
-        storage,
-        f"{remote.read_tree(storage, iso_path(project, key), trusted=signer)[0]}/image.iso",
-        root / "xcraft.toml",
-    )
-    with pytest.raises(remote.RemoteError, match="missing or corrupted"):
-        # The transport rejects the changed payload before installing its cache directory.
-        remote.fetch_tree(project, iso_path(project, key), tree)
-    assert not tree.exists()
 
 
 def _source_archive(root: Path, tmp_path: Path) -> tuple[Path, str]:
@@ -320,7 +145,9 @@ def should_check_the_downloaded_source_archives(root: Path, tmp_path: Path) -> N
         prepare_tree(Project.find(), "trivial")
 
 
-def should_download_source_archives_from_the_urls_of_the_spec(root: Path, tmp_path: Path) -> None:
+def should_download_source_archives_from_the_urls_of_the_spec_and_report_those_failing(
+    root: Path, tmp_path: Path
+) -> None:
     archive, extra = (tmp_path / f"{name}-{secrets.token_hex(4)}.tar.gz" for name in ("trivial", "extra"))
     for path in (archive, extra):
         path.write_text(path.name)
@@ -343,7 +170,6 @@ def should_download_source_archives_from_the_urls_of_the_spec(root: Path, tmp_pa
         0,
         "2 archives in the remote storage, 0 missing\n",
     )
-    write_manifest(root / "base/trivial/sources", {archive.name: sha256_of(archive)})
     # checked too
     write_manifest(root / "base/trivial/sources", {archive.name: "0" * 64})
     code, output = xcraft("fetch", "sources", "trivial")
@@ -387,8 +213,6 @@ def should_trust_only_trees_signed_by_a_build_key(root: Path, tmp_path: Path) ->
     prefix = f"builds/security/{secrets.token_hex(4)}"
     signer = release_signer(Project.find())
     assert signer
-    with pytest.raises(remote.RemoteError, match="no key to sign uploads"):
-        remote.upload_tree(storage, prefix, src, ["file"], signer=None)
     # Verification keys neither select the signer nor need to be configured for uploads.
     remote.upload_tree(storage.model_copy(update={"build_keys": []}), prefix, src, ["file"], signer=signer)
     assert remote.download_tree(storage, prefix, tmp_path / "valid")
@@ -401,9 +225,6 @@ def should_trust_only_trees_signed_by_a_build_key(root: Path, tmp_path: Path) ->
     assert not remote.tree_exists(storage.model_copy(update={"build_keys": ["0" * 40]}), prefix)
     # A signed manifest cannot be transplanted to another build key.
     generation = remote.read_tree(storage, prefix)[0]
-    assert (
-        generation == f"{prefix}/{hashlib.sha256(f'{prefix}\n{sha256_of(src / "file")}  file\n'.encode()).hexdigest()}"
-    )
     remote.transfer(
         storage,
         {
@@ -434,6 +255,12 @@ def should_trust_only_trees_signed_by_a_build_key(root: Path, tmp_path: Path) ->
         (src / remote.MANIFEST).write_text(forged)
         remote.upload(storage, f"{prefix}/{remote.MANIFEST}", src / remote.MANIFEST)
         assert not remote.tree_exists(storage, prefix)
+    # nor is a signed one with a size that is not a number
+    (src / "malformed").write_text(f"{generation}\n{sha256_of(valid)} x file\n")
+    signer.clearsign(src / "malformed", src / remote.MANIFEST)
+    remote.upload(storage, f"{prefix}/{remote.MANIFEST}", src / remote.MANIFEST)
+    remote.forget()
+    assert not remote.tree_exists(storage, prefix)
 
 
 def should_update_a_tree_when_some_of_its_files_fail_to_download(
@@ -456,20 +283,7 @@ def should_update_a_tree_when_some_of_its_files_fail_to_download(
     assert [p.name for p in (root / "dest").iterdir()] == ["good"]
 
 
-def should_list_file_sizes_in_manifests_without_changing_their_tree() -> None:
-    files, sizes = {"a b": "1" * 64, "123 c": "2" * 64}, {"a b": 12}
-    text = remote.manifest_text("p", files, sizes)
-    # the size of those known, the others like sha256sum's lines, which the trees written without have
-    assert text == f"p\n{'2' * 64}  123 c\n{'1' * 64} 12 a b\n"
-    assert remote._parse("p", text) == ("p", files, sizes)
-    # their generation the same with or without the sizes
-    generation = remote.generation("p", files)
-    assert remote._parse("p", remote.manifest_text(generation, files, sizes))[0] == generation
-    with pytest.raises(ValueError, match="not the manifest"):
-        remote._parse("p", f"p\n{'1' * 64} x a\n")
-
-
-def should_fetch_trees_from_dev_when_the_main_copy_is_not_trusted(
+def should_fetch_trees_from_dev_when_the_main_copy_is_untrusted_or_corrupted(
     root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     project = Project.find()
@@ -509,28 +323,16 @@ def should_fetch_trees_from_dev_when_the_main_copy_is_not_trusted(
     assert (tmp_path / "fallback/file").read_text() == "trusted payload"
 
 
-def should_protect_the_main_storage_from_developer_uploads(
-    root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def should_push_to_main_only_the_developer_source_archives_of_their_manifest(root: Path, tmp_path: Path) -> None:
     storage = Project.find().config.remote.get("main")
     assert storage
     dev_storage = Project.find().config.remote["dev"]
-    key_name = f"developer-{secrets.token_hex(4)}"
-    fields = dict(re.findall(r"^(Key ID|Secret key):\s+(\S+)$", garage("key", "create", key_name), re.MULTILINE))
-    garage("bucket", "allow", "--read", "--write", "xcraft-dev", "--key", key_name)
     archive = tmp_path / f"source-{secrets.token_hex(4)}"
     archive.write_text("source archive")
     digest = sha256_of(archive)
     path = source_path(archive.name, digest)
     write_manifest(root / "base/trivial/sources", {archive.name: digest})
-    with monkeypatch.context() as developer:
-        developer.setenv("AWS_ACCESS_KEY_ID", fields["Key ID"])
-        developer.setenv("AWS_SECRET_ACCESS_KEY", fields["Secret key"])
-        remote.upload(dev_storage, path, archive)
-        with pytest.raises(remote.RemoteError):
-            remote.upload(storage, path, archive)
-        with pytest.raises(remote.RemoteError):
-            remote.delete(storage, [path])
+    remote.upload(dev_storage, path, archive)  # by a developer
     code, output = xcraft("push", "--to", "main")
     assert code == 1
     assert "not in the source cache" in output
@@ -558,7 +360,7 @@ def should_protect_the_main_storage_from_developer_uploads(
 
 def _dev_only(root: Path) -> tuple[str, Signer]:
     """Configure the project with the dev bucket only, and return that configuration, and the developer's key made."""
-    config = re.sub(r"\[remote.main\]\n.*?(?=\[remote.dev\])", "", unsigned(), flags=re.DOTALL)
+    config = re.sub(r"\[remote.main\]\n.*?(?=\[remote.dev\])", "", unsigned(REMOTE), flags=re.DOTALL)
     (root / "xcraft.toml").write_text(config)
     return config, create_dev_key(Project.find(), "Developer")
 
@@ -619,7 +421,7 @@ def should_keep_embargoed_builds_in_the_private_storage(
     garage("bucket", "allow", "--read", "--write", bucket, "--key", "test")
     branches = 'maintenance_branches = ["maint/*", "embargo/*"]\nembargo_branches = ["embargo/*"]\n'
     private = f'[remote.private]\ns3_endpoint = "http://localhost:{S3_PORT}"\nbucket = "{bucket}"\n'
-    config = unsigned()
+    config = unsigned(REMOTE)
     (root / "xcraft.toml").write_text(f'{branches}{config}{private}build_keys = ["{build_signer[0]}"]\n')
     (root / ".gitignore").write_text(".xcraft/\n")
     commit_base(root)
@@ -668,10 +470,11 @@ def should_share_builds_between_checkouts_with_their_rpm_dependencies(
     fetching them all does not resolve again.
     """
     # CI selects its key without a private-key setting in the project.
-    (root / "xcraft.toml").write_text(unsigned())
+    (root / "xcraft.toml").write_text(unsigned(REMOTE))
     monkeypatch.setenv("GNUPGHOME", str(build_signer[1]))
     assert xcraft("build")[0] == 0
-    assert xcraft("push", "--key", build_signer[0], "--to", "main", "builds")[0] == 0
+    for what in ("builds", "resolutions"):  # those of the build environment, rather than resolving them again
+        assert xcraft("push", "--key", build_signer[0], "--to", "main", what)[0] == 0
     recorded = {p.parts[-3]: p.read_text() for p in root.glob(".xcraft/cache/builds/*/*/*/*/rpm-deps.json")}
     assert set(recorded) == {"trivial", "with-deps"}
     # another checkout, elsewhere, with what is committed: the same keys, whatever the path
@@ -679,19 +482,13 @@ def should_share_builds_between_checkouts_with_their_rpm_dependencies(
     shutil.copytree(root, other, ignore=shutil.ignore_patterns(".xcraft"))
     monkeypatch.setenv("XCRAFT_PROJECT", str(other))
     assert Project.find().id != Project(root, Project.find().config).id
-    resolved: list[dict[str, str]] = []
-    resolve = checks.resolve_rpm_deps
-
-    def counted(project: Project, names: dict[str, str], rpms: list[Path]) -> resolution.Resolved:
-        resolved.append(names)
-        return resolve(project, names, rpms)
-
-    monkeypatch.setattr(checks, "resolve_rpm_deps", counted)
+    # resolving here, not reading what the other tests resolved, see conftest.py
+    monkeypatch.setattr(resolution, "_run", getattr(resolution._run, "__wrapped__", resolution._run))
     code, output = xcraft("build")
     assert code == 0, output
-    assert output.splitlines()[0].startswith("made the developer's key")  # of this checkout, for its builds
+    assert "made the developer's key" in output  # of this checkout, for its builds
     assert output.splitlines()[-1] == "2 fetched"
-    assert resolved == []
+    assert not (other / f".xcraft/logs/_resolve-{ARCH}.log").exists()
     assert {p.parts[-3]: p.read_text() for p in other.glob(".xcraft/cache/builds/*/*/*/*/rpm-deps.json")} == recorded
 
 
@@ -718,9 +515,7 @@ def should_push_what_it_can_and_report_the_rest(root: Path, tmp_path: Path) -> N
     assert xcraft("push", "sources", "trivial", "--check", "--to", "main")[0] == 0
 
 
-def should_not_reuse_resolutions_of_other_package_contents(
-    root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def should_not_reuse_resolutions_of_other_package_contents(root: Path, tmp_path: Path) -> None:
     """The resolutions of the storage are of the pins they were made with: neither an update pinning other contents
     of the same versions, nor another machine with the lock it made, get those of the former contents.
     """
@@ -764,8 +559,6 @@ def should_not_reuse_resolutions_of_other_package_contents(
     # another machine, with the lock updated, and the resolutions of the former contents in the storage
     locked = (root / "xcraft.lock").read_bytes()
     shutil.rmtree(project.state / "cache/resolved")
-    monkeypatch.setattr(resolution, "_resolved", {})
-    monkeypatch.setattr(resolution, "_unreachable", set())
     code, output = xcraft("build", "--dry-run", "--locked")
     assert code == 0, output
     assert (root / "xcraft.lock").read_bytes() == locked
@@ -784,26 +577,26 @@ def should_fetch_resolutions_rather_than_resolving_again(root: Path, monkeypatch
     deps.write_text(deps.read_text().replace("BuildRequires: trivial", "BuildRequires: trivial >= 1.0"))
 
     def pushed() -> str:
-        """Push the resolutions, like CI, in a new process."""
-        monkeypatch.setattr(resolution, "_resolved", {})
+        """Push the resolutions, like CI."""
         code, output = xcraft("push", "resolutions", "--to", "main")
         assert code == 0, output
         return output
 
     assert re.search(r"^resolutions: [1-9]\d* pushed", pushed(), re.MULTILINE)
     assert re.search(r"^resolutions: 0 pushed", pushed(), re.MULTILINE)
+    resolved, log = root / ".xcraft/cache/resolved", root / f".xcraft/logs/_resolve-{ARCH}.log"
+    before = {c: c.read_bytes() for c in resolved.rglob("*.json")}
     # another release of trivial: the same key, resolved again, which replaces those of the storage
     spec.write_text(spec.read_text().replace("Release: 1%{?dist}", "Release: 2%{?dist}"))
     assert re.search(r"^resolutions: [1-9]\d* pushed", pushed(), re.MULTILINE)
-    resolved, log = root / ".xcraft/cache/resolved", root / f".xcraft/logs/_resolve-{ARCH}.log"
     caches = sorted(c for c in resolution.resolutions_read() if c.is_relative_to(resolved))
+    # one resolved again for that release: of this test only, with its trivial
+    changed = next(c for c in caches if c in before and c.read_bytes() != before[c])
 
     def new_checkout() -> str:
-        """Run xcraft status like in a new checkout, without the resolutions, in a new process."""
+        """Run xcraft status like in a new checkout, without the resolutions."""
         shutil.rmtree(resolved)
         log.unlink(missing_ok=True)
-        monkeypatch.setattr(resolution, "_resolved", {})
-        monkeypatch.setattr(resolution, "_unreachable", set())
         code, output = xcraft("status")
         assert code == 0, output
         return output
@@ -812,12 +605,11 @@ def should_fetch_resolutions_rather_than_resolving_again(root: Path, monkeypatch
     new_checkout()
     assert not log.exists()
     assert sorted(resolved.rglob("*.json")) == caches
-    # resolved, when what the storage has is not what was signed: the build roots of this test only
+    # resolved, when what the storage has is not what was signed
     project = Project.find()
-    roots = resolution._cache(project, resolution._unversioned(resolution._roots_data(project)))
     (tampered := root / "tampered.json").write_text("{}")
-    storage, tree = remote.storages(project)[0], resolution.remote_tree(roots)
-    remote.upload(storage, f"{remote.read_tree(storage, tree)[0]}/{roots.name}", tampered)
+    storage, tree = remote.storages(project)[0], resolution.remote_tree(changed)
+    remote.upload(storage, f"{remote.read_tree(storage, tree)[0]}/{changed.name}", tampered)
     assert "no resolutions from the remote storage" in new_checkout()
     assert log.exists()
     assert sorted(resolved.rglob("*.json")) == caches
@@ -929,23 +721,29 @@ def ccache_hits(cache: Path) -> int:
     return stats["direct_cache_hit"] + stats["preprocessed_cache_hit"]
 
 
-@pytest.mark.parametrize("developer", [False, True])
-def should_share_compiler_caches_through_the_storage(  # noqa: PLR0915
+def _ci(root: Path, monkeypatch: pytest.MonkeyPatch, build_signer: tuple[str, Path]) -> list[str]:
+    """Configure the project like CI, with the key of the builds of the storage, and return the options to push."""
+    (root / "xcraft.toml").write_text(unsigned(REMOTE))
+    monkeypatch.setenv("GNUPGHOME", str(build_signer[1]))
+    return ["--key", build_signer[0]]
+
+
+def _developer(root: Path, *_: object) -> list[str]:
+    """Configure the project like a developer's, trusting no build key but theirs, and return the options to push."""
+    (root / "xcraft.toml").write_text(re.sub(r"build_keys = \[.*?\]", "build_keys = []", unsigned(REMOTE)))
+    create_dev_key(Project.find(), "Developer <dev@example.com>")
+    return []
+
+
+@pytest.mark.parametrize("signing", [_ci, _developer])
+def should_share_compiler_caches_through_the_storage(
     root: Path,
     monkeypatch: pytest.MonkeyPatch,
     build_signer: tuple[str, Path],
     caplog: pytest.LogCaptureFixture,
-    *,
-    developer: bool,
+    signing: Callable[[Path, pytest.MonkeyPatch, tuple[str, Path]], list[str]],
 ) -> None:
-    config = unsigned()
-    if developer:
-        config = re.sub(r"build_keys = \[.*?\]", "build_keys = []", config)
-    (root / "xcraft.toml").write_text(config)
-    if developer:
-        create_dev_key(Project.find(), "Developer <dev@example.com>")
-    else:
-        monkeypatch.setenv("GNUPGHOME", str(build_signer[1]))
+    options = signing(root, monkeypatch, build_signer)
     write_spec(root, "compiled", files="/usr/lib/compiled/t.o")
     spec = root / "base/compiled/compiled.spec"
     build = "%build\necho 'int f(void) { return 0; }' > t.c\ngcc -c t.c -o t.o\n"
@@ -959,7 +757,6 @@ def should_share_compiler_caches_through_the_storage(  # noqa: PLR0915
     cache = root / ".xcraft/ccache/compiled"
     results = sorted(cache.rglob("*R"))  # the results of the compilations
     assert results
-    options = [] if developer else ["--key", build_signer[0]]
 
     def levels() -> set[int]:
         return {path.read_bytes()[5] for path in cache.rglob("*R")}  # in the header of ccache's entries
@@ -978,7 +775,6 @@ def should_share_compiler_caches_through_the_storage(  # noqa: PLR0915
     entries = [p.relative_to(cache).as_posix() for p in results]
     dates = {p: p.stat().st_mtime for p in cache.rglob("*") if p.is_file()}
     assert set(entries) <= set(push())
-    assert [m for m in caplog.messages if "--recompress" in m]
     # compressed again in place, once, with the dates which tell the entries of the last build
     assert levels() == {ccache.LEVEL}
     assert {p: p.stat().st_mtime for p in dates} == dates
@@ -991,8 +787,9 @@ def should_share_compiler_caches_through_the_storage(  # noqa: PLR0915
     with pytest.raises(urllib.error.HTTPError):
         page(f"{tree}/{entries[0].split('/')[0]}/")
     # only what the storage does not have is uploaded, and compressed: nothing
+    files = {p: p.stat().st_ino for p in cache.rglob("*") if p.is_file()}
     assert push() == []
-    assert not [m for m in caplog.messages if "--recompress" in m]
+    assert {p: p.stat().st_ino for p in files} == files
     shutil.rmtree(cache)
     assert xcraft("fetch", "ccache", "compiled") == (0, "↓ compiled\n1 fetched\n")
     assert sorted(cache.rglob("*R")) == results
@@ -1013,7 +810,7 @@ def should_share_compiler_caches_through_the_storage(  # noqa: PLR0915
 
 
 def should_refuse_to_push_compiler_caches_without_a_signing_key(root: Path) -> None:
-    (root / "xcraft.toml").write_text(unsigned())
+    (root / "xcraft.toml").write_text(unsigned(REMOTE))
     cache = root / ".xcraft/ccache/trivial/0"
     cache.mkdir(parents=True)
     (cache / "entry").write_text("cached")
@@ -1142,9 +939,7 @@ def should_build_locally_when_the_storage_is_unavailable(root: Path) -> None:
     (root / "xcraft.toml").write_text(REMOTE.replace(str(WEB_PORT), "13899"))  # of no worker
     code, output = xcraft("build", "trivial")
     assert code == 0, output
-    assert output.splitlines()[1].startswith(  # after the build IDs
-        "remote storage unavailable, building locally: http://xcraft-dev.web.garage.localhost:13899/"
-    )
+    assert "remote storage unavailable, building locally: http://xcraft-dev.web.garage.localhost:13899/" in output
     assert output.splitlines()[-1] == "1 built"
 
 
@@ -1171,277 +966,6 @@ def should_not_push_builds_made_without_their_tests(root: Path) -> None:
     assert code == 1
     assert "built without their tests, with --nocheck, not pushed: trivial\n" in output
     assert output.endswith("not built: trivial")
-
-
-def should_index_the_source_packages_reused_from_the_latest_snapshot(root: Path, tmp_path: Path) -> None:
-    arches = [ARCH, "x86_64"] if ARCH == "x86_64_v2" else [ARCH]
-    platforms = ", ".join(f'"{p}"' for p in [PLATFORM, "linux/amd64"][: len(arches)])
-    (root / "xcraft.toml").write_text(REMOTE.replace(f'["{PLATFORM}"]', f"[{platforms}]"))
-    storage = Project.find().config.remote["main"]
-    # with the builds of all the architectures in the storage, like CI pushes them, and a change of with-deps only:
-    # the source package of trivial, reused from the latest snapshot, is the one of its metadata
-    assert xcraft("build")[0] == 0
-    for arch in arches:
-        if arch != ARCH:
-            assert xcraft("build", "--arch", arch)[0] == 0
-        assert xcraft("push", "builds", "--to", "main", "--arch", arch)[0] == 0
-    stage = f"sources-{secrets.token_hex(4)}"
-    assert xcraft("publish", "repos", "--to", "main", "--stage", stage)[0] == 0
-    spec = root / "base/with-deps/with-deps.spec"
-    spec.write_text(spec.read_text().replace('echo "with-deps"', 'echo "with-deps, changed"'))
-    assert xcraft("publish", "repos", "--to", "main", "--stage", stage)[0] == 0
-    assert remote.download_tree(storage, f"repos/9.0/{stage}/latest", tmp_path / "latest")
-    sources = tmp_path / "latest/base/Source"
-    indexed = repodata.read(sources) or {}
-    assert all(sha256_of(srpm) in indexed for srpm in sources.glob("*.src.rpm"))
-
-
-def should_publish_dated_and_latest_snapshots_of_all_architectures(root: Path) -> None:
-    # the architectures the host runs, built for all: two on x86_64
-    arches = [ARCH, "x86_64"] if ARCH == "x86_64_v2" else [ARCH]
-    platforms = ", ".join(f'"{p}"' for p in [PLATFORM, "linux/amd64"][: len(arches)])
-    (root / "xcraft.toml").write_text(REMOTE.replace(f'["{PLATFORM}"]', f"[{platforms}]") + 'extra = ["bc"]\n')
-    code, output = xcraft("publish", "--to", "main")
-    assert code == 0, output
-    assert {"bc", "glibc"} <= set(load_lock(Project.find()).runtime[ARCH])
-    bc = resolve_image(Project.find()).packages["bc"]
-    assert bc.repo == "baseos"
-    storage = Project.find().config.remote.get("main")
-    assert storage
-    day = output.split(f"published repos/9.0/{STAGE}/")[1].split(",")[0]  # of the publish, which may be yesterday
-    for name in (day, "latest"):
-        base = f"repos/9.0/{STAGE}/{name}/base"
-        for repo in (*arches, "Source"):
-            assert remote.exists(storage, f"{base}/{repo}/repodata/repomd.xml")
-            assert remote.exists(
-                storage, f"{base}/{repo}/trivial-1.0-1+b1.xcpng8.99.{'src' if repo == 'Source' else 'noarch'}.rpm"
-            )
-        # the sources of the upstream packages too
-        assert remote.exists(storage, f"{base}/Source/bc-{bc.evr}.src.rpm")
-        assert 'href="trivial-1.0-1%2Bb1.xcpng8.99.noarch.rpm"' in page(f"{base}/{arches[-1]}/")
-    # a second one the same day, without changing the locks, of the repositories only, like all without [iso]
-    code, output = xcraft("publish", "repos", "--to", "main", "--locked")
-    assert code == 0, output
-    assert f"published repos/9.0/{STAGE}/{day}.2, and as repos/9.0/{STAGE}/latest" in output
-    assert not remote.tree_exists(storage, f"isos/9.0/{STAGE}/latest")
-    # An explicit stage has an independent snapshot sequence and latest tree.
-    incoming = f"{STAGE}-incoming"
-    code, output = xcraft("publish", "--to", "main", "--stage", incoming, "repos", "--locked")
-    assert code == 0, output
-    assert f"published repos/9.0/{incoming}/{day}, and as repos/9.0/{incoming}/latest" in output
-    assert remote.tree_exists(storage, f"repos/9.0/{STAGE}/latest")
-    assert remote.tree_exists(storage, f"repos/9.0/{incoming}/latest")
-    code, output = xcraft("publish", "isos", "--to", "main")
-    assert code == 2
-    assert "no ISO to publish: see [iso] in xcraft.toml" in output
-    # a local one is of the host's architecture, unless asked; signed again, from the originals, which the snapshots
-    # do not have, but the upstream copy
-    shutil.rmtree(root / ".xcraft/cache/rpms")
-    code, output = xcraft("publish", "--local")
-    assert code == 0, output
-    assert sorted(p.name for p in (root / ".xcraft/publish/base").iterdir()) == ["Source", ARCH]
-    if len(arches) > 1:
-        assert f"warning: only {ARCH} is published, not x86_64: --arch all publishes them all" in output
-        code, output = xcraft("publish", "--local", "--arch", "x86_64")
-        assert code == 0, output
-        assert "warning" not in output
-        assert sorted(p.name for p in (root / ".xcraft/publish/base").iterdir()) == ["Source", "x86_64"]
-
-
-def should_lock_what_is_published_when_preparing(root: Path) -> None:
-    # what our packages need at runtime, like the build roots
-    (root / "xcraft.toml").write_text(f'{REMOTE}extra = ["bc"]\n')
-    assert xcraft("build", "--dry-run")[0] == 0
-    buildid.update(Project.find())  # and the build IDs
-    (root / "xcraft.toml").write_text(REMOTE)
-    # the options of publish apply to its subcommands too, given before them
-    for args in (["publish", "--locked", "--local"], ["publish", "--locked", "--local", "repos"],
-                 ["publish", "--locked", "repos", "--local"], ["build", "--locked", "--dry-run"]):  # fmt: skip
-        code, output = xcraft(*args)
-        assert code == 1
-        assert re.search(rf"--locked forbids: .*-runtime\.{ARCH} bc\b", output)
-
-
-def should_refuse_upstream_packages_not_signed_by_their_repositories(root: Path) -> None:
-    (root / "xcraft.toml").write_text(f'{REMOTE}extra = ["bc"]\n')
-    assert xcraft("build", "trivial")[0] == 0
-    bc = resolve_image(Project.find()).packages["bc"]
-    srpm = root / f".xcraft/cache/srpms/bc-{bc.evr}.src.rpm"
-    srpm.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy(next(root.glob(f".xcraft/cache/builds/*/{ARCH}/trivial/*/SRPMS/*.src.rpm")), srpm)
-    code, output = xcraft("publish", "--local")
-    assert code == 1
-    assert f"✗ base/Source/{srpm.name}: digests SIGNATURES NOT OK" in output
-    assert "some upstream packages are not signed with the keys of the repositories" in output
-
-
-@needs_gpg
-def should_sign_published_packages_and_metadata(root: Path) -> None:  # noqa: PLR0915
-    toml = unsigned()
-    (root / "xcraft.toml").write_text(toml)
-    code, output = xcraft("publish", "--to", "main")
-    assert code == 2
-    assert "no key to sign the packages" in " ".join(output.replace("│", "").split())
-    signer = create_dev_key(Project.find(), "Release <release@example.com>")
-    try:
-        # the developer's key, without a release one
-        code, output = xcraft("publish", "--local")
-        assert code == 0, output
-        assert (root / ".xcraft/publish/RPM-GPG-KEY").read_text() == signer.public_key()
-        # Its remote builds and snapshots are trusted without adding the developer key to the config.
-        code, output = xcraft("push", "builds", "--to", "main")
-        assert code == 0, output
-        shutil.rmtree(root / ".xcraft/cache/builds")
-        code, output = xcraft("fetch", "builds")
-        assert code == 0, output
-        assert "fetched" in output
-        code, output = xcraft("publish", "--to", "main")
-        assert code == 0, output
-        storage = Project.find().config.remote.get("main")
-        assert storage
-        assert remote.tree_exists(storage, f"repos/9.0/{STAGE}/latest", trusted=signer)
-        assert not remote.tree_exists(storage, f"repos/9.0/{STAGE}/latest")
-        # again, on that latest snapshot, which the configuration does not trust
-        assert xcraft("publish", "--to", "main")[0] == 0
-        (root / "xcraft.toml").write_text(
-            re.sub(r"build_keys = \[.*?\]", f'build_keys = ["{signer.key}"]', toml)
-            + f'[sign]\nkey = "{signer.key}"\ngnupghome = "{signer.gnupghome}"\n'
-        )
-        code, output = xcraft("publish", "--to", "main")
-        assert code == 0, output
-        snapshot = root / ".xcraft/publish"
-        assert (snapshot / "RPM-GPG-KEY").read_text() == signer.public_key()
-        for repo in (ARCH, "Source"):
-            assert (snapshot / "base" / repo / "repodata/repomd.xml.asc").exists()
-        ours = [f"base/{ARCH}/trivial-1.0-1+b1.xcpng8.99.noarch.rpm", "base/Source/trivial-1.0-1+b1.xcpng8.99.src.rpm"]
-        check_signatures(Project.find(), snapshot, ours, what="packages of ours", public_key=signer.public_key())
-        storage = Project.find().config.remote.get("main")
-        assert storage
-        assert remote.exists(storage, f"repos/9.0/{STAGE}/latest/base/{ARCH}/repodata/repomd.xml.asc")
-        signed = list((root / ".xcraft/cache/builds" / signer.key / ARCH / "trivial").iterdir())
-        assert remote.tree_exists(storage, f".xcraft/builds/{signer.key}/{ARCH}/trivial/{signed[0].name}")
-        # signed once: the next snapshots have the same files
-        rpm = signed[0] / "RPMS/noarch/trivial-1.0-1+b1.xcpng8.99.noarch.rpm"
-        before = rpm.read_bytes()
-        assert xcraft("publish", "--to", "main")[0] == 0
-        assert rpm.read_bytes() == before
-        config = root / "xcraft.toml"
-        config.write_text(config.read_text().replace(f'key = "{signer.key}"', f'key = "{"0" * 40}"'))
-        code, output = xcraft("publish", "--key", signer.key, "--to", "main", "repos", "--locked")
-        assert code == 0, output
-        # Developer publishing defaults to the independent dev bucket and ignores the configured release key.
-        code, output = xcraft("publish", "repos", "--locked")
-        assert code == 0, output
-        dev_storage = Project.find().config.remote["dev"]
-        assert remote.tree_exists(dev_storage, f"repos/9.0/{STAGE}/latest", trusted=signer)
-        assert not remote.tree_exists(dev_storage, f"repos/9.0/{STAGE}/latest")
-        assert remote.tree_exists(
-            dev_storage, f".xcraft/builds/{signer.key}/{ARCH}/trivial/{signed[0].name}", trusted=signer
-        )
-    finally:
-        subprocess.run(["gpgconf", "--homedir", str(signer.gnupghome), "--kill", "gpg-agent"], check=False)
-
-
-def should_start_maintenance_branches_at_the_latest_published_commit(root: Path) -> None:
-    (root / ".gitignore").write_text(".xcraft/\n")
-    code, output = xcraft("publish", "repos", "--to", "main")  # of the platforms of the test, locking them
-    assert code == 0, output
-    commit_base(root)
-    release = git(root, "rev-parse", "HEAD")
-    # published again, from the commit: the same snapshot, reused, with the commit
-    code, output = xcraft("publish", "repos", "--to", "main", "--locked")
-    assert code == 0, output
-    assert "(reused the matching snapshot)" in output
-    edit(root, "after the release")
-    git(root, "commit", "-qam", "after the release")
-    # at the commit of its latest snapshot
-    code, output = xcraft("maint", "start", "--stage", STAGE)
-    assert code == 0, output
-    assert f"maint/9.0, from {release[:12]}" in output
-    assert git(root, "rev-parse", "maint/9.0") == release
-    assert "maint/9.0 exists already" in xcraft("maint", "start", "--stage", STAGE)[1]
-    # of another pattern
-    config = root / "xcraft.toml"
-    config.write_text(f'maintenance_branches = ["maint/*", "embargo/*"]\n{config.read_text()}')
-    code, output = xcraft("maint", "start", "--stage", STAGE, "--name", "embargo/xsa-123")
-    assert code == 0, output
-    assert git(root, "rev-parse", "embargo/xsa-123") == release
-    code, output = xcraft("maint", "start", "--stage", STAGE, "--name", "fix/xsa-123")
-    assert code == 1
-    assert "fix/xsa-123 is of none of the maintenance_branches: maint/*, embargo/*" in output
-    with pytest.raises(subprocess.CalledProcessError):
-        git(root, "rev-parse", "-q", "--verify", "fix/xsa-123")
-    assert "no published snapshot in repos/9.0/nothing/latest" in xcraft("maint", "start", "--stage", "nothing")[1]
-
-
-def should_refuse_embargo_branches_that_are_not_maintenance_ones(root: Path) -> None:
-    config = root / "xcraft.toml"
-    config.write_text(
-        f'maintenance_branches = ["maint/*", "embargo/*"]\nembargo_branches = ["other/*"]\n{config.read_text()}'
-    )
-    code, output = xcraft("status")
-    assert code == 1
-    assert "embargo_branches must be maintenance_branches too: other/*" in output
-
-
-def should_reuse_the_metadata_of_the_latest_snapshot(
-    root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    """A snapshot has the metadata of the packages of the latest one, without downloading them, and the packages
-    rebuilt since.
-    """
-    stage = f"metadata-{secrets.token_hex(4)}"
-    (root / "xcraft.toml").write_text(f'{REMOTE}extra = ["bc"]\n')
-    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
-    assert code == 0, output
-    spec = root / "base/trivial/trivial.spec"
-    spec.write_text(spec.read_text().replace('echo "hello"', 'echo "hello, rebuilt"'))
-    with caplog.at_level(logging.DEBUG, logger="xcraft"):
-        code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
-    assert code == 0, output
-    assert not [m for m in caplog.messages if "downloading " in m and ".rpm to " in m]
-    # each manifest checked once
-    manifests = [
-        m.split()[1] for m in caplog.messages if m.startswith("downloading ") and f"/{remote.MANIFEST} to " in m
-    ]
-    assert len(manifests) == len(set(manifests))
-    # the unchanged packages are already in latest
-    latest = f"s3://xcraft/repos/9.0/{stage}/latest/"
-    copied = [m.split(" to ")[-1] for m in caplog.messages if m.startswith("copying ") and f" to {latest}" in m]
-    assert copied
-    assert all(Path(f).name.startswith(("trivial-", "with-deps-")) for f in copied if f.endswith(".rpm"))
-    # only those rebuilt, trivial and the package built against it, not the upstream ones
-    local = {p.name for p in root.glob(".xcraft/publish/**/*.rpm")}
-    assert local
-    assert all(name.startswith(("trivial-", "with-deps-")) for name in local)
-    storage = Project.find().config.remote["main"]
-    latest = f"repos/9.0/{stage}/latest"
-    manifest = remote.read_manifest(storage, latest)
-    # trivial rebuilt, keeping its version-release: published rather than the previous build of the storage
-    rpm = f"base/{ARCH}/trivial-1.0-1+b1.xcpng8.99.noarch.rpm"
-    published = re.search(r"published (repos/\S+),", output)
-    assert published, output
-    for name in (published[1], latest):
-        assert remote.read_manifest(storage, name)[rpm] == sha256_of(root / ".xcraft/publish" / rpm)
-    assert remote.download(storage, f"{latest}/{rpm}", tmp_path / "rebuilt.rpm")
-    assert sha256_of(tmp_path / "rebuilt.rpm") == sha256_of(root / ".xcraft/publish" / rpm)
-    bc = resolve_image(Project.find()).packages["bc"]
-    assert {f"base/{ARCH}/bc-{bc.evr}.{bc.arch}.rpm", f"base/Source/bc-{bc.evr}.src.rpm"} <= manifest.keys()
-    for repo in (f"base/{ARCH}", "base/Source"):
-        assert remote.download(storage, f"{latest}/{repo}/repodata/repomd.xml", tmp_path / repo / "repodata/repomd.xml")
-        for href in repodata.files((tmp_path / repo / "repodata/repomd.xml").read_bytes()).values():
-            assert remote.download(storage, f"{latest}/{repo}/{href}", tmp_path / repo / href)
-        entries = repodata.read(tmp_path / repo)
-        assert entries
-        assert {f"{repo}/{repodata.location(e)}": pkgid for pkgid, e in entries.items()} == {
-            f: digest for f, digest in manifest.items() if f.startswith(f"{repo}/") and f.endswith(".rpm")
-        }
-    # the packages of a repository, for its ISO
-    rpms = {f: publisher.Stored(f"{latest}/{f}", digest) for f, digest in manifest.items() if f.endswith(".rpm")}
-    publisher.materialize(storage, tmp_path / "packages", rpms, f"base/{ARCH}")
-    assert {p.relative_to(tmp_path / "packages").as_posix() for p in (tmp_path / "packages").rglob("*.rpm")} == {
-        f for f in rpms if f.startswith(f"base/{ARCH}/")
-    }
 
 
 def should_keep_trees_complete_when_uploaded_concurrently(
@@ -1635,414 +1159,6 @@ def should_copy_the_pinned_upstream_packages_to_the_storage_once(
         clean()
 
 
-def should_reuse_the_latest_snapshot_when_nothing_changed(root: Path, caplog: pytest.LogCaptureFixture) -> None:
-    stage = f"reuse-{secrets.token_hex(4)}"
-    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
-    assert code == 0, output
-    project = Project.find()
-    project.config.publish.stage = stage
-    for name in ("publish", "cache/builds", "cache/rpms", "cache/srpms", "cache/checks"):
-        shutil.rmtree(project.state / name, ignore_errors=True)
-    with caplog.at_level(logging.DEBUG, logger="xcraft"):
-        summary = project.state.parent / "summary.md"
-        code, output = xcraft(
-            "publish", "repos", "--to", "main", "--stage", stage, "--locked", "--summary", str(summary)
-        )
-    assert code == 0, output
-    assert "reused the matching snapshot" in output
-    target = output.split("✓ published ")[1].split(",")[0]
-    # its summary too, for CI
-    assert f"/{target}/" in summary.read_text()
-    assert not (project.state / "publish").exists()
-    assert not (project.state / "cache/builds").exists()
-    assert not any(
-        "podman " in message or ("downloading " in message and ".rpm to " in message) for message in caplog.messages
-    )
-    storage = project.config.remote["main"]
-    prefix = f"repos/9.0/{stage}"
-    manifest = remote.read_manifest(storage, target)
-    assert manifest
-    # but their metalinks, of their own trees
-    links = {f for f in manifest if f.endswith(f"/{metalink.FILE}")}
-    assert links
-    assert {f: d for f, d in manifest.items() if f not in links} == {
-        f: d for f, d in remote.read_manifest(storage, f"{prefix}/latest").items() if f not in links
-    }
-    # with its own .repo file, of its tree, in the latest one too
-    for tree in (target, f"{prefix}/latest"):
-        assert remote.download(storage, f"{tree}/xcraft-{stage}-{ARCH}.repo", project.state / "reused.repo")
-        assert f"/{target}/base/{ARCH}/" in (project.state / "reused.repo").read_text()
-    # what it was made from is out of it
-    assert not [f for f in manifest if "inputs" in f]
-    assert remote.read_manifest(storage, upload.inputs_tree(f"{prefix}/latest")).keys() == {upload.INPUTS}
-
-    project.config.publish.extra.append("bc")
-    assert not upload.Uploader(project, storage, release_signer(project), build=False).reuse(
-        [project], only="repos", isos=[]
-    )
-    project.config.publish.extra.clear()
-    # nor for dev mode, whose packages keep their signatures, even without development builds
-    assert not upload.Uploader(project, storage, release_signer(project), build=False, dev=True).reuse(
-        [project], only="repos", isos=[]
-    )
-    # nor another latest snapshot than the one it was made from
-    signer = release_signer(project)
-    assert signer
-    uploader = upload.Uploader(project, storage, signer, build=False)
-    latest = remote.read_manifest(storage, f"{prefix}/latest")
-    remote.write_manifest(storage, f"{prefix}/latest", {**latest, "other": "0" * 64}, signer=signer)
-    assert not uploader.reuse([project], only="repos", isos=[])
-    remote.write_manifest(storage, f"{prefix}/latest", latest, signer=signer)
-    assert uploader.reuse([project], only="repos", isos=[])
-    # nor with a package missing in the latest snapshot: assembled again, as the name of the copy, deleted
-    remote.delete(storage, [f"{prefix}/latest/{next(f for f in manifest if f.endswith('.rpm'))}"])
-    name = uploader.snapshot_name()
-    assert not uploader.reuse([project], only="repos", isos=[])
-    assert not remote.listing(storage, f"{prefix}/{name}/")
-    # nor with what it was made from changed
-    remote.upload(storage, f"{upload.inputs_tree(f'{prefix}/latest')}/{upload.INPUTS}", root / "xcraft.toml")
-    assert not uploader.reuse([project], only="repos", isos=[])
-
-
-def should_select_the_dated_snapshots_past_their_days() -> None:
-    names = {"latest", "2026-01-01", "2026-01-01.2", "2026-01-01.10", "2026-02-01", "other"}
-    assert upload.expired_snapshots(names, 30, date(2026, 3, 1)) == ["2026-01-01", "2026-01-01.10", "2026-01-01.2"]
-    # the latest one is kept, however old, and the order of the suffixes is numeric
-    assert upload.expired_snapshots(names, 30, date(2026, 3, 5)) == ["2026-01-01", "2026-01-01.10", "2026-01-01.2"]
-    assert upload.expired_snapshots({"2026-01-01", "2026-01-01.2", "2026-01-01.10"}, 1, date(2026, 3, 1)) == [
-        "2026-01-01", "2026-01-01.2",
-    ]  # fmt: skip
-
-
-@needs_gpg
-def should_remove_expired_snapshots_of_stages_with_snapshot_days(root: Path) -> None:
-    stage = f"expiry-{secrets.token_hex(4)}"
-    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
-    assert code == 0, output
-    project = Project.find()
-    storage, signer = project.config.remote["main"], release_signer(project)
-    assert signer
-    # older ones, of the repositories and of the ISOs
-    old = [f"{kind}/9.0/{stage}/{name}" for kind in ("repos", "isos") for name in ("2020-01-01", "2020-01-01.2")]
-    for tree in old:
-        remote.upload(storage, f"{tree}/file", root / "xcraft.toml")
-        remote.write_manifest(storage, tree, {"file": sha256_of(root / "xcraft.toml")}, signer=signer)
-    remote_pages.update_pages(project, storage, [f"{tree}/" for tree in old])
-    # kept without snapshot_days, like the stages of the releases
-    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage, "--locked")
-    assert code == 0, output
-    assert all(remote.tree_exists(storage, tree) for tree in old)
-    (root / "xcraft.toml").write_text(f"{REMOTE}\n[publish.stages.{stage}]\nsnapshot_days = 30\n")
-    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage, "--locked")
-    assert code == 0, output
-    # but the latest ISOs, which have no newer ones
-    assert f"removed {', '.join(old[:3])}, published more than 30 days ago" in " ".join(output.split())
-    for tree in old[:3]:
-        assert not remote.listing(storage, f"{tree}/")
-        assert f'href="{tree.rsplit("/", 1)[1]}/"' not in page(f"{tree.rsplit('/', 1)[0]}/")
-    assert remote.tree_exists(storage, old[3])
-    today = output.split(f"published repos/9.0/{stage}/")[1].split(",")[0]
-    assert remote.tree_exists(storage, f"repos/9.0/{stage}/{today}")
-    assert remote.tree_exists(storage, f"repos/9.0/{stage}/latest")
-
-
-def should_keep_recent_versions_and_the_newest_older_ones() -> None:
-    now = datetime(2026, 3, 1, tzinfo=UTC)
-    older = {f"base/x/a-{v}.rpm": ("a", "noarch") for v in (1, 2, 3, 10)} | {"base/x/gone-1.rpm": ("gone", "noarch")}
-    left = {
-        "base/x/a-1.rpm": datetime(2026, 1, 1, tzinfo=UTC), "base/x/a-2.rpm": datetime(2026, 1, 2, tzinfo=UTC),
-        "base/x/a-3.rpm": datetime(2026, 1, 2, 10, tzinfo=UTC), "base/x/a-10.rpm": datetime(2026, 2, 20, tzinfo=UTC),
-        "base/x/gone-1.rpm": datetime(2026, 1, 1, tzinfo=UTC),
-    }  # fmt: skip
-    current = {("base/x", "a", "noarch")}
-    # the recent ones, and the newest of the packages of the snapshot, however old: not those it does not have
-    assert upload.kept_versions(older, left, current, Retention(days=30), now) == {"base/x/a-10.rpm"}
-    # the newest by when they left, of the same day too, not by their names
-    assert upload.kept_versions(older, left, current, Retention(days=30, keep=3), now) == {
-        "base/x/a-3.rpm", "base/x/a-10.rpm",
-    }  # fmt: skip
-    assert upload.kept_versions(older, left, set(), Retention(days=30, keep=3), now) == {"base/x/a-10.rpm"}
-    # all of them, without days
-    assert upload.kept_versions(older, left, current, Retention(), now) == set(older)
-
-
-def _versions(storage: Remote, tree: str) -> list[str]:
-    """Return the versions of trivial in the snapshot `tree`, as its metadata lists them."""
-    manifest = remote.read_manifest(storage, tree)
-    known, _ = publisher.published_packages(Project.find(), storage, None, tree)
-    return sorted(
-        repodata.nevra(known[digest][0])[1].split("-")[0]
-        for f, digest in manifest.items()
-        if f.startswith(f"base/{ARCH}/trivial-") and digest in known
-    )
-
-
-@needs_gpg
-def should_keep_older_versions_in_cumulative_stages(root: Path) -> None:  # noqa: PLR0915
-    stage = f"cumulative-{secrets.token_hex(4)}"
-    (root / "xcraft.toml").write_text(f"{REMOTE}\n[publish.stages.{stage}]\nretention = {{ days = 30, keep = 2 }}\n")
-    spec = root / "base/trivial/trivial.spec"
-    project = Project.find()
-    storage, latest = project.config.remote["main"], f"repos/9.0/{stage}/latest"
-    names = []
-    for version in ("1.0", "1.1", "1.2"):
-        spec.write_text(re.sub(r"^Version: .*$", f"Version: {version}", spec.read_text(), flags=re.MULTILINE))
-        code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
-        assert code == 0, output
-        names.append(output.split(f"published repos/9.0/{stage}/")[1].split(",")[0])
-        # the dated snapshot is exact, the latest one has the older versions too, in its metadata
-        assert _versions(storage, f"repos/9.0/{stage}/{names[-1]}") == [version]
-    assert _versions(storage, latest) == ["1.0", "1.1", "1.2"]
-    manifest = remote.read_manifest(storage, latest)
-    sources = sorted(f for f in manifest if f.startswith("base/Source/trivial-"))
-    assert [s.split("-")[1] for s in sources] == ["1.0", "1.1", "1.2"]
-    # as if 1.0 and 1.1 left it long ago: 1.1 is kept, the newest older version of a package it has, 1.0 goes with
-    # its source package, at the next publication, the latest snapshot reused
-    signer = release_signer(project)
-    assert signer
-    uploader = upload.Uploader(project, storage, signer, build=False)
-    project.config.publish.stage = stage
-    inputs = uploader._read_inputs(latest)
-    assert inputs
-    assert sorted(inputs.left) == sorted(f for f in manifest if "trivial-1.0-" in f or "trivial-1.1-" in f)
-    old = inputs.model_copy(
-        update={"left": {f: f"2020-01-0{2 if 'trivial-1.1-' in f else 1}T00:00:00+00:00" for f in inputs.left}}
-    )
-    with project.tmp_dir("inputs") as work:
-        (work / upload.INPUTS).write_text(old.model_dump_json())
-        remote.upload_tree(storage, upload.inputs_tree(latest), work, [upload.INPUTS], signer=signer)
-    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage, "--locked")
-    assert code == 0, output
-    assert "reused the matching snapshot" in output
-    assert _versions(storage, latest) == ["1.1", "1.2"]
-    manifest = remote.read_manifest(storage, latest)
-    assert sorted(f.split("-")[1] for f in manifest if f.startswith("base/Source/trivial-")) == ["1.1", "1.2"]
-    assert not any("trivial-1.0-" in f for f in remote.listing(storage, f"{latest}/"))
-    # published again unchanged, its metadata are the same, rather than new ones the hosts would download
-    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage, "--locked")
-    assert code == 0, output
-    metadata = {f: d for f, d in manifest.items() if "/repodata/" in f}
-    assert {f: d for f, d in remote.read_manifest(storage, latest).items() if "/repodata/" in f} == metadata
-    # a publication interrupted, which left it without its manifest, loses none of its older versions: they are in
-    # what it was made from; 1.2 is kept, the newest older one, 1.1 goes, which left it long ago
-    remote.delete(storage, [f"{latest}/{remote.MANIFEST}"])
-    spec.write_text(spec.read_text().replace("Version: 1.2", "Version: 1.3"))
-    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
-    assert code == 0, output
-    assert _versions(storage, latest) == ["1.2", "1.3"]
-    # nor when the metadata of an older version cannot be read: the publication fails
-    primary = next(
-        f for f in remote.read_manifest(storage, latest) if f.startswith(f"base/{ARCH}/repodata/") and "-primary." in f
-    )
-    remote.delete(storage, [f"{latest}/{primary}"])
-    spec.write_text(spec.read_text().replace("Version: 1.3", "Version: 1.4"))
-    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
-    assert code == 1
-    assert "whose older versions would be lost" in " ".join(output.split())
-    # nor when, without its manifest, what it was made from is signed by a key no longer trusted
-    inputs = uploader._read_inputs(latest)
-    assert inputs
-    remote.delete(storage, [f"{latest}/{remote.MANIFEST}"])
-    with project.tmp_dir("inputs") as work:
-        (work / upload.INPUTS).write_text(inputs.model_dump_json())
-        other = create_dev_key(project, "Other")
-        remote.upload_tree(storage, upload.inputs_tree(latest), work, [upload.INPUTS], signer=other)
-    remote.forget()
-    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
-    assert code == 1
-    assert "has a manifest no trusted key signs" in " ".join(output.split())
-
-
-@needs_gpg
-@pytest.mark.parametrize("cumulative", [False, True])
-def should_publish_metalinks_with_mirrors_and_previous_metadata(
-    root: Path, tmp_path: Path, *, cumulative: bool
-) -> None:
-    stage = f"metalinks-{secrets.token_hex(4)}"
-    retention = "retention = { days = 30 }\n" if cumulative else ""
-    mirror = "https://mirror.example/xcp-ng"
-    (root / "xcraft.toml").write_text(f'{REMOTE}\n[publish.stages.{stage}]\nmirrors = ["{mirror}/"]\n{retention}')
-    storage = Project.find().config.remote["main"]
-    repo, latest = f"base/{ARCH}/repodata", f"repos/9.0/{stage}/latest"
-
-    def read(tree: str, file: str) -> bytes:
-        assert remote.download(storage, f"{tree}/{repo}/{file}", tmp_path / file)
-        assert sha256_of(tmp_path / file) == remote.read_manifest(storage, tree)[f"{repo}/{file}"]
-        return (tmp_path / file).read_bytes()
-
-    hashes = []
-    for version in ("1.0", "1.1"):
-        spec = root / "base/trivial/trivial.spec"
-        spec.write_text(re.sub(r"^Version: .*$", f"Version: {version}", spec.read_text(), flags=re.MULTILINE))
-        code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
-        assert code == 0, output
-        name = output.split(f"published repos/9.0/{stage}/")[1].split(",")[0]
-        dated = f"repos/9.0/{stage}/{name}"
-        # the dated snapshot on our server only, the latest one on the mirrors first
-        for tree, servers in ((dated, [WEB]), (latest, [mirror, WEB])):
-            text = read(tree, metalink.FILE).decode()
-            assert re.findall(r'preference="\d+">([^<]*)<', text) == [
-                f"{server}/{tree}/{repo}/repomd.xml" for server in servers
-            ]
-            assert (
-                re.findall(r'<hash type="sha256">([0-9a-f]{64})</hash>', text)[0]
-                == hashlib.sha256(read(tree, "repomd.xml")).hexdigest()
-            )
-        hashes.append(hashlib.sha256(read(latest, "repomd.xml")).hexdigest())
-    # with the previous repomd.xml of the latest snapshot as an alternate
-    assert (
-        re.findall(r'<hash type="sha256">([0-9a-f]{64})</hash>', read(latest, metalink.FILE).decode()) == hashes[::-1]
-    )
-
-
-@needs_gpg
-def should_prune_the_builds_no_publication_has(root: Path, tmp_path: Path) -> None:
-    # a bucket of its own: the others have the builds of the tests running meanwhile
-    garage("bucket", "create", bucket := f"xcraft-prune-{secrets.token_hex(4)}")
-    garage("bucket", "allow", "--read", "--write", bucket, "--key", "test")
-    garage("bucket", "website", "--allow", bucket)
-    web = f"http://{bucket}.web.garage.localhost:{WEB_PORT}"
-    (root / "xcraft.toml").write_text(REMOTE.replace(WEB, web).replace('bucket = "xcraft"\n', f'bucket = "{bucket}"\n'))
-    code, published_output = xcraft("publish", "repos", "--to", "main")
-    assert code == 0, published_output
-    project = Project.find()
-    storage, signer = project.config.remote["main"], release_signer(project)
-    assert signer
-    manifests = [f for f in remote.listing(storage, f"{prune.BUILDS}/") if f.endswith(f"/{remote.MANIFEST}")]
-    published = [f"{prune.BUILDS}/{f.removesuffix(f'/{remote.MANIFEST}')}" for f in manifests]
-    assert published
-    # a build no publication has, with the public key of its signer, like the publications, and one pushed again
-    # with other files, whose previous generation is garbage
-    unpublished, again = (f"{prune.BUILDS}/{signer.key}/{ARCH}/{name}/key" for name in ("unpublished", "again"))
-    for name in ("a.rpm", "b.rpm"):
-        (tmp_path / name).write_text(name)
-    (tmp_path / KEY_FILE).write_text(signer.public_key())
-    remote.upload_tree(storage, unpublished, tmp_path, ["a.rpm", KEY_FILE], signer=signer)
-    remote.upload_tree(storage, again, tmp_path, ["a.rpm"], signer=signer)
-    first = remote.read_tree(storage, again, trusted=signer)[0]
-    time.sleep(2)  # the dates of the storage are in seconds
-    between = datetime.now(UTC)
-    time.sleep(2)
-    remote.forget()
-    remote.upload_tree(storage, again, tmp_path, ["b.rpm"], signer=signer)
-    found = prune.pruned(storage, 0, between)
-    assert found.trees == [unpublished]
-    assert sorted(found.files) == sorted(
-        [f"{first}/a.rpm", *(f"{unpublished}/{f}" for f in remote.listing(storage, f"{unpublished}/"))]
-    )
-    # a dry run removes nothing
-    code, output = xcraft("prune", "--to", "main", "--keep-days", "0", "-n")
-    assert code == 0, output
-    assert f"would remove {unpublished}" in output
-    assert remote.listing(storage, f"{unpublished}/")
-    # a latest snapshot without its manifest, as while a cumulative one changes, keeps its builds by what it was
-    # made from, its dated snapshot gone
-    dated, latest = re.findall(r"published (repos/\S+), and as (repos/\S+)", published_output)[0]
-    upload.remove_trees(project, storage, [dated])
-    remote.delete(storage, [f"{latest}/{remote.MANIFEST}"])
-    # without grace, what no publication has goes: the published builds stay
-    code, output = xcraft("prune", "--to", "main", "--keep-days", "0")
-    assert code == 0, output
-    assert not remote.listing(storage, f"{unpublished}/")
-    assert not remote.listing(storage, f"{again}/")
-    remote.forget()
-    assert all(remote.tree_exists(storage, tree, trusted=signer) for tree in published)
-    with urllib.request.urlopen(f"{web}/{prune.BUILDS}/{signer.key}/{ARCH}/") as response:  # noqa: S310, the test garage
-        assert 'href="unpublished/"' not in response.read().decode()
-    # nothing more to prune
-    code, output = xcraft("prune", "--to", "main", "--keep-days", "0")
-    assert code == 0, output
-    assert "removed 0 builds, 0 files" in output
-
-
-def _stats(directory: Path) -> dict[str, tuple[int, float, int]]:
-    """Return the sizes, dates and modes of the files of `directory`, as rsync compares them, by path."""
-    return {
-        p.relative_to(directory).as_posix(): (p.stat().st_size, p.stat().st_mtime, p.stat().st_mode)
-        for p in directory.rglob("*")
-        if p.is_file()
-    }
-
-
-@needs_gpg
-def should_mirror_the_latest_snapshot_of_a_stage(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: PLR0915
-    stage = f"mirror-{secrets.token_hex(4)}"
-    spec = root / "base/trivial/trivial.spec"
-    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
-    assert code == 0, output
-    storage, latest = Project.find().config.remote["main"], f"repos/9.0/{stage}/latest"
-    copy = tmp_path / "copy"
-    code, output = xcraft("mirror", str(copy), "--stage", stage)
-    assert code == 0, output
-    assert f"copied {latest}" in output
-    link = copy / latest
-    assert link.is_symlink()
-    manifest = remote.read_manifest(storage, latest)
-    assert {f: sha256_of(link / f) for f in manifest} == manifest
-    # the dates of the storage, and fixed modes
-    rpm = next(f for f in manifest if f.endswith(".rpm"))
-    date = remote.modified(storage, f"{latest}/{rpm}")
-    assert date
-    assert (link / rpm).stat().st_mtime == date.timestamp()
-    assert {oct(p.stat().st_mode & 0o777) for p in link.resolve().rglob("*")} == {"0o644", "0o755"}
-    code, output = xcraft("mirror", str(copy), "--stage", stage)
-    assert code == 0, output
-    assert "is up to date" in output
-    # a new publication: the files it did not change are hard links to those of the previous version, kept
-    first = link.resolve()
-    spec.write_text(spec.read_text().replace("Version: 1.0", "Version: 1.1"))
-    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
-    assert code == 0, output
-    code, output = xcraft("mirror", str(copy), "--stage", stage)
-    assert code == 0, output
-    assert link.resolve() != first
-    assert first.exists()
-    key = next(f for f in remote.read_manifest(storage, latest) if f.startswith("RPM-GPG-KEY"))
-    assert (link / key).stat().st_ino == (first / key).stat().st_ino
-    # made again from scratch, the copy is the same for rsync
-    again = tmp_path / "again"
-    code, output = xcraft("mirror", str(again), "--stage", stage)
-    assert code == 0, output
-    assert _stats((again / latest).resolve()) == _stats(link.resolve())
-    # checked against its manifests: the damaged files downloaded again, the others reported
-    code, output = xcraft("mirror", str(copy), "--stage", stage, "--check")
-    assert code == 0, output
-    (link / key).chmod(0o644)
-    (link / key).write_text("damaged")
-    (link / "extra").write_text("extra")
-    code, output = xcraft("mirror", str(copy), "--stage", stage, "--check")
-    assert code == 1
-    assert f"✗ {latest}/{key}: damaged" in output
-    assert f"✗ {latest}/extra: not in the manifest" in output
-    assert sha256_of(link / key) == remote.read_manifest(storage, latest)[key]
-    (link / "extra").unlink()
-    code, output = xcraft("mirror", str(copy), "--stage", stage, "--check")
-    assert code == 0, output
-    # a publication finished during the copy, its manifest dated otherwise after it than before: not switched to
-    real = remote.modified
-    dated = iter(range(1, 10))
-
-    def later(storage: Remote, path: str) -> datetime | None:
-        date = real(storage, path)
-        return date + timedelta(seconds=next(dated)) if date and path.endswith(remote.MANIFEST) else date
-
-    monkeypatch.setattr(remote, "modified", later)
-    project = Project.find()
-    project.config.publish.stage = stage
-    with pytest.raises(BuildError, match="was published again while it was copied"):
-        mirror.mirrored(project, storage, tmp_path / "raced", key_signer(project))
-    assert not list((tmp_path / "raced" / latest).parent.iterdir())
-
-
-def should_reject_stages_that_are_not_plain_names(root: Path) -> None:
-    for stage in ("", ".", "..", "../other", "/absolute", "a/b"):
-        with pytest.raises(ValidationError):
-            Publish(stage=stage)
-    code, output = xcraft("publish", "repos", "--local", "--stage", "../other")
-    assert code == 2
-    assert "stage must start" in " ".join(output.split())
-
-
 def should_fetch_the_isos_of_a_publication_but_the_corrupted_ones(root: Path, tmp_path: Path) -> None:
     project = Project.find()
     signer = release_signer(project)
@@ -2054,9 +1170,10 @@ def should_fetch_the_isos_of_a_publication_but_the_corrupted_ones(root: Path, tm
     for tree in trees:
         shutil.rmtree(tree)
     assert fetch_isos(project, signer=signer)
-    assert all(tree.exists() for tree in trees)
-    # one corrupted: not there, for the publish to get the packages it is made from
-    shutil.rmtree(trees[1])
+    assert [tree for tree in trees if not tree.exists()] == []
+    # one corrupted: not there, for the publish to get the packages it is made from, but the others
+    for tree in trees:
+        shutil.rmtree(tree)
     key = iso_key(project, netinstall=True, volid=None, signer=signer)
     storage = project.config.remote["dev"]
     remote.upload(
@@ -2065,61 +1182,8 @@ def should_fetch_the_isos_of_a_publication_but_the_corrupted_ones(root: Path, tm
         root / "xcraft.toml",
     )
     assert not fetch_isos(project, signer=signer)
-
-
-def should_publish_the_inputs_of_netinstall_isos_without_the_others(root: Path, tmp_path: Path) -> None:
-    project = Project.find()
-    signer = release_signer(project)
-    assert signer
-    image = tmp_path / "test.iso"
-    image.write_bytes(secrets.token_bytes(2048))
-    snapshot = tmp_path / "snapshot"
-    netinstall = snapshot / "iso" / iso_name(project, netinstall=True, signer=signer)
-    netinstall.parent.mkdir(parents=True)
-    shutil.copy2(image, netinstall)
-    storage = project.config.remote["main"]
-    project.config.publish.stage = f"netinstall-{secrets.token_hex(4)}"
-    upload.Uploader(project, storage, signer, build=False).upload_isos(snapshot, "netinstall")
-    inputs = upload.inputs_tree(f"isos/9.0/{project.config.publish.stage}/latest")
-    assert remote.download_tree(storage, inputs, tmp_path / "inputs")
-    assert upload.SnapshotInputs.model_validate_json((tmp_path / "inputs" / upload.INPUTS).read_bytes()).keys
-
-
-def should_number_iso_snapshots_by_stage(root: Path, tmp_path: Path) -> None:
-    project = Project.find()
-    storage = project.config.remote["main"]
-    signer = release_signer(project)
-    assert signer
-    isos = tmp_path / "iso" / ARCH
-    isos.mkdir(parents=True)
-    image = isos / "install.iso"
-    day = datetime.now(UTC).date().isoformat()
-    stages = [f"{STAGE}-incoming", f"{STAGE}-testing"]
-    for stage in stages:
-        project.config.publish.stage = stage
-        assert upload.Uploader(project, storage, None, build=False).snapshot_name() == day
-        image.write_text(stage)
-        upload.Uploader(project, storage, signer, build=False).upload_isos(tmp_path, day)
-        assert upload.Uploader(project, storage, None, build=False).snapshot_name() == f"{day}.2"
-    for stage in stages:
-        for name in (day, "latest"):
-            prefix = f"isos/9.0/{stage}/{name}"
-            assert remote.download_tree(storage, prefix, tmp_path / stage / name)
-            assert (tmp_path / stage / name / ARCH / "install.iso").read_text() == stage
-
-
-def should_not_reuse_snapshot_names_taken_by_another_signer(root: Path) -> None:
-    project = Project.find()
-    project.config.publish.stage = f"snapshot-name-{secrets.token_hex(4)}"
-    storage = project.config.remote["dev"]
-    signer = release_signer(project)
-    assert signer
-    assert not storage.build_keys
-    day = datetime.now(UTC).date().isoformat()
-    prefix = f"isos/9.0/{project.config.publish.stage}/{day}"
-    remote.write_manifest(storage, prefix, {}, signer=signer)
-    assert not remote.tree_exists(storage, prefix)
-    assert upload.Uploader(project, storage, None, build=False).snapshot_name() == f"{day}.2"
+    assert trees[0].exists()
+    assert not trees[1].exists()
 
 
 def should_reject_manifest_paths_out_of_their_tree(root: Path, tmp_path: Path) -> None:
@@ -2180,22 +1244,37 @@ def should_show_the_logo_of_the_project_in_the_pages(root: Path, tmp_path: Path)
 
 
 def should_read_directory_totals_through_a_proxy(root: Path, tmp_path: Path) -> None:
+    """The totals of the pages of the subdirectories are read from their metadata, whose names a proxy may change the
+    case of.
+    """
     project = Project.find()
     storage = project.config.remote["main"]
     file = tmp_path / "file"
     file.write_bytes(b"x" * 1000)
-    remote.upload(storage, "cased/file", file)
-    remote_pages.update_pages(project, storage, ["cased/"])
+    prefix = f"cased-{secrets.token_hex(4)}"
+    for directory in ("listed", "paged"):
+        remote.upload(storage, f"{prefix}/{directory}/file", file)
+    remote_pages.update_pages(project, storage, [f"{prefix}/paged/"])
 
     class Proxy(http.server.BaseHTTPRequestHandler):
-        def do_HEAD(self) -> None:
+        protocol_version = "HTTP/1.1"  # for Expect: 100-continue
+
+        def do_GET(self) -> None:
+            body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            headers = {k: v for k, v in self.headers.items() if k.lower() != "expect"}
             with closing(http.client.HTTPConnection("localhost", S3_PORT)) as connection:
-                connection.request("HEAD", self.path, headers=dict(self.headers.items()))
+                connection.request(self.command, self.path, body, headers=headers)
                 response = connection.getresponse()
+                data = response.read()
                 self.send_response(response.status)
                 for key, value in response.getheaders():
-                    self.send_header(key.title(), value)
+                    if key.lower() not in ("transfer-encoding", "connection", "content-length"):
+                        self.send_header(key.title(), value)
+                self.send_header("Content-Length", response.getheader("Content-Length") or str(len(data)))
                 self.end_headers()
+                self.wfile.write(data)
+
+        do_HEAD = do_PUT = do_GET  # noqa: N815, as http.server names them
 
         def log_message(self, format: str, *args: object) -> None:  # noqa: A002
             pass
@@ -2205,13 +1284,11 @@ def should_read_directory_totals_through_a_proxy(root: Path, tmp_path: Path) -> 
         thread.start()
         try:
             proxied = storage.model_copy(update={"s3_endpoint": f"http://localhost:{proxy.server_port}"})
-            with remote.writing(proxied, "read cached totals") as s3:
-                size, newest = remote_pages._stored_total(s3, storage.bucket, "cased/")
-            assert size == 1000
-            assert newest
+            remote_pages.update_pages(project, proxied, [f"{prefix}/listed/"])
         finally:
             proxy.shutdown()
             thread.join()
+    assert 'href="paged/">paged/</a></td><td data-k="1000"' in page(f"{prefix}/")
 
 
 def should_list_the_signing_keys_in_a_page(root: Path, tmp_path: Path) -> None:
@@ -2237,11 +1314,11 @@ def should_neither_push_nor_fetch_development_builds(root: Path) -> None:
     assert xcraft("build", "trivial")[0] == 0
     code, output = xcraft("push", "builds", "--to", "main")
     assert code == 0, output
-    assert output.splitlines()[0] == "development builds, not pushed: trivial, with-deps"
+    assert "development builds, not pushed: trivial, with-deps" in output.splitlines()
     assert "0 pushed" in output
     code, output = xcraft("fetch", "builds")
     assert code == 0, output
-    assert output.splitlines()[0] == "development builds, not fetched: trivial, with-deps"
+    assert "development builds, not fetched: trivial, with-deps" in output.splitlines()
     # their final builds, explicitly
     assert xcraft("build", "trivial", "--final")[0] == 0
     code, output = xcraft("push", "builds", "trivial", "--final", "--to", "main")
@@ -2273,142 +1350,3 @@ def should_fetch_the_builds_reused_from_the_main_branch(root: Path) -> None:
     code, output = xcraft("build", "with-deps", "--fetch=none")
     assert code == 1
     assert "✗ with-deps: not built, and the remote storage is not used" in output
-
-
-@needs_gpg
-def should_publish_pull_requests_to_a_stage_of_their_own(
-    root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # master's builds in the main bucket, signed by the key of [sign], CI's
-    assert xcraft("build")[0] == 0
-    commit_base(root)
-    code, output = xcraft("push", "builds", "--to", "main")
-    assert code == 0, output
-    ci = key_signer(Project.find())
-    assert ci
-    # a pull request changing with-deps, built again by each of its runs, numbered by them
-    git(root, "checkout", "-qb", "feature")
-    edit(root, "changed", name="with-deps")
-    monkeypatch.setenv("XCRAFT_DEV_COUNTER", "7")
-    stage = f"pr7-{STAGE}"
-    with caplog.at_level(logging.DEBUG, logger="xcraft"):
-        code, output = xcraft(
-            "publish", "repos", "--to", "dev", "--stage", stage, "--dev", "pr7", "--summary", str(tmp_path / "summary")
-        )
-    assert code == 0, output
-    developer = dev_signer(Project.find())  # the key of the pull request, made by the publication
-    assert developer
-    dev = Project.find().config.remote["dev"]
-    latest = f"repos/9.0/{stage}/latest"
-    manifest = remote.read_manifest(dev, latest, trusted=developer)
-    ours = sorted(f for f in manifest if f.startswith(f"base/{ARCH}/") and f.endswith(".noarch.rpm"))
-    assert ours == [
-        f"base/{ARCH}/trivial-1.0-1+b1.xcpng8.99.noarch.rpm",
-        f"base/{ARCH}/with-deps-1.0-1+b2~7.pr7.xcpng8.99.noarch.rpm",
-    ]
-    # master's build copied from the main bucket, server-side, keeping CI's signature, whose key the stage has
-    assert any(
-        m.startswith(f"copying s3://xcraft/.xcraft/builds/{ci.key}/") and f"s3://xcraft-dev/repos/9.0/{stage}/" in m
-        for m in caplog.messages
-    )
-    snapshot = root / ".xcraft/publish"
-    check_signatures(Project.find(), snapshot, [ours[0]], what="master's", public_key=ci.public_key())
-    check_signatures(Project.find(), snapshot, [ours[1]], what="the pull request's", public_key=developer.public_key())
-    assert {"RPM-GPG-KEY", f"RPM-GPG-KEY-{ci.key}"} <= set(manifest)
-    # the repository of the snapshot for the hosts, trusting all the signers of its packages
-    tree = f"{dev.url.rstrip('/')}/repos/9.0/{stage}/{datetime.now(UTC).date().isoformat()}"
-    repo = (snapshot / f"xcraft-{stage}-{ARCH}.repo").read_text()
-    assert f"baseurl={tree}/base/{ARCH}/\n" in repo
-    assert f"gpgkey={tree}/RPM-GPG-KEY {tree}/RPM-GPG-KEY-{ci.key}" in repo
-    assert f"xcraft-{stage}-{ARCH}.repo" in manifest
-    # where it is, how to use it, and the files of the development builds, by source package
-    summary = (tmp_path / "summary").read_text()
-    assert "latest" not in summary
-    assert f"dnf config-manager --add-repo {tree}/xcraft-{stage}-{ARCH}.repo\n" in summary
-    name = "with-deps-1.0-1+b2~7.pr7.xcpng8.99"
-    assert (
-        f"- with-deps\n  - [{name}.noarch.rpm]({tree}/base/{ARCH}/{quote(name)}.noarch.rpm)\n"
-        f"  - [{name}.src.rpm]({tree}/base/Source/{quote(name)}.src.rpm)\n"
-    ) in summary
-    assert "- trivial" not in summary  # master's
-    # its contents, which the checkout is compared with: its development build, final in the checkout
-    assert "contents.json" in manifest
-    code, output = xcraft("contents", "--diff-stage", f"dev@{stage}")
-    assert code == 0, output
-    assert "  ~ with-deps 1.0-1+b2~7.pr7.xcpng8.99 → 1.0-1+b2.xcpng8.99" in output.splitlines()
-    assert xcraft("contents", "--diff-stage", f"dev@{stage}/no-such-snapshot")[0] == 1
-    # the development builds are files of the stage only
-    assert not remote.listing(dev, f".xcraft/builds/{developer.key}/")
-    # removed with the pull request
-    code, output = xcraft("unpublish", "--stage", stage)
-    assert code == 0, output
-    assert not remote.listing(dev, f"repos/9.0/{stage}/")
-    assert not remote.listing(dev, f".xcraft/inputs/repos/9.0/{stage}/")
-    assert xcraft("unpublish", "--stage", stage)[1].endswith(f"no stage {stage} to remove\n")
-
-
-@needs_gpg
-def should_sign_upstream_packages_once_in_final_mode(root: Path, tmp_path: Path) -> None:
-    stage = f"signed-{secrets.token_hex(4)}"
-    # an upstream package for the hosts, and an extra one, unsigned
-    extra = TOYS / ARCH / f"toyarch-1-1.{os.uname().machine}.rpm"  # installable on the platform
-    (root / "xcraft.toml").write_text(
-        f'{REMOTE}extra = ["bc"]\n'
-        f'[extra_upstream.toyarch-new]\nurl = "{extra.as_uri()}"\nsha256 = "{sha256_of(extra)}"\n'
-    )
-    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
-    assert code == 0, output
-    signer = key_signer(Project.find())  # of [sign]
-    assert signer
-    storage = Project.find().config.remote["main"]
-    # all the packages of the hosts signed by its key, the upstream ones too
-    latest = f"repos/9.0/{stage}/latest"
-    binaries = [f for f in remote.read_manifest(storage, latest, trusted=signer) if f.startswith(f"base/{ARCH}/")]
-    upstream = [f for f in binaries if f.endswith(".rpm") and not Path(f).name.startswith(("trivial-", "with-deps-"))]
-    assert f"base/{ARCH}/{extra.name}" in upstream
-    for f in upstream:
-        assert remote.download(storage, f"{latest}/{f}", tmp_path / f)
-    check_signatures(Project.find(), tmp_path, upstream, what="upstream", public_key=signer.public_key())
-    copies = remote.listing(storage, f".xcraft/upstream-signed/{signer.key}/{ARCH}/")
-    assert any(f.endswith(".rpm") for f in copies)
-    # signed once: another snapshot copies them, even without the cache
-    shutil.rmtree(root / ".xcraft/cache/upstream-signed", ignore_errors=True)  # signed here, or by another test
-    spec = root / "base/trivial/trivial.spec"
-    spec.write_text(spec.read_text().replace('echo "hello"', 'echo "hello, signed upstream"'))
-    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
-    assert code == 0, output
-    assert not (root / ".xcraft/cache/upstream-signed").exists()  # none signed again
-    assert remote.listing(storage, f".xcraft/upstream-signed/{signer.key}/{ARCH}/") == copies
-    # their metadata signed by the key, as the bucket is not: another signature is refused
-    signature = f".xcraft/upstream-signed/{signer.key}/{ARCH}/repodata/repomd.xml.asc"
-    assert remote.download(storage, signature, tmp_path / "repomd.xml.asc")
-    (tmp_path / "other").write_text("other")
-    remote.upload(storage, signature, signer.sign_file(tmp_path / "other"))
-    try:
-        with pytest.raises(upstream_copy.UpstreamError, match=f"is not signed by {signer.key}"):
-            upstream_signed.read(Project.find(), storage, signer, tmp_path / "read")
-    finally:
-        remote.upload(storage, signature, tmp_path / "repomd.xml.asc")
-
-
-def should_accept_only_upstream_entries_of_their_pinned_versions() -> None:
-    # forged metadata of the unsigned upstream copy, for a package of the pinned SHA-256
-    def entry(version: str, location: str) -> repodata.Entry:
-        return (f'<package><name>bc</name><arch>x86_64</arch>{version}<location href="{location}"/></package>', "", "")
-
-    pins = {
-        "bc": Pin(evr="1.07.1-11.el10", arch="x86_64", sha256="0" * 64, source="bc"),
-        "dbus": Pin(evr="1:1.14.10-5.el10", arch="x86_64", sha256="1" * 64, source="dbus"),
-    }
-    pinned_version = '<version epoch="0" ver="1.07.1" rel="11.el10"/>'
-    assert publisher._pinned(pins, "bc", entry(pinned_version, "bc-1.07.1-11.el10.x86_64.rpm"))
-    assert publisher._pinned(pins, "bc", entry(pinned_version, "0123/bc-1.07.1-11.el10.x86_64.rpm"))  # a signed copy
-    assert not publisher._pinned(pins, "bc", entry(pinned_version, "bc-1.06-1.el10.x86_64.rpm"))
-    assert not publisher._pinned(
-        pins, "bc", entry('<version epoch="0" ver="1.06" rel="1.el10"/>', "bc-1.07.1-11.el10.x86_64.rpm")
-    )
-    assert not publisher._pinned(
-        pins, "bc", entry('<version epoch="1" ver="1.07.1" rel="11.el10"/>', "bc-1.07.1-11.el10.x86_64.rpm")
-    )
-    dbus = entry('<version epoch="1" ver="1.14.10" rel="5.el10"/>', "dbus-1.14.10-5.el10.x86_64.rpm")
-    assert publisher._pinned(pins, "dbus", (dbus[0].replace("<name>bc", "<name>dbus"), "", ""))

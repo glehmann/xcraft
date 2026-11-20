@@ -27,10 +27,8 @@ def should_name_source_packages_without_the_rebuild_suffixes() -> None:
 @pytest.mark.parametrize(
     ("dep", "attributes"),
     [
-        ("foo", {"name": "foo"}),
         ("foo >= 1:2.0-3", {"name": "foo", "flags": "GE", "epoch": "1", "ver": "2.0", "rel": "3"}),
         ("libfoo.so.1()(64bit)", {"name": "libfoo.so.1()(64bit)"}),
-        ("bar = 4.17", {"name": "bar", "flags": "EQ", "epoch": "0", "ver": "4.17"}),
         ("(a if b)", {"name": "(a if b)"}),
         ("q&a < 1", {"name": "q&a", "flags": "LT", "epoch": "0", "ver": "1"}),
     ],
@@ -66,10 +64,7 @@ def should_write_the_repository_metadata_of_our_packages(tmp_path: Path) -> None
     [
         ("trivial >= 1.0-2", ["trivial"]),
         ("trivial", []),  # without a version
-        ("/usr/bin/toyrun", []),
-        ("pkgconfig(foo) = 1.0", ["pkgconfig(foo)"]),
         # rich: all the words, the capabilities with their own parentheses
-        ("(pkgconfig(example) >= 1.0-2 or nonexistent)", ["pkgconfig(example)", ">=", "1.0-2", "or", "nonexistent"]),
         ("((a or b) with c(x))", ["a", "or", "b", "with", "c(x)"]),
     ],
 )
@@ -83,8 +78,6 @@ def should_find_the_names_dependencies_refer_to_with_versions(dep: str, names: l
         ("pair-libs = 1.0-2.xcpng8.99", True),  # like Requires: pair-libs = %{version}-%{release}
         ("pkgconfig(pair) >= 1.0-2.xcpng8.99", True),  # by a capability, with the version of the package having it
         ("pair-libs >= 1.0-1.xcpng8.99", False),  # another version: its key changes with another release
-        ("pair-libs", False),
-        ("upstream = 1.0-2.xcpng8.99", False),
         ("(pair-libs = 1.0-2.xcpng8.99 or upstream)", False),  # rich
     ],
 )

@@ -139,7 +139,7 @@ def _run(project: Project, data: dict, *, show: str, rpms: Sequence[Path] = (), 
 
 
 _resolved: dict[Path, Resolved] = {}
-"""The cached resolutions read by this process, by file."""
+"""The cached resolutions read by this command, by file."""
 _keys: dict[Path, tuple[Project, dict]] = {}
 """What the cached resolutions read by this process are resolved from, by file, for _rekey()."""
 
@@ -187,7 +187,14 @@ def remote_tree(cache: Path) -> str:
 
 _unreachable: set[Path] = set()
 """The projects whose remote storage failed, or which resolve from the repositories as they are, see _forget(): not
-asked again by this process."""
+asked again by this command."""
+
+
+def forget() -> None:
+    """Forget the resolutions read, and the remote storages failing, for a new command."""
+    _resolved.clear()
+    _keys.clear()
+    _unreachable.clear()
 
 
 def _fetched(project: Project, cache: Path) -> bool:

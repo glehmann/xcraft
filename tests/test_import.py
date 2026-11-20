@@ -1,21 +1,19 @@
+"""Importing packages: the history of their packaging repositories, and source RPMs, into import branches."""
+
 from __future__ import annotations
 
 import hashlib
 from typing import TYPE_CHECKING
 
 import pytest
-from typer.testing import CliRunner
 
-from tests import TOML, git, needs_git_lfs
+from tests import TOML, git, needs_git_lfs, xcraft
 from xcraft import container, resolution
-from xcraft.__main__ import app
 from xcraft.importer import PackageImportError, import_history
 from xcraft.project import Project
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-runner = CliRunner()
 
 pytestmark = needs_git_lfs  # for the archives of the packaging repositories
 
@@ -76,12 +74,10 @@ def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def should_import_the_history_of_a_packaging_repository(root: Path, upstream: Path) -> None:
     url = f"file://{upstream}"
-    result = runner.invoke(app, ["import", "foo", "--url", url])
-    assert result.exit_code == 0, result.output
+    code, output = xcraft("import", "foo", "--url", url)
+    assert code == 0, output
     master, xs = git(root, "rev-parse", "import/foo/master"), git(root, "rev-parse", "import/foo/XS-9.0")
-    assert (
-        f"foo: import/foo/master at {master[:12]}\nfoo: import/foo/XS-9.0 at {xs[:12]}\n" in result.output
-    )  # not XS-10
+    assert f"foo: import/foo/master at {master[:12]}\nfoo: import/foo/XS-9.0 at {xs[:12]}\n" in output  # not XS-10
     # the files of SPECS/ and SOURCES/ in the package, and the archives in the manifest, by the SHA-256 of LFS
     files = ["base/foo/a.patch", "base/foo/b.patch", "base/foo/foo.spec", "base/foo/sources"]
     assert git(root, "ls-tree", "-r", "--name-only", master).split() == files
@@ -107,29 +103,39 @@ def should_import_the_history_of_a_packaging_repository(root: Path, upstream: Pa
     assert git(root, "log", "--format=%s", "--", "base/foo/foo.spec").splitlines() == ["update", "update"]
 
 
-def should_add_the_new_commits_when_importing_again(
-    root: Path, upstream: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def should_add_the_new_commits_when_importing_again(root: Path, upstream: Path) -> None:
     url = f"file://{upstream}"
-    assert runner.invoke(app, ["import", "foo", "--url", url]).exit_code == 0
+    assert xcraft("import", "foo", "--url", url)[0] == 0
     master = git(root, "rev-parse", "import/foo/master")
-    # the same commits, with the new ones on top, without a git maintenance for each fetch
+    # the same commits, with the new ones on top
     commit_files(upstream, {"SPECS/foo.spec": "Name: foo\nVersion: 2.0\nRelease: 2\n"})
-    monkeypatch.setenv("GIT_TRACE", str(tmp_path / "trace"))
     assert import_history(Project.find(), root / "base/foo", url, ["master"]) == (
         {"master": git(root, "rev-parse", "import/foo/master")},
         [],
     )
     assert git(root, "rev-parse", "import/foo/master~") == master
+
+
+def should_not_maintain_the_project_repository_after_each_fetch(
+    root: Path, upstream: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # which would repack it for each package imported
+    monkeypatch.setenv("GIT_TRACE", str(tmp_path / "trace"))
+    import_history(Project.find(), root / "base/foo", f"file://{upstream}", ["master"])
     assert "git fetch" in (trace := (tmp_path / "trace").read_text())
     assert "git maintenance run" not in trace
-    monkeypatch.delenv("GIT_TRACE")
+
+
+def should_refuse_to_import_none_of_the_branches(root: Path, upstream: Path) -> None:
     with pytest.raises(PackageImportError, match="none of the branches to import"):
-        import_history(Project.find(), root / "base/foo", url, ["XS-10"])
+        import_history(Project.find(), root / "base/foo", f"file://{upstream}", ["XS-10"])
+
+
+def should_refuse_to_import_into_a_project_not_starting_with_an_empty_commit(root: Path, upstream: Path) -> None:
     git(root, "checkout", "-q", "--orphan", "other")
     git(root, "commit", "-qm", "not empty")
     with pytest.raises(PackageImportError, match="must start with an empty commit"):
-        import_history(Project.find(), root / "base/foo", url, ["master"])
+        import_history(Project.find(), root / "base/foo", f"file://{upstream}", ["master"])
 
 
 def source_rpm(tmp_path: Path, name: str, version: str) -> Path:
@@ -154,16 +160,16 @@ def source_rpm(tmp_path: Path, name: str, version: str) -> Path:
 def should_import_a_source_rpm_on_top_of_the_imported_history(
     build_environment: Path, root: Path, upstream: Path, tmp_path: Path
 ) -> None:
-    assert runner.invoke(app, ["import", "foo", "--url", f"file://{upstream}"]).exit_code == 0
+    assert xcraft("import", "foo", "--url", f"file://{upstream}")[0] == 0
     before = git(root, "rev-parse", "import/foo/XS-9.0")
     srpm = source_rpm(tmp_path, "foo", "3.0")
     # its files are imported even when git ignores them, like with the user's excludes
     (root / ".git/info").mkdir(exist_ok=True)
     (root / ".git/info/exclude").write_text("*.patch\n")
-    result = runner.invoke(app, ["import", str(srpm)])
-    assert result.exit_code == 0, result.output
+    code, output = xcraft("import", str(srpm))
+    assert code == 0, output
     commit = git(root, "rev-parse", "import/foo/XS-9.0")
-    assert f"foo: import/foo/XS-9.0 at {commit[:12]}" in result.output
+    assert f"foo: import/foo/XS-9.0 at {commit[:12]}" in output
     assert git(root, "rev-parse", f"{commit}~") == before
     assert git(root, "ls-tree", "-r", "--name-only", commit).split() == [
         "base/foo/Citrix_Logo_Black.png.deleted-by-XCP-ng.txt", "base/foo/fix.patch", "base/foo/foo.spec",
@@ -176,35 +182,37 @@ def should_import_a_source_rpm_on_top_of_the_imported_history(
         f"Import {srpm.name}\n\nFiles deleted for legal reasons:\n - Citrix_Logo_Black.png\n\n"
         "Signed-off-by: Test User <test@example.com>"
     )
-    assert f"import/foo/XS-9.0 has the content of {srpm} already" in runner.invoke(app, ["import", str(srpm)]).output
+    assert f"import/foo/XS-9.0 has the content of {srpm} already" in xcraft("import", str(srpm))[1]
     # the history of XenServer's packaging repository cannot drop it
-    result = runner.invoke(app, ["import", "foo", "--url", f"file://{upstream}"])
-    assert "import/foo/XS-9.0 has commits that are not imported" in str(result.exception)
+    assert (
+        "import/foo/XS-9.0 has commits that are not imported"
+        in xcraft("import", "foo", "--url", f"file://{upstream}")[1]
+    )
     assert git(root, "rev-parse", "import/foo/XS-9.0") == commit
 
     # a new package, from the first commit of the project
-    assert runner.invoke(app, ["import", str(source_rpm(tmp_path, "bar", "1.0"))]).exit_code == 0
+    assert xcraft("import", str(source_rpm(tmp_path, "bar", "1.0")))[0] == 0
     assert git(root, "rev-parse", "import/bar/XS-9.0~") == git(root, "rev-list", "--max-parents=0", "HEAD")
 
 
 def should_update_all_the_imported_packages_on_their_branches(root: Path, upstream: Path) -> None:
-    assert runner.invoke(app, ["import", "foo", "--url", f"file://{upstream}"]).exit_code == 0
+    assert xcraft("import", "foo", "--url", f"file://{upstream}")[0] == 0
     master = git(root, "rev-parse", "import/foo/master")
     commit_files(upstream, {"SPECS/foo.spec": "Name: foo\nVersion: 3.0\n"})
     git(root, "branch", "import/bar/XS-9.0", "master")  # of source RPMs only: not imported again
     # from xcp-ng-rpms by default: a file:// URL can stand for it
-    result = runner.invoke(app, ["import", "--all", "--url", f"file://{upstream}"])
-    assert result.exit_code == 0, result.output
+    code, output = xcraft("import", "--all", "--url", f"file://{upstream}")
+    assert code == 0, output
     assert git(root, "rev-parse", "import/foo/master~") == master
     assert git(root, "branch", "--list", "import/bar/*").split() == ["import/bar/XS-9.0"]
     # on the branches of its import branches, rather than those of [import]
     git(upstream, "checkout", "-qb", "ydi/9")
-    assert runner.invoke(app, ["import", "foo", "--url", f"file://{upstream}", "--branch", "ydi/9"]).exit_code == 0
+    assert xcraft("import", "foo", "--url", f"file://{upstream}", "--branch", "ydi/9")[0] == 0
     git(root, "branch", "-qD", "import/foo/master", "import/foo/XS-9.0")
     commit_files(upstream, {"SPECS/foo.spec": "Name: foo\nVersion: 4.0\n"})
     ydi = git(root, "rev-parse", "import/foo/ydi/9")
-    result = runner.invoke(app, ["import", "--all", "--url", f"file://{upstream}"])
-    assert result.exit_code == 0, result.output
+    code, output = xcraft("import", "--all", "--url", f"file://{upstream}")
+    assert code == 0, output
     assert git(root, "rev-parse", "import/foo/ydi/9~") == ydi
     assert git(root, "branch", "--list", "import/foo/*").split() == ["import/foo/ydi/9"]
 
@@ -237,19 +245,17 @@ def should_import_repositories_of_other_layouts(root: Path, tmp_path: Path) -> N
 
 
 def should_reject_invalid_import_arguments(root: Path, upstream: Path) -> None:
-    assert "no package given" in runner.invoke(app, ["import"]).output
-    assert "--url applies to a single package" in runner.invoke(app, ["import", "a", "b", "--url", "x"]).output
-    assert "not package names: '..'" in runner.invoke(app, ["import", "..", "--url", "x"]).output
-    result = runner.invoke(app, ["import", "foo", "--url", f"file://{upstream}", "--repo", "xostor"])
-    assert "xostor is not a repository of the project: base" in result.output
+    assert "no package given" in xcraft("import")[1]
+    assert "--url applies to a single package" in xcraft("import", "a", "b", "--url", "x")[1]
+    assert "not package names: '..'" in xcraft("import", "..", "--url", "x")[1]
+    output = xcraft("import", "foo", "--url", f"file://{upstream}", "--repo", "xostor")[1]
+    assert "xostor is not a repository of the project: base" in output
 
 
 def should_import_into_the_given_repository_of_the_project(root: Path, upstream: Path) -> None:
     (root / "xcraft.toml").write_text(f'repositories = ["base", "xostor"]\n{(root / "xcraft.toml").read_text()}')
-    result = runner.invoke(
-        app, ["import", "foo", "--url", f"file://{upstream}", "--repo", "xostor", "--branch", "XS-9.0"]
-    )
-    assert result.exit_code == 0, result.output
+    code, output = xcraft("import", "foo", "--url", f"file://{upstream}", "--repo", "xostor", "--branch", "XS-9.0")
+    assert code == 0, output
     assert git(root, "ls-tree", "--name-only", "import/foo/XS-9.0") == "xostor"
     assert git(root, "for-each-ref", "--format=%(refname:short)", "refs/heads/import") == "import/foo/XS-9.0"
 
@@ -260,9 +266,10 @@ def should_refuse_links_to_files_out_of_the_package(root: Path, upstream: Path, 
     (upstream / "SOURCES/key").symlink_to(tmp_path / "secret")
     git(upstream, "add", "-A")
     git(upstream, "commit", "-qm", "link")
-    result = runner.invoke(app, ["import", "foo", "--url", f"file://{upstream}"])
-    assert "SOURCES/key of " in str(result.exception)
-    assert "not a regular file, not imported" in str(result.exception)
+    code, output = xcraft("import", "foo", "--url", f"file://{upstream}")
+    assert code != 0
+    assert "SOURCES/key of " in output
+    assert "not a regular file, not imported" in output
     assert git(root, "for-each-ref", "refs/heads/import") == ""
 
 
@@ -279,7 +286,7 @@ def should_warn_about_archives_that_cannot_be_found(root: Path, upstream: Path) 
     commit_files(upstream, {"SOURCES/foo-3.0.tar.gz": "3.0\n"})
     digest = hashlib.sha256(b"3.0\n").hexdigest()
     next(upstream.glob(f".git/lfs/objects/*/*/{digest}")).unlink()
-    result = runner.invoke(app, ["import", "foo", "--url", f"file://{upstream}", "--branch", "master"])
-    assert result.exit_code == 0, result.output
-    assert "foo: foo-3.0.tar.gz is not in the source cache, the remote storage, or git LFS" in result.output
+    code, output = xcraft("import", "foo", "--url", f"file://{upstream}", "--branch", "master")
+    assert code == 0, output
+    assert "foo: foo-3.0.tar.gz is not in the source cache, the remote storage, or git LFS" in output
     assert (Project.find().source_cache / hashlib.sha256(b"2.0\n").hexdigest() / "foo-1.0.tar.gz").exists()

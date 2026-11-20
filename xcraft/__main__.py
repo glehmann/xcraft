@@ -121,9 +121,11 @@ def options(
 ) -> None:
     """Build the XCP-ng distribution."""
     # --trace and --debug are handled in main(), they are declared here for --help
-    from xcraft import buildid, remote  # noqa: PLC0415, with urllib3: not for the completions
+    from xcraft import buildid, remote, resolution  # noqa: PLC0415, with urllib3: not for the completions
 
-    remote.forget()  # what another command, in the same process like the tests, read
+    # what another command, in the same process like the tests, read
+    remote.forget()
+    resolution.forget()
     buildid.target = maintenance
 
 

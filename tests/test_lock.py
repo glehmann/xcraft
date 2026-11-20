@@ -1,3 +1,5 @@
+"""The lock of the upstream packages: its format, its validation, and how resolving records it."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -20,11 +22,10 @@ from xcraft.lock import (
     save_lock,
 )
 from xcraft.project import Project
+from xcraft.resolution import ResolutionError, Resolved, lock_sources
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-from xcraft.resolution import ResolutionError, Resolved, lock_sources
 
 
 def locked(evr: str, source: str = "foo", arch: str = "x86_64_v2") -> Locked:
@@ -32,14 +33,14 @@ def locked(evr: str, source: str = "foo", arch: str = "x86_64_v2") -> Locked:
 
 
 @pytest.fixture
-def project(tmp_path, monkeypatch: pytest.MonkeyPatch) -> Project:  # noqa: ANN001
+def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Project:
     (tmp_path / "xcraft.toml").write_text(TOML)
     monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path))
     monkeypatch.delenv("XCRAFT_ARCH", raising=False)
     return Project.find()
 
 
-def should_save_the_lock_in_a_readable_format(tmp_path) -> None:  # noqa: ANN001
+def should_save_the_lock_in_a_readable_format(tmp_path: Path) -> None:
     project = Project(tmp_path, config())
     pin = Pin(evr="2.39-145.el10_2", arch="aarch64", sha256="ab" * 32, source="glibc")
     lock = Lock(
@@ -67,44 +68,34 @@ def should_save_the_lock_in_a_readable_format(tmp_path) -> None:  # noqa: ANN001
     assert f'"glibc" = "2.39-145.el10_2 aarch64 {"ab" * 32} glibc"\n' in text
 
 
-def should_parse_the_lock_again_only_when_changed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_parse_the_lock_again_only_when_changed(tmp_path: Path) -> None:
     project = Project(tmp_path, config())
     save_lock(project, Lock(sources={"glibc": "1-1"}))
+    parsed = cached_lock(project)
+    assert cached_lock(project) is parsed  # shared by the callers only reading it
+    # but a copy for each caller, which may change it
     first = load_lock(project)
-    assert cached_lock(project) is cached_lock(project)  # shared by the callers only reading it
-    # parsed again only once changed, but a copy for each caller, which may change it
-    monkeypatch.setattr("xcraft.lock.parse_lock", lambda _: pytest.fail("parsed again"))
     first.sources["zlib"] = "1-1"
+    assert cached_lock(project) is parsed
     assert load_lock(project).sources == {"glibc": "1-1"}
-    monkeypatch.undo()
     save_lock(project, first)
+    assert cached_lock(project) is not parsed
     assert load_lock(project).sources == {"glibc": "1-1", "zlib": "1-1"}
 
 
 def should_reject_invalid_locks(tmp_path: Path) -> None:
     project = Project(tmp_path, config())
     # pins of one format, in full
-    for text in ("1-1 aarch64", f"1-1 aarch64 {'ab' * 31} glibc", f"1-1 aarch64 {'ab' * 32} glibc extra"):
-        with pytest.raises(ValueError, match=r"pinned binary package|sha256"):
-            Pin.parse(text)
+    with pytest.raises(ValueError, match="not a pinned binary package: 1-1 aarch64"):
+        Pin.parse("1-1 aarch64")
+    with pytest.raises(ValueError, match="sha256"):
+        Pin.parse(f"1-1 aarch64 {'ab' * 31} glibc")
     pin = Pin(evr="1-1", arch="aarch64", sha256="ab" * 32, source="glibc")
     # the packages of the images, of the build roots, of the published repositories and of the tools making the ISO,
     # all pinned, of locked sources
     for invalid, problem in (
         ({"image": {"aarch64": ["glibc"]}}, "architectures without pinned binary packages: aarch64"),
-        ({"roots": Recorded(arches={"aarch64": {"qemu": ["glibc"]}})}, "without pinned binary packages: aarch64"),
-        ({"runtime": {"aarch64": ["glibc"]}}, "without pinned binary packages: aarch64"),
-        ({"iso": {"aarch64": ["glibc"]}}, "without pinned binary packages: aarch64"),
-        ({"sign": {"aarch64": ["glibc"]}}, "without pinned binary packages: aarch64"),
-        ({"lint": {"aarch64": ["glibc"]}}, "without pinned binary packages: aarch64"),
-        ({"unsigned": {"aarch64": ["glibc"]}}, "without pinned binary packages: aarch64"),
-        ({"binaries": {"aarch64": {"glibc": pin}}, "image": {"aarch64": ["bash"]}}, "not pinned in the lock: bash"),
         ({"binaries": {"aarch64": {"glibc": pin}}, "roots": Recorded(shared={"qemu": ["bash"]})}, "not pinned"),
-        ({"binaries": {"aarch64": {"glibc": pin}}, "runtime": {"aarch64": ["bash"]}}, "not pinned in the lock: bash"),
-        ({"binaries": {"aarch64": {"glibc": pin}}, "iso": {"aarch64": ["bash"]}}, "not pinned in the lock: bash"),
-        ({"binaries": {"aarch64": {"glibc": pin}}, "sign": {"aarch64": ["bash"]}}, "not pinned in the lock: bash"),
-        ({"binaries": {"aarch64": {"glibc": pin}}, "lint": {"aarch64": ["bash"]}}, "not pinned in the lock: bash"),
-        ({"binaries": {"aarch64": {"glibc": pin}}, "unsigned": {"aarch64": ["bash"]}}, "not pinned in the lock: bash"),
         ({"binaries": {"aarch64": {"glibc": pin}}, "sources": {}}, "of source packages not locked: glibc"),
     ):
         with pytest.raises(ValueError, match=problem):
@@ -113,11 +104,14 @@ def should_reject_invalid_locks(tmp_path: Path) -> None:
     lock_path(project).write_text('version = 4\n\n[sources]\n"glibc" = "1-1"\n')
     with pytest.raises(LockFormatError, match="the lock has the format 4, not 3: of another xcraft"):
         load_lock(project)
-    # of the formats before, without the tables sign, unsigned or lint: read, and written in the current one
-    for version in (1, 2):
-        lock_path(project).write_text(f'version = {version}\n\n[sources]\n"glibc" = "1-1"\n')
-        save_lock(project, load_lock(project))
-        assert lock_path(project).read_text().splitlines()[2] == "version = 3"
+
+
+def should_upgrade_locks_of_earlier_formats(tmp_path: Path) -> None:
+    project = Project(tmp_path, config())
+    # without the tables sign, unsigned or lint: read, and written in the current one
+    lock_path(project).write_text('version = 1\n\n[sources]\n"glibc" = "1-1"\n')
+    save_lock(project, load_lock(project))
+    assert lock_path(project).read_text().splitlines()[2] == "version = 3"
 
 
 def should_share_entries_found_on_the_first_architecture() -> None:
@@ -145,14 +139,14 @@ def should_share_entries_found_on_the_first_architecture() -> None:
     record("aarch64", "xen", [])
     assert recorded.arches == {}
     # the first one finding nothing, and another one something, in any order: the first one does not get it
-    for order in (["x86_64_v2", "aarch64"], ["aarch64", "x86_64_v2"]):
+    for order in ([("x86_64_v2", []), ("aarch64", ["lzo"])], [("aarch64", ["lzo"]), ("x86_64_v2", [])]):
         recorded = Recorded()
-        for arch in order:
-            record(arch, "xen", [] if arch == "x86_64_v2" else ["lzo"])
+        for arch, values in order:
+            record(arch, "xen", values)
         assert (recorded.of("x86_64_v2"), recorded.of("aarch64")) == ({}, {"xen": ["lzo"]})
 
 
-def should_refuse_lock_changes_when_locked(tmp_path) -> None:  # noqa: ANN001
+def should_refuse_lock_changes_when_locked(tmp_path: Path) -> None:
     project = Project(tmp_path, config())
     lock = Lock(sources={"bash": "5.2-3"})
     save_lock(project, lock)

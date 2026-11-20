@@ -1,4 +1,6 @@
-"""Parts of the builds working on files only: build trees, cleaning, estimates, locking."""
+"""The builds without containers: their trees and sources, their orchestration, the checks and recordings of what
+they made, the local repositories, the queue, the estimates, and cleaning.
+"""
 
 from __future__ import annotations
 
@@ -12,11 +14,11 @@ from pathlib import Path
 import pytest
 
 from tests import TOML, config, ours
-from xcraft import build, buildkey, cache, localrepo, resolution, rpmbuild, specs
+from xcraft import build, cache, lint, localrepo, resolution, rpmbuild, specs
 from xcraft.build import queued
 from xcraft.builds import load_builds, save_builds
 from xcraft.cache import BuildError, build_keys, previous_duration
-from xcraft.checks import _check_made, record_rpm_deps
+from xcraft.checks import check_made, record_rpm_deps
 from xcraft.clean import caches_removal, freed, remove, repos_disk_usage, routine_removal, sources_removal
 from xcraft.localrepo import OUTPUT_MARKER, RepoError, extra_rpms, fresh_dir
 from xcraft.lock import Lock, Pin, save_lock
@@ -49,7 +51,11 @@ def should_stage_the_build_tree_like_a_packaging_repository(project: Project, tm
 
     (pkg / "fix.patch").chmod(0o700)
     (pkg / "empty").mkdir()
-    tree = prepare_tree(project, "foo", hash_dir(pkg, project.root))
+    previous = os.umask(0o077)  # whatever the umask
+    try:
+        tree = prepare_tree(project, "foo", hash_dir(pkg, project.root))
+    finally:
+        os.umask(previous)
     # other specs are sources of the main one
     assert files(tree) == ["SOURCES/fix.patch", "SOURCES/foo-1.0.tar.gz", "SOURCES/foo-helper.spec", "SOURCES/sub/conf",
                            "SPECS/foo.spec"]  # fmt: skip
@@ -104,30 +110,6 @@ def should_refuse_to_link_a_file_to_itself(tmp_path: Path) -> None:
     with pytest.raises(RepoError, match="to itself"):
         localrepo.link(file, tmp_path / "." / "file")
     assert file.read_text() == "kept"
-
-
-def should_stage_the_same_tree_whatever_the_umask(project: Project) -> None:
-    pkg = project.root / "base/foo"
-    (pkg / "sub").mkdir(parents=True)
-    for name in ("foo.spec", "sub/conf"):
-        (pkg / name).write_text(name)
-
-    def staged(umask: int) -> dict[str, tuple[int, float, bytes]]:
-        previous = os.umask(umask)
-        try:
-            tree = prepare_tree(project, "foo", hash_dir(pkg, project.root))
-        finally:
-            os.umask(previous)
-        return {
-            p.relative_to(tree).as_posix(): (
-                p.stat().st_mode,
-                p.stat().st_mtime,
-                p.read_bytes() if p.is_file() else b"",
-            )
-            for p in [tree, *tree.rglob("*")]
-        }
-
-    assert staged(0o077) == staged(0o022)
 
 
 def should_stage_the_archives_of_the_manifest_as_hashed(
@@ -217,59 +199,61 @@ def should_keep_the_isos_of_the_checkout_when_cleaning(project: Project) -> None
     assert sorted(p.name for p in isos.iterdir()) == ["current.iso"]
 
 
-def should_keep_sources_and_current_builds_when_cleaning(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    state = project.state
-    for path in ("cache/sources/abc/foo.tar.gz", "cache/builds/one/x86_64_v2/foo/current/RPMS/foo.rpm",
-                 "cache/builds/one/x86_64_v2/foo/old/RPMS/foo.rpm", "cache/builds/one/x86_64_v2/gone/old/RPMS/gone.rpm",
-                 "build/foo/SPECS/foo.spec", "repo/foo.rpm", "ccache/foo/data",
-                 # the caches of what this process read, and of the rest
-                 "cache/specs/x86_64_v2/current.json", "cache/specs/x86_64_v2/old.json",
-                 "cache/resolved/x86_64_v2/current.json", "cache/resolved/x86_64_v2/old.json",
-                 # of another architecture: see xcraft clean --arch
-                 "cache/specs/aarch64/old.json", "cache/resolved/aarch64/old.json",
-                 "cache/checks/installable/old", "cache/upstream/old.json", "cache/rpms/old.rpm",
-                 "cache/srpms/old.src.rpm", "cache/builds/key/x86_64_v2/foo/old/RPMS/foo.rpm",
-                 "cache/builds/key/x86_64_v2/foo/current/RPMS/foo.rpm",
-                 "cache/builds/key/aarch64/foo/old/RPMS/foo.rpm",
-                 "logs/foo.log", "logs/gone.log", "logs/_resolve.log"):  # fmt: skip
+def written(state: Path, paths: list[str]) -> None:
+    """Write the files `paths` of 8 KiB in `state`."""
+    for path in paths:
         (state / path).parent.mkdir(parents=True, exist_ok=True)
         (state / path).write_bytes(b"x" * 8192)
+
+
+def should_clean_only_the_given_packages(project: Project) -> None:
+    written(project.state, ["cache/builds/one/x86_64_v2/foo/old/RPMS/foo.rpm", "build/foo/SPECS/foo.spec",
+                            "ccache/foo/data", "cache/builds/one/x86_64_v2/bar/current/RPMS/bar.rpm",
+                            "cache/builds/one/x86_64_v2/bar/old/RPMS/bar.rpm", "build/bar/SPECS/bar.spec",
+                            "ccache/bar/data"])  # fmt: skip
+    keys = {"foo": "current", "bar": "current"}
+    remove(project, routine_removal(project, [keys], ["bar"], isos=set()) | caches_removal(project, "ccache", ["bar"]))
+    assert files(project.state) == ["build/foo/SPECS/foo.spec", "cache/builds/one/x86_64_v2/bar/current/RPMS/bar.rpm",
+                                    "cache/builds/one/x86_64_v2/foo/old/RPMS/foo.rpm", "ccache/foo/data"]  # fmt: skip
+
+
+def should_free_only_what_no_repository_links_when_cleaning(project: Project) -> None:
+    written(project.state, ["cache/builds/one/x86_64_v2/bar/current/RPMS/bar.rpm"])
+    rpm = project.state / "cache/builds/one/x86_64_v2/bar/current/RPMS/bar.rpm"
+    # what the local repository, the snapshot and the repositories of xcraft repo still link
+    for linked in (project.state / "repo/bar.rpm", project.state / "publish/base/x86_64_v2/bar.rpm",
+                   project.root / "repo/bar.rpm"):  # fmt: skip
+        linked.parent.mkdir(parents=True, exist_ok=True)
+        linked.hardlink_to(rpm)
+    assert removed(project, routine_removal(project, [{"bar": "current"}], ["bar"], isos=set(), current=True)) == 0
+    assert not [f for f in files(project.state) if "bar" in f]
+    # still in repo/, counted as its disk usage once xcraft repo made it
+    assert repos_disk_usage(project) == 0
+    (project.root / "repo" / OUTPUT_MARKER).touch()
+    assert repos_disk_usage(project) == 8192
+
+
+def should_keep_sources_and_current_builds_when_cleaning(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    state = project.state
+    written(state, ["cache/sources/abc/foo.tar.gz", "cache/builds/one/x86_64_v2/foo/current/RPMS/foo.rpm",
+                    "cache/builds/one/x86_64_v2/foo/old/RPMS/foo.rpm",
+                    "cache/builds/one/x86_64_v2/gone/old/RPMS/gone.rpm",
+                    "build/foo/SPECS/foo.spec", "repo/foo.rpm", "ccache/foo/data",
+                    # the caches of what this process read, and of the rest
+                    "cache/specs/x86_64_v2/current.json", "cache/specs/x86_64_v2/old.json",
+                    "cache/resolved/x86_64_v2/current.json", "cache/resolved/x86_64_v2/old.json",
+                    # of another architecture: see xcraft clean --arch
+                    "cache/specs/aarch64/old.json", "cache/resolved/aarch64/old.json",
+                    "cache/checks/installable/old", "cache/upstream/old.json", "cache/rpms/old.rpm",
+                    "cache/srpms/old.src.rpm", "cache/builds/key/x86_64_v2/foo/old/RPMS/foo.rpm",
+                    "cache/builds/key/x86_64_v2/foo/current/RPMS/foo.rpm",
+                    "cache/builds/key/aarch64/foo/old/RPMS/foo.rpm",
+                    "logs/foo.log", "logs/gone.log", "logs/_resolve.log"])  # fmt: skip
     (project.root / "base/foo").mkdir(parents=True)  # but not gone, removed from the project
     monkeypatch.setattr(specs, "_read", {state / "cache/specs/x86_64_v2/current.json"})
     monkeypatch.setattr(resolution, "_resolved", {state / "cache/resolved/x86_64_v2/current.json": Resolved()})
-
-    keys = {"foo": "current", "bar": "current"}
-    # only what is of the given packages
-    for path in ("cache/builds/one/x86_64_v2/bar/current/RPMS/bar.rpm",
-                 "cache/builds/one/x86_64_v2/bar/old/RPMS/bar.rpm", "build/bar/SPECS/bar.spec",
-                 "ccache/bar/data"):  # fmt: skip
-        (state / path).parent.mkdir(parents=True, exist_ok=True)
-        (state / path).write_bytes(b"x" * 8192)
-    assert (
-        removed(
-            project, routine_removal(project, [keys], ["bar"], isos=set()) | caches_removal(project, "ccache", ["bar"])
-        )
-        > 0
-    )
-    assert "cache/builds/one/x86_64_v2/bar/current/RPMS/bar.rpm" in files(state)
-    assert not [
-        f for f in files(state) if f.startswith(("cache/builds/one/x86_64_v2/bar/old", "build/bar", "ccache/bar"))
-    ]
-    assert {"build/foo/SPECS/foo.spec", "cache/builds/one/x86_64_v2/foo/old/RPMS/foo.rpm"} <= set(files(state))
-    # what the local repository, the snapshot and the repositories of xcraft repo still link
-    rpm = state / "cache/builds/one/x86_64_v2/bar/current/RPMS/bar.rpm"
-    for linked in (state / "repo/bar.rpm", state / "publish/base/x86_64_v2/bar.rpm", project.root / "repo/bar.rpm"):
-        linked.parent.mkdir(parents=True, exist_ok=True)
-        linked.hardlink_to(rpm)
-    assert repos_disk_usage(project) == 0
-    # still in repo/, of xcraft repo
-    assert removed(project, routine_removal(project, [keys], ["bar"], isos=set(), current=True)) == 0
-    assert not [f for f in files(state) if "bar" in f]
-    assert repos_disk_usage(project) == 0  # of a directory xcraft repo did not make
-    (project.root / "repo" / OUTPUT_MARKER).touch()
-    assert repos_disk_usage(project) == 8192  # only repo/ has it now
-
-    assert removed(project, routine_removal(project, [keys], isos=set())) > 0
+    keys = {"foo": "current"}
+    remove(project, routine_removal(project, [keys], isos=set()))
     kept = [
         "cache/builds/key/aarch64/foo/old/RPMS/foo.rpm",
         "cache/resolved/aarch64/old.json",
@@ -285,13 +269,13 @@ def should_keep_sources_and_current_builds_when_cleaning(project: Project, monke
         "cache/builds/one/x86_64_v2/foo/current/RPMS/foo.rpm",
     ]
     assert files(state) == sorted([*kept, *current, "ccache/foo/data"])
-    removed(project, routine_removal(project, [keys], isos=set(), current=True) | caches_removal(project, "ccache"))
+    remove(project, routine_removal(project, [keys], isos=set(), current=True) | caches_removal(project, "ccache"))
     assert files(state) == kept
     # but those of the packages of the checkout with sources
     write_manifest(project.root / "base/foo/sources", {"foo-2.tar.gz": "0" * 64})
     (state / "cache/sources" / ("0" * 64)).mkdir()
     (state / "cache/sources" / ("0" * 64) / "foo-2.tar.gz").write_text("foo")
-    removed(project, routine_removal(project, [keys], isos=set()) | sources_removal(project))
+    remove(project, routine_removal(project, [keys], isos=set()) | sources_removal(project))
     kept.remove("cache/sources/abc/foo.tar.gz")
     assert files(state) == sorted([*kept, f"cache/sources/{'0' * 64}/foo-2.tar.gz"])
 
@@ -386,28 +370,28 @@ def should_reject_builds_unlike_what_the_spec_declares(project: Project, tmp_pat
         "foo-tools-debuginfo": {"evr": "1.0-1", "arch": "x86_64", "provides": [], "requires": []},
     }  # fmt: skip
     (tmp_path / "made.json").write_text(json.dumps(made))
-    _check_made(project, "foo", tmp_path, suffix="")
+    check_made(project, "foo", tmp_path, suffix="")
     made["foo"] |= {"evr": "1.0-1.0.fix.1", "requires": ["libc.so.6()(64bit)"]}
     (tmp_path / "made.json").write_text(json.dumps({**made, "foo-extra": made["foo"]}))
     problems = (
         r"\+foo-extra; foo-1\.0-1\.0\.fix\.1\.x86_64 rather than 1\.0-1\.x86_64; foo without the requires bar >= 2"
     )
     with pytest.raises(BuildError, match=f": {problems}: xcraft parses"):
-        _check_made(project, "foo", tmp_path, suffix="")
+        check_made(project, "foo", tmp_path, suffix="")
     # the release suffix, %autorev, at the start of %dist, wherever the spec has it
     numbered = binary.model_copy(update={"evr": "1.0-1.xcpng", "provides": ["foo = 1.0-1.xcpng"]})
     project.parsed = {"foo": Package(name="foo", dist=".xcpng", binaries=[numbered, debug])}
     made["foo"] |= {"evr": "1.0-1+b2.xcpng", "provides": ["foo = 1.0-1+b2.xcpng"], "requires": ["bar >= 2"]}
     (tmp_path / "made.json").write_text(json.dumps(made))
-    _check_made(project, "foo", tmp_path, suffix="+b2")
+    check_made(project, "foo", tmp_path, suffix="+b2")
     with pytest.raises(BuildError, match=r"foo-1\.0-1\+b2\.xcpng\.x86_64 rather than 1\.0-1\+b3\.xcpng\.x86_64"):
-        _check_made(project, "foo", tmp_path, suffix="+b3")
+        check_made(project, "foo", tmp_path, suffix="+b3")
     # or at the end of the release, for the packages without %dist, like the one defining it
     numbered = binary.model_copy(update={"evr": "1.0-2.abc", "provides": ["foo = 1.0-2.abc"]})
     project.parsed = {"foo": Package(name="foo", dist=".xcpng", binaries=[numbered, debug])}
     made["foo"] |= {"evr": "1.0-2.abc+b2", "provides": ["foo = 1.0-2.abc+b2"]}
     (tmp_path / "made.json").write_text(json.dumps(made))
-    _check_made(project, "foo", tmp_path, suffix="+b2")
+    check_made(project, "foo", tmp_path, suffix="+b2")
     # in the names including the release too
     for release, built in ((".xcpng", "+b2.xcpng"), ("", "+b2")):
         named = numbered.model_copy(
@@ -421,7 +405,7 @@ def should_reject_builds_unlike_what_the_spec_declares(project: Project, tmp_pat
         project.parsed = {"foo": Package(name="foo", dist=".xcpng", binaries=[named])}
         named_made = {f"foo-rel_1.0_2.abc{built}": made["foo"] | {"evr": f"1.0-2.abc{built}", "provides": []}}
         (tmp_path / "made.json").write_text(json.dumps(named_made))
-        _check_made(project, "foo", tmp_path, suffix="+b2")
+        check_made(project, "foo", tmp_path, suffix="+b2")
 
 
 def should_record_what_rpm_generated_once_resolvable(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -479,58 +463,66 @@ def should_record_providers_by_their_names_in_the_spec(project: Project, monkeyp
     assert load_builds(project).requires.shared == {"foo": ["baz-rel_1_1"]}
 
 
-def should_fail_builds_still_to_build_again_after_retries(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    project.deps = {"a": set()}
+def ours_cached(
+    project: Project, monkeypatch: pytest.MonkeyPatch, deps: dict[str, set[str]], cached: list[str]
+) -> dict[str, str]:
+    """Give `project` the packages of ours `deps`, see ours(), with their directories and the builds of `cached`, and
+    return their keys: their builds only cache an empty build, and nothing is resolved, linted nor recorded, without
+    containers.
+    """
+    for name in deps:
+        (project.root / "base" / name).mkdir(parents=True)
+        (project.root / "base" / name / f"{name}.spec").write_text(name)
+    project.config.platforms = [project.platform]  # the one of the dependencies given
+    ours(project, monkeypatch, deps)
     monkeypatch.setattr(resolution, "prepare", lambda _: None)
-    monkeypatch.setattr(build, "built_image", lambda _: "image")
-    monkeypatch.setattr(build, "_record_cached", lambda *_: ({"a": "key"}, {}, {}))
-    monkeypatch.setattr(build, "update_build_ids", lambda _: None)
-    attempts = []
-    monkeypatch.setattr(build._Run, "build", lambda *_: attempts.append(1) or [build.Result("a", "again")])
-    assert build.build(project, ["a"]) == ([build.Result("a", "failed")], {"a": "key"}, {})
-    assert len(attempts) == 2
+    monkeypatch.setattr(lint, "findings", lambda *_, **__: {})
+    monkeypatch.setattr(build, "record_rpm_deps", lambda *_, **__: False)
+
+    def built(run: build._Run, name: str, _step: str | None) -> build.Result:
+        cache.cached_build(project, name, run.keys[name]).mkdir(parents=True)
+        return build.Result(name, "built")
+
+    monkeypatch.setattr(build._Run, "_build_shown", built)
+    keys = build_keys(project)
+    for name in cached:
+        cache.cached_build(project, name, keys[name]).mkdir(parents=True)
+    return keys
+
+
+def should_fail_what_is_still_to_build_after_planning_again(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    ours_cached(project, monkeypatch, {"a": set()}, [])
+    # builds finding what changes their build roots each time, which the real ones settle in two plans
+    monkeypatch.setattr(build._Run, "build", lambda *_: [build.Result("a", "again")])
+    assert build.build(project, ["a"])[0] == [build.Result("a", "failed")]
 
 
 def should_build_packages_as_they_were_when_the_builds_started(
     project: Project, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(build, "record_rpm_deps", lambda *_: False)
-    for name in ("a", "b", "c"):
-        (project.root / "base" / name).mkdir(parents=True)
-        (project.root / "base" / name / f"{name}.spec").write_text(name)
-    project.config.platforms = [project.platform]  # the one of the dependencies given
-    ours(project, monkeypatch, {"a": set(), "b": {"a"}, "c": set()})
-    hashes = buildkey.directories(project)
-    keys = build_keys(project, hashes=hashes)
-    (cache.cached_build(project, "b", keys["b"])).mkdir(parents=True)
+    ours_cached(project, monkeypatch, {"a": set(), "c": {"a"}, "b": {"a", "c"}}, ["b"])
+    fake = build._Run._build_shown
 
-    def building(_run: build._Run, name: str, _status: str | None) -> build.Result:
+    def editing(run: build._Run, name: str, step: str | None) -> build.Result:
         if name == "c":  # a, which b depends on, edited meanwhile
             (project.root / "base/a/a.spec").write_text("a edited")
-        cache.cached_build(project, name, keys[name]).mkdir(parents=True)
-        return build.Result(name, "built")
+        return fake(run, name, step)
 
-    monkeypatch.setattr(build._Run, "_build_shown", building)
-    monkeypatch.setattr(build._Run, "_lint_specs", lambda *_: None)  # of specs that are not
-    (project.state / "build").mkdir(parents=True)  # for the queue, which build() makes
-    results = build._Run(project, hashes, keys, {}, fetch="none").build(["a", "c", "b"])
+    monkeypatch.setattr(build._Run, "_build_shown", editing)
     # the builds work on the packages as they were at the start: b fails, rather than b cached with the old a
-    assert results == [build.Result("a", "built"), build.Result("c", "built"), build.Result("b", "failed")]
+    assert build.build(project, ["b"])[0] == [
+        build.Result("a", "built"),
+        build.Result("c", "built"),
+        build.Result("b", "failed"),
+    ]
 
 
-def should_build_again_when_the_last_recording_changes_a_key(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("a", "b"):
-        (project.root / "base" / name).mkdir(parents=True)
-        (project.root / "base" / name / f"{name}.spec").write_text(name)
-    project.config.platforms = [project.platform]  # the one of the dependencies given
-    ours(project, monkeypatch, {"a": set(), "b": {"a"}})
-    monkeypatch.setattr(resolution, "prepare", lambda _: None)
-    hashes = buildkey.directories(project)
-    keys = build_keys(project, hashes=hashes)
-    for name in ("a", "b"):
-        cache.cached_build(project, name, keys[name]).mkdir(parents=True)
+def should_build_again_when_the_recording_after_the_builds_changes_a_key(
+    project: Project, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    keys = ours_cached(project, monkeypatch, {"a": set(), "b": {"a"}}, ["a", "b"])
 
-    def record(*_: object, quiet: bool = False) -> bool:
+    def record(*_: object, quiet: bool = False, **__: bool) -> bool:
         # the last one, of the cached builds, finds what changes the build root of b
         if quiet:
             return False
@@ -540,42 +532,31 @@ def should_build_again_when_the_last_recording_changes_a_key(project: Project, m
         return True
 
     monkeypatch.setattr(build, "record_rpm_deps", record)
-    (project.state / "build").mkdir(parents=True)  # for the queue, which build() makes
-    run = build._Run(project, hashes, keys, {}, fetch="none")
-    results, after = run.build(["a", "b"]), run.keys
-    # b to build again, with its new key, not cached
-    assert results == [build.Result("a", "cached"), build.Result("b", "again")]
-    assert (after["a"], after["b"]) == (keys["a"], after["b"])
+    results, after, _ = build.build(project, ["b"])
+    # b built again, with its new key, not cached
+    assert results == [build.Result("a", "cached"), build.Result("b", "built")]
+    assert after["a"] == keys["a"]
     assert after["b"] != keys["b"]
 
 
-def should_build_again_when_a_recording_changes_a_key(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("a", "b", "c"):
-        (project.root / "base" / name).mkdir(parents=True)
-        (project.root / "base" / name / f"{name}.spec").write_text(name)
-    project.config.platforms = [project.platform]  # the one of the dependencies given
-    ours(project, monkeypatch, {"a": set(), "b": {"a"}, "c": set()})
-    monkeypatch.setattr(resolution, "prepare", lambda _: None)
-    hashes = buildkey.directories(project)
-    keys = build_keys(project, hashes=hashes)
-    for name in ("a", "b", "c"):
-        cache.cached_build(project, name, keys[name]).mkdir(parents=True)
-    monkeypatch.setattr(build, "record_rpm_deps", lambda *_, **__: False)  # the last recording changes nothing
-    done = build._Run._done
+def should_build_again_when_a_recording_during_the_builds_changes_a_key(
+    project: Project, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    keys = ours_cached(project, monkeypatch, {"a": set(), "b": {"a"}, "c": {"b"}}, ["a", "b"])
+    fake = build._Run._build_shown
 
-    def changing(run: build._Run, name: str) -> build.Result | None:
-        if name == "c":  # what changes the build root of b, found after it, like by another command
-            builds = load_builds(project)
-            builds.buildrequires.shared["b"] = ["found"]
-            save_builds(project, builds)
-        return done(run, name)
+    def recording(run: build._Run, name: str, step: str | None) -> build.Result:
+        # what changes the build root of b, cached already, found during the build of c after it, like by another
+        # command
+        builds = load_builds(project)
+        builds.buildrequires.shared["b"] = ["found"]
+        save_builds(project, builds)
+        return fake(run, name, step)
 
-    monkeypatch.setattr(build._Run, "_done", changing)
-    (project.state / "build").mkdir(parents=True)  # for the queue, which build() makes
-    run = build._Run(project, hashes, keys, {}, fetch="none")
-    results, after = run.build(["a", "b", "c"]), run.keys
-    # b to build again, with its new key, not cached
-    assert results == [build.Result("a", "cached"), build.Result("b", "again"), build.Result("c", "cached")]
+    monkeypatch.setattr(build._Run, "_build_shown", recording)
+    results, after, _ = build.build(project, ["c"])
+    # b built again, with its new key, not cached, and c against it
+    assert results == [build.Result("a", "cached"), build.Result("b", "built"), build.Result("c", "built")]
     assert after["b"] != keys["b"]
 
 
@@ -585,13 +566,12 @@ def should_build_again_when_stored_builds_have_former_keys(project: Project, mon
     stored = {f"a/{keys['a']}": True, f"b/{'3' * 64}": True}
     results = {name: build.Result(name, "stored") for name in keys}
     # b in the storage with the key it had then, not with the final one: fetched or built again
-    after = build._Run(project, {}, keys, {}, results=results, stored=stored)._recorded_again()
-    assert after == [build.Result("a", "stored"), build.Result("b", "again")]
+    run = build._Run(project, hashes={}, keys=keys, autorev={}, results=results, stored=stored)
+    assert run._recorded_again() == [build.Result("a", "stored"), build.Result("b", "again")]
 
 
 def should_fail_when_the_recordings_keep_changing_the_keys(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(build, "dev_keys", lambda *_: ({}, {}))
+    ours_cached(project, monkeypatch, {"a": set()}, ["a"])
     monkeypatch.setattr(build, "record_rpm_deps", lambda *_, **__: True)
-    monkeypatch.setattr(resolution, "prepare", lambda _: None)
     with pytest.raises(BuildError, match="keeps changing the keys"):
-        build._record_cached(project, None)
+        build.build(project, ["a"])

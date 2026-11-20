@@ -17,7 +17,8 @@ def root(root: Path) -> Path:
     return root
 
 
-def edit(path: Path, old: str, new: str) -> None:
+def replace(path: Path, old: str, new: str) -> None:
+    """Replace the first `old` of the file `path`, which has it, by `new`."""
     text = path.read_text()
     assert old in text
     path.write_text(text.replace(old, new, 1))
@@ -26,7 +27,7 @@ def edit(path: Path, old: str, new: str) -> None:
 def _spec_error(root: Path) -> Path:
     """Return the spec of trivial, given an error of rpmlint, use-of-RPM_SOURCE_DIR."""
     spec = root / "base/trivial/trivial.spec"
-    edit(spec, "%build\ncd %{name}-%{version}", "%build\ncd %{name}-%{version} && ls $RPM_SOURCE_DIR")
+    replace(spec, "%build\ncd %{name}-%{version}", "%build\ncd %{name}-%{version} && ls $RPM_SOURCE_DIR")
     return spec
 
 
@@ -79,8 +80,8 @@ def should_filter_the_errors_of_the_specs_as_configured(root: Path) -> None:
 def should_fail_final_builds_when_the_packages_have_errors(root: Path) -> None:
     spec = root / "base/trivial/trivial.spec"
     local = "mkdir -p %{buildroot}/usr/local/share\necho x > %{buildroot}/usr/local/share/x\n"
-    edit(spec, "%install\n", f"%install\n{local}")
-    edit(spec, "%files\n", "%files\n/usr/local/share/x\n")
+    replace(spec, "%install\n", f"%install\n{local}")
+    replace(spec, "%files\n", "%files\n/usr/local/share/x\n")
     # not in the spec: the development builds, without --lint, never see it
     code, output = xcraft("build", "trivial")
     assert code == 0, output
@@ -91,7 +92,7 @@ def should_fail_final_builds_when_the_packages_have_errors(root: Path) -> None:
     # the changelog, 1.0-1, compared without the release suffix, +b1.xcpng8.99
     assert "incoherent-version-in-changelog" not in output
     # with --lint, shown when built, without failing them, a release without its changelog entry too
-    edit(spec, "Release: 1%", "Release: 2%")
+    replace(spec, "Release: 1%", "Release: 2%")
     code, output = xcraft("build", "--lint", "trivial")
     assert code == 0, output
     assert "E: dir-or-file-in-usr-local" in output
@@ -102,4 +103,5 @@ def should_fail_final_builds_when_the_packages_have_errors(root: Path) -> None:
     assert "E: dir-or-file-in-usr-local" in output
     assert "✗ trivial: rpmlint found errors in its packages" in output
     code, output = xcraft("lint", "--final", "trivial")
+    assert code == 0, output
     assert "not built, only their specs linted: trivial" in output

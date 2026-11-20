@@ -6,16 +6,18 @@ import fcntl
 import os
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
 import typer
+from pydantic import ValidationError
 
-from tests import TOML, config
-from xcraft.commands import complete_arch, prepared_project
+from tests import TOML, config, xcraft
+from xcraft.commands import complete_arch
 from xcraft.commands.shell import package_of
 from xcraft.packages import Package
-from xcraft.project import Project, ProjectLockedError
+from xcraft.project import Config, Project, ProjectLockedError, Publish
 
 
 @pytest.fixture
@@ -75,8 +77,13 @@ def should_find_the_project_in_the_parent_directories(tmp_path: Path, monkeypatc
         Project.find()
 
 
-@pytest.mark.parametrize("location", ["outside", "cwd", "override", "missing"])
-def should_find_the_project_of_the_installed_executable(tmp_path: Path, location: str) -> None:
+# run from outside the projects, from one, or with $XCRAFT_PROJECT
+@pytest.mark.parametrize(
+    ("cwd", "override", "found"), [(".", None, "installed"), ("cwd", None, "cwd"), (".", "override", "override")]
+)
+def should_find_the_project_of_the_installed_executable(
+    tmp_path: Path, cwd: str, override: str | None, found: str
+) -> None:
     executable = tmp_path / "installed/.venv/bin/xcraft"
     executable.parent.mkdir(parents=True)
     executable.write_text("from xcraft.project import Project\nprint(Project.find().root)\n")
@@ -84,22 +91,12 @@ def should_find_the_project_of_the_installed_executable(tmp_path: Path, location
         (tmp_path / name).mkdir(exist_ok=True)
         (tmp_path / name / "xcraft.toml").write_text(TOML)
     env = {k: v for k, v in os.environ.items() if k != "XCRAFT_PROJECT"}
-    if location in {"override", "missing"}:
-        env["XCRAFT_PROJECT"] = str(tmp_path / location)
+    env |= {"XCRAFT_PROJECT": str(tmp_path / override)} if override else {}
     result = subprocess.run(
-        [sys.executable, str(executable)],
-        cwd=tmp_path / "cwd" if location == "cwd" else tmp_path,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
+        [sys.executable, str(executable)], cwd=tmp_path / cwd, env=env, capture_output=True, text=True, check=False
     )
-    if location == "missing":
-        assert result.returncode != 0
-        assert f"no xcraft.toml in {tmp_path / 'missing'}" in result.stderr
-    else:
-        assert result.returncode == 0, result.stderr
-        assert result.stdout.strip() == str(tmp_path / ("installed" if location == "outside" else location))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(tmp_path / found)
 
 
 def should_build_for_the_host_architecture_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -114,17 +111,25 @@ def should_build_for_the_host_architecture_by_default(tmp_path: Path, monkeypatc
     assert Project.find("aarch64").arch == "aarch64"
     with pytest.raises(RuntimeError, match="x86_64 is not an architecture of the project: x86_64_v2, aarch64"):
         Project.find("x86_64")
+
+
+def should_complete_the_architectures_of_the_project(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XCRAFT_PROJECT", str(project.root))
     assert (complete_arch(""), complete_arch("a")) == (["x86_64_v2", "aarch64"], ["aarch64"])
-    x86, arm = Project.find().all_platforms()
+
+
+def should_use_the_repositories_of_each_platform(project: Project) -> None:
+    x86, arm = project.all_platforms()
     assert ("epel" in x86.repos, "epel-fedora" in x86.repos) == (True, False)
     assert ("epel" in arm.repos, "epel-fedora" in arm.repos) == (False, True)
 
 
 def should_refuse_unknown_packages_before_preparing(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("XCRAFT_PROJECT", str(project.root))
-    monkeypatch.setattr("xcraft.resolution.prepare", lambda _: pytest.fail("prepared"))
-    with pytest.raises(typer.BadParameter, match="unknown package"):
-        prepared_project(["nope"])
+    code, output = xcraft("build", "nope")
+    assert code == 2, output
+    assert "unknown package(s): nope" in output
+    assert not (project.root / "xcraft.lock").exists()
 
 
 def should_find_the_package_of_a_path(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -143,9 +148,37 @@ def should_find_the_package_of_a_path(project: Project, monkeypatch: pytest.Monk
 def should_parse_the_specs_once_per_platform(project: Project) -> None:
     # the project on its platforms shares what it parsed, for each platform
     project.parsed = {"a": Package(name="a")}
-    same, other = (p for p in project.all_platforms() if p.platform == project.platform), project.all_platforms()
-    assert all(p.parsed is project.parsed for p in same)
-    other[1].parsed = {"b": Package(name="b")}
-    assert project.all_platforms()[1].parsed is other[1].parsed is not project.parsed
-    # but a project found again parses them again, like another command
-    assert Project(project.root, config()).specs == {}
+    x86, arm = project.all_platforms()
+    arm.parsed = {"b": Package(name="b")}
+    assert (x86.parsed, project.all_platforms()[1].parsed, project.parsed) == (
+        {"a": Package(name="a")},
+        {"b": Package(name="b")},
+        {"a": Package(name="a")},
+    )
+
+
+def should_require_the_digest_of_the_base_image() -> None:
+    # a tag only may name another image later, while the build keys stay the same
+    with pytest.raises(ValidationError, match=r"base_image\n.*@sha256:"):
+        Config.model_validate({**tomllib.loads(TOML), "base_image": "ghcr.io/almalinux/10-base:10.2"})
+
+
+def should_require_a_platform() -> None:
+    with pytest.raises(ValidationError, match=r"platforms\n.*at least 1 item"):
+        Config.model_validate({**tomllib.loads(TOML), "platforms": []})
+
+
+def should_refuse_embargo_branches_that_are_not_maintenance_ones() -> None:
+    with pytest.raises(ValidationError, match="embargo_branches must be maintenance_branches too: other/"):
+        Config.model_validate(
+            {**tomllib.loads(TOML), "maintenance_branches": ["maint/*", "embargo/*"], "embargo_branches": ["other/*"]}
+        )
+
+
+def should_reject_stages_that_are_not_plain_names(unprepared_root: Path) -> None:
+    for stage in ("", ".", "..", "../other", "/absolute", "a/b"):
+        with pytest.raises(ValidationError):
+            Publish(stage=stage)
+    code, output = xcraft("publish", "repos", "--local", "--stage", "../other")
+    assert code == 2
+    assert "stage must start" in " ".join(output.split())

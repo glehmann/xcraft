@@ -1,4 +1,6 @@
-"""Builds in the real build environment, on the fixture packages."""
+"""Builds in the real build environment, on the fixture packages: their locks and pins, their recordings, the
+snapshots, and the commands needing the image.
+"""
 
 from __future__ import annotations
 
@@ -13,15 +15,15 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
-from tests import ARCH, TOML, TOYS, commit_base, config, git, results, runner, write_spec, xcraft
+from tests import ARCH, TOML, TOYS, copy_project, git, results, runner, write_spec, xcraft
 from xcraft import build as builder
-from xcraft import buildid, checks, clean, container, localrepo, pinned, process, publish, resolution
+from xcraft import buildid, clean, container, localrepo, pinned, process, publish, resolution
 from xcraft.__main__ import app
 from xcraft.builds import builds_path, load_builds, save_builds
 from xcraft.cache import BuildError
@@ -31,7 +33,6 @@ from xcraft.lock import Recorded, load_lock, lock_path, save_lock
 from xcraft.project import Project
 from xcraft.publish import _check_installable
 from xcraft.resolution import ISO_TOOLS, ResolutionError
-from xcraft.signing import check_signatures
 from xcraft.sources import write_manifest
 
 
@@ -70,7 +71,6 @@ def should_build_all_the_packages_when_none_is_given(root: Path) -> None:
     code, output = xcraft("build", "--dry-run")
     assert code == 0, output
     assert output.splitlines() == ["build    trivial", "build    with-deps", "2 to build"]
-    assert xcraft("build", "-n") == (code, output)
 
 
 def should_count_only_the_packages_to_build_in_the_steps(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -81,41 +81,24 @@ def should_count_only_the_packages_to_build_in_the_steps(root: Path, monkeypatch
     assert "[1/1] building with-deps" in result.stderr
 
 
-def should_show_the_step_header_when_no_duration_is_known(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # out of the build environment, without containers
-    (tmp_path / "xcraft.toml").write_text(TOML)
-    monkeypatch.delenv("CI", raising=False)
-    headers: list[str] = []
-    diagnostics = builder.diagnostics
-
-    def recording(on_line: Callable[[str], None], header: str = "") -> Callable[[str], None]:
-        headers.append(header)
-        return diagnostics(on_line, header=header)
-
-    monkeypatch.setattr(builder, "diagnostics", recording)
-    with builder._shown(Project(tmp_path, config()), "trivial", "[1/1]"):
-        pass
-    assert headers == ["[1/1] building trivial"]
-
-
-def should_not_cache_a_build_when_its_spec_changed_meanwhile(root: Path) -> None:
+def should_not_cache_a_build_when_its_spec_changed_meanwhile(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spec = root / "base/trivial/trivial.spec"
+    run_build = builder.run_build
 
-    def change() -> None:
-        for _ in range(1200):  # not after the test, whose build fails to start
-            if (root / ".xcraft/logs/trivial.log").exists():  # its build started, staged
-                spec.write_text(f"{spec.read_text()}# changed\n")
-                return
-            time.sleep(0.1)
+    def changed(*args: object, **kwargs: object) -> None:
+        run_build(*args, **kwargs)  # ty: ignore[invalid-argument-type]
+        spec.write_text(f"{spec.read_text()}# changed\n")  # during the build, once staged
 
-    threading.Thread(target=change, daemon=True).start()
+    monkeypatch.setattr(builder, "run_build", changed)
     code, output = xcraft("build", "trivial")
     assert code == 1
     assert "base/trivial changed during the build, build it again" in output
     assert states() == {"trivial": "missing", "with-deps": "missing"}
 
 
-def should_not_cache_a_build_when_its_spec_changed_before_it(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_not_cache_a_build_when_its_spec_changed_since_the_builds_started(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     spec = root / "base/trivial/trivial.spec"
     resolved_root = builder.resolved_root
 
@@ -128,6 +111,7 @@ def should_not_cache_a_build_when_its_spec_changed_before_it(root: Path, monkeyp
     code, output = xcraft("build", "trivial")
     assert code == 1
     assert "base/trivial changed since the builds started, build it again" in output
+    assert not list(root.glob(".xcraft/cache/builds/*/*/trivial"))
 
 
 HOST_ENTRIES = "" if ARCH == "x86_64_v2" else f"{ARCH}."
@@ -209,6 +193,9 @@ def should_record_the_files_our_builds_provide(root: Path) -> None:
     code, output = xcraft("build", "tool-user")
     assert code == 0, output
     assert load_builds(Project.find()).provides.of(ARCH) == {"tool": ["/usr/bin/xcraft-test-tool"]}
+
+
+def should_refuse_build_roots_with_upstream_packages_named_like_ours(root: Path) -> None:
     # upstream's bc, instead of ours, never built since nothing is known to need it
     write_spec(root, "bc")
     write_spec(root, "bc-user", "/usr/bin/bc")
@@ -229,11 +216,11 @@ def should_put_ours_in_build_roots_instead_of_upstream_ones(root: Path) -> None:
     project = Project.find()
     assert "kernel-headers" in project.deps["compiled"]
     # the upstream one in the lock, like for the image, which the build does not get
-    assert "kernel-headers" in load_lock(project).roots.of(ARCH)["compiled"]
+    roots = load_lock(project).roots
+    assert "kernel-headers" in roots.of(ARCH)["compiled"]
     assert re.search(r"^ kernel-headers .* xcraft-[0-9a-f]{8} ", project.log("compiled").read_text(), re.MULTILINE)
     # and ccache, for a compiler
-    assert "ccache" in load_lock(project).roots.shared["compiled"]
-    assert "ccache" not in load_lock(project).roots.shared.get("trivial", [])
+    assert "ccache" in roots.shared["compiled"]
 
 
 def should_replace_image_packages_by_ours_in_build_roots(root: Path) -> None:
@@ -247,29 +234,6 @@ def should_replace_image_packages_by_ours_in_build_roots(root: Path) -> None:
     log = root.joinpath(".xcraft/logs/trivial.log").read_text()
     assert re.search(r"^Downgrading:\n openblas-srpm-macros .* xcraft-[0-9a-f]{8} ", log, re.MULTILINE)
     assert re.search(r"^ toyrun .* xcraft-pinned ", log, re.MULTILINE), log
-
-
-def should_update_the_build_ids_without_building(root: Path) -> None:
-    code, output = xcraft("build", "--ids")
-    assert code == 0, output
-    assert set(load_builds(Project.find()).ids) == {"trivial", "with-deps"}
-    assert "build IDs: trivial 1, with-deps 1" in output
-    assert xcraft("build", "--ids")[1].endswith("the build IDs are up to date\n")
-    # a change, which --locked refuses, then updates the IDs of trivial and of with-deps, built against it
-    key = load_builds(Project.find()).ids["trivial"].key
-    spec = root / "base/trivial/trivial.spec"
-    spec.write_text(spec.read_text().replace('echo "hello"', 'echo "hello again"'))
-    code, output = xcraft("build", "--ids", "--locked")
-    assert code == 1
-    assert "the build IDs would change, which --locked forbids: trivial, with-deps" in output
-    code, output = xcraft("build", "--ids")
-    assert code == 0, output
-    assert "build IDs: trivial 1, with-deps 1" in output
-    assert load_builds(Project.find()).ids["trivial"].key != key
-    assert not (root / ".xcraft/cache/builds").exists()  # nothing built
-    code, output = xcraft("build", "trivial", "--ids")
-    assert code == 2
-    assert "--ids updates the build IDs of all the packages" in " ".join(output.replace("│", "").split())
 
 
 def should_share_the_dnf_lock_between_containers(root: Path) -> None:
@@ -297,7 +261,7 @@ def should_cache_a_build_back_at_the_key_of_a_former_one(root: Path) -> None:
     save_builds(Project.find(), builds)
     code, output = xcraft("build", "trivial")
     assert code == 0, output
-    assert results(output) == [results(output)[0], "1 built"]
+    assert [line.split(" in ")[0] for line in results(output)] == ["✓ trivial built", "1 built"]
     assert states() == {"trivial": "ready", "with-deps": "missing"}
     assert not list(root.glob(f".xcraft/cache/builds/*/{ARCH}/trivial/.*"))
 
@@ -330,39 +294,17 @@ def should_report_missing_archives_and_broken_specs(root: Path) -> None:
     assert "trivial-1.0.tar.gz is not in the source cache, the remote storage, nor at a URL of the spec" in output
     assert "✗ broken: " in output
     assert re.search(r"^broken +error *$", xcraft("status")[1], re.MULTILINE)
-    assert xcraft("st") == xcraft("status")
 
 
-def should_make_a_repository_with_its_dependencies_satisfied(root: Path) -> None:
-    code, output = xcraft("repo", "with-deps")
-    assert code == 0, output
-    assert f"repository in {root / 'repo'}, with all dependencies satisfied" in output
-    assert sorted(p.name.split("-1.0")[0] for p in (root / "repo").glob("*.rpm")) == ["trivial", "with-deps"]
-    assert (root / "repo/repodata/repomd.xml").exists()
-    # with the cached metadata and builds, after clean removed .xcraft/tmp, what a dry run shows only
-    code, output = xcraft("clean", "-n")
-    assert code == 0, output
-    assert re.search(r"^local repositories +1 to remove$", output, re.MULTILINE), output
-    assert (root / ".xcraft/repo").exists()
-    code, output = xcraft("clean")
-    assert code == 0, output
-    assert re.search(r"^local repositories +1 removed$", output, re.MULTILINE), output
-    assert not (root / ".xcraft/repo").exists()
-    code, output = xcraft("repo", "with-deps")
-    assert code == 0, output
-
-    spec = root / "base/trivial/trivial.spec"
-    spec.write_text(spec.read_text().replace("BuildArch: noarch", "BuildArch: noarch\nRequires: no-such-package"))
-    code, output = xcraft("repo", "trivial", "--output", str(root / "out"))
-    assert code == 1
-    assert "no-such-package" in output
-    assert "some dependencies cannot be satisfied" in output
-
-
-def should_bump_the_release_with_a_changelog_entry(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    gitconfig = root / "gitconfig"
-    gitconfig.write_text("[user]\n\tname = Me\n\temail = me@example.com\n")
+@pytest.fixture
+def me(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make git give the changelog entries a user of its global configuration."""
+    (gitconfig := tmp_path / "gitconfig").write_text("[user]\n\tname = Me\n\temail = me@example.com\n")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(gitconfig))
+
+
+@pytest.mark.usefixtures("me")
+def should_bump_the_release_with_a_changelog_entry(root: Path) -> None:
     code, output = xcraft("bump", "trivial", "-m", "Rebuild")
     assert code == 0, output
     assert output == "trivial: 1.0-1 -> 1.0-2\n"
@@ -375,13 +317,10 @@ def should_bump_the_release_with_a_changelog_entry(root: Path, monkeypatch: pyte
     assert code == 0, output
     assert " Me <me@example.com> - 1.0-3\n-\n\n" in (root / "base/trivial/trivial.spec").read_text()
     assert xcraft("build", "trivial")[0] == 0
-    assert xcraft("bump")[0] == 2  # no package
 
 
-def should_bump_the_version_of_packages_sharing_an_archive(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    gitconfig = root / "gitconfig"
-    gitconfig.write_text("[user]\n\tname = Me\n\temail = me@example.com\n")
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(gitconfig))
+@pytest.mark.usefixtures("me")
+def should_bump_the_version_of_packages_sharing_an_archive(root: Path) -> None:
     archives = root / "archives"
     archives.mkdir()
     (archives / "trivial-2.0.tar.gz").write_bytes(b"new")
@@ -406,11 +345,9 @@ def should_bump_the_version_of_packages_sharing_an_archive(root: Path, monkeypat
     assert (root / ".xcraft/cache/sources" / digest / "trivial-2.0.tar.gz").read_bytes() == b"new"
 
 
+@pytest.mark.usefixtures("me")
 @pytest.mark.parametrize("version", ["1.9", "1.10", "1.010", "1.10~rc1"])
-def should_refuse_a_bump_to_a_version_not_greater(root: Path, monkeypatch: pytest.MonkeyPatch, version: str) -> None:
-    gitconfig = root / "gitconfig"
-    gitconfig.write_text("[user]\n\tname = Me\n\temail = me@example.com\n")
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(gitconfig))
+def should_refuse_a_bump_to_a_version_not_greater(root: Path, version: str) -> None:
     twin = root / "base/twin"
     twin.mkdir()
     spec = root / "base/trivial/trivial.spec"
@@ -426,6 +363,16 @@ def should_refuse_a_bump_to_a_version_not_greater(root: Path, monkeypatch: pytes
     assert code == 1
     assert f"twin: --version {version} must be greater than current version 1.10" in output
     assert {path: path.read_bytes() for path in paths} == before
+
+
+def should_refuse_bumps_and_patchsets_of_no_known_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    copy_project(tmp_path / "project")
+    monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path / "project"))
+    for args, error in [(["bump"], "no package given"),
+                        (["patchset", str(tmp_path), "--package", "nope"], "unknown package: nope")]:  # fmt: skip
+        code, output = xcraft(*args)
+        assert code == 2
+        assert error in output
 
 
 @pytest.mark.parametrize("output", ["yes looping", "yes looping | tr -d '\\n'"])  # in lines, or in a single one
@@ -458,7 +405,6 @@ def should_lock_upstream_sources_when_builds_need_them(root: Path) -> None:
     assert "lzo" in load_lock(Project.find()).sources
     assert xcraft("build", "trivial", "--locked") == (0, "1 cached\n")
     assert xcraft("lock", "--update", "lzo-devel")[1] == "0 updated\n"
-    assert xcraft("lock", "--outdated", "lzo") == (0, f"{UP_TO_DATE}\n")
 
 
 def should_refuse_to_pin_upstream_packages_of_several_architectures(root: Path) -> None:
@@ -598,7 +544,7 @@ def should_refuse_a_snapshot_when_the_checkout_changed_meanwhile(
         publish.snapshot([Project.find()], tmp_path / "snapshot", signer=None, storage=None, build=False)
 
 
-def should_check_each_snapshot_with_its_own_metadata(root: Path, tmp_path: Path) -> None:
+def should_check_each_snapshot_once_with_its_own_metadata(root: Path, tmp_path: Path) -> None:
     # like those of two projects: the broken one, made first, is not checked with the newer metadata of the other, which
     # the dnf cache shared by the containers keeps
     project = Project.find()
@@ -618,9 +564,8 @@ def should_check_each_snapshot_with_its_own_metadata(root: Path, tmp_path: Path)
         _check_installable(project, [repo.path for repo in snapshots["broken"]])
 
 
-@pytest.mark.parametrize("cached", [False, True])
-def should_record_requirements_once_what_they_need_is_built(root: Path, *, cached: bool) -> None:
-    # a script of trivial run by xtool, of ours too, built after it: recorded once xtool is built, without warning
+def run_by_xtool(root: Path) -> None:
+    """Make trivial install a script run by xtool, of ours too, built after it."""
     (root / "base/xtool").mkdir()
     (root / "base/xtool/xtool.spec").write_text(
         "Name: xtool\nVersion: 1.0\nRelease: 1%{?dist}\nSummary: An interpreter\nLicense: MIT\nBuildArch: noarch\n"
@@ -636,47 +581,30 @@ def should_record_requirements_once_what_they_need_is_built(root: Path, *, cache
                  "install -m 755 %{name}-%{version}/hello.sh %{buildroot}/usr/share/%{name}/")
         .replace("/usr/share/%{name}/hello.txt", "/usr/share/%{name}/hello.sh")
     )  # fmt: skip
-    if cached:
-        code, output = xcraft("build", "trivial")
-        assert code == 0, output
-        assert "cannot record what rpm generated for trivial" in output
+
+
+def should_record_requirements_once_what_they_need_is_built(root: Path) -> None:
+    # built together: recorded once xtool is built, without warning
+    run_by_xtool(root)
     code, output = xcraft("build", "trivial", "xtool")
     assert code == 0, output
-    assert [line.split(" in ")[0] for line in results(output)] == (
-        ["✓ xtool built", "1 built, 1 cached"] if cached else ["✓ trivial built", "✓ xtool built", "2 built"]
-    )
+    assert [line.split(" in ")[0] for line in results(output)] == ["✓ trivial built", "✓ xtool built", "2 built"]
     assert "cannot record" not in output
     assert load_builds(Project.find()).requires.of(ARCH)["trivial"] == ["xtool"]
     assert xcraft("build", "trivial", "xtool", "--locked") == (0, "2 cached\n")
 
 
-def should_keep_the_dune_cache_of_development_builds(root: Path) -> None:
-
-    # the cache of dune of trivial, which writes in it like dune: kept on this machine, for the development builds
-    # only, but for the builds without dune
-    spec = root / "base/trivial/trivial.spec"
-    spec.write_text(
-        spec.read_text().replace(
-            'echo "hello" > hello.txt',
-            'echo "hello" > hello.txt\n'
-            'test -z "${DUNE_CACHE_ROOT:-}" || echo "$DUNE_CACHE $DUNE_CACHE_STORAGE_MODE" > "$DUNE_CACHE_ROOT/entry"',
-        )
-    )
-    commit_base(root)
-    code, output = xcraft("build")
+def should_record_the_requirements_of_a_cached_build_once_what_they_need_is_built(root: Path) -> None:
+    # built alone first, with a warning, then cached
+    run_by_xtool(root)
+    code, output = xcraft("build", "trivial")
     assert code == 0, output
-    caches = root / ".xcraft/dune-cache"
-    assert not caches.exists() or not any(caches.iterdir())
-    git(root, "checkout", "-qb", "feature")
-    spec.write_text(f"# changed\n{spec.read_text()}")
-    code, output = xcraft("build")
+    assert "cannot record what rpm generated for trivial" in output
+    code, output = xcraft("build", "trivial", "xtool")
     assert code == 0, output
-    assert (caches / "trivial/entry").read_text() == "enabled copy\n"
-    assert [p.name for p in caches.iterdir()] == ["trivial"]  # not with-deps, without dune
-    assert xcraft("clean", "trivial")[0] == 0
-    assert (caches / "trivial/entry").exists()
-    assert xcraft("clean", "trivial", "--dune-cache")[0] == 0
-    assert not (caches / "trivial").exists()
+    assert [line.split(" in ")[0] for line in results(output)] == ["✓ xtool built", "1 built, 1 cached"]
+    assert "cannot record" not in output
+    assert load_builds(Project.find()).requires.of(ARCH)["trivial"] == ["xtool"]
 
 
 def should_defer_recording_until_what_is_required_is_built(root: Path, caplog: pytest.LogCaptureFixture) -> None:
@@ -721,8 +649,9 @@ def should_defer_recording_until_what_is_required_is_built(root: Path, caplog: p
 
 
 def should_record_requirements_as_soon_as_they_resolve(root: Path, caplog: pytest.LogCaptureFixture) -> None:
-    # trivial, of dynamic BuildRequires, whose script requires tcl, recorded at once, and trivial-extra, which requires
-    # what xtool, of ours, provides, once xtool is built: the builds against trivial get tcl before
+    # trivial, of dynamic BuildRequires, whose script requires tcl, recorded at once, while trivial-extra, of the same
+    # build, requires what xtool, of ours, provides, recorded once xtool is built: the builds against trivial get tcl
+    # before
     (root / "base/xtool").mkdir()
     (root / "base/xtool/xtool.spec").write_text(
         "Name: xtool\nVersion: 1.0\nRelease: 1%{?dist}\nSummary: A tool\nLicense: MIT\nBuildArch: noarch\n"
@@ -756,12 +685,8 @@ def should_record_requirements_as_soon_as_they_resolve(root: Path, caplog: pytes
     )
     assert load_builds(Project.find()).requires.of(ARCH) == {"trivial": ["tcl"]}
     assert "tcl" in resolution.resolve(Project.find()).buildroots["with-deps"]
-    caplog.clear()
-    with caplog.at_level(logging.DEBUG, logger="xcraft"):
-        code, output = xcraft("build", "trivial", "xtool", "with-deps")
+    code, output = xcraft("build", "with-deps")
     assert code == 0, output
-    assert "recorded once" not in caplog.text
-    assert load_builds(Project.find()).requires.of(ARCH) == {"trivial": ["tcl"]}
     assert xcraft("build", "with-deps", "--locked")[0] == 0
 
 
@@ -807,41 +732,34 @@ def should_record_binaries_named_with_their_releases(root: Path) -> None:
     assert load_builds(Project.find()).requires.of(ARCH) == {"trivial-rel_1.0_1.xcpng8.99": ["tcl"]}
 
 
-def should_keep_recordings_when_a_dependent_is_rebuilt(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_keep_recordings_when_a_dependent_is_rebuilt(root: Path) -> None:
     # what trivial recorded, with the former build of with-deps there, which it does not resolve to: recorded as it is,
     # rather than resolved again; with-deps records its own when built
     assert xcraft("build")[0] == 0
+    (recorded,) = (root / ".xcraft/cache/builds").glob("*/*/trivial/*/rpm-deps.json")
+    resolved = recorded.stat().st_mtime_ns
     edit_spec = root / "base/with-deps/with-deps.spec"
     edit_spec.write_text(f"# changed\n{edit_spec.read_text()}")
-    resolved: list[list[str]] = []
-    resolve = checks.resolve_rpm_deps
-
-    def counted(project: Project, names: dict[str, str], rpms: list[Path]) -> resolution.Resolved:
-        resolved.append(sorted(names.values()))
-        return resolve(project, names, rpms)
-
-    monkeypatch.setattr(checks, "resolve_rpm_deps", counted)
     code, output = xcraft("build")
     assert code == 0, output
     assert [line.split(" in ")[0] for line in results(output)] == ["✓ with-deps built", "1 built, 1 cached"]
-    assert resolved == [["with-deps"]]
+    assert recorded.stat().st_mtime_ns == resolved
+    assert len(list((root / ".xcraft/cache/builds").glob("*/*/with-deps/*/rpm-deps.json"))) == 2
 
 
-def _roots_key() -> Path:
-    """Return the cache of the build roots of the project, as looked up, with the lock as it is."""
-    project = Project.find()
-    return resolution._cache(project, resolution._unversioned(resolution._roots_data(project)))
+def resolutions() -> set[Path]:
+    """Return the cached resolutions of the project, of all the architectures."""
+    return set(Project.find().state.glob("cache/resolved/*/*.json"))
 
 
-def _resolved_again(monkeypatch: pytest.MonkeyPatch, *, new_process: bool = True) -> tuple[Path, resolution.Resolved]:
-    """Return the cache of the build roots of the project looked up, before what the resolution locks, and what they
-    resolve to, in a new process, or in this one, with what it read already.
+def resolved_again(monkeypatch: pytest.MonkeyPatch, *, new_process: bool = True) -> resolution.Resolved:
+    """Return what the build roots of the project resolve to, prepared again, in a new process, or in this one, with
+    what it read already.
     """
     if new_process:
         monkeypatch.setattr(resolution, "_resolved", {})
-    cache = _roots_key()
     resolution.prepare(project := Project.find())
-    return cache, resolution.resolve(project)
+    return resolution.resolve(project)
 
 
 def should_resolve_build_roots_again_when_upstream_requires_our_version(
@@ -855,40 +773,42 @@ def should_resolve_build_roots_again_when_upstream_requires_our_version(
     lock = load_lock(Project.find())
     lock.sources["toyrun"] = "2-1"
     save_lock(Project.find(), lock)
-    resolved = _resolved_again(monkeypatch)[1]
-    assert "toyrun" not in resolved.runtime
-    cache = _roots_key()  # with what the resolution locked
+    assert "toyrun" not in resolved_again(monkeypatch).runtime
     spec.write_text(spec.read_text().replace("Version: 2", "Version: 3"))
-    # the same key, without the versions of ours, but resolved again, as toyrun-bin refers to its version
-    again, resolved = _resolved_again(monkeypatch)
-    assert again == cache
-    assert "toyrun" in resolved.runtime
+    # resolved again, as toyrun-bin refers to its version
+    assert "toyrun" in resolved_again(monkeypatch).runtime
 
 
 VERSIONED = "trivial >= 1.0-2.xcpng8.99"
+REQUIRED = ("BuildRequires: trivial", f"BuildRequires: {VERSIONED}")
 
 
 @pytest.mark.parametrize(
-    ("case", "errors"),
-    [("build requirement", "errors"), ("rich dependency", "runtime_errors"), ("published", "runtime_errors"),
-     ("same process", "errors")],
+    ("required", "published", "errors", "new_process"),
+    [
+        pytest.param(REQUIRED, "", "errors", True, id="build requirement"),
+        pytest.param(("BuildArch: noarch", f"BuildArch: noarch\nRequires: ({VERSIONED} or no)"), "", "runtime_errors",
+                     True, id="rich dependency"),
+        pytest.param(("", ""), f'\n[publish]\nextra = ["{VERSIONED}"]\n', "runtime_errors", True, id="published"),
+        pytest.param(REQUIRED, "", "errors", False, id="same process"),
+    ],
 )  # fmt: skip
 def should_resolve_build_roots_again_when_a_required_version_changes(
-    root: Path, monkeypatch: pytest.MonkeyPatch, case: str, errors: str
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    required: tuple[str, str],
+    published: str,
+    errors: str,
+    *,
+    new_process: bool,
 ) -> None:
     # what requires a version of trivial it does not have resolves again for another release, under the same key: on
     # all the architectures at once, also when the process read the resolution of the former release already
     spec = root / "base/with-deps/with-deps.spec"
-    if case == "rich dependency":
-        spec.write_text(
-            spec.read_text().replace("BuildArch: noarch", f"BuildArch: noarch\nRequires: ({VERSIONED} or no)")
-        )
-    elif case == "published":
-        (root / "xcraft.toml").write_text(f'{TOML}\n[publish]\nextra = ["{VERSIONED}"]\n')
-    else:
-        spec.write_text(spec.read_text().replace("BuildRequires: trivial", f"BuildRequires: {VERSIONED}"))
-    assert getattr(_resolved_again(monkeypatch)[1], errors)
-    cache = _roots_key()
+    spec.write_text(spec.read_text().replace(*required))
+    (root / "xcraft.toml").write_text(f"{TOML}{published}")
+    assert getattr(resolved_again(monkeypatch), errors)
+    cached = resolutions()
     trivial = root / "base/trivial/trivial.spec"
     trivial.write_text(trivial.read_text().replace("Release: 1%{?dist}", "Release: 3%{?dist}"))
     shown: list[str] = []
@@ -899,9 +819,8 @@ def should_resolve_build_roots_again_when_a_required_version_changes(
         return activity(show)
 
     monkeypatch.setattr(resolution, "activity", recorded)
-    again, resolved = _resolved_again(monkeypatch, new_process=case != "same process")
-    assert again == cache
-    assert not getattr(resolved, errors)
+    assert not getattr(resolved_again(monkeypatch, new_process=new_process), errors)
+    assert resolutions() == cached
     arches = ", ".join(p.arch for p in Project.find().all_platforms())
     assert [s for s in shown if s.startswith("resolving the build roots of ")] == [
         f"resolving the build roots of {arches}, and what is published"
@@ -917,22 +836,23 @@ def should_keep_build_roots_when_subpackages_require_their_release(root: Path, m
     spec.write_text(
         f"{text}%package libs\nSummary: test\n%description libs\ntest\n%files libs\n/usr/share/doc/pair-libs\n"
     )
-    assert "pair-libs" not in _resolved_again(monkeypatch)[1].versioned
-    cache = _roots_key()
+    assert "pair-libs" not in resolved_again(monkeypatch).versioned
+    cached = resolutions()
     spec.write_text(spec.read_text().replace("Release: 1%{?dist}", "Release: 2%{?dist}"))
     monkeypatch.setattr(resolution, "_run", lambda *_, **__: pytest.fail("resolved again"))
-    assert _resolved_again(monkeypatch)[0] == cache
+    resolved_again(monkeypatch)
+    assert resolutions() == cached
 
 
 def should_keep_resolutions_when_their_packages_get_pinned(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # bc, needed but not locked: locked, then its binary packages pinned, which resolves nothing again
-    _resolved_again(monkeypatch)
+    resolved_again(monkeypatch)
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace("%description", "BuildRequires: bc\n%description", 1))
-    assert "bc" in _resolved_again(monkeypatch)[1].buildroots["trivial"]
+    assert "bc" in resolved_again(monkeypatch).buildroots["trivial"]
     assert "bc" in load_lock(Project.find()).binaries[ARCH]
     monkeypatch.setattr(resolution, "_run", lambda *_, **__: pytest.fail("resolved again"))
-    _resolved_again(monkeypatch)
+    resolved_again(monkeypatch)
 
 
 def should_keep_build_roots_when_a_version_has_epoch_0(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -941,9 +861,9 @@ def should_keep_build_roots_when_a_version_has_epoch_0(root: Path, monkeypatch: 
     trivial.write_text(trivial.read_text().replace("Version: 1.0", "Epoch: 0\nVersion: 1.0"))
     spec = root / "base/with-deps/with-deps.spec"
     spec.write_text(spec.read_text().replace("BuildRequires: trivial", "BuildRequires: trivial >= 0:1.0"))
-    assert "with-deps" not in _resolved_again(monkeypatch)[1].errors
+    assert "with-deps" not in resolved_again(monkeypatch).errors
     monkeypatch.setattr(resolution, "_run", lambda *_, **__: pytest.fail("resolved again"))
-    assert "with-deps" not in _resolved_again(monkeypatch)[1].errors
+    assert "with-deps" not in resolved_again(monkeypatch).errors
 
 
 def should_reject_an_image_when_a_base_package_is_not_in_the_repositories(
@@ -978,12 +898,11 @@ def should_pin_the_host_image_when_the_project_is_of_other_architectures(root: P
         *lock.sign[native.arch],
         *lock.lint[native.arch],
     }
-    assert container._image_pins(native)
     # kept by xcraft clean --shared
-    assert container.image_tag(native) in container.checkout_images(project)
-    assert container._side_tag(native, "lint") in container.checkout_images(project)
-    assert pinned.ident(container._image_pins(native)) in container.checkout_repositories(project)
-    assert pinned.ident(container._side_pins(native, "lint")) in container.checkout_repositories(project)
+    images = container.checkout_images(project)
+    assert container.image_tag(native) in images
+    assert len([tag for tag in images if tag.startswith(f"{container.side_name('lint')}:")]) == 2  # of both
+    assert pinned.ident(pinned.pins(native)) in container.checkout_repositories(project)
 
 
 def should_rebuild_dependents_when_a_lock_update_changes_implicit_deps(root: Path) -> None:
@@ -1034,8 +953,10 @@ def should_report_the_health_of_the_host(root: Path) -> None:
         assert f"debug: running {podman}\n" in output.stderr
 
 
-def should_apply_options_given_before_subcommands(root: Path) -> None:
+def should_apply_options_given_before_subcommands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # those of fetch and push apply to their subcommands too, given before them
+    (tmp_path / "xcraft.toml").write_text(TOML)
+    monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path))
     for args in (["fetch", "--arch", "sparc", "sources"], ["push", "--arch", "sparc", "builds"]):
         code, output = xcraft(*args)
         assert code == 1, output
@@ -1071,15 +992,11 @@ def should_clean_the_images_of_no_checkout(root: Path) -> None:
 def should_refuse_builds_when_pinned_packages_have_other_contents(root: Path) -> None:
     assert xcraft("build", "trivial")[0] == 0
     project = Project.find()
-    lock, tag = load_lock(project), container.image_tag(project)
+    lock = load_lock(project)
     pin = lock.binaries[ARCH]["bash"]
-    # other contents than the repositories have, of the same version: kept by the builds, which fail, in another image
+    # other contents than the repositories have, of the same version: kept by the builds, which fail
     lock.binaries[ARCH]["bash"] = pin.model_copy(update={"sha256": "0" * 64})
     save_lock(project, lock)
-    assert container.image_tag(Project.find()) != tag
-    # with its pins before installing them, not a layer of the cache of podman of other contents
-    containerfile = (container.BUILDENV / "Containerfile").read_text()
-    assert containerfile.index("COPY pins.list") < containerfile.index("distro-sync")
     code, output = xcraft("build", "trivial")
     assert code == 1
     assert f"bash-{pin.evr}.{pin.arch}: the repositories have other contents, {pin.sha256}, than pinned" in output
@@ -1126,105 +1043,101 @@ def should_build_distinct_images_for_pins_of_other_contents(root: Path, tmp_path
     (root / "xcraft.toml").write_text(f'{config}\n[repos.payload]\nbaseurl = "file://{repo}/"\ngpgcheck = false\n')
     assert xcraft("build", "--dry-run")[0] == 0
     images = []
-    for payload in ("a", "b"):
-        if payload == "b":  # published again, pinned again on purpose
-            shutil.rmtree(repo)
-            shutil.copytree(rpms / "b", repo)
-            code, output = xcraft("lock", "--update", "toypayload")
-            assert code == 0, output
-            assert "pinned again, of the same versions: toypayload" in output
+
+    def payload() -> str:
+        """Return the payload installed in the image, built with the layers of the cache of podman: those of the pins of
+        the image only.
+        """
         images.append(image := container.built_image(Project.find()))
-        # with the layers of the cache of podman: those of the pins of the image only
         cat = ["podman", "run", "--rm", image, "cat", "/usr/share/toypayload"]
-        installed = subprocess.run(cat, capture_output=True, text=True, check=True)
-        assert installed.stdout == f"{payload}\n"
-    subprocess.run(["podman", "rmi", *images], capture_output=True, check=False)
+        return subprocess.run(cat, capture_output=True, text=True, check=True).stdout
+
+    try:
+        assert payload() == "a\n"
+        # published again, pinned again on purpose
+        shutil.rmtree(repo)
+        shutil.copytree(rpms / "b", repo)
+        code, output = xcraft("lock", "--update", "toypayload")
+        assert code == 0, output
+        assert "pinned again, of the same versions: toypayload" in output
+        assert payload() == "b\n"
+    finally:
+        subprocess.run(["podman", "rmi", *images], capture_output=True, check=False)
 
 
-def should_parse_the_specs_with_the_image_pins_only(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # a store of its own, and a build root with a pin the image does not have
+@pytest.fixture
+def store(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """Give the test a store of pinned packages of its own, in a volume removed after it, and return its path."""
     monkeypatch.setattr(pinned, "VOLUME", volume := f"xcraft-pinned-test-{os.getpid()}-{time.monotonic_ns()}")
     monkeypatch.setattr(pinned, "_checked", set())
+    try:
+        yield pinned._store()
+    finally:
+        subprocess.run(["podman", "volume", "rm", "-f", volume], check=False, capture_output=True)
+
+
+def should_parse_the_specs_with_the_image_pins_only(root: Path, store: Path) -> None:
+    # a build root with a pin the image does not have
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace("BuildArch: noarch", "BuildArch: noarch\nBuildRequires: lzo-devel"))
-    try:
-        assert xcraft("build", "--dry-run")[0] == 0
-        lock = load_lock(Project.find())
-        pins = lock.binaries[ARCH]
-        assert "lzo-devel" in pins
-        # parsed again, once pinned
-        shutil.rmtree(root / ".xcraft/cache/specs")
-        assert xcraft("build", "--dry-run")[0] == 0
-        stored = {path.name for path in (pinned._store() / "rpms").glob("*/*.rpm")}
-        assert stored <= {pinned.file_name(name, pins[name]) for name in lock.image[ARCH]}
-    finally:
-        subprocess.run(["podman", "volume", "rm", "-f", volume], check=False, capture_output=True)
+    assert xcraft("build", "--dry-run")[0] == 0
+    lock = load_lock(Project.find())
+    pins = lock.binaries[ARCH]
+    assert "lzo-devel" in pins
+    # parsed again, once pinned
+    shutil.rmtree(root / ".xcraft/cache/specs")
+    assert xcraft("build", "--dry-run")[0] == 0
+    stored = {path.name for path in (store / "rpms").glob("*/*.rpm")}
+    assert stored <= {pinned.file_name(name, pins[name]) for name in lock.image[ARCH]}
 
 
-def should_download_again_pinned_packages_damaged_in_the_store(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # a store of its own
-    monkeypatch.setattr(pinned, "VOLUME", volume := f"xcraft-pinned-test-{os.getpid()}-{time.monotonic_ns()}")
-    monkeypatch.setattr(pinned, "_checked", set())
+@pytest.mark.usefixtures("root", "store")
+def should_download_again_pinned_packages_damaged_in_the_store() -> None:
     project = Project.find()
-    try:
-        repo = pinned.repository(project)
-        pin = load_lock(project).binaries[ARCH]["bash"]
-        stored = repo.parent.parent / "rpms" / pin.sha256 / pinned.file_name("bash", pin)
-        # damaged in the store after it was checked, then in the repository used again, or in another one made of it
-        for remade in (False, True):
-            stored.chmod(0o644)
-            with stored.open("ab") as f:
-                f.write(b"damaged")
-            pinned._checked.clear()
-            if remade:
-                shutil.rmtree(repo)
-            assert pinned.repository(project) == repo
-            # downloaded again
-            assert hashlib.sha256(stored.read_bytes()).hexdigest() == pin.sha256
-        # missing in the repository, which two commands check at once, one after the other
-        (repo / pinned.file_name("bash", pin)).unlink()
+    repo = pinned.repository(project)
+    pin = load_lock(project).binaries[ARCH]["bash"]
+    stored = repo.parent.parent / "rpms" / pin.sha256 / pinned.file_name("bash", pin)
+    # damaged in the store after it was checked, then in the repository used again, or in another one made of it
+    for remade in (False, True):
+        stored.chmod(0o644)
+        with stored.open("ab") as f:
+            f.write(b"damaged")
         pinned._checked.clear()
-        with ThreadPoolExecutor(2) as pool:
-            assert list(pool.map(lambda _: pinned.repository(project), range(2))) == [repo, repo]
-        assert hashlib.sha256((repo / pinned.file_name("bash", pin)).read_bytes()).hexdigest() == pin.sha256
-    finally:
-        subprocess.run(["podman", "volume", "rm", "-f", volume], check=False, capture_output=True)
+        if remade:
+            shutil.rmtree(repo)
+        assert pinned.repository(project) == repo
+        # downloaded again
+        assert hashlib.sha256(stored.read_bytes()).hexdigest() == pin.sha256
+    # missing in the repository, which two commands check at once, one after the other
+    (repo / pinned.file_name("bash", pin)).unlink()
+    pinned._checked.clear()
+    with ThreadPoolExecutor(2) as pool:
+        assert list(pool.map(lambda _: pinned.repository(project), range(2))) == [repo, repo]
+    assert hashlib.sha256((repo / pinned.file_name("bash", pin)).read_bytes()).hexdigest() == pin.sha256
 
 
-def should_clean_the_repositories_of_pins_no_checkout_uses(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.usefixtures("root")
+def should_clean_the_repositories_of_pins_no_checkout_uses(request: pytest.FixtureRequest) -> None:
     project = Project.find()
     used = {pinned.repository(project), pinned.repository(project, container._image_pins(project))}
     assert {repo.name for repo in used} <= container.checkout_repositories(project)
-    # a store of its own
-    monkeypatch.setattr(pinned, "VOLUME", volume := f"xcraft-pinned-test-{os.getpid()}-{time.monotonic_ns()}")
-    try:
-        store = pinned._store()
-        for repo, rpms in {"current": ["a", "b"], "old": ["b", "c"], "used": ["d"], ".partial.1": ["e"]}.items():
-            (store / "repos" / repo).mkdir(parents=True)
-            for rpm in rpms:
-                (store / "rpms" / rpm).mkdir(parents=True, exist_ok=True)
-                (store / "rpms" / rpm / f"{rpm}.rpm").touch()
-                (store / "repos" / repo / f"{rpm}.rpm").hardlink_to(store / "rpms" / rpm / f"{rpm}.rpm")
-        (store / "rpms/f").mkdir()
-        (store / "rpms/f/f.rpm").touch()  # of no repository, like the part of a download
-        since = time.time() - 3600
-        for repo in ("current", "old", ".partial.1"):
-            os.utime(store / "repos" / repo, (since - 1, since - 1))
-        others = pinned.other_repositories({"current"}, since)
-        assert sorted(others) == [".partial.1", "old"]
-        pinned.remove_repositories(others)
-        assert sorted(p.name for p in (store / "repos").iterdir()) == ["current", "used"]
-        assert sorted(p.name for p in (store / "rpms").iterdir()) == ["a", "b", "d"]
-    finally:
-        subprocess.run(["podman", "volume", "rm", "-f", volume], check=False, capture_output=True)
-
-
-def should_check_signatures_with_the_keys_of_the_repositories(root: Path, tmp_path: Path) -> None:
-    # signed with the key of AlmaLinux's EPEL, of a URL, which the build image does not have, as it installs the pinned
-    # packages without the keys
-    srpm = tmp_path / "htop-3.3.0-5.el10_0.alma_altarch.src.rpm"
-    process.download(f"https://epel.vault.almalinux.org/10/Source/Packages/{srpm.name}", srpm)
-    check_signatures(Project.find(), tmp_path, [srpm.name], what="upstream source packages")
+    store = request.getfixturevalue("store")  # of its own, once those of the checkout are used
+    for repo, rpms in {"current": ["a", "b"], "old": ["b", "c"], "used": ["d"], ".partial.1": ["e"]}.items():
+        (store / "repos" / repo).mkdir(parents=True)
+        for rpm in rpms:
+            (store / "rpms" / rpm).mkdir(parents=True, exist_ok=True)
+            (store / "rpms" / rpm / f"{rpm}.rpm").touch()
+            (store / "repos" / repo / f"{rpm}.rpm").hardlink_to(store / "rpms" / rpm / f"{rpm}.rpm")
+    (store / "rpms/f").mkdir()
+    (store / "rpms/f/f.rpm").touch()  # of no repository, like the part of a download
+    since = time.time() - 3600
+    for repo in ("current", "old", ".partial.1"):
+        os.utime(store / "repos" / repo, (since - 1, since - 1))
+    others = pinned.other_repositories({"current"}, since)
+    assert sorted(others) == [".partial.1", "old"]
+    pinned.remove_repositories(others)
+    assert sorted(p.name for p in (store / "repos").iterdir()) == ["current", "used"]
+    assert sorted(p.name for p in (store / "rpms").iterdir()) == ["a", "b", "d"]
 
 
 def should_show_a_package_as_building_until_recorded(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1242,7 +1155,7 @@ def should_show_a_package_as_building_until_recorded(root: Path, monkeypatch: py
     monkeypatch.setattr(builder, "record_rpm_deps", recording)
     code, output = xcraft("build", "trivial")
     assert code == 0, output
-    assert True in states
+    assert states == [True, False]
     assert not builder.building(Project.find(), "trivial")
 
 
@@ -1250,8 +1163,11 @@ def should_show_the_status_during_a_build(root: Path) -> None:
     assert xcraft("build", "--dry-run")[0] == 0
     with (root / ".xcraft/lock").open("w") as f:
         fcntl.flock(f, fcntl.LOCK_EX)  # as a build does
-        code, output = xcraft("status")
-        assert code == 0, output
+        assert states() == {"trivial": "missing", "with-deps": "missing"}
+
+
+def should_show_the_status_by_its_short_name(root: Path) -> None:
+    assert xcraft("st") == xcraft("status")
 
 
 def should_export_a_patchset_during_a_build(root: Path, tmp_path: Path) -> None:
@@ -1271,7 +1187,6 @@ def should_export_a_patchset_during_a_build(root: Path, tmp_path: Path) -> None:
         assert code == 0, output
     assert output.startswith("trivial: patchset from 1.0, 1 added")
     assert (root / "base/trivial/0001-a-fix.patch").exists()
-    assert xcraft("patchset", str(repo), "--package", "nope")[0] == 2
 
 
 def should_lock_the_image_and_the_build_roots(root: Path) -> None:
@@ -1285,6 +1200,8 @@ def should_lock_the_image_and_the_build_roots(root: Path) -> None:
     # the upstream binary packages of the build roots, but the image's
     assert "lzo-devel" in lock.roots.shared["trivial"]
     assert not image & {*lock.roots.shared["trivial"], *lock.roots.shared.get("with-deps", [])}
+    # without ccache, which only compilers get
+    assert "ccache" not in lock.roots.shared["trivial"]
     # recorded again when they change, which --locked forbids
     spec.write_text(original)
     code, output = xcraft("build", "--dry-run", "--locked")
@@ -1293,7 +1210,9 @@ def should_lock_the_image_and_the_build_roots(root: Path) -> None:
     assert "-roots.trivial lzo" in output
     assert xcraft("build", "--dry-run")[0] == 0
     assert "lzo" not in load_lock(Project.find()).roots.shared.get("trivial", [])
-    # nor kept for packages removed from the project
+
+
+def should_drop_the_recordings_of_packages_removed_from_the_project(root: Path) -> None:
     gone = 'gone.requires."gone" = ["bash"]\ngone.aarch64.provides."gone" = ["zsh"]\ngone.buildrequires = ["bash"]\n'
     with builds_path(Project.find()).open("a") as f:
         f.write(f"\n# gone\n{gone}")

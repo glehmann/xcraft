@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
+import secrets
 import shutil
 import subprocess
 import tomllib
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -14,9 +17,12 @@ from typer.testing import CliRunner
 
 from xcraft import buildid
 from xcraft.__main__ import app
+from xcraft.iso import Image, cached_iso, iso_key
 from xcraft.packages import Binary, Package
 from xcraft.project import Config, Project
 from xcraft.resolution import Resolved
+from xcraft.signing import Signer, release_signer
+from xcraft.sources import sha256_of
 
 PROJECT = Path(__file__).parent / "project"
 UPSTREAM = Path(__file__).parent / "upstream"
@@ -33,6 +39,24 @@ PLATFORM, ARCH = {"x86_64": ("linux/amd64/v2", "x86_64_v2"), "aarch64": ("linux/
 )
 needs_gpg = pytest.mark.skipif(not shutil.which("gpg"), reason="needs gpg")
 needs_git_lfs = pytest.mark.skipif(not shutil.which("git-lfs"), reason="needs git-lfs")
+
+# the Garage server of the remote storage, see conftest.py: one for each worker of pytest-xdist, with its name and ports
+WORKER = int(os.environ.get("PYTEST_XDIST_WORKER", "gw0").removeprefix("gw"))
+GARAGE = f"xcraft-test-garage-{WORKER}"
+S3_PORT, WEB_PORT = 13900 + 10 * WORKER, 13902 + 10 * WORKER
+WEB = f"http://xcraft.web.garage.localhost:{WEB_PORT}"
+REMOTE = (
+    # only the host's: publish fetches the builds of the others
+    TOML.replace('platforms = ["linux/amd64/v2", "linux/arm64"]', f'platforms = ["{PLATFORM}"]')
+    + f'[remote.main]\nurl = "{WEB}"\ns3_endpoint = "http://localhost:{S3_PORT}"\nbucket = "xcraft"\n'
+    + f'[remote.dev]\nurl = "http://xcraft-dev.web.garage.localhost:{WEB_PORT}"\n'
+    + f's3_endpoint = "http://localhost:{S3_PORT}"\nbucket = "xcraft-dev"\n'
+    # not the build repository, with the hundreds of source packages of their build environment to download
+    '[publish]\nrelease = "9.0"\nbuild = false\n'
+)
+"""The configuration of the tests with the remote storage: storage_root(), in conftest.py, gives each test its own,
+with its stage, STAGE, and the key of its builds, in the REMOTE and STAGE of its module."""
+STAGE = ""
 
 
 def config() -> Config:
@@ -121,3 +145,51 @@ def commit_base(root: Path, branch: str = "master") -> None:
     buildid.update(Project.find())
     git(root, "add", "-A")
     git(root, "commit", "-qm", "base")
+
+
+def garage(*args: str) -> str:
+    """Run the command of the Garage server of the remote storage, and return its output."""
+    return subprocess.run(
+        ["podman", "exec", GARAGE, "/garage", *args], check=True, capture_output=True, text=True
+    ).stdout
+
+
+def page(directory: str) -> str:
+    """Return the page of a directory of the storage, through its public endpoint."""
+    with urllib.request.urlopen(f"{WEB}/{directory}") as response:  # noqa: S310, the test garage
+        assert response.headers["Content-Type"].startswith("text/html")
+        assert response.headers["Cache-Control"] == "no-cache"
+        return response.read().decode()
+
+
+def unsigned(remote: str) -> str:
+    """Return the configuration `remote` of the tests, without the [sign] section of the key of their builds."""
+    return re.sub(r"\[sign\]\n.*?(?=\[remote.main\])", "", remote, flags=re.DOTALL)
+
+
+def cache_image(
+    project: Project, image: Path, *, signer: Signer | None = None, netinstall: bool = False, keep: bool = False
+) -> Path:
+    """Seed a cached image to exercise lookups and transfers independently of distribution assembly: of dev mode with
+    `keep`, like those of xcraft iso without --final.
+    """
+    tree = cached_iso(project, iso_key(project, netinstall=netinstall, volid=None, signer=signer, keep=keep))
+    tree.mkdir(parents=True)
+    shutil.copy2(image, tree / "image.iso")
+    (tree / "image.json").write_text(Image(sha256=sha256_of(image)).model_dump_json())
+    return tree
+
+
+def pushed_iso(project: Project, tmp_path: Path) -> tuple[Signer, Path, Path]:
+    """Push the ISO of a cached image, signed with the key of the builds of the storage, like those of CI, see
+    storage_root(), and return that key, the image, and the tree of its cache.
+    """
+    signer = release_signer(project)
+    assert signer
+    image = tmp_path / "test.iso"
+    image.write_bytes(secrets.token_bytes(2048))
+    tree = cache_image(project, image, signer=signer)
+    code, output = xcraft("push", "isos")
+    assert code == 0, output
+    assert "1 ISOs pushed" in output
+    return signer, image, tree

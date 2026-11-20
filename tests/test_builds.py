@@ -45,15 +45,16 @@ def project(tmp_path: Path) -> Project:
     return project
 
 
+BUILDS = Builds(
+    ids={"xen": BuildId(number=2, key="ab" * 32), "lib.c++": BuildId(number=1, key="cd" * 32, accepts="ef" * 32)},
+    buildrequires=Recorded(arches={"aarch64": {"xen": ["meson"]}}),
+    requires=Recorded(shared={"xen-dom0-libs": ["lzo", "e2fsprogs-libs"]}, arches={"aarch64": {"lib.c++": []}}),
+    provides=Recorded(shared={"xen-devel": ["pkgconfig(xenctrl) = %{version}"]}),
+)
+
+
 def should_save_the_builds_one_line_per_entry(project: Project) -> None:
-    arch = project.arch
-    builds = Builds(
-        ids={"xen": BuildId(number=2, key="ab" * 32), "lib.c++": BuildId(number=1, key="cd" * 32, accepts="ef" * 32)},
-        buildrequires=Recorded(arches={"aarch64": {"xen": ["meson"]}}),
-        requires=Recorded(shared={"xen-dom0-libs": ["lzo", "e2fsprogs-libs"]}, arches={"aarch64": {"lib.c++": []}}),
-        provides=Recorded(shared={"xen-devel": ["pkgconfig(xenctrl) = %{version}"]}),
-    )
-    save_builds(project, builds)
+    save_builds(project, BUILDS)
     # a line by entry, starting with its package, after a comment line with it, and a blank line after them
     assert builds_path(project).read_text() == (
         "# written by xcraft: the builds of our packages, and what they found that the specs do not say\n"
@@ -71,22 +72,30 @@ def should_save_the_builds_one_line_per_entry(project: Project) -> None:
         'xen.provides."xen-devel" = ["pkgconfig(xenctrl) = %{version}"]\n'
         'xen.aarch64.buildrequires = ["meson"]\n'
     )
-    assert load_builds(project) == builds
-    # the versions put back, with those the specs declare
-    devel = locked_packages(project.parsed, builds, arch)["xen"].binaries[1]
+    assert load_builds(project) == BUILDS
+    assert parse_builds("") == Builds()
+
+
+def should_put_the_versions_back_in_what_the_builds_recorded(project: Project) -> None:
+    # with those the specs declare
+    devel = locked_packages(project.parsed, BUILDS, project.arch)["xen"].binaries[1]
     assert devel.provides == ["xen-devel = 1:4.2-3.xcpng", "pkgconfig(xenctrl) = 4.2"]
-    # not the records of packages and binary packages gone
+
+
+def should_drop_the_records_of_packages_gone(project: Project) -> None:
     del project.parsed["xen"]
-    save_builds(project, builds)
-    assert load_builds(project) == builds.model_copy(
+    save_builds(project, BUILDS)
+    assert load_builds(project) == BUILDS.model_copy(
         update={"requires": Recorded(arches={"aarch64": {"lib.c++": []}}), "provides": Recorded()}
     )
-    # nor any change with --locked
+
+
+def should_refuse_to_change_the_builds_when_locked(project: Project) -> None:
+    save_builds(project, BUILDS)
     project.frozen = True
-    save_builds(project, load_builds(project))
+    save_builds(project, load_builds(project))  # unchanged
     with pytest.raises(RuntimeError, match=r"--locked forbids: .*-xen\.build = 2"):
-        save_builds(project, Builds(ids={"lib.c++": builds.ids["lib.c++"]}))
-    assert parse_builds("") == Builds()
+        save_builds(project, Builds(ids={"lib.c++": BUILDS.ids["lib.c++"]}))
 
 
 def should_record_only_what_the_spec_does_not_declare() -> None:

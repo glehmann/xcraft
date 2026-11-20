@@ -120,7 +120,6 @@ def should_build_from_the_tree_as_it_is(root: Path, tree: Path) -> None:
     assert code == 0, output
     assert "✓ trivial built" in output
     assert (sources / "hello.txt").read_text() == "hello, edited\n"
-    assert (sources / "kept.txt").exists()
     assert (sources / "kept.txt").read_text() == ""  # from built-before, of the previous build
     assert (sources / "new.in").exists()
     assert not (sources / "ignored.o").exists()

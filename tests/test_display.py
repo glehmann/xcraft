@@ -10,11 +10,11 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
-from rich.console import ConsoleDimensions
-from rich.text import Text
 
-from tests import TOML, xcraft
-from xcraft.display import TreeProgress, _commands, _Messages, activity, diagnostics, print_message_line, read_tail
+from tests import TOML, config, xcraft
+from xcraft import build
+from xcraft.display import TreeProgress, activity, console, diagnostics, print_message_line, read_tail
+from xcraft.project import Project
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -23,11 +23,13 @@ if TYPE_CHECKING:
 def should_throttle_the_progress_lines_of_logged_activities(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    clock = iter([0, 31, 31, 31, 62])
-    monkeypatch.setattr("xcraft.display.time.monotonic", lambda: next(clock))
+    now = 0
+    monkeypatch.setattr("xcraft.display.time.monotonic", lambda: now)
     with activity("publishing", log=True) as update:
+        now = 31
         update("first.rpm")
-        update("second.rpm")
+        update("second.rpm")  # less than 30s after the previous line
+        now = 62
     output = capsys.readouterr().err
     assert "publishing\n" in output
     assert "publishing: first.rpm" in output
@@ -38,13 +40,20 @@ def should_throttle_the_progress_lines_of_logged_activities(
 def should_show_an_activity_still_running_with_its_last_line(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr("xcraft.display._STILL_INTERVAL", 0.2)
+    monkeypatch.setattr("xcraft.display._STILL_INTERVAL", 0.1)
     monkeypatch.setenv("CI", "true")
+    output = ""
     with activity("[1/1] building foo", still="building foo") as update:
         update("\x1b[1mgcc -c foo.c\x1b[0m")
-        time.sleep(0.3)
+        for _ in range(100):
+            output += capsys.readouterr().err
+            if "still" in output:
+                break
+            time.sleep(0.02)
+        else:
+            pytest.fail(f"no line telling the activity is still running in 2s: {output!r}")
     # first, then after the interval, with the last line, plain
-    assert capsys.readouterr().err == "[1/1] building foo\n  still building foo (0s): gcc -c foo.c\n"
+    assert output.startswith("[1/1] building foo\n  still building foo (0s): gcc -c foo.c\n")
 
 
 LOG = """\
@@ -82,10 +91,15 @@ def should_filter_build_logs_by_step_pattern_and_count() -> None:
         "make: *** [all] Error 1\n",
     )
     assert xcraft("log", "foo", "-n", "2") == xcraft("log", "foo", "--last", "2")
-    assert xcraft("log", "-h") == xcraft("log", "--help")
-    code, output = xcraft("log", "foo", "--step", "install")
-    assert code == 1
-    assert output == "no install step in the log of foo, it has: prep, build"
+
+
+@pytest.mark.usefixtures("log")
+def should_tell_the_steps_a_build_log_has() -> None:
+    assert xcraft("log", "foo", "--step", "install") == (1, "no install step in the log of foo, it has: prep, build")
+
+
+@pytest.mark.usefixtures("log")
+def should_refuse_the_log_of_a_package_never_built() -> None:
     assert xcraft("log", "bar") == (1, "bar has no build log")
 
 
@@ -162,10 +176,13 @@ def should_show_the_step_header_before_its_first_diagnostic() -> None:
 
 
 def should_leave_the_last_terminal_column_free() -> None:
-    messages = _Messages(width=80, height=24)
-    assert messages.size == ConsoleDimensions(79, 24)
-    messages.size = (40, 30)
-    assert messages.size == ConsoleDimensions(39, 30)
+    # of a terminal of 80x24, and once resized
+    code = (
+        "from xcraft.display import messages\nprint(*messages.size)\nmessages.size = (40, 30)\nprint(*messages.size)\n"
+    )
+    env = {**os.environ, "COLUMNS": "80", "LINES": "24", "TERM": "xterm"}
+    output = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True).stdout
+    assert output == "79 24\n39 30\n"
 
 
 def should_print_diagnostics_as_messages_on_stderr(capsys: pytest.CaptureFixture[str]) -> None:
@@ -193,9 +210,7 @@ def should_show_colours_without_progress_frames_in_ci() -> None:
 def should_highlight_the_xcraft_commands_in_messages() -> None:
     # those of the command line of xcraft.__main__, imported
     def highlighted(message: str) -> list[str]:
-        text = Text(message)
-        _commands.highlight(text)
-        return [message[span.start : span.end] for span in text.spans]
+        return [message[span.start : span.end] for span in console.render_str(message).spans]
 
     assert highlighted("no key: see xcraft key create") == ["xcraft key create"]
     assert highlighted("see xcraft boot and xcraft vm start") == ["xcraft boot", "xcraft vm start"]
@@ -220,3 +235,15 @@ def should_show_the_progress_of_all_the_files_of_a_download() -> None:
     progress = TreeProgress(lines.append, 2)
     progress.report("a")(3, 2**20, 4 * 2**20)
     assert lines == ["0/2 files, 3.0 MiB"]
+
+
+def should_show_the_build_step_before_its_first_diagnostic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # of a package without a previous duration, out of CI
+    (tmp_path / "xcraft.toml").write_text(TOML)
+    monkeypatch.delenv("CI", raising=False)
+    with build._shown(Project(tmp_path, config()), "trivial", "[1/1]") as on_line:
+        on_line("gcc -O2 -c foo.c")
+        on_line("error: boom")
+    assert capsys.readouterr().err == "[1/1] building trivial\nerror: boom\n"

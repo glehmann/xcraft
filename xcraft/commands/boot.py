@@ -31,7 +31,7 @@ def _check_host(arch: str, accel: str, *, new_disk: bool) -> None:
     vm.check_tools(accel, new_disk=new_disk)
 
 
-def _answered(text: str, answers: list[str]) -> str:
+def answered(text: str, answers: list[str]) -> str:
     """Return the answer file `text` with the `answers`: NAME=VALUE sets the text of the element NAME of the
     installation, NAME.ATTR=VALUE an attribute of it, each added when missing.
     """
@@ -64,7 +64,7 @@ def _check_edits(*, bios: bool, kernel_args: str | None, unattended: bool, answe
 
 
 def _unattended(project: Project, answers: list[str]) -> str:
-    """Return the answer file of [iso] unattended of xcraft.toml with the `answers`, see _answered()."""
+    """Return the answer file of [iso] unattended of xcraft.toml with the `answers`, see answered()."""
     if not project.config.iso.unattended:
         msg = "no unattended answer file in [iso] of xcraft.toml"
         raise typer.BadParameter(msg, param_hint="--unattended")
@@ -72,7 +72,7 @@ def _unattended(project: Project, answers: list[str]) -> str:
         msg = f"no answer file {path}, the unattended one of [iso] of xcraft.toml"
         raise typer.BadParameter(msg, param_hint="--unattended")
     try:
-        return _answered(path.read_text(), answers)
+        return answered(path.read_text(), answers)
     except ET.ParseError as e:
         msg = f"{path}: {e}"
         raise typer.BadParameter(msg, param_hint="--unattended") from e

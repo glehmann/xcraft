@@ -15,11 +15,10 @@ import typer
 
 from tests import ARCH, PROJECT, TOYS, config, copy_project, git, needs_gpg, xcraft
 from xcraft import buildid, pinned, publish
-from xcraft.cache import build_keys, cached_build
+from xcraft.cache import build_keys, cached_build, signed_build
 from xcraft.commands import choose_signer
 from xcraft.lock import cached_lock, load_lock, save_lock
 from xcraft.project import Config, Project, Remote, Repo, Sign
-from xcraft.publish import _signed_build
 from xcraft.signing import Signer, SigningError, check_signatures, create_dev_key, dev_keyring, dev_signer, key_signer
 
 if TYPE_CHECKING:
@@ -246,7 +245,7 @@ def should_sign_the_build_of_each_architecture_apart(root: Path, build_environme
     key = build_keys(project)["trivial"]
     shutil.copytree(cached_build(project, "trivial", key), cached_build(other, "trivial", key))
     (cached_build(other, "trivial", key) / "RPMS/x86_64").write_text("the build of x86_64")
-    signed = [_signed_build(p, signer, "trivial", key, storage=None) for p in (project, other)]
+    signed = [signed_build(p, "trivial", key, signer) for p in (project, other)]
     assert not (signed[0] / "RPMS/x86_64").exists()
     assert (signed[1] / "RPMS/x86_64").read_text() == "the build of x86_64"
 

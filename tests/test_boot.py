@@ -17,18 +17,9 @@ import pytest
 import typer
 from pydantic import BaseModel, Field, TypeAdapter
 
-from tests import PROJECT, TOML, xcraft
+from tests import xcraft
 from xcraft import vm
-from xcraft.commands.boot import _answered
-
-
-@pytest.fixture
-def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    root = tmp_path / "project"
-    shutil.copytree(PROJECT, root)
-    (root / "xcraft.toml").write_text(TOML)
-    monkeypatch.setenv("XCRAFT_PROJECT", str(root))
-    return root
+from xcraft.commands.boot import answered
 
 
 class Image(BaseModel):
@@ -111,7 +102,7 @@ def attached(socket_path: Path, args: list[str], failure: str | None = None) -> 
 
 
 @pytest.mark.skipif(not (shutil.which("qemu-system-x86_64") and shutil.which("qemu-img")), reason="needs QEMU")
-def should_start_again_from_the_disk_it_created(root: Path, tmp_path: Path) -> None:
+def should_start_again_from_the_disk_it_created(unprepared_root: Path, tmp_path: Path) -> None:
     try:
         code, _ = vm.firmware(None, None)
     except RuntimeError as exc:
@@ -119,7 +110,7 @@ def should_start_again_from_the_disk_it_created(root: Path, tmp_path: Path) -> N
     # Blank CD media is enough to inspect attachment: -S keeps the CPUs paused throughout the test.
     iso = tmp_path / "installer.iso"
     iso.write_bytes(bytes(2048))
-    disk = root / ".xcraft/vm/x86_64_v2/disk.qcow2"
+    disk = unprepared_root / ".xcraft/vm/x86_64_v2/disk.qcow2"
     images = boot_vm(tmp_path / "qmp", "--iso", str(iso), "--disk-size", "16M")
     assert {image.filename for image in images} == {str(disk), str(iso), str(code), "OVMF_VARS.fd"}
     assert next(image for image in images if image.format == "qcow2").size == 16 * 2**20
@@ -135,8 +126,8 @@ def should_start_again_from_the_disk_it_created(root: Path, tmp_path: Path) -> N
     assert disk.stat().st_ino == inode
     assert variables.stat().st_ino == vars_inode
     # No containers or build preparation are needed when using existing media or starting the installed disk.
-    assert not (root / "xcraft.lock").exists()
-    assert not (root / ".xcraft/cache").exists()
+    assert not (unprepared_root / "xcraft.lock").exists()
+    assert not (unprepared_root / ".xcraft/cache").exists()
 
 
 @pytest.mark.parametrize(
@@ -144,18 +135,18 @@ def should_start_again_from_the_disk_it_created(root: Path, tmp_path: Path) -> N
     [
         (["--accel", "unknown"], "--accel must be kvm or tcg"),
         (["--arch", "aarch64"], "boot currently supports x86_64 and x86_64_v2 only"),
-        (["--memory", "0"], "512"),
-        (["--cpus", "0"], "1"),
+        (["--memory", "0"], "'--memory': 0 is not in the range x>=512"),
+        (["--cpus", "0"], "'--cpus': 0 is not in the range x>=1"),
     ],
 )
-def should_reject_invalid_options_before_making_anything(root: Path, args: list[str], message: str) -> None:
+def should_reject_invalid_options_before_making_anything(unprepared_root: Path, args: list[str], message: str) -> None:
     code, output = xcraft("boot", *args)
     assert code == 2, output
     assert message in " ".join(output.split())
-    assert not (root / ".xcraft").exists()
+    assert not (unprepared_root / ".xcraft").exists()
 
 
-def should_refuse_a_vm_directory_of_other_content(root: Path, tmp_path: Path) -> None:
+def should_refuse_a_vm_directory_of_other_content(unprepared_root: Path, tmp_path: Path) -> None:
     (tmp_path / "mine").write_text("kept")
     code, output = xcraft("boot", "--vm-dir", str(tmp_path))
     assert code == 2, output
@@ -163,43 +154,61 @@ def should_refuse_a_vm_directory_of_other_content(root: Path, tmp_path: Path) ->
     assert (tmp_path / "mine").read_text() == "kept"
 
 
-def should_refuse_vm_commands_without_a_session(root: Path) -> None:
+@pytest.mark.usefixtures("unprepared_root")
+def should_refuse_vm_commands_without_a_session() -> None:
     for command in ("start", "ssh", "ssh-copy-id"):
         code, output = xcraft("vm", "--arch", "x86_64_v2", command)
         assert code == 1, output
         assert "no VM session" in output
+
+
+def old_session(root: Path) -> None:
+    """Write the session of a VM launched by an xcraft without xcraft vm start: without its options."""
     session = root / ".xcraft/vm/x86_64_v2"
     session.mkdir(parents=True)
-    # launched by an xcraft without xcraft vm start: without its options
     (session / "session.json").write_text(
         json.dumps({"pid": 0, "arch": "x86_64_v2", "disk": "disk.qcow2", "iso": None, "ssh_port": 0, "command": []})
     )
+
+
+def should_refuse_to_start_vms_of_older_xcraft_versions(unprepared_root: Path) -> None:
+    old_session(unprepared_root)
     code, output = xcraft("vm", "--arch", "x86_64_v2", "start")
     assert code == 1, output
     assert "launched by an older xcraft" in " ".join(output.split())
+
+
+def should_refuse_ssh_to_a_vm_not_running(unprepared_root: Path) -> None:
+    old_session(unprepared_root)
     for command in ("ssh", "ssh-copy-id"):
         code, output = xcraft("vm", "--arch", "x86_64_v2", command)
         assert code == 1, output
         assert "no VM running in" in " ".join(output.split())
 
 
-@pytest.mark.parametrize("edit", [["--kernel-args", "quiet"], ["--unattended"]])
-def should_refuse_kernel_args_when_booting_with_bios(root: Path, edit: list[str]) -> None:
-    code, output = xcraft("boot", *edit, "--bios")
+@pytest.mark.usefixtures("unprepared_root")
+def should_refuse_grub_menu_edits_when_booting_with_bios() -> None:
+    code, output = xcraft("boot", "--kernel-args", "quiet", "--bios")
     assert code == 2, output
     assert "--kernel-args and --unattended edit the GRUB menu of the ISO" in " ".join(output.split())
 
 
-def should_refuse_unattended_boot_without_answer_file(root: Path, tmp_path: Path) -> None:
+def should_refuse_unattended_boot_without_answer_file(unprepared_root: Path, tmp_path: Path) -> None:
     iso = tmp_path / "installer.iso"
     iso.touch()
     code, output = xcraft("boot", "--unattended", "--iso", str(iso))
     assert code == 2, output
     assert "no unattended answer file" in output
+    assert not (unprepared_root / ".xcraft").exists()
+
+
+def should_refuse_answers_without_unattended_boot(unprepared_root: Path, tmp_path: Path) -> None:
+    iso = tmp_path / "installer.iso"
+    iso.touch()
     code, output = xcraft("boot", "--answer", "keymap=fr", "--iso", str(iso))
     assert code == 2, output
     assert "--answer changes the answer file of --unattended" in " ".join(output.split())
-    assert not (root / ".xcraft").exists()
+    assert not (unprepared_root / ".xcraft").exists()
 
 
 def should_set_the_answers_in_the_answer_file() -> None:
@@ -207,15 +216,15 @@ def should_set_the_answers_in_the_answer_file() -> None:
         '<?xml version="1.0"?>\n<!-- for test VMs -->\n<installation srtype="ext">\n'
         "  <primary-disk>sda</primary-disk>\n  <keymap>us</keymap>\n</installation>\n"
     )
-    answered = _answered(text, ["keymap=fr", "primary-disk.fs-type=ext4", "system-snapshot.name=installed"])
+    edited = answered(text, ["keymap=fr", "primary-disk.fs-type=ext4", "system-snapshot.name=installed"])
     # the text and the attributes of the elements, those missing added, the comments kept
-    assert "<!-- for test VMs -->" in answered
-    assert '<primary-disk fs-type="ext4">sda</primary-disk>' in answered
-    assert "<keymap>fr</keymap>" in answered
-    assert '<system-snapshot name="installed" />' in answered
-    assert _answered(text, []).count("<keymap>us</keymap>") == 1
+    assert "<!-- for test VMs -->" in edited
+    assert '<primary-disk fs-type="ext4">sda</primary-disk>' in edited
+    assert "<keymap>fr</keymap>" in edited
+    assert '<system-snapshot name="installed" />' in edited
+    assert answered(text, []).count("<keymap>us</keymap>") == 1
     with pytest.raises(typer.BadParameter, match=r"not NAME=VALUE nor NAME\.ATTR=VALUE"):
-        _answered(text, ["keymap"])
+        answered(text, ["keymap"])
 
 
 def should_serve_the_answer_file_to_the_guest(tmp_path: Path) -> None:
@@ -250,14 +259,16 @@ def should_find_the_kernel_line_in_the_grub_editor() -> None:
         vm.kernel_line([line.replace("vmlinuz", "linux") for line in EDITOR])
 
 
-def should_fail_when_qemu_is_not_installed(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_fail_when_qemu_is_not_installed(
+    unprepared_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     iso = tmp_path / "installer.iso"
     iso.touch()
     monkeypatch.setenv("PATH", "")
     code, output = xcraft("boot", "--iso", str(iso), "--accel", "tcg", "--arch", "x86_64_v2")
-    assert code == 1
+    assert code == 1, output
     assert "qemu-system-x86_64 is not installed" in output
-    assert not (root / ".xcraft").exists()
+    assert not (unprepared_root / ".xcraft").exists()
 
 
 @pytest.fixture
@@ -281,8 +292,12 @@ def should_show_vm_help_outside_projects(tmp_path: Path, monkeypatch: pytest.Mon
     code, output = xcraft("vm", "status", "--help")
     assert code == 0, output
     assert "QEMU status" in output
+
+
+def should_require_a_project_for_vm_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path))
     code, output = xcraft("vm", "status")
-    assert code == 1
+    assert code == 1, output
     assert "no xcraft.toml" in output
 
 
@@ -290,13 +305,15 @@ def stop_vm(directory: Path) -> None:
     assert xcraft("vm", "--vm-dir", str(directory), "stop")[0] == 0
     for _ in range(100):
         if not vm.running(directory):
-            return
+            break
         time.sleep(0.05)
+    else:
+        pytest.fail(f"the VM of {directory} still runs 5s after xcraft vm stop")
 
 
 @pytest.mark.skipif(not (shutil.which("qemu-system-x86_64") and shutil.which("qemu-img")), reason="needs QEMU")
-def should_control_a_background_vm_and_collect_its_logs(root: Path, tmp_path: Path, echo_disk: Path) -> None:  # noqa: PLR0915
-    directory = root / ("long-session-name-" * 4)
+def should_control_a_background_vm_and_collect_its_logs(unprepared_root: Path, tmp_path: Path, echo_disk: Path) -> None:  # noqa: PLR0915
+    directory = unprepared_root / ("long-session-name-" * 4)
     iso = tmp_path / "installer.iso"
     iso.write_bytes(bytes(2048))
     boot = [
@@ -368,8 +385,8 @@ def should_control_a_background_vm_and_collect_its_logs(root: Path, tmp_path: Pa
 
 
 @pytest.mark.skipif(not (shutil.which("qemu-system-x86_64") and shutil.which("qemu-img")), reason="needs QEMU")
-def should_destroy_the_vm_but_keep_a_given_disk(root: Path, tmp_path: Path, echo_disk: Path) -> None:
-    directory = root / "vm"
+def should_destroy_the_vm_but_keep_a_given_disk(unprepared_root: Path, tmp_path: Path, echo_disk: Path) -> None:
+    directory = unprepared_root / "vm"
     iso = tmp_path / "installer.iso"
     iso.write_bytes(bytes(2048))
     boot = [
@@ -393,11 +410,11 @@ def should_destroy_the_vm_but_keep_a_given_disk(root: Path, tmp_path: Path, echo
     assert not directory.exists()
     assert echo_disk.exists()  # given with --disk, out of the directory
     code, output = xcraft("vm", "--vm-dir", str(directory), "destroy", "--yes")
-    assert code == 1
+    assert code == 1, output
     assert "no VM session" in output
 
 
-def should_use_the_first_free_ssh_port_by_default() -> None:
+def should_skip_ssh_ports_in_use() -> None:
     with socket.socket() as taken:
         taken.bind(("127.0.0.1", 0))
         taken.listen()
@@ -407,7 +424,7 @@ def should_use_the_first_free_ssh_port_by_default() -> None:
         assert vm.free_port(port) > port
 
 
-def should_refuse_an_ssh_port_in_use(root: Path, tmp_path: Path) -> None:
+def should_refuse_an_ssh_port_in_use(unprepared_root: Path, tmp_path: Path) -> None:
     with socket.socket() as taken:
         taken.bind(("127.0.0.1", 0))
         taken.listen()
@@ -418,9 +435,13 @@ def should_refuse_an_ssh_port_in_use(root: Path, tmp_path: Path) -> None:
         code, output = xcraft("boot", "--iso", str(iso), "--bios", "--accel", "tcg", "--ssh-port", str(port))
         assert code == 2, output
         assert f"port {port} is in use on localhost" in " ".join(output.split())
-        assert not (root / ".xcraft").exists()
+        assert not (unprepared_root / ".xcraft").exists()
 
 
 def should_show_why_qemu_failed(tmp_path: Path) -> None:
-    (tmp_path / "qemu.log").write_text("qemu-system-x86_64: -nic user: Could not set up host forwarding rule\n")
-    assert vm._failure(tmp_path) == ": qemu-system-x86_64: -nic user: Could not set up host forwarding rule"
+    # like QEMU failing to forward the SSH port: what it says last
+    error = "qemu-system-x86_64: -nic user: Could not set up host forwarding rule"
+    command = ["sh", "-c", f"echo starting >&2; echo '{error}' >&2; exit 1"]
+    session = vm.Session(pid=0, arch="x86_64_v2", disk=tmp_path / "disk", iso=None, ssh_port=0, command=command)
+    with pytest.raises(RuntimeError, match=f"^QEMU exited with 1: {error}$"):
+        vm.launch(tmp_path, session)

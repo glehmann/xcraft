@@ -1,3 +1,5 @@
+"""The metalinks of the published repositories: their mirrors and the previous metadata."""
+
 from __future__ import annotations
 
 import hashlib

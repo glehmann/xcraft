@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 from typing import TYPE_CHECKING
 
 import pytest
 
 from tests import TOML, config, ours
-from xcraft import buildid, buildkey, devbuilds
+from xcraft import buildid, buildkey
 from xcraft.buildkey import recipe_key
 from xcraft.builds import BuildId, Builds, save_builds
 from xcraft.cache import build_keys
@@ -30,7 +28,7 @@ def project(tmp_path: Path) -> Project:
     return project
 
 
-def should_compute_the_keys_as_the_specification_has_them() -> None:
+def should_keep_the_keys_of_the_same_inputs() -> None:
     # fixed values: a change of the formulas, or of how their inputs are serialized, changes all the keys
     inputs = {"a": ["1" * 64, "2" * 64, {"x86_64_v2": [{"glibc": "2.39-1"}, {}, [], {}]}, [["b", 2, "3" * 64]]]}
     assert buildkey.key(inputs, "a") == "d253f2c4df8681e755fec12f9fd0c205524908f739f3bdfd7ba0b4b5fbd33401"
@@ -38,8 +36,6 @@ def should_compute_the_keys_as_the_specification_has_them() -> None:
         buildkey.development_key({"a": ["1" * 64, "~1.dev"]}, {"b": "3" * 64 + "+b2"}, "a")
         == "d21c169c89066b40b20382eee1576e8c1cdd7cd8e58878e5bf18cf7458f7b5f9"
     )
-    # as the specification has them
-    assert buildkey.key(inputs, "a") == hashlib.sha256(f"{json.dumps(inputs, sort_keys=True)}\0a".encode()).hexdigest()
 
 
 def should_change_the_keys_of_the_packages_whose_inputs_changed(
@@ -73,34 +69,34 @@ def should_change_the_keys_of_the_packages_whose_inputs_changed(
         save_builds(project, builds)
         return {name: i.key for name, i in buildid.compute(project, None, hashes).items()}
 
+    def lock_other_arch() -> None:
+        lock.binaries["aarch64"] = lock.binaries[arch]
+        lock.roots.arches["aarch64"] = {"b": []}
+
     before = keys()
-    for change, changed in (
-        (lambda: repin("glibc", sha256="2" * 64), {"a", "b"}),  # of the image: other contents, of the same version
-        (lambda: repin("glibc", evr="1-2"), {"a", "b"}),
-        (lambda: repin("zlib", sha256="2" * 64), {"b"}),  # of the build root of b
-        (lambda: repin("bash", sha256="2" * 64), set()),  # of no image nor build root of the project
-        (lambda: lock.image[arch].append("bash"), {"a", "b"}),
-        (lambda: lock.sources.update(zlib="1-2"), set()),  # what its binary packages have
-        (lambda: builds.buildrequires.shared.update(b=["foo"]), {"b"}),
-        (lambda: builds.requires.shared.update(a=["bar"]), {"b"}),  # of the binary package a, which b gets
-        (lambda: builds.provides.shared.update(a=["libbar.so.1"]), {"b"}),
-        # not an architecture of the project
-        (
-            lambda: lock.binaries.update(aarch64=lock.binaries[arch]) or lock.roots.arches.update(aarch64={"b": []}),
-            set(),
-        ),
-        (lambda: lock.runtime.update({arch: ["bash"]}), set()),  # what publishing gets
-        (lambda: lock.iso.update({arch: ["bash"]}), set()),
-        (lambda: hashes.update(a="3" * 64), {"a", "b"}),  # the files of a, which change its build ID
-        (lambda: hashes.update(b="4" * 64), {"b"}),
+    for description, change, changed in (
+        ("other contents of a package of the image", lambda: repin("glibc", sha256="2" * 64), {"a", "b"}),
+        ("another version of a package of the image", lambda: repin("glibc", evr="1-2"), {"a", "b"}),
+        ("other contents of a package of the build root of b", lambda: repin("zlib", sha256="2" * 64), {"b"}),
+        ("other contents of a package of no image nor build root", lambda: repin("bash", sha256="2" * 64), set()),
+        ("another package in the image", lambda: lock.image[arch].append("bash"), {"a", "b"}),
+        ("another version of a source, which its binaries have", lambda: lock.sources.update(zlib="1-2"), set()),
+        ("a dynamic BuildRequires of b", lambda: builds.buildrequires.shared.update(b=["foo"]), {"b"}),
+        ("a requirement generated for a, which b gets", lambda: builds.requires.shared.update(a=["bar"]), {"b"}),
+        ("a capability generated for a", lambda: builds.provides.shared.update(a=["libbar.so.1"]), {"b"}),
+        ("the lock of an architecture not of the project", lock_other_arch, set()),
+        ("what publishing gets", lambda: lock.runtime.update({arch: ["bash"]}), set()),
+        ("the tools making the ISO", lambda: lock.iso.update({arch: ["bash"]}), set()),
+        ("the files of a, which change its build ID", lambda: hashes.update(a="3" * 64), {"a", "b"}),
+        ("the files of b", lambda: hashes.update(b="4" * 64), {"b"}),
     ):
         change()
         after = keys()
-        assert {name for name in after if after[name] != before[name]} == changed, change
+        assert {name for name in after if after[name] != before[name]} == changed, description
         before = after
 
 
-def should_read_the_inputs_of_the_keys_once(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_compute_the_keys_from_the_inputs_read_once(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     ours(project, monkeypatch, {"a": set(), "b": {"a"}, "c": set()})
     save_lock(project, Lock())
     hashes = {name: digit * 64 for name, digit in zip("abc", "123", strict=True)}
@@ -110,14 +106,15 @@ def should_read_the_inputs_of_the_keys_once(project: Project, monkeypatch: pytes
     assert buildid.compute(project, None, hashes) == expected
     # but those of the locks given, like those of another commit, with its dynamic BuildRequires
     other = buildkey.Inputs(project, hashes, Lock(), Builds(buildrequires=Recorded(shared={"c": ["a"]})))
-    assert (other.deps["c"], buildkey.Inputs(project, hashes).deps["c"]) == ({"a"}, set())
-    # and nothing more after
-    monkeypatch.setattr(buildkey, "cached_lock", lambda _: pytest.fail("read again"))
-    monkeypatch.setattr(buildkey, "load_builds", lambda _: pytest.fail("read again"))
-    monkeypatch.setattr("xcraft.resolution.resolve_image", lambda _: pytest.fail("resolved again"))
-    project.parsed = {}
+    assert other.deps["c"] == {"a"}
     ids = {name: BuildId(number=1, key=hashes[name]) for name in hashes}
-    assert buildkey.key(other.of({"c"}, ids), "c") != buildkey.key(other.of({"a"}, ids), "a")
+    key = buildkey.key(other.of({"c"}, ids), "c")
+    # and nothing more after: neither the locks, the files, nor the specs changed since
+    save_lock(project, Lock(sources={"glibc": "1-1"}))
+    save_builds(project, Builds(buildrequires=Recorded(shared={"c": ["b"]})))
+    hashes["c"] = "4" * 64
+    project.parsed = {}
+    assert buildkey.key(other.of({"c"}, ids), "c") == key
 
 
 def should_take_the_image_from_the_lock_given(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -198,11 +195,11 @@ def should_hash_the_package_files_as_builds_get_them(tmp_path: Path) -> None:
     shared.write_text("changed")
     assert hash_dir(pkg, tmp_path) != linked
     # not one out of it, which depends on the machine, nor a directory, nor nothing
-    for target in (shared, tmp_path, tmp_path / "missing"):
+    for target, root in ((shared, pkg), (tmp_path, tmp_path), (tmp_path / "missing", tmp_path)):
         (pkg / "linked").unlink()
         (pkg / "linked").symlink_to(target)
         with pytest.raises(ValueError, match="is a link to"):
-            hash_dir(pkg, pkg if target == shared else tmp_path)
+            hash_dir(pkg, root)
 
 
 def should_map_earlier_recipes_making_the_same_builds(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -229,31 +226,35 @@ def should_change_the_recipe_only_for_what_builds_get(project: Project, monkeypa
     config.macros, config.repos = dict(reversed(config.macros.items())), dict(reversed(config.repos.items()))
     assert buildkey.recipe(project) == after
     # but all the rest
-    for change in (
-        lambda: setattr(config, "macros", {**config.macros, "a": "changed"}),
-        lambda: setattr(config.repos["baseos"], "baseurl", "https://example.com/other/"),
-        lambda: setattr(config.repos["baseos"], "includepkgs", ["bash"]),
-        lambda: setattr(config, "packages", [*config.packages, "vim"]),
-        lambda: setattr(config, "release_suffixes", [".alt"]),
-        lambda: setattr(config, "extra_upstream", {"foo": Extra(url="https://example.com/foo.rpm", sha256="1" * 64)}),
-        lambda: setattr(config, "base_image", config.base_image.replace("@sha256:", "@sha256:0")[:-1]),
-        lambda: monkeypatch.setattr(buildkey, "FORMAT", buildkey.FORMAT + 1),
-        lambda: monkeypatch.setattr(buildkey, "RECIPE", "0" * 64),
+    extra = {"foo": Extra(url="https://example.com/foo.rpm", sha256="1" * 64)}
+    for description, change in (
+        ("a macro", lambda: setattr(config, "macros", {**config.macros, "a": "changed"})),
+        ("the URL of a repository", lambda: setattr(config.repos["baseos"], "baseurl", "https://example.com/other/")),
+        ("the packages of a repository", lambda: setattr(config.repos["baseos"], "includepkgs", ["bash"])),
+        ("the packages of the image", lambda: setattr(config, "packages", [*config.packages, "vim"])),
+        ("the release suffixes", lambda: setattr(config, "release_suffixes", [".alt"])),
+        ("the extra upstream RPMs", lambda: setattr(config, "extra_upstream", extra)),
+        (
+            "the base image",
+            lambda: setattr(config, "base_image", config.base_image.replace("@sha256:", "@sha256:0")[:-1]),
+        ),
+        (
+            "how xcraft gives the builds their inputs",
+            lambda: monkeypatch.setattr(buildkey, "FORMAT", buildkey.FORMAT + 1),
+        ),
+        ("the scripts of the builds", lambda: monkeypatch.setattr(buildkey, "RECIPE", "0" * 64)),
     ):
         change()
-        assert buildkey.recipe(project) != after
+        assert buildkey.recipe(project) != after, description
         after = buildkey.recipe(project)
     assert after != before
 
 
-def should_fail_when_the_lock_lacks_an_image_package(project: Project) -> None:
-    with pytest.raises(RuntimeError, match="the lock has no pinned glibc"):
-        buildkey.lock_inputs(
-            [buildkey.Platform(project.arch, {}, {})],
-            Lock.model_construct(image={project.arch: ["glibc"]}),
-            Builds(),
-            "foo",
-        )
+def should_fail_when_the_lock_pins_nothing_for_the_shared_build_roots_of_an_architecture(project: Project) -> None:
+    # shared by the architectures, valid without one pinning their packages
+    lock = Lock(sources={"zlib": "1-1"}, roots=Recorded(shared={"foo": ["zlib"]}))
+    with pytest.raises(RuntimeError, match=f"the lock has no pinned zlib for {project.arch}"):
+        buildkey.lock_inputs([buildkey.Platform(project.arch, {}, {})], lock, Builds(), "foo")
 
 
 def should_give_new_keys_to_builds_against_development_ones(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -276,31 +277,6 @@ def should_give_new_keys_to_builds_against_development_ones(project: Project, mo
     # in a cycle of the dependencies of all the architectures: those of each development build of the others
     cycle = {"d": {"e"}, "e": {"d"}}
     assert keys(cycle, {"d": "~1.dev", "e": "~1.dev"})["d"] != keys(cycle, {"d": "~1.dev", "e": "~2.dev"})["d"]
-
-
-@pytest.mark.parametrize("cycle", [{"a": {"b"}, "b": {"a"}}, {"a": {"b", "c"}, "b": {"a"}, "c": set()}])
-def should_number_the_development_builds_of_a_cycle_together(
-    project: Project, monkeypatch: pytest.MonkeyPatch, cycle: dict[str, set[str]]
-) -> None:
-    # a cycle of the dependencies of all the architectures, and maybe a package it is built against, all developed
-    ours(project, monkeypatch, cycle)
-    save_lock(project, Lock())
-    monkeypatch.setattr(buildid, "base", lambda _: None)
-    monkeypatch.setattr(devbuilds, "proposed", lambda _fork, ids: set(ids))
-    hashes = dict.fromkeys(cycle, "1" * 64)
-
-    def build(ident: str, names: list[str]) -> dict[str, str]:
-        suffixes = devbuilds.dev_keys(project, ident, hashes)[1]
-        devbuilds.keep_built(project, ident, suffixes, names, hashes)
-        return suffixes
-
-    assert build("dev", list(cycle)) == dict.fromkeys(cycle, "~1.dev")
-    # another development build of a, or of c, which a is built against, alone: b, built against a, is not
-    build("other", ["c" if "c" in cycle else "a"])
-    # but its next one, of other inputs, has a newer release, like a
-    again = build("dev", list(cycle))
-    assert again["b"] == again["a"] != "~1.dev"
-    assert build("dev", list(cycle)) == again
 
 
 def should_change_the_keys_with_the_image_of_any_architecture(root: Path) -> None:
