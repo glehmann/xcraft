@@ -397,15 +397,22 @@ def should_destroy_the_vm_but_keep_a_given_disk(root: Path, tmp_path: Path, echo
     assert "no VM session" in output
 
 
+def should_use_the_first_free_ssh_port_by_default() -> None:
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        port = taken.getsockname()[1]
+        # after those in use, like by another VM
+        assert not vm.port_free(port)
+        assert vm.free_port(port) > port
+
+
 def should_refuse_an_ssh_port_in_use(root: Path, tmp_path: Path) -> None:
     with socket.socket() as taken:
         taken.bind(("127.0.0.1", 0))
         taken.listen()
         port = taken.getsockname()[1]
-        # the first free one by default, after those in use, like by another VM
-        assert not vm.port_free(port)
-        assert vm.free_port(port) > port
-        # and an error for one given in use, before making anything
+        # before making anything
         iso = tmp_path / "installer.iso"
         iso.write_bytes(bytes(2048))
         code, output = xcraft("boot", "--iso", str(iso), "--bios", "--accel", "tcg", "--ssh-port", str(port))

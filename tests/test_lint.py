@@ -23,9 +23,15 @@ def edit(path: Path, old: str, new: str) -> None:
     path.write_text(text.replace(old, new, 1))
 
 
-def should_fail_final_builds_when_the_spec_has_errors(root: Path) -> None:
+def _spec_error(root: Path) -> Path:
+    """Return the spec of trivial, given an error of rpmlint, use-of-RPM_SOURCE_DIR."""
     spec = root / "base/trivial/trivial.spec"
     edit(spec, "%build\ncd %{name}-%{version}", "%build\ncd %{name}-%{version} && ls $RPM_SOURCE_DIR")
+    return spec
+
+
+def should_report_the_errors_of_the_specs(root: Path) -> None:
+    spec = _spec_error(root)
     code, output = xcraft("lint", "trivial")
     assert code == 1, output
     assert f"{spec}:16: E: use-of-RPM_SOURCE_DIR" in output
@@ -38,6 +44,10 @@ def should_fail_final_builds_when_the_spec_has_errors(root: Path) -> None:
     code, output = xcraft("lint", "--spec", str(root / "xcraft.toml"))
     assert code == 2, output
     assert "not in the directory of a package" in output
+
+
+def should_fail_final_builds_when_the_spec_has_errors(root: Path) -> None:
+    _spec_error(root)
     # shown before the development builds, which go on
     code, output = xcraft("build", "trivial")
     assert code == 0, output
@@ -46,7 +56,11 @@ def should_fail_final_builds_when_the_spec_has_errors(root: Path) -> None:
     code, output = xcraft("build", "--final", "trivial")
     assert code == 1, output
     assert "✗ trivial: rpmlint found errors in its spec" in output
-    # filtered by the project, out of the package directory
+
+
+def should_filter_the_errors_of_the_specs_as_configured(root: Path) -> None:
+    _spec_error(root)
+    # by the project, out of the package directory
     (root / "lint/trivial.rpmlintrc").write_text('addFilter("use-of-RPM_SOURCE_DIR")\n')
     code, output = xcraft("lint", "trivial")
     assert code == 0, output

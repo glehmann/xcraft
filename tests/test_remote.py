@@ -182,10 +182,10 @@ def root(
     return root
 
 
-def should_share_pushed_isos_with_snapshots_and_checkouts(
-    root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    project = Project.find()
+def _pushed_iso(project: Project, tmp_path: Path) -> tuple[Signer, Path, Path]:
+    """Push the ISO of a cached image, signed with the key of the builds of the storage, like those of CI, see root(),
+    and return that key, the image, and the tree of its cache.
+    """
     signer = release_signer(project)
     assert signer
     image = tmp_path / "test.iso"
@@ -194,6 +194,14 @@ def should_share_pushed_isos_with_snapshots_and_checkouts(
     code, output = xcraft("push", "isos")
     assert code == 0, output
     assert "1 ISOs pushed" in output
+    return signer, image, tree
+
+
+def should_copy_pushed_isos_to_snapshots_rather_than_upload_them(
+    root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    project = Project.find()
+    signer, image, _ = _pushed_iso(project, tmp_path)
     assert "0 ISOs pushed, 1 already" in xcraft("push", "isos")[1]
     storage = project.config.remote["dev"]
     snapshot = tmp_path / "snapshot"
@@ -212,16 +220,26 @@ def should_share_pushed_isos_with_snapshots_and_checkouts(
     sums = tmp_path / upload.SUMS
     assert remote.download(storage, f"isos/9.0/{STAGE}/cache-reuse/{upload.SUMS}", sums)
     assert sums.read_text() == f"{sha256_of(image)}  {published.name}\n"
+
+
+def should_fetch_pushed_isos_without_preparing_the_checkout(root: Path, tmp_path: Path) -> None:
+    project = Project.find()
+    signer, image, tree = _pushed_iso(project, tmp_path)
     shutil.rmtree(project.state / "cache")
     # No snapshot, RPMs, prepared container state or signing operations are needed to fetch the image.
     project.frozen = True
     assert checkout_iso(project, signer=signer).read_bytes() == image.read_bytes()
     assert tree.exists()
-    # signed with the key of the builds of the storage, like those of CI, see root(): a checkout signing with another
-    # key, like the developer's, gets it rather than making it, the file of its cache rather than a copy
+    # a checkout signing with another key, like the developer's, gets it rather than making it, the file of its cache
+    # rather than a copy
     assert checkout_iso(project, signer=Signer("0" * 40), published=True).samefile(tree / "image.iso")
     assert not (project.state / "publish").exists()
     assert not (project.state / "cache/builds").exists()
+
+
+def should_not_fetch_isos_changed_in_the_storage(root: Path, tmp_path: Path) -> None:
+    project = Project.find()
+    signer, _, tree = _pushed_iso(project, tmp_path)
     shutil.rmtree(tree)
     key = iso_key(project, netinstall=False, volid=None, signer=signer)
     storage = project.config.remote["dev"]
@@ -236,15 +254,20 @@ def should_share_pushed_isos_with_snapshots_and_checkouts(
     assert not tree.exists()
 
 
-def should_fetch_the_source_archives_pushed_to_the_storage(
-    root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def _source_archive(root: Path, tmp_path: Path) -> tuple[Path, str]:
+    """Return a new source archive of trivial, in the source cache and its manifest, and its SHA-256."""
     archive = tmp_path / f"trivial-{secrets.token_hex(4)}.tar.gz"
     archive.write_text(archive.name)
-    cache = Project.find().source_cache
-    digest = cache_source(cache, archive)
+    digest = cache_source(Project.find().source_cache, archive)
     write_manifest(root / "base/trivial/sources", {archive.name: digest})
+    return archive, digest
 
+
+def should_push_the_source_archives_missing_from_the_storage(
+    root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    archive, digest = _source_archive(root, tmp_path)
+    cache = Project.find().source_cache
     code, output = xcraft("push", "sources", "--check", "--to", "main")
     assert code == 1
     assert f"✗ {archive.name} is not in the remote storage" in output
@@ -260,6 +283,11 @@ def should_fetch_the_source_archives_pushed_to_the_storage(
     assert xcraft("push", "--to", "main")[0] == 1  # sources are uploaded before reporting the missing builds
     assert xcraft("push", "sources", "--check", "--to", "main") == (0, "1 archives in the remote storage, 0 missing\n")
 
+
+def should_download_the_pushed_source_archives(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    archive, digest = _source_archive(root, tmp_path)
+    assert xcraft("push", "sources", "--to", "main")[0] == 0
+    cache = Project.find().source_cache
     # a fresh checkout downloads it
     shutil.rmtree(cache)
     assert (prepare_tree(Project.find(), "trivial") / "SOURCES" / archive.name).read_text() == archive.name
@@ -273,7 +301,13 @@ def should_fetch_the_source_archives_pushed_to_the_storage(
         assert xcraft("fetch", "sources") == (0, "all the source archives are in the source cache\n")
     assert any(m.startswith(f"downloading {WEB}/.xcraft/sources/{digest}/") for m in caplog.messages)
     assert (cache / digest / archive.name).read_text() == archive.name
-    # and checks it
+
+
+def should_check_the_downloaded_source_archives(root: Path, tmp_path: Path) -> None:
+    archive, digest = _source_archive(root, tmp_path)
+    assert xcraft("push", "sources")[0] == 0
+    assert xcraft("push", "sources", "--to", "main")[0] == 0
+    cache = Project.find().source_cache
     shutil.rmtree(cache)
     storage = Project.find().config.remote.get("main")
     assert storage
@@ -522,11 +556,15 @@ def should_protect_the_main_storage_from_developer_uploads(
     assert not remote.exists(storage, path)
 
 
-def should_push_and_fetch_with_the_dev_bucket_only(root: Path, tmp_path: Path) -> None:
-    config = unsigned()
-    config = re.sub(r"\[remote.main\]\n.*?(?=\[remote.dev\])", "", config, flags=re.DOTALL)
+def _dev_only(root: Path) -> tuple[str, Signer]:
+    """Configure the project with the dev bucket only, and return that configuration, and the developer's key made."""
+    config = re.sub(r"\[remote.main\]\n.*?(?=\[remote.dev\])", "", unsigned(), flags=re.DOTALL)
     (root / "xcraft.toml").write_text(config)
-    signer = create_dev_key(Project.find(), "Developer")
+    return config, create_dev_key(Project.find(), "Developer")
+
+
+def should_push_and_fetch_sources_with_the_dev_bucket_only(root: Path, tmp_path: Path) -> None:
+    _dev_only(root)
     archive = tmp_path / f"source-{secrets.token_hex(4)}"
     archive.write_text("developer source")
     digest = cache_source(Project.find().source_cache, archive)
@@ -535,8 +573,10 @@ def should_push_and_fetch_with_the_dev_bucket_only(root: Path, tmp_path: Path) -
     shutil.rmtree(Project.find().source_cache)
     assert xcraft("fetch")[0] == 0  # a developer-only configuration can fetch sources without a main bucket
     assert (Project.find().source_cache / digest / archive.name).read_text() == archive.read_text()
-    spec = root / "base/trivial/trivial.spec"
-    spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
+
+
+def should_push_and_fetch_builds_with_the_dev_bucket_only(root: Path) -> None:
+    _, signer = _dev_only(root)
     assert xcraft("build", "trivial", "--fetch=none")[0] == 0
     assert xcraft("push", "builds", "trivial")[0] == 0
     storage = Project.find().config.remote["dev"]
@@ -548,7 +588,10 @@ def should_push_and_fetch_with_the_dev_bucket_only(root: Path, tmp_path: Path) -
     code, output = xcraft("fetch", "builds", "trivial")
     assert code == 0, output
     assert "1 fetched" in output
-    # Compiler caches also fall back to dev when main cannot be reached.
+
+
+def should_fetch_compiler_caches_from_dev_when_main_is_unreachable(root: Path) -> None:
+    config, _ = _dev_only(root)
     (root / "xcraft.toml").write_text(config + '\n[remote.main]\nurl = "http://localhost:1"\n')
     cache = root / ".xcraft/ccache/trivial"
     (cache / "0").mkdir(parents=True, exist_ok=True)  # like those of ccache
@@ -558,7 +601,12 @@ def should_push_and_fetch_with_the_dev_bucket_only(root: Path, tmp_path: Path) -
     code, output = xcraft("fetch", "ccache", "trivial")
     assert code == 0, output
     assert (cache / "0/entry").read_text() == "cached object"
-    (root / "xcraft.toml").write_text(re.sub(r"\[remote.dev\]\n.*?(?=\[publish\])", "", config, flags=re.DOTALL))
+
+
+def should_refuse_to_push_without_the_dev_bucket(root: Path) -> None:
+    (root / "xcraft.toml").write_text(
+        re.sub(r"\[remote.dev\]\n.*?(?=\[publish\])", "", _dev_only(root)[0], flags=re.DOTALL)
+    )
     code, output = xcraft("push", "sources")
     assert code == 2
     assert "remote.dev" in output
@@ -775,12 +823,9 @@ def should_fetch_resolutions_rather_than_resolving_again(root: Path, monkeypatch
     assert sorted(resolved.rglob("*.json")) == caches
 
 
-def should_fetch_pushed_builds_rather_than_building_them(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_list_the_pushed_builds_in_browsable_pages(root: Path) -> None:
     assert xcraft("build", "trivial")[0] == 0
-    assert (
-        xcraft("push", "builds", "trivial", "--to", "main")[1]
-        == "↑ trivial\n1 pushed, 0 already in the remote storage\n"
-    )
+    assert xcraft("push", "builds", "trivial", "--to", "main")[0] == 0
     # browsable, as the storage does not list directories
     assert 'href=".xcraft/"' in page("")
     assert 'href="builds/"' in page(".xcraft/")
@@ -793,6 +838,14 @@ def should_fetch_pushed_builds_rather_than_building_them(root: Path, monkeypatch
         r'href="builds/">builds/</a></td><td data-k="[1-9]\d*"[^>]*>[\d.]+ \w+</td><td data-k="\d{4}-', page(".xcraft/")
     )
     assert xcraft("push", "index", "--to", "main")[1].endswith(" pages\n")
+
+
+def should_fetch_pushed_builds_rather_than_building_them(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert xcraft("build", "trivial")[0] == 0
+    assert (
+        xcraft("push", "builds", "trivial", "--to", "main")[1]
+        == "↑ trivial\n1 pushed, 0 already in the remote storage\n"
+    )
     assert xcraft("push", "builds", "--to", "main") == (
         1,
         "0 pushed, 1 already in the remote storage\nnot built: with-deps",
@@ -1143,7 +1196,7 @@ def should_index_the_source_packages_reused_from_the_latest_snapshot(root: Path,
     assert all(sha256_of(srpm) in indexed for srpm in sources.glob("*.src.rpm"))
 
 
-def should_publish_dated_and_latest_snapshots_of_all_architectures(root: Path) -> None:  # noqa: PLR0915
+def should_publish_dated_and_latest_snapshots_of_all_architectures(root: Path) -> None:
     # the architectures the host runs, built for all: two on x86_64
     arches = [ARCH, "x86_64"] if ARCH == "x86_64_v2" else [ARCH]
     platforms = ", ".join(f'"{p}"' for p in [PLATFORM, "linux/amd64"][: len(arches)])
@@ -1193,10 +1246,13 @@ def should_publish_dated_and_latest_snapshots_of_all_architectures(root: Path) -
         assert code == 0, output
         assert "warning" not in output
         assert sorted(p.name for p in (root / ".xcraft/publish/base").iterdir()) == ["Source", "x86_64"]
-    # what our packages need at runtime is locked when preparing, like the build roots
+
+
+def should_lock_what_is_published_when_preparing(root: Path) -> None:
+    # what our packages need at runtime, like the build roots
     (root / "xcraft.toml").write_text(f'{REMOTE}extra = ["bc"]\n')
-    assert xcraft("build", "--dry-run")[0] == 0  # the lock of the architecture left
-    buildid.update(Project.find())  # and the build IDs, which cover all the architectures
+    assert xcraft("build", "--dry-run")[0] == 0
+    buildid.update(Project.find())  # and the build IDs
     (root / "xcraft.toml").write_text(REMOTE)
     # the options of publish apply to its subcommands too, given before them
     for args in (["publish", "--locked", "--local"], ["publish", "--locked", "--local", "repos"],
@@ -1204,9 +1260,14 @@ def should_publish_dated_and_latest_snapshots_of_all_architectures(root: Path) -
         code, output = xcraft(*args)
         assert code == 1
         assert re.search(rf"--locked forbids: .*-runtime\.{ARCH} bc\b", output)
-    # the upstream packages must be signed with the keys of the repositories
+
+
+def should_refuse_upstream_packages_not_signed_by_their_repositories(root: Path) -> None:
     (root / "xcraft.toml").write_text(f'{REMOTE}extra = ["bc"]\n')
+    assert xcraft("build", "trivial")[0] == 0
+    bc = resolve_image(Project.find()).packages["bc"]
     srpm = root / f".xcraft/cache/srpms/bc-{bc.evr}.src.rpm"
+    srpm.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(next(root.glob(f".xcraft/cache/builds/*/{ARCH}/trivial/*/SRPMS/*.src.rpm")), srpm)
     code, output = xcraft("publish", "--local")
     assert code == 1
@@ -1311,8 +1372,13 @@ def should_start_maintenance_branches_at_the_latest_published_commit(root: Path)
     with pytest.raises(subprocess.CalledProcessError):
         git(root, "rev-parse", "-q", "--verify", "fix/xsa-123")
     assert "no published snapshot in repos/9.0/nothing/latest" in xcraft("maint", "start", "--stage", "nothing")[1]
-    # whose embargo branches are maintenance ones
-    config.write_text(f'embargo_branches = ["other/*"]\n{config.read_text()}')
+
+
+def should_refuse_embargo_branches_that_are_not_maintenance_ones(root: Path) -> None:
+    config = root / "xcraft.toml"
+    config.write_text(
+        f'maintenance_branches = ["maint/*", "embargo/*"]\nembargo_branches = ["other/*"]\n{config.read_text()}'
+    )
     code, output = xcraft("status")
     assert code == 1
     assert "embargo_branches must be maintenance_branches too: other/*" in output
@@ -1977,7 +2043,7 @@ def should_reject_stages_that_are_not_plain_names(root: Path) -> None:
     assert "stage must start" in " ".join(output.split())
 
 
-def should_fetch_the_isos_of_a_publication_from_the_storage(root: Path, tmp_path: Path) -> None:
+def should_fetch_the_isos_of_a_publication_but_the_corrupted_ones(root: Path, tmp_path: Path) -> None:
     project = Project.find()
     signer = release_signer(project)
     assert signer
@@ -1999,7 +2065,14 @@ def should_fetch_the_isos_of_a_publication_from_the_storage(root: Path, tmp_path
         root / "xcraft.toml",
     )
     assert not fetch_isos(project, signer=signer)
-    # the inputs of the netinstall ISOs too, without the others
+
+
+def should_publish_the_inputs_of_netinstall_isos_without_the_others(root: Path, tmp_path: Path) -> None:
+    project = Project.find()
+    signer = release_signer(project)
+    assert signer
+    image = tmp_path / "test.iso"
+    image.write_bytes(secrets.token_bytes(2048))
     snapshot = tmp_path / "snapshot"
     netinstall = snapshot / "iso" / iso_name(project, netinstall=True, signer=signer)
     netinstall.parent.mkdir(parents=True)
@@ -2092,12 +2165,18 @@ def should_show_the_sizes_of_nested_directories_in_their_pages(root: Path, tmp_p
     remote_pages.update_pages(Project.find(), storage, ["nested/a/", "nested/"])
     assert 'href="b/">b/</a></td><td data-k="1000"' in page("nested/a/")
     assert 'href="a/">a/</a></td><td data-k="1000"' in page("nested/")
-    # and the logo of the project, if any
-    assert "<img" not in page("nested/")
+
+
+def should_show_the_logo_of_the_project_in_the_pages(root: Path, tmp_path: Path) -> None:
+    storage = Project.find().config.remote["main"]
+    (tmp_path / "file").write_bytes(b"x" * 1000)
+    remote.upload(storage, "logo/file", tmp_path / "file")
+    remote_pages.update_pages(Project.find(), storage, ["logo/"])
+    assert "<img" not in page("logo/")
     before, sep, after = (root / "xcraft.toml").read_text().partition("\n[")
     (root / "xcraft.toml").write_text(f'{before}logo = "https://xcp-ng.org/assets/img/mainlogo.png"\n{sep}{after}')
-    remote_pages.update_pages(Project.find(), storage, ["nested/"])
-    assert '<img src="https://xcp-ng.org/assets/img/mainlogo.png" alt="">' in page("nested/")
+    remote_pages.update_pages(Project.find(), storage, ["logo/"])
+    assert '<img src="https://xcp-ng.org/assets/img/mainlogo.png" alt="">' in page("logo/")
 
 
 def should_read_directory_totals_through_a_proxy(root: Path, tmp_path: Path) -> None:

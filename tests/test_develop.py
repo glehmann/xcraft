@@ -94,7 +94,7 @@ def tree(tmp_path: Path) -> Path:
     return tree
 
 
-def should_build_from_the_tree_as_it_is_until_stopped(root: Path, tree: Path) -> None:
+def should_build_from_the_tree_as_it_is(root: Path, tree: Path) -> None:
     builds = (root / "xcraft.builds").read_text()
     sources = root / ".xcraft/build/trivial/BUILD/trivial-1.0"
     sources.mkdir(parents=True)
@@ -135,9 +135,13 @@ def should_build_from_the_tree_as_it_is_until_stopped(root: Path, tree: Path) ->
     assert not (sources / "new.in").exists()
     # never in the build IDs, which are of git
     assert (root / "xcraft.builds").read_text() == builds
-    # nor in the final builds
+
+
+def should_refuse_final_builds_until_developing_stops(root: Path, tree: Path) -> None:
+    assert xcraft("key", "create")[0] == 0  # which the development builds make, to sign the final ones with
+    assert xcraft("develop", str(tree))[0] == 0
     code, output = xcraft("build", "--final", "trivial")
-    assert code == 1
+    assert code == 1, output
     assert "final builds with packages developed from trees, trivial: xcraft develop --stop first" in output
     code, output = xcraft("develop", "--stop")
     assert code == 0, output

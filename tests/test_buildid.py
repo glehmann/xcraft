@@ -90,7 +90,7 @@ def should_number_again_the_packages_of_merge_conflicts(tmp_path: Path, monkeypa
         buildid.read(Project.find())
 
 
-def should_number_the_builds_and_forbid_new_numbers_when_locked(root: Path) -> None:
+def should_number_the_builds_until_locked(root: Path) -> None:
     (root / "xcraft.toml").write_text(f'{TOML}installer = ["bash"]\n')  # for the ISO
     code, output = xcraft("build")
     assert code == 0, output
@@ -294,7 +294,7 @@ def should_number_jj_maintenance_bookmarks_like_branches(
     assert update() == {"trivial": 2, "with-deps": 2}
 
 
-def should_refuse_maintenance_numbers_merged_by_fast_forward(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_number_a_fix_after_its_target_when_master_did_not_move(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     commit_base(root)
     git(root, "checkout", "-qb", "maint/9.0")
     git(root, "checkout", "-qb", "fix")
@@ -310,7 +310,14 @@ def should_refuse_maintenance_numbers_merged_by_fast_forward(root: Path, monkeyp
     assert update() == {"trivial": 2, "with-deps": 2}
     assert xcraft("--maintenance", "maint/9.0", "build", "--ids")[0] == 0
     assert buildid.read(Project.find())["trivial"].build == "1.1"
-    monkeypatch.delenv("XCRAFT_MAINTENANCE")
+
+
+def should_refuse_maintenance_numbers_merged_by_fast_forward(root: Path) -> None:
+    commit_base(root)
+    git(root, "checkout", "-qb", "maint/9.0")
+    git(root, "checkout", "-qb", "fix")
+    edit(root, "fix")
+    assert xcraft("--maintenance", "maint/9.0", "build", "--ids")[0] == 0
     git(root, "commit", "-qam", "fix")
     git(root, "checkout", "-q", "maint/9.0")
     git(root, "merge", "-q", "--no-ff", "fix")

@@ -74,9 +74,7 @@ def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return root
 
 
-def should_import_the_history_of_a_packaging_repository(
-    root: Path, upstream: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def should_import_the_history_of_a_packaging_repository(root: Path, upstream: Path) -> None:
     url = f"file://{upstream}"
     result = runner.invoke(app, ["import", "foo", "--url", url])
     assert result.exit_code == 0, result.output
@@ -108,6 +106,13 @@ def should_import_the_history_of_a_packaging_repository(
     git(root, "merge", "-q", "--no-edit", "import/foo/master")
     assert git(root, "log", "--format=%s", "--", "base/foo/foo.spec").splitlines() == ["update", "update"]
 
+
+def should_add_the_new_commits_when_importing_again(
+    root: Path, upstream: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    url = f"file://{upstream}"
+    assert runner.invoke(app, ["import", "foo", "--url", url]).exit_code == 0
+    master = git(root, "rev-parse", "import/foo/master")
     # the same commits, with the new ones on top, without a git maintenance for each fetch
     commit_files(upstream, {"SPECS/foo.spec": "Name: foo\nVersion: 2.0\nRelease: 2\n"})
     monkeypatch.setenv("GIT_TRACE", str(tmp_path / "trace"))
@@ -231,12 +236,15 @@ def should_import_repositories_of_other_layouts(root: Path, tmp_path: Path) -> N
     assert git(root, "show", f"{commits[1]}:base/bar/sources") == f"{digest}  bar-1.0.tar.gz"
 
 
-def should_import_into_the_given_repository_of_the_project(root: Path, upstream: Path) -> None:
+def should_reject_invalid_import_arguments(root: Path, upstream: Path) -> None:
     assert "no package given" in runner.invoke(app, ["import"]).output
     assert "--url applies to a single package" in runner.invoke(app, ["import", "a", "b", "--url", "x"]).output
     assert "not package names: '..'" in runner.invoke(app, ["import", "..", "--url", "x"]).output
     result = runner.invoke(app, ["import", "foo", "--url", f"file://{upstream}", "--repo", "xostor"])
     assert "xostor is not a repository of the project: base" in result.output
+
+
+def should_import_into_the_given_repository_of_the_project(root: Path, upstream: Path) -> None:
     (root / "xcraft.toml").write_text(f'repositories = ["base", "xostor"]\n{(root / "xcraft.toml").read_text()}')
     result = runner.invoke(
         app, ["import", "foo", "--url", f"file://{upstream}", "--repo", "xostor", "--branch", "XS-9.0"]
