@@ -4,7 +4,8 @@ Run as root in the build environment, with the tools making the ISO installed: `
 JSON object of ``snapshot``, the binaries of the snapshot for the architecture, ``templates``, the files of the ISO,
 of install.img, and the hook, ``tree``, the directory to make, ``installer`` and ``packages`` (see
 xcraft.project.Iso), ``netinstall``, ``signed``, ``keys``, the files of the keys: ours first, when signed, then
-those of the repositories, and the ``name`` and ``version`` of the distribution. The tree gets the owner of the config,
+those of the repositories, the ``name`` and ``version`` of the distribution, and ``roots``, the cache of the root
+filesystems of install.img before the hook, see installed_root(). The tree gets the owner of the config,
 even when it fails.
 
 The hook, ``hook <stage> <dir> <hook.json>``, makes what is particular to the distribution: ``installimg``, on the root
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -133,11 +135,23 @@ def kernel(root: Path) -> Path:
     return extract(name, f".{path}") / path.lstrip("/")
 
 
-def install_img(dest: Path) -> None:
-    """Make the installer's root filesystem, as a cpio archive compressed with zstd, and copy its kernel to
-    boot/vmlinuz.
+def installed_root(root: Path) -> None:
+    """Install the installer's packages in `root`, without the firmware files no driver names, or extract them from
+    the cache of the roots, `roots` in the config, by the packages they install: the same while only the packages of
+    the ISO change, or our packages the hook adds.
     """
-    root, cache = Path(tempfile.mkdtemp()), tempfile.mkdtemp()  # a cache of its own, see installable.py
+    installed = resolver(config["installer"]).transaction.install_set
+    key = hashlib.sha256(
+        json.dumps([
+            Path(__file__).read_text(), config["installer"],
+            sorted(f"{p.location} {p.chksum}" for p in installed),
+        ]).encode()
+    ).hexdigest()  # fmt: skip
+    cached = Path(config["roots"]) / f"{key}.tar.zst"
+    if cached.exists():
+        sh("tar", "-I", "zstd", "--numeric-owner", "-xf", cached, "-C", root)
+        return
+    cache = tempfile.mkdtemp()  # a cache of its own, see installable.py
     sh(
         "dnf", "-q", "-y", f"--installroot={root}", "--disableplugin=*", "--disablerepo=*",
         f"--repofrompath=snapshot,{snapshot}", f"--releasever={dnf.rpm.detect_releasever('/')}",
@@ -151,6 +165,19 @@ def install_img(dest: Path) -> None:
     for f in (root / "usr").rglob("*.py[co]"):
         f.unlink()
     prune_firmware(root)
+    partial = cached.with_name(f".{cached.name}.{os.getpid()}")
+    sh("tar", "-I", "zstd -q -T0", "--numeric-owner", "-cf", partial, "-C", root, ".")
+    owner = Path(sys.argv[1]).stat()  # like the tree, see give_back()
+    os.chown(partial, owner.st_uid, owner.st_gid)
+    partial.rename(cached)  # whole, for another command at the same time
+
+
+def install_img(dest: Path) -> None:
+    """Make the installer's root filesystem, as a cpio archive compressed with zstd, and copy its kernel to
+    boot/vmlinuz.
+    """
+    root = Path(tempfile.mkdtemp())
+    installed_root(root)
     (root / "init").symlink_to("/sbin/init")
     copy_templates(templates / "installimg", root, symlinks=True)
     hook("installimg", root)

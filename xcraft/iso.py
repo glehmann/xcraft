@@ -324,16 +324,18 @@ def _assemble_iso(
                     "/work/key.asc", *(f"/work/signer-{i}.asc" for i in range(len(signers))),
                     *(key_paths(project, work) if keep else []),
                 ] if signer else [],
-                "name": iso.name, "version": iso.version,
+                "name": iso.name, "version": iso.version, "roots": "/roots",
             })
         )  # fmt: skip
+        roots = project.state / "cache/installroots" / project.arch
+        roots.mkdir(parents=True, exist_ok=True)
         volumes = [f"{snapshot}:/snapshot:ro", f"{project.root / 'iso'}:/templates:ro", f"{work}:/work"]
         container.run(
             project,
             "iso",
             f"{_INSTALL_TOOLS} && {container.DNF_LOCK} python3 /xcraft/record.py /work/tools.json"
             " && sudo python3 /xcraft/iso.py /work/config.json",
-            volumes=volumes,
+            volumes=[*volumes, f"{roots}:/roots"],
             show="making the tree of the ISO",
             install=True,
         )

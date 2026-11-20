@@ -116,7 +116,8 @@ def routine_removal(
             if p not in read and p.stat().st_mtime < used_since
         ],
         "checks and downloads": [
-            state / "cache" / cache for cache in ("checks", "upstream", "rpms", "srpms", "extra", "keys")
+            state / "cache" / cache
+            for cache in ("checks", "upstream", "rpms", "srpms", "extra", "keys", "installroots")
         ],
         # but those of the steps, like _resolve.log
         "logs": [log for log in (state / "logs").glob("[!_]*.log") if log.stem not in project.package_dirs],

@@ -6,7 +6,8 @@ its architecture only, with nothing else to install, like
 
 - `install.img`, the installer's root filesystem, is installed from the snapshot: its packages, `[iso] installer` in
   `xcraft.toml`, are published with the others. The firmware files no driver names are removed, and the files of
-  `iso/installimg/` of the project are added, like its systemd units;
+  `iso/installimg/` of the project are added, like its systemd units. Its packages, once installed, are cached in
+  `.xcraft/cache/installroots/<arch>/`, by what they are: an ISO whose installer did not change installs nothing;
 - the boot files are its kernel, grub's image for CDs and its modules, from `grub2-efi-x64-cdboot` and
   `grub2-efi-x64-modules` of the snapshot, for UEFI, and isolinux, for BIOS, configured by the files of `iso/tree/`;
 - its repository has `[iso] packages`, like `xcp-ng-deps`, and what they need, signed like the snapshot, unless
