@@ -107,17 +107,18 @@ it.
 
 ### The buckets
 
-The copy of the ci bucket, `.xcraft/upstream/` there, is the reference, written by CI on the main branch only, with the
-CI key: see ci-secret-management-design.md for the buckets. Until they are set up, the ci bucket is the main one.
+The copy of the main bucket, `.xcraft/upstream/` there, is the reference, written by CI on the main branch only, with
+the CI key: see ci-secret-management-design.md for the buckets.
 
-- **dev:** a developer pushes the packages of their lock the ci copy misses to the copy of the dev bucket.
+- **dev:** a developer pushes the packages of their lock the main copy misses to the copy of the dev bucket.
 - **pull requests:** no copy: they push nothing but their stage, in the dev bucket, see pr-ci-design.md, which has
   the upstream packages it publishes.
-- **release:** no copy. A release publishes a snapshot of the ci bucket, whose packages are in the ci copy already.
+- **release:** no copy. A release publishes a snapshot of the main bucket, whose packages are in the main copy
+  already.
 
 When a pull request is merged, CI on the main branch builds the packages it changed again, so it installs the pins of
-the new lock: the pin download, xcraft/buildenv/pin.py, takes them from the ci copy, or else from the upstream
-repositories. `xcraft push` then copies them to the ci copy, from the store of the runner.
+the new lock: the pin download, xcraft/buildenv/pin.py, takes them from the main copy, or else from the upstream
+repositories. `xcraft push` then copies them to the main copy, from the store of the runner.
 
 A version is then lost only if upstream drops it before the main branch's CI downloads it, the risk of the lock
 update itself.
@@ -130,9 +131,9 @@ publishes to. It does not fill the copy: on the main branch, `xcraft push` runs 
 it when a pinned package cannot be copied. Those the copy misses anyway, like in the dev bucket after a lock update on
 a developer's machine, are downloaded and uploaded with the snapshot, as before the copy.
 
-Publishing to the release bucket checks the ci copy instead, reading it only, with the public reads of the ci bucket:
-a release whose lock pins a package the ci copy misses is refused, so a released commit can always be built again,
-even if the release bucket only has what it publishes.
+Publishing to the release bucket checks the main copy instead, reading it only, with the public reads of the main
+bucket: a release whose lock pins a package the main copy misses is refused, so a released commit can always be built
+again, even if the release bucket only has what it publishes.
 
 ### Metadata
 

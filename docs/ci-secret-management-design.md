@@ -232,8 +232,8 @@ that job alone; the pull requests of forks never get one.
 The published stages, the ones hosts install, get a bucket of their own, the release bucket: written only by the
 release manager, then by the signing host of part 2, C1 or C2, with an S3 key allowed to write it and to read the main
 bucket, and nothing else. `[remote.release] build_keys` has the release key only. The main bucket keeps what CI writes:
-the builds, the sources, the compiler caches, and the `incoming` stage, signed with the CI key; it becomes the ci
-bucket, named after its writer like the others.
+the builds, the sources, the compiler caches, and the `incoming` stage, signed with the CI key, and keeps its name:
+main, dev, and release, the three buckets.
 
 - **The CI's S3 key cannot touch the releases**: today it can delete or replace anything of the main bucket, the
   published stages included. Its theft then costs the main bucket's availability, which can be made again, not what
@@ -252,9 +252,9 @@ key signs what the builds signed by the CI key contain: see [What the release ke
 The dev bucket follows the same rule: the developers write it, each trusting their own key, and so does the CI of the
 pull requests, as a developer, with the PR key, see [the CI of pull requests](pr-ci-design.md#signing-and-trust).
 
-### Not a stage of the ci bucket
+### Not a stage of the main bucket
 
-A release stage of the ci bucket, signed with the release key, would keep the CI key from forging a release: the hosts
+A release stage of the main bucket, signed with the release key, would keep the CI key from forging a release: the hosts
 check the signatures of the packages and of the repositories' metadata. But not from deleting it, nor replacing it
 by an older release, as validly signed, which the hosts accept: Garage's S3 keys have rights by bucket, not by prefix,
 see part 3. xcraft trusts the keys of `build_keys` for a whole remote, the CI key with the release key. And the
@@ -283,6 +283,10 @@ again each time `latest/` changes. rsync would keep hard links, which S3 and HTT
 And a publication is not atomic: `_upload()` copies the changed files of `latest/` in the order of their names,
 `repomd.xml` among the others, and deletes the files of the previous snapshot in the same publication. A host updating
 meanwhile can read metadata whose packages are not copied yet, or lose a package being downloaded.
+
+The cumulative stages of [the publishing layout design](publishing-layout-design.md#the-cumulative-stages) replace
+the pool below: the mirrors copy `latest/` alone, which only grows, but by its retention, and publishing writes it in
+the same order.
 
 **A pool of packages.** The packages go once in `repos/<release>/pool/<arch>/`, by their file names, never changed;
 a snapshot only has its `repodata/`, whose packages are located in the pool by relative paths, `../../pool/...`:
@@ -335,10 +339,10 @@ directories, listing by the S3 API needing credentials: the mirrors follow the `
 [".xcraft/"]`, leaves `.xcraft/` out of the root page, and writes no page under it: the mirrors then only find
 `repos/`, `isos/` and their pages. The files under `.xcraft/` stay readable, signed, public data, and xcraft reads
 them by their paths and signed manifests, not through the pages. Moving them out of the release bucket would leave it
-only a few small files there, but changes the publication and the ISOs, and needs the ci bucket to trust the release
+only a few small files there, but changes the publication and the ISOs, and needs the main bucket to trust the release
 key for those trees: not worth it while hiding them is enough.
 
-The pool and the order of the writes apply to every bucket publishing, the ci bucket's `incoming` stage included,
+The pool and the order of the writes apply to every bucket publishing, the main bucket's `incoming` stage included,
 which they make cheaper to publish too.
 
 ## What it does not cover

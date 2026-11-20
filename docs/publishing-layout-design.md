@@ -2,10 +2,11 @@
 
 Status: the first three steps of the [order](#order) implemented: the builds signed at build and stored by signer,
 the upstream packages signed again in final mode, and the publications of dev mode and of the pull requests; the
-expiry of the snapshots of incoming and the release bucket to come. It gathers the questions of the publication of
-the pull requests, of the mirrors, of the release keys and of the signatures of our packages and of the upstream
-ones. It builds on [the buckets of the CI secrets
-design](ci-secret-management-design.md#4-a-bucket-for-the-releases) and [the CI of pull requests](pr-ci-design.md).
+expiry of the snapshots of incoming, the release bucket, the cumulative stages, the mirrors and the pruning of the
+builds to come. It gathers the questions of the publication of the pull requests, of the mirrors, of the rollbacks of
+the hosts, of the release keys and of the signatures of our packages and of the upstream ones. It builds on [the
+buckets of the CI secrets design](ci-secret-management-design.md#4-a-bucket-for-the-releases) and [the CI of pull
+requests](pr-ci-design.md).
 
 ## Snapshots and stages
 
@@ -22,7 +23,8 @@ upstream packages its lock pins, published together, at once, and never changed 
 
 A **stage** is a channel of snapshots, like `incoming`, a release's `stable`, or a pull request's `pr123`: each
 publication adds a dated snapshot, `repos/<release>/<stage>/<date>[.<n>]/`, with its ISOs in
-`isos/<release>/<stage>/<date>[.<n>]/`, and copies it as `latest/`, which the hosts and the mirrors use.
+`isos/<release>/<stage>/<date>[.<n>]/`, and copies it as `latest/`, which the hosts and the mirrors use; the `latest/`
+of a cumulative stage keeps older versions too, see [the cumulative stages](#the-cumulative-stages).
 
 ## The problems
 
@@ -46,7 +48,7 @@ publication adds a dated snapshot, `repos/<release>/<stage>/<date>[.<n>]/`, with
 6. **The originals of the upstream packages are kept.** With their upstream signatures, in the upstream copy, see
    [its design](upstream-mirror-design.md), or in a mirror: their signed copies cannot replace them.
 7. **The writers of the buckets.** The releases must be out of reach of the CI's credentials: a bucket of their own,
-   see the CI secrets design. The buckets are named after their writers, not after the keys.
+   see the CI secrets design. The main bucket is the one of CI, and of its key.
 
 ## Proposal
 
@@ -134,7 +136,7 @@ the publication of incoming and of the releases only, by our keys.
 ### Server-side copies
 
 A stage has all its files, copied server-side from the builds and the signed copies: those of incoming and of the
-releases from their bucket, those of the pull requests partly from the ci bucket, see below. The same layout for all
+releases from their bucket, those of the pull requests partly from the main bucket, see below. The same layout for all
 of them: mirrored as they are, and never broken by what happens to the builds or the copies.
 
 Garage v2.1.0 copies by reference, measured with 264 MiB of objects, uploaded whole and by parts: the copies, within a
@@ -145,8 +147,9 @@ of the server is to check, for the same behavior.
 ### Signatures
 
 Every snapshot is signed: its metadata by the key of the stage, its packages as said below. Publishing has no unsigned
-mode. The upstream packages are checked first, as now: their SHA-256 against the lock, their signatures against the
-keys of their repositories.
+mode, and neither have `xcraft iso`, `xcraft boot` and `xcraft push isos`: their `--unsigned` goes, dev mode
+generating a key. The upstream packages are checked first, as now: their SHA-256 against the lock, their signatures
+against the keys of their repositories.
 
 - **Incoming and the releases:** every package is signed by the key of the stage, the CI key or the release key of
   the major version. Incoming copies the builds of CI as they are, signed by the CI key, and the upstream packages
@@ -181,46 +184,211 @@ design](ci-secret-management-design.md).
 
 `xcraft publish --dev`, see [the CI of pull requests](pr-ci-design.md), signs nothing: the development builds, signed
 at build by the PR key, are files of the stage, not pushed as builds, as their counter is the run number, and they
-are used once. Master's builds and the upstream originals are copied server-side from the ci bucket, with its read
+are used once. Master's builds and the upstream originals are copied server-side from the main bucket, with its read
 given to the dev bucket's key of the pull requests: nothing is uploaded for them, and the stage has all its files. A
-final package the ci bucket does not have, master not having built it, is built by the run, signed by the PR key, and
-a file of the stage, as the development builds. An upstream package the ci copy does not have, that the pull request
+final package the main bucket does not have, master not having built it, is built by the run, signed by the PR key, and
+a file of the stage, as the development builds. An upstream package the main copy does not have, that the pull request
 adds or updates, is uploaded as it is from the store of the runner, as for every dev publication, see
 [signatures](#signatures). The ISOs, made from the files, download the copied packages.
 
+### The cumulative stages
+
+`dnf history rollback`, `undo` and `downgrade` need the older versions in an enabled repository: dnf does not take
+them from its cache, but with `keepcache=1` set before the update. A snapshot has the current versions only, so a host
+cannot go back. A stage can so be **cumulative**: its `latest/` has the packages of its latest snapshot, and the older
+versions the stage published, kept by a retention, with metadata over all of them. dnf updates to the newest version
+of each package, which are those of the latest snapshot: an updated host is the same either way, the older versions
+are only there to go back. It is how the repositories of RHEL and AlmaLinux are, cumulative within a minor release.
+
+A stage is cumulative when `xcraft.toml` gives it a retention, exact otherwise, like the stages of the pull requests
+and of the developers, whose hosts do not follow them over time:
+
+```toml
+[publish.stages.stable]
+retention = { days = 90, keep = 2 }
+
+[publish.stages.incoming]
+retention = { days = 30, keep = 1 }
+snapshot_days = 90
+```
+
+- **`days`:** how long a version stays once out of the latest snapshot; without it, for the life of the release.
+- **`snapshot_days`,** apart from the retention, of any stage, cumulative or not: how long its dated snapshots are
+  kept, but the latest one; without it, for the life of the release, as those of the releases, which hosts can pin.
+  It is also how long their builds are kept, see [removing what nothing refers to](#removing-what-nothing-refers-to):
+  a commit of master is a starting point without rebuilding for 90 days, which costs the metadata of the snapshots
+  only, where the rollbacks from incoming's `latest/` need 30 days.
+- **`keep`:** the versions always kept, the current one included, for the packages of the latest snapshot, by name
+  and architecture: a host updating once a quarter jumps over several versions, and the time alone would remove the
+  one it comes from. A package out of the latest snapshot, removed, renamed or no longer built for an architecture,
+  has the time rule only, and its versions go after `days`.
+- **By stage and release:** the history of a stage is what it published, its previous `latest/`, from its signed
+  inputs, and the new snapshot. The first publication of a stage, like the first `stable` of a release, has its
+  snapshot only: the versions of incoming that no host of the users installed never reach it. A new release,
+  `repos/<release>/`, starts empty the same way; a host updated by dnf goes back with the repositories of the previous
+  release, `--releasever`, while it is published.
+- **The source packages** follow their binaries: one goes with the last binary built from it, kept as long as one is.
+- **One name, one content:** a cumulative `latest/` cannot have two files of one name. Our build IDs make our
+  packages unique; an upstream package pinned again with other contents under the same NEVRA, see the problems,
+  replaces the previous one, which xcraft reports.
+- **Changing the configuration** applies at the next publication of the stage: from exact to cumulative, its history
+  starts there; from cumulative to exact, `latest/` loses its history; a shorter retention removes the versions past
+  it at once. `[publish] stage` stays the default stage, the tables only describe them.
+
+The dated snapshots stay exact: what one commit made, which its `contents.json`, its ISOs and `xcraft contents
+--diff-stage` describe, and not what a retention happened to keep that day. `latest/` is then not a copy of the latest
+snapshot anymore, but has metadata of its own, made again when its history changes, even when the retention only
+removes versions. Publishing it writes, in order:
+
+1. the new packages, new names nothing refers to yet;
+2. the metadata files, named after their checksums by createrepo_c, the metalinks, whose alternates have the previous
+   `repomd.xml`, then `repomd.xml` and its signature: a reader gets the previous repository or the new one, both
+   complete, but for the request between the two files;
+3. the manifest, last, with all the files;
+4. the deletions, of the versions past the retention only, and of the metadata files of the previous `repomd.xml`
+   at the next publication: no host needs a file the moment it is removed.
+
+So the pool of [the CI secrets design](ci-secret-management-design.md#mirrors-and-atomic-publication) is not
+needed: the mirrors copy `latest/` alone, see below, and it only grows, but by the retention.
+
+### The dated snapshots for the hosts
+
+The repository files of the hosts select the snapshot by a variable of dnf, `$snapshot`, in a file of
+`/etc/dnf/vars/`, which the package of the repositories installs, `%config(noreplace)`, with `latest`:
+
+```ini
+[xcp-ng-base]
+metalink=https://updates.xcp-ng.org/repos/9.0/stable/$snapshot/base/x86_64_v2/repodata/metalink.xml
+baseurl=https://updates.xcp-ng.org/repos/9.0/stable/$snapshot/base/x86_64_v2/
+```
+
+As dnf 4.20 of AlmaLinux 10.2 does it, tested with a metalink and local servers:
+
+- **Pinned:** `echo 2026-11-20 > /etc/dnf/vars/snapshot` keeps a host on a snapshot, until it is `latest` again. Once,
+  to test or reproduce a state, the URL is given, `--setopt=xcp-ng-base.metalink=<URL of the snapshot>`:
+  `DNF_VAR_snapshot` is ignored when the file exists, which it always does.
+- **Going back:** a host pinned to A then moved to B goes back from A, which has all its previous versions, with A in
+  the file for the time of `dnf history rollback <n>`. The hosts following `latest/` go back with its history.
+- **A cache by URL:** dnf keeps the metadata of each value of `$snapshot` in its own directory, `<repo>-<hash>`, and
+  takes those of the current value, with `-C` too.
+- **Without the file,** dnf keeps `$snapshot` as it is in the URL, and the repository fails, like a mistyped date.
+- **The metalink first, then `baseurl`:** with both, dnf uses the metalink, and `baseurl` only when it cannot
+  download it: with the metalink alone, our server down fails the repository. `baseurl` on our server too is so a
+  fallback for the metalink only, not for our server; on a mirror, the hosts would depend on it.
+- **A stale mirror is skipped:** dnf takes its `repomd.xml`, and its `primary`, then the next mirror, whose
+  `repomd.xml` matches the metalink: what a stale mirror costs is its metadata, downloaded for nothing.
+- **x86_64_v2** is written in the path, `$basearch` being x86_64 there: a repository file by architecture, or a
+  variable of ours in `/etc/dnf/vars/` too.
+- **The dated snapshots of a release are a public interface** once hosts can pin them: they are kept for the life of
+  the release, and the mirrors do not have them.
+
+### The mirrors
+
+The mirrors copy `latest/` of the stages of the releases, and of the ISOs, by rsync: the dated snapshots stay in our
+storage only, like vault.almalinux.org or Fedora's archives, and a mirror has one copy of the repository, which rsync
+updates by its new packages only. Garage serves S3 and HTTP only, and mirrorbits needs a file system too, so a
+**primary mirror** host has the copy the mirrors sync from:
+
+- **`xcraft mirror <stage> <dir>`** makes it from the public HTTP endpoint, without S3 credentials: it checks the
+  signed manifest of `latest/`, hard links the files whose SHA-256 it has already, downloads the others and checks
+  them against the manifest, in a new directory, then switches the symlink an rsync module serves, with `ln -sfn` and
+  `mv -T`. An rsync session sees one complete tree, checked before any mirror gets it, which the bucket cannot give,
+  as S3 writes no two objects at once. rclone hard links nothing, and compares by size and date, or by the MD5 of the
+  ETags, which multipart uploads do not have: a package signed again under the same name and size would be missed.
+- **Its files have the dates of the storage:** each one the `Last-Modified` of its object, which the HTTP endpoint
+  gives, and fixed modes, 0644 and 0755. The copy only depends on the bucket: made again from scratch, on a new host
+  or after a loss, it is the same for rsync, whose quick check compares sizes and dates, and the mirrors transfer
+  nothing again. A hard link has one date: a file is linked only to one of the same SHA-256 and the same date, and
+  downloaded otherwise.
+- **The copy is checked against the manifest,** which it has, as the mirrors do: `xcraft mirror --check <dir>`
+  checks its signature with the release keys only, then the SHA-256 of each file, reports the files the manifest does
+  not have, and downloads again the damaged ones, as a periodic timer of the host. Without xcraft, a mirror checks its
+  copy with our public key: `gpgv --keyring <keys> manifest.asc && gpg --decrypt manifest.asc | tail -n +2 |
+  sha256sum -c --quiet`, `gpg --decrypt` printing the text whatever the key, so after `gpgv` only. Publishing writes
+  the manifest of `latest/` last, after its metadata and its metalinks, so that it has all its files.
+- **It runs after each publication of a mirrored stage,** started by the CI, and periodically too, as a fallback.
+- **The mirrors sync with `rsync -a --delay-updates --delete-after`:** the changed files are put in place together at
+  the end, and what `latest/` deletes is past the retention, which no host needs anymore.
+
+The hosts find the mirrors with a **metalink**, which dnf supports as Fedora, EPEL and AlmaLinux use it: a file by
+repository, written by `xcraft publish` next to `repomd.xml`, `repodata/metalink.xml`, with the URL of `repomd.xml` on
+our server and on each mirror, its size and SHA-256, and those of the few previous ones, its alternates, for the
+mirrors a sync behind. dnf takes the repository from the first mirror whose `repomd.xml` matches, by `preference`, or
+by latency with `fastestmirror=True`, which the package of the repositories sets, and skips the stale or broken ones:
+a mirror can be late or slow, never wrong, the packages being checked by the metadata, and the metadata by their
+signature. The metalinks of the dated snapshots list our server alone. A static metalink sends every host the same
+list, without the routing by country of MirrorManager, enough for a few mirrors; the mirrors are a list of
+`xcraft.toml`, and changing it writes the metalinks again, without changing the repositories.
+
+Compared to mirrorbits, which redirects each file of XCP-ng 8:
+
+- our server serves a small file by refresh of the metadata, rather than a redirection by file;
+- a host gets all its repository from one mirror, checked against the hash of `repomd.xml`, where mirrorbits redirects
+  a file by what its last scan of the mirrors found, by size and date, a `repomd.xml` changed with the same size
+  included;
+- the routing by country, the health checks of the mirrors and the statistics are lost: a check of the `repomd.xml`
+  of each mirror against ours, and a `lastupdate` file by stage, tell their delay;
+- dnf only reads metalinks: mirrorbits stays for the ISOs and the network installs of the installer, which use plain
+  URLs, and whose files never change in place, which its scans then follow without risk.
+
 ### Removing what nothing refers to
+
+What is published is the reference: the builds of everything a kept publication has are kept, and the rest is
+removed. Keeping them costs their manifests only, Garage sharing the blocks of the copies, and any published state is
+a starting point for a fix, `xcraft maint start --at <commit>` finding all its builds, so that a security fix
+rebuilds only the patched package.
 
 - **The stages of the pull requests** are removed when they close, with `xcraft unpublish`, which leaves nothing
   behind: their files are their own, copies or development builds. They are the frequent removals.
-- **The dated snapshots of incoming,** one by push of master, expire after a retention, like 90 days, but the latest
+- **The dated snapshots of incoming,** one by push of master, expire after its `snapshot_days`, 90, but the latest
   and those of the releases, which are published from them. Their files are copies of the builds and of the signed
-  copies: their blocks are shared, so they cost their metadata only, and free nothing else.
+  copies: their blocks are shared, so they cost their metadata only, and free nothing else. Their retention is so the
+  one of the builds of master: an older commit is a starting point after rebuilding its packages.
+- **The dated snapshots of the releases** are kept for the life of the release, see the hosts above.
 - **The signed copies** are kept, like the originals; those of the release keys while the releases are.
-- **The remote builds** are not pruned: master's builds that no lock has anymore, and those the developers push to
-  the dev bucket, as now, see the open questions.
+- **The remote builds** are pruned by `xcraft prune --to <remote> [--keep-days N] [-n]`, a mark and sweep run by a
+  weekly job of CI, with the key of the bucket, as `xcraft clean` does for the local cache:
+  - **marked:** the builds of the inputs of each kept publication, its dated snapshots and `latest/`, and those whose
+    manifest was uploaded in the last N days, 15 by default, in every bucket: a grace period for a publication
+    running meanwhile, or failing, its builds waiting for the next one, over a weekend or holidays. What must last
+    longer is published, and kept by the retention of its stage, the embargoed builds included, in their private
+    bucket;
+  - **removed:** the other build trees, their manifest, their generations and their public key, and the generations
+    of the kept trees that their last manifest does not have, which are garbage already;
+  - **the other inputs of a starting point** follow the same rule: the source archives of `sources/` the manifests of
+    the marked builds list. The upstream originals and their signed copies are kept anyway; the images and the
+    resolutions are made again from the lock;
+  - **the branches whose builds matter publish:** master to incoming, at each push; a maintenance branch to the
+    incoming of its release, `[publish] release` telling them apart, so that the main bucket has no other stage; an
+    embargo branch to a private stage of `remote.private`. Their builds are otherwise
+    kept for the grace period only;
+  - **the dev bucket:** the open pull requests keep their builds by their stages, and the developers' pushes go after
+    the grace period;
+  - **the release bucket** is not pruned automatically: everything a supported release published is kept, and a
+    release is pruned by hand at its end of life.
+
+  `-n` shows what would go, and the space it would free: what no kept publication has, the builds never published, or
+  whose publications expired.
 
 ### The keys and the buckets
 
 | Bucket | Writers | Keys | Signed by them | Reads |
 |---|---|---|---|---|
-| ci | the CI of master | the CI key | the builds, the copies of the upstream packages | |
-| release | the release manager, or the signing host | a release key by major version | the builds, signed again, and the copies of the upstream packages | ci, for the releases |
-| dev | the developers, the CI of the pull requests | their keys | the builds | ci, for master's packages |
+| main | the CI of master | the CI key | the builds, the copies of the upstream packages | |
+| release | the release manager, or the signing host | a release key by major version | the builds, signed again, and the copies of the upstream packages | main, for the releases |
+| dev | the developers, the CI of the pull requests | their keys | the builds | main, for master's packages |
 
 The trust of xcraft follows: the build keys of a bucket are those of its writers. A release key signs only the trees
 of its major version, `repos/<release>/` and its copies: to bind, by `[publish] release`.
 
 ## Open questions
 
-- The retention of the dated snapshots of incoming, and whether the other stages of the ci bucket have one.
 - The binding of the release keys to their major versions in `xcraft.toml`, and whether the CI key is by major version
   too.
-- Whether a repository of all the versions, a flat repository, is published for the hosts, to install an older
-  version; the builds and the signed copies make it cheap, as metadata only.
-- Whether `xcraft iso`, `xcraft boot` and `xcraft push isos` keep `--unsigned`, now that dev mode generates a key.
-- The pruning of the remote builds, master's that no lock of a kept branch has, and the developers' in the dev
-  bucket.
 - The incoming stage of aarch64, which is not published yet: the pull requests need it, and the releases.
+- Whether `baseurl=` of the hosts is our server, a fallback for the metalink alone, or a mirror, the hosts then
+  depending on it when our server is down.
+- Whether a recent mirrorbits compares hashes, or excludes paths, for the files changed in place.
 
 ## Order
 
@@ -229,6 +397,9 @@ of its major version, `repos/<release>/` and its copies: to bind, by `[publish] 
    are wiped, as at a full rebuild: no migration of the unsigned builds.
 2. The copies of the upstream packages signed by the CI key, with the keys of incoming's hosts and ISOs reduced to
    ours, and the end of the unsigned publications.
-3. `xcraft publish --dev`, with the copies from the ci bucket, `xcraft unpublish`, then the CI of the pull requests.
+3. `xcraft publish --dev`, with the copies from the main bucket, `xcraft unpublish`, then the CI of the pull requests.
 4. The expiry of the dated snapshots of incoming.
 5. The release bucket, the release keys by major version, and their signed copies.
+6. The cumulative stages, and `xcraft prune`.
+7. The metalinks, `$snapshot` in the repository files, and `xcraft mirror` with the primary mirror host.
+8. The end of `--unsigned` for `xcraft iso`, `xcraft boot` and `xcraft push isos`.
