@@ -150,6 +150,15 @@ in `FILE`, as Markdown, where the snapshot and its ISOs are published, how a hos
 of the files of its development builds, like for the comment of a pull request.
 `xcraft unpublish --stage s` removes a stage, all its snapshots and ISOs, and what xcraft keeps of them, like the CI
 of a pull request once closed: its files are its own copies, which nothing else refers to.
+`xcraft prune` removes the builds of the remote storage whose packages no snapshot of the repositories has, of any
+stage, dated or latest, pushed more than `--keep-days` days ago, 15 by default, like a weekly job of CI with the key
+of the bucket: what is published stays a starting point for a fix, its builds kept as long as its snapshots, see
+`snapshot_days`, and the grace period covers a publication failing, its builds waiting for the next one. A latest
+snapshot without its manifest, while a cumulative one changes, keeps its builds by what it was made from. The ISOs
+keep no builds of their own: they are made from the packages of a snapshot of the repositories, and one kept longer
+than it is not a starting point anymore. The files of the earlier generations of the trees go too. `-n` shows what
+would go, and the space it would free. Like two publications, it must not run during one, which may copy a build it
+removes.
 
 Only one `xcraft publish` must run at a time on a storage, like in a CI job of its own: Garage has no conditional
 writes, so two publishes at the same time could take the same snapshot name, and mix their files.

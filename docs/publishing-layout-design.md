@@ -1,12 +1,12 @@
 # Design: the layout of the published repositories, and their signatures
 
-Status: the first four steps of the [order](#order) implemented, the cumulative stages of the sixth one, the
-metalinks of the seventh one, and the last one: the builds signed at build and stored by signer, the upstream packages
-signed again in final mode, the publications of dev mode and of the pull requests, the expiry of the dated snapshots,
-by `snapshot_days`, the cumulative stages, the metalinks, and the end of `--unsigned`; the release bucket, `xcraft
-mirror` and the pruning of the builds to come. It gathers the questions of the publication of the pull requests, of
-the mirrors, of the rollbacks of the hosts, of the release keys and of the signatures of our packages and of the
-upstream ones. It builds on [the
+Status: the first four steps of the [order](#order) implemented, the sixth one, the metalinks of the seventh one,
+and the last one: the builds signed at build and stored by signer, the upstream packages signed again in final mode,
+the publications of dev mode and of the pull requests, the expiry of the dated snapshots, by `snapshot_days`, the
+cumulative stages, `xcraft prune`, the metalinks, and the end of `--unsigned`; the release bucket and `xcraft mirror`
+to come. `xcraft prune` keeps the source archives for now. It gathers the questions of the publication of the pull
+requests, of the mirrors, of the rollbacks of the hosts, of the release keys and of the signatures of our packages and
+of the upstream ones. It builds on [the
 buckets of the CI secrets design](ci-secret-management-design.md#4-a-bucket-for-the-releases) and [the CI of pull
 requests](pr-ci-design.md).
 

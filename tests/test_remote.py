@@ -39,6 +39,7 @@ from xcraft import (
     container,
     metalink,
     pinned,
+    prune,
     remote,
     remote_pages,
     repodata,
@@ -55,7 +56,7 @@ from xcraft.lock import Pin, load_lock
 from xcraft.project import Project, Remote, Retention
 from xcraft.resolution import resolve_image
 from xcraft.rpmbuild import prepare_tree
-from xcraft.signing import Signer, check_signatures, create_dev_key, dev_signer, key_signer, release_signer
+from xcraft.signing import KEY_FILE, Signer, check_signatures, create_dev_key, dev_signer, key_signer, release_signer
 from xcraft.sources import SourceError, cache_source, sha256_of, source_path, write_manifest
 
 if TYPE_CHECKING:
@@ -1871,6 +1872,66 @@ def test_metalinks(root: Path, tmp_path: Path, *, cumulative: bool) -> None:
     assert (
         re.findall(r'<hash type="sha256">([0-9a-f]{64})</hash>', read(latest, metalink.FILE).decode()) == hashes[::-1]
     )
+
+
+@needs_gpg
+def test_prune(root: Path, tmp_path: Path) -> None:
+    # a bucket of its own: the others have the builds of the tests running meanwhile
+    garage("bucket", "create", bucket := f"xcraft-prune-{secrets.token_hex(4)}")
+    garage("bucket", "allow", "--read", "--write", bucket, "--key", "test")
+    garage("bucket", "website", "--allow", bucket)
+    web = f"http://{bucket}.web.garage.localhost:{WEB_PORT}"
+    (root / "xcraft.toml").write_text(REMOTE.replace(WEB, web).replace('bucket = "xcraft"\n', f'bucket = "{bucket}"\n'))
+    code, published_output = xcraft("publish", "repos", "--to", "main")
+    assert code == 0, published_output
+    project = Project.find()
+    storage, signer = project.config.remote["main"], release_signer(project)
+    assert signer
+    manifests = [f for f in remote.listing(storage, f"{prune.BUILDS}/") if f.endswith(f"/{remote.MANIFEST}")]
+    published = [f"{prune.BUILDS}/{f.removesuffix(f'/{remote.MANIFEST}')}" for f in manifests]
+    assert published
+    # a build no publication has, with the public key of its signer, like the publications, and one pushed again
+    # with other files, whose previous generation is garbage
+    unpublished, again = (f"{prune.BUILDS}/{signer.key}/{ARCH}/{name}/key" for name in ("unpublished", "again"))
+    for name in ("a.rpm", "b.rpm"):
+        (tmp_path / name).write_text(name)
+    (tmp_path / KEY_FILE).write_text(signer.public_key())
+    remote.upload_tree(storage, unpublished, tmp_path, ["a.rpm", KEY_FILE], signer=signer)
+    remote.upload_tree(storage, again, tmp_path, ["a.rpm"], signer=signer)
+    first = remote.read_tree(storage, again, trusted=signer)[0]
+    time.sleep(2)  # the dates of the storage are in seconds
+    between = datetime.now(UTC)
+    time.sleep(2)
+    remote.forget()
+    remote.upload_tree(storage, again, tmp_path, ["b.rpm"], signer=signer)
+    found = prune.pruned(storage, 0, between)
+    assert found.trees == [unpublished]
+    assert sorted(found.files) == sorted(
+        [f"{first}/a.rpm", *(f"{unpublished}/{f}" for f in remote.listing(storage, f"{unpublished}/"))]
+    )
+    # a dry run removes nothing
+    code, output = xcraft("prune", "--to", "main", "--keep-days", "0", "-n")
+    assert code == 0, output
+    assert f"would remove {unpublished}" in output
+    assert remote.listing(storage, f"{unpublished}/")
+    # a latest snapshot without its manifest, as while a cumulative one changes, keeps its builds by what it was
+    # made from, its dated snapshot gone
+    dated, latest = re.findall(r"published (repos/\S+), and as (repos/\S+)", published_output)[0]
+    upload.remove_trees(project, storage, [dated])
+    remote.delete(storage, [f"{latest}/{remote.MANIFEST}"])
+    # without grace, what no publication has goes: the published builds stay
+    code, output = xcraft("prune", "--to", "main", "--keep-days", "0")
+    assert code == 0, output
+    assert not remote.listing(storage, f"{unpublished}/")
+    assert not remote.listing(storage, f"{again}/")
+    remote.forget()
+    assert all(remote.tree_exists(storage, tree, trusted=signer) for tree in published)
+    with urllib.request.urlopen(f"{web}/{prune.BUILDS}/{signer.key}/{ARCH}/") as response:  # noqa: S310, the test garage
+        assert 'href="unpublished/"' not in response.read().decode()
+    # nothing more to prune
+    code, output = xcraft("prune", "--to", "main", "--keep-days", "0")
+    assert code == 0, output
+    assert "removed 0 builds, 0 files" in output
 
 
 @pytest.mark.parametrize("command", [[], ["repos"], ["isos"]])

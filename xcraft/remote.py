@@ -605,6 +605,22 @@ def _manifest(
     return checked[0], dict(checked[1])
 
 
+def unverified_manifest(storage: Remote, prefix: str) -> tuple[str, dict[str, str]] | None:
+    """Return the directory of the files of the tree `prefix`, and their SHA-256, from its manifest, without checking
+    its signature, or None: for what a forged manifest can only make keep more, like the pruning of the storage.
+    """
+    with tempfile.TemporaryDirectory(prefix="xcraft-manifest-") as tmp:
+        if not download(storage, f"{prefix}/{MANIFEST}", manifest := Path(tmp) / MANIFEST):
+            return None
+        lines = manifest.read_text(errors="replace").split("\n")
+    try:  # the text signed in clear, between the headers and the signature, its dashes escaped
+        start, end = lines.index("") + 1, lines.index("-----BEGIN PGP SIGNATURE-----")
+        root, files, _ = _parse(prefix, "".join(f"{line.removeprefix('- ')}\n" for line in lines[start:end]))
+    except ValueError:
+        return None
+    return root, files
+
+
 def tree_exists(storage: Remote, prefix: str, *, trusted: Signer | None = None, signer: str | None = None) -> bool:
     """Return whether the storage has the complete tree `prefix`, signed by `signer`, with one."""
     return _manifest(storage, prefix, trusted, signer) is not None
