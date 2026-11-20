@@ -105,7 +105,7 @@ def read(
 
 def stored(project: Project, storage: Remote, arches: list[str]) -> tuple[dict[str, tuple[Entry, str]], dict[str, str]]:
     """Return the packages of the copies of `arches` and of the source packages, by SHA-256, with their metadata and
-    their paths in `storage`, and the SHA-256 of the source packages, by file name, like publish.previous().
+    their paths in `storage`, and the SHA-256 of the source packages, by file name, like publish.published_packages().
     """
     known, sources = {}, {}
     with project.tmp_dir("upstream-copy") as work:
@@ -206,7 +206,7 @@ def push(project: Project, storage: Remote) -> list[str]:
 
     def latest() -> tuple[dict[str, tuple[Entry, str]], dict[str, str]]:
         if not snapshot:  # read once, when needed
-            snapshot.append(publish.previous(project, storage, None))
+            snapshot.append(publish.published_packages(project, storage, None))
         return snapshot[0]
 
     with project.tmp_dir("upstream") as work:

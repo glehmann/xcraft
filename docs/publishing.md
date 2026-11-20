@@ -35,6 +35,28 @@ ago, but the latest one of each, by the dates of their names.
 snapshot_days = 90
 ```
 
+A stage with a `retention` is cumulative: its `latest` has the packages of its latest snapshot, and the older
+versions it published, with metadata over all of them, for `dnf history rollback`, `undo` and `downgrade` on the
+hosts; dnf updates to the newest ones, those of the latest snapshot. Its dated snapshots stay exact.
+
+```toml
+[publish.stages.stable]
+retention = { days = 90, keep = 2 }
+```
+
+- `days`: how long a version stays once out of the latest snapshot, for the life of the release without it.
+- `keep`: the versions always kept, the current one included, of the packages of the latest snapshot, however old:
+  a host updating rarely can always go back one version. A package the latest snapshot does not have anymore has the
+  time rule only.
+- A source package stays with the last binary built from it. A package of the snapshot replaces an older one of the
+  same name with other contents, which publishing reports.
+- When each older version left the latest snapshot is in what the latest snapshot was made from, in `.xcraft/`:
+  the retention applies at each publication, the latest snapshot reused too. A publication interrupted, which left
+  `latest` without its manifest, loses none of them, and one which cannot read the metadata of an older version
+  fails, rather than dropping it. A repository whose packages did not change keeps its metadata.
+- The metadata files of the previous `latest` are deleted at the next publication, not at once: a host which has read
+  the previous `repomd.xml` still finds them.
+
 - Our packages are built or fetched, but only fetched for the architectures the host emulates: those are built by
   native builders, which push them. The publish fails when the remote storage misses one of their builds.
 

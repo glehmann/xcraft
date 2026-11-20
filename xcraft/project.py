@@ -160,11 +160,24 @@ class Sign(BaseModel):
         return fingerprint(key)
 
 
+class Retention(BaseModel):
+    """The older versions the latest snapshot of a cumulative stage keeps, for the hosts to go back."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    days: PositiveInt | None = None
+    """How long a version stays once out of the latest snapshot; for the life of the release without it."""
+    keep: PositiveInt = 1
+    """The versions always kept, the current one included, of the packages of the latest snapshot."""
+
+
 class Stage(BaseModel):
     """What a stage keeps of its snapshots."""
 
     model_config = ConfigDict(extra="forbid")
 
+    retention: Retention | None = None
+    """The older versions its latest snapshot keeps, which makes it cumulative; exact without it."""
     snapshot_days: PositiveInt | None = None
     """How long its dated snapshots are kept, but the latest one; for the life of the release without it."""
 
@@ -183,7 +196,7 @@ class Publish(BaseModel):
     build: bool = True
     """Whether to publish the build repository too: the upstream packages the builds need, not in the base one."""
     stages: dict[str, Stage] = {}
-    """What the stages keep of their snapshots, by name: the others keep them all."""
+    """What the stages keep of their snapshots, by name: the others keep them all, and are exact."""
 
     def current(self) -> Stage:
         """Return what the stage published to keeps of its snapshots."""

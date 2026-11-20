@@ -37,6 +37,8 @@ _NAME = re.compile(r"<name>([^<]*)</name>")
 _ARCH = re.compile(r"<arch>([^<]*)</arch>")
 _VERSION = re.compile(r'<version epoch="([^"]*)" ver="([^"]*)" rel="([^"]*)"/>')
 _METADATA = re.compile(r"repodata/(?!\.)[\w.+-]+")
+_NAMED = re.compile(r"repodata/[0-9a-f]{64}-(\w+)\.xml\.\w+")
+"""A metadata file named after its checksum, by createrepo_c, with its kind."""
 
 type Entry = tuple[str, str, str]
 """The primary, filelists and other entries of a package."""
@@ -102,16 +104,27 @@ def files(repomd: bytes) -> dict[str, str]:
     return found
 
 
-def read(repo: Path) -> dict[str, Entry] | None:
-    """Return the entries of the packages of the metadata of `repo`, by pkgid, or None when it cannot be read."""
+def read(repo: Path, hrefs: dict[str, str] | None = None) -> dict[str, Entry] | None:
+    """Return the entries of the packages of the metadata of `repo`, by pkgid, or None when it cannot be read: of the
+    metadata files `hrefs` by kind, if given, rather than those of its repomd.xml.
+    """
     found: dict[str, list[str]] = {}
-    for i, href in enumerate(files((repo / "repodata/repomd.xml").read_bytes())[kind] for kind in KINDS):
+    hrefs = hrefs or files((repo / "repodata/repomd.xml").read_bytes())
+    for i, href in enumerate(hrefs[kind] for kind in KINDS):
         if (data := _decompress(repo / href)) is None:
             return None
         for package in _PACKAGE.findall(data.decode()):
             if pkgid := _PKGID.search(package):
                 found.setdefault(pkgid[1] or pkgid[2], ["", "", ""])[i] = package
     return {pkgid: (p, f, o) for pkgid, (p, f, o) in found.items() if p and f and o}
+
+
+def named(paths: list[str]) -> dict[str, str]:
+    """Return those of `paths` that are metadata files named after their checksums, by kind, when there is one of each
+    kind: their repomd.xml may have been replaced since, by a publication interrupted.
+    """
+    found = [(m[1], path) for path in paths if (m := _NAMED.fullmatch(path)) and m[1] in KINDS]
+    return dict(found) if len(found) == len(KINDS) == len(dict(found)) else {}
 
 
 def sourcerpm(entry: Entry) -> str:

@@ -629,19 +629,25 @@ def _fetch_metadata(work: Path, repo: str, fetch: Callable[[str], bool]) -> bool
         return all(pool.map(fetch, [f"{repo}/{href}" for href in hrefs]))
 
 
-def previous(
-    project: Project, storage: Remote, signer: Signer | None
+def published_packages(
+    project: Project,
+    storage: Remote,
+    signer: Signer | None,
+    tree: str | None = None,
+    manifest: dict[str, str] | None = None,
 ) -> tuple[dict[str, tuple[Entry, str]], dict[str, str]]:
-    """Return the metadata of the packages of the latest snapshot, by SHA-256, with their paths in the storage, and
-    the SHA-256 of its source packages, by file name.
+    """Return the metadata of the packages of the latest snapshot, or of the snapshot `tree`, by SHA-256, with their
+    paths in the storage, and the SHA-256 of its source packages, by file name.
 
-    Only the metadata matching its trusted manifest is read, for the packages with the SHA-256 of the manifest: none
-    of a repository whose metadata Python cannot decompress, like zstd before Python 3.14.
+    Only the metadata matching its trusted manifest, or the `manifest` given, is read, for the packages with the
+    SHA-256 of the manifest: none of a repository whose metadata Python cannot decompress, like zstd before Python
+    3.14. A repository whose repomd.xml is not the manifest's anymore is read from the metadata files it lists.
     """
-    latest = snapshot_tree(project, "repos", "latest")
-    manifest = remote.read_manifest(storage, latest, trusted=trusted_key(project, signer))
+    latest = tree or snapshot_tree(project, "repos", "latest")
+    if manifest is None:
+        manifest = remote.read_manifest(storage, latest, trusted=trusted_key(project, signer))
     known = {}
-    with project.tmp_dir("previous") as work, activity("reading the metadata of the latest snapshot", log=True):
+    with project.tmp_dir("previous") as work, activity(f"reading the metadata of {latest}", log=True):
 
         def fetch(path: str) -> bool:
             # of the manifest only, whose paths stay in the tree
@@ -652,12 +658,20 @@ def previous(
             )
 
         for repo in (f.removesuffix("/repodata/repomd.xml") for f in manifest if f.endswith("/repodata/repomd.xml")):
-            if _fetch_metadata(work, repo, fetch):
-                known |= {
-                    digest: (entry, f"{latest}/{path}")
-                    for digest, entry in (repodata.read(work / repo) or {}).items()
-                    if manifest.get(path := f"{repo}/{repodata.location(entry)}") == digest
-                }
+            hrefs = {}
+            if not _fetch_metadata(work, repo, fetch):
+                listed = [f.removeprefix(f"{repo}/") for f in manifest if f.startswith(f"{repo}/repodata/")]
+                with thread_pool(remote.REQUESTS) as pool:
+                    found = (hrefs := repodata.named(listed)) and all(
+                        pool.map(fetch, [f"{repo}/{href}" for href in hrefs.values()])
+                    )
+                if not found:
+                    continue
+            known |= {
+                digest: (entry, f"{latest}/{path}")
+                for digest, entry in (repodata.read(work / repo, hrefs) or {}).items()
+                if manifest.get(path := f"{repo}/{repodata.location(entry)}") == digest
+            }
     sources = {
         Path(f).name: digest for f, digest in manifest.items() if f.startswith((f"{REPO}/Source/", f"{BUILD}/Source/"))
     }
@@ -667,8 +681,9 @@ def previous(
 def _with_copy(
     platforms: list[Project], storage: Remote, signer: Signer | None, main: Remote | None
 ) -> tuple[dict[str, tuple[Entry, str | remote.Located]], dict[str, str]]:
-    """Return the packages of the latest snapshot, like previous(), and those of the upstream copy of the storage, and
-    of the `main` bucket, if any, for the architectures of `platforms`: copied from there, without being uploaded.
+    """Return the packages of the latest snapshot, like published_packages(), and those of the upstream copy of the
+    storage, and of the `main` bucket, if any, for the architectures of `platforms`: copied from there, without being
+    uploaded.
     """
     arches = [p.arch for p in platforms]
     known: dict[str, tuple[Entry, str | remote.Located]] = {}
@@ -677,7 +692,7 @@ def _with_copy(
         found, sources = upstream_copy.stored(platforms[0], main, arches)
         known = {digest: (entry, remote.Located(main, path)) for digest, (entry, path) in found.items()}
     found, own = upstream_copy.stored(platforms[0], storage, arches)
-    latest, latest_sources = previous(platforms[0], storage, signer)
+    latest, latest_sources = published_packages(platforms[0], storage, signer)
     return known | found | latest, sources | own | latest_sources
 
 

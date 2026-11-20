@@ -15,20 +15,21 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 from rich.markup import escape
 
-from xcraft import buildid, remote, remote_pages
+from xcraft import buildid, remote, remote_pages, repodata
 from xcraft.cache import BuildError, build_keys, build_path
 from xcraft.display import activity, console
 from xcraft.iso import iso_inputs
 from xcraft.localrepo import OUTPUT_MARKER
 from xcraft.project import INTERNAL
-from xcraft.publish import ISO_DIR, REPO, Stored, snapshot_key, snapshot_tree, trusted_key
+from xcraft.publish import ISO_DIR, REPO, Stored, published_packages, snapshot_key, snapshot_tree, trusted_key
 from xcraft.signing import Signer, key_signer
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
-    from xcraft.project import Project, Remote
+    from xcraft.project import Project, Remote, Retention
+    from xcraft.repodata import Entry
 
 SUMS = "SHA256SUMS"
 """The checksums of the published ISOs, as sha256sum writes them, next to them."""
@@ -47,6 +48,10 @@ class SnapshotInputs(BaseModel):
     """The git commit of its publication, a maintenance branch of the release starts from, see xcraft maint start:
     <commit>-dirty for a checkout with changes, see xcraft.buildid.commit(), none for the snapshots published before it
     was recorded."""
+    snapshot: str | None = None
+    """The name of the dated snapshot of a cumulative stage, whose latest one has the older versions too."""
+    left: dict[str, str] = {}
+    """When each older version of the latest snapshot of a cumulative stage left it, by path."""
 
 
 def inputs_tree(latest: str) -> str:
@@ -88,6 +93,45 @@ def expired_snapshots(names: set[str], days: int, today: date) -> list[str]:
     dated = {name: m for name in names if (m := _DATED.fullmatch(name))}
     newest = max(dated, key=lambda n: (dated[n][1], int(dated[n][2][1:] if dated[n][2] else 1)), default=None)
     return sorted(n for n, m in dated.items() if n != newest and (today - date.fromisoformat(m[1])).days > days)
+
+
+def _source(path: str) -> bool:
+    """Return whether the package `path` of a snapshot is a source package."""
+    return path.split("/")[1] == "Source"
+
+
+def _name_arch(entry: Entry) -> tuple[str, str]:
+    """Return the name and the architecture of a package, from its metadata."""
+    name, _, arch = repodata.nevra(entry)
+    return name, arch
+
+
+def _metadata(manifest: dict[str, str]) -> set[str]:
+    """Return the metadata files of the repositories of a snapshot of `manifest`."""
+    return {f for f in manifest if "/repodata/" in f}
+
+
+def kept_versions(
+    older: dict[str, tuple[str, str]],
+    left: dict[str, datetime],
+    current: set[tuple[str, str, str]],
+    retention: Retention,
+    now: datetime,
+) -> set[str]:
+    """Return those of the `older` binary packages, by path, with their names and architectures, that the latest
+    snapshot of a cumulative stage keeps, with the `retention` of the stage: those which `left` it `days` ago at most,
+    and the newest ones of the packages it has, `current` by repository, name and architecture, `keep` with the
+    current version, however old: those which left it last, a publication replacing one version of a package at most.
+    """
+    by_package: dict[tuple[str, str, str], list[str]] = {}
+    for path, (name, arch) in older.items():
+        by_package.setdefault((path.rsplit("/", 1)[0], name, arch), []).append(path)
+    kept = set()
+    for package, paths in by_package.items():
+        newest = sorted(paths, key=lambda p: (left[p], p), reverse=True)
+        protected = newest[: retention.keep - 1] if package in current else []
+        kept |= {p for p in paths if p in protected or retention.days is None or (now - left[p]).days <= retention.days}
+    return kept
 
 
 def _batches(files: list[str]) -> list[list[str]]:
@@ -185,14 +229,14 @@ class Uploader:
         one.
         """
         wanted = self._inputs(platforms, only, isos)
-        manifests = {kind: self._reusable(kind, keys) for kind, keys in wanted.items()}
-        if not manifests or not all(manifests.values()):
+        sources = {kind: found for kind, keys in wanted.items() if (found := self._reusable(kind, keys))}
+        if not wanted or len(sources) != len(wanted):
             return None
         name = self.snapshot_name()
-        for i, (kind, manifest) in enumerate(manifests.items()):
+        for i, (kind, (source, manifest)) in enumerate(sources.items()):
             own = repo_files(name, manifest) if repo_files and kind == "repos" else {}
-            if not self._copy_latest(kind, name, manifest, wanted[kind], own):  # all assembled again, as `name`
-                for copied in list(manifests)[: i + 1]:
+            if not self._copy(kind, source, name, manifest, wanted[kind], own):  # all assembled again, as `name`
+                for copied in list(sources)[: i + 1]:
                     _delete_stale(self.storage, snapshot_tree(self.project, copied, name), set())
                 return None
         return name
@@ -211,32 +255,57 @@ class Uploader:
             wanted["isos"] = {name: key for p in isos for name, key in iso_inputs(p, signer=self.signer).items()}
         return wanted
 
-    def _reusable(self, kind: str, keys: dict[str, str]) -> dict[str, str]:
-        """Return the manifest of the latest snapshot of `kind`, when it was made from the input `keys`: none
-        otherwise.
-        """
-        latest = snapshot_tree(self.project, kind, "latest")
+    def _read_inputs(self, latest: str) -> SnapshotInputs | None:
+        """Return what the latest snapshot `latest` was made from, if it is trusted."""
         with self.project.tmp_dir("snapshot-inputs") as work:
             try:
                 if not remote.download_tree(self.storage, inputs_tree(latest), work / "inputs", trusted=self._trusted):
-                    return {}
-                inputs = SnapshotInputs.model_validate_json((work / "inputs" / INPUTS).read_bytes())
+                    return None
+                return SnapshotInputs.model_validate_json((work / "inputs" / INPUTS).read_bytes())
             except (OSError, ValueError, remote.RemoteError):
-                return {}
-        manifest = remote.read_manifest(self.storage, latest, trusted=self._trusted)
-        return manifest if manifest and inputs.keys == keys and inputs.files == manifest else {}
+                return None
 
-    def _write_inputs(self, latest: str, keys: dict[str, str], manifest: dict[str, str]) -> None:
-        """Write what the latest snapshot `latest` was made from: its input `keys`, its `manifest`, and the commit."""
+    def _reusable(self, kind: str, keys: dict[str, str]) -> tuple[str, dict[str, str]] | None:
+        """Return the latest snapshot of `kind`, with its manifest, when it was made from the input `keys`: the latest
+        tree, or the dated snapshot of a cumulative stage, whose latest tree has older versions too.
+        """
+        latest = snapshot_tree(self.project, kind, "latest")
+        if not (inputs := self._read_inputs(latest)):
+            return None
+        manifest = remote.read_manifest(self.storage, latest, trusted=self._trusted)
+        if not manifest or inputs.keys != keys or inputs.files != manifest:
+            return None
+        if not inputs.snapshot:
+            return latest, manifest
+        tree = snapshot_tree(self.project, kind, inputs.snapshot)
+        return (tree, dated) if (dated := remote.read_manifest(self.storage, tree, trusted=self._trusted)) else None
+
+    def _write_inputs(
+        self,
+        latest: str,
+        keys: dict[str, str],
+        manifest: dict[str, str],
+        snapshot: str | None = None,
+        left: dict[str, str] | None = None,
+    ) -> None:
+        """Write what the latest snapshot `latest` was made from: its input `keys`, its `manifest`, and the commit;
+        of a cumulative stage, its dated `snapshot`, and the day each older version `left` it.
+        """
         with self.project.tmp_dir("snapshot-inputs") as work:
-            snapshot = SnapshotInputs(keys=keys, files=manifest, commit=buildid.commit(self.project))
-            (work / INPUTS).write_text(snapshot.model_dump_json())
+            inputs = SnapshotInputs(
+                keys=keys, files=manifest, commit=buildid.commit(self.project), snapshot=snapshot, left=left or {}
+            )
+            (work / INPUTS).write_text(inputs.model_dump_json())
             remote.upload_tree(self.storage, inputs_tree(latest), work, [INPUTS], signer=self._signing)
 
-    def _copy_latest(
-        self, kind: str, name: str, manifest: dict[str, str], keys: dict[str, str], own: dict[str, str]
+    def _retention(self, kind: str) -> Retention | None:
+        """Return the retention of the stage, for the repositories of a cumulative one: none otherwise."""
+        return self.project.config.publish.current().retention if kind == "repos" else None
+
+    def _copy(
+        self, kind: str, source: str, name: str, manifest: dict[str, str], keys: dict[str, str], own: dict[str, str]
     ) -> bool:
-        """Copy the latest snapshot of `kind`, with its `manifest`, made from the input `keys`, as `name`, with the
+        """Copy the snapshot `source` of `kind`, with its `manifest`, made from the input `keys`, as `name`, with the
         commit of this publication, but its files of `own`, by path, written with their texts, in the latest snapshot
         too, which is the new one, and return whether it could.
         """
@@ -250,21 +319,100 @@ class Uploader:
             files = manifest | {f: sha256_of(work / f) for f in own}
             try:
                 for batch in _batches(list(files)):
-                    sources = {f"{target}/{f}": work / f if f in own else f"{latest}/{f}" for f in batch}
+                    sources = {f"{target}/{f}": work / f if f in own else f"{source}/{f}" for f in batch}
                     remote.transfer(self.storage, sources, on_line)
             except remote.RemoteError as e:  # a file missing in the latest snapshot
                 console.print(f"[yellow]the published {kind} cannot be reused[/]: {escape(str(e))}")
                 return False
             remote.write_manifest(self.storage, target, files, signer=self._signing)
             _delete_stale(self.storage, target, {*files, remote.MANIFEST})
-            if files != manifest:  # without its manifest while it changes, see _upload()
-                remote.delete(self.storage, [f"{latest}/{remote.MANIFEST}"])
-                remote.transfer(self.storage, {f"{latest}/{f}": work / f for f in own}, on_line)
-                remote.write_manifest(self.storage, latest, files, signer=self._signing)
-            self._write_inputs(latest, keys, files)
+            if retention := self._retention(kind):
+                self._update_cumulative(target, name, files, keys, retention, on_line)
+            else:
+                if files != manifest:  # without its manifest while it changes, see _upload()
+                    remote.delete(self.storage, [f"{latest}/{remote.MANIFEST}"])
+                    remote.transfer(self.storage, {f"{latest}/{f}": work / f for f in own}, on_line)
+                    remote.write_manifest(self.storage, latest, files, signer=self._signing)
+                self._write_inputs(latest, keys, files)
             remote_pages.update_pages(self.project, self.storage, [f"{target}/", f"{latest}/"])
         console.print(f"[bold green]✓[/] published {target}, and as {latest} (reused the matching snapshot)")
         return True
+
+    def _update_cumulative(
+        self,
+        tree: str,
+        name: str,
+        manifest: dict[str, str],
+        keys: dict[str, str],
+        retention: Retention,
+        on_line: Callable[[str], None],
+    ) -> None:
+        """Make the latest snapshot of the cumulative stage the snapshot `tree`, `name`, with its `manifest`, made
+        from the input `keys`, and the older versions of the previous latest one that its `retention` keeps, with the
+        metadata of all of them.
+
+        A package of the snapshot replaces an older one of the same path, with other contents.
+        """
+        latest, now = snapshot_tree(self.project, "repos", "latest"), datetime.now(UTC).replace(microsecond=0)
+        previous, history, complete = self._previous(latest)
+        known = published_packages(self.project, self.storage, self.signer, latest, previous)[0] if previous else {}
+        new = published_packages(self.project, self.storage, self.signer, tree)[0]
+        entries = {f: new[d][0] for f, d in manifest.items() if f.endswith(".rpm") and d in new}
+        if replaced := sorted(f for f, d in previous.items() if f in manifest and d != manifest[f] and f in entries):
+            console.print(f"[yellow]replaced by other contents of the same name[/]: {escape(', '.join(replaced))}")
+        olds = {f: d for f, d in previous.items() if f.endswith(".rpm") and f not in manifest}
+        if unread := sorted(f for f, d in olds.items() if d not in known):
+            msg = f"the metadata of {', '.join(unread)} cannot be read in {latest}, whose older versions would be lost"
+            raise BuildError(msg)
+        older = {f: known[d][0] for f, d in olds.items()}
+        left = {f: datetime.fromisoformat(history[f]) if f in history else now for f in older}
+        current = {(f.rsplit("/", 1)[0], *_name_arch(e)) for f, e in entries.items() if not _source(f)}
+        binaries = {f: _name_arch(e) for f, e in older.items() if not _source(f)}
+        kept = kept_versions(binaries, left, current, retention, now)
+        srpms = {(f.split("/")[0], repodata.sourcerpm(older[f])) for f in kept}
+        kept |= {f for f in older if _source(f) and (f.split("/")[0], f.rsplit("/", 1)[1]) in srpms}
+        files = {f: d for f, d in manifest.items() if "/repodata/" not in f} | {f: previous[f] for f in kept}
+        sources: dict[str, str | Path] = {f: f"{tree}/{f}" for f in manifest}
+        repos = sorted(f.removesuffix("/repodata/repomd.xml") for f in manifest if f.endswith("/repodata/repomd.xml"))
+        with self.project.tmp_dir("cumulative") as work:
+            listed = entries | {f: older[f] for f in kept}
+            for repo in repos:
+                packages = {f: d for f, d in files.items() if f.rsplit("/", 1)[0] == repo}
+                if complete and packages == {f: d for f, d in previous.items() if f.rsplit("/", 1)[0] == repo}:
+                    # the same metadata, rather than a new repomd.xml, which the hosts would download for nothing
+                    files |= {f: d for f, d in previous.items() if f.startswith(f"{repo}/repodata/")}
+                    continue
+                repodata.write(work / repo, {f.rsplit("/", 1)[1]: listed[f] for f in packages if f in listed})
+                if self.signer:
+                    self.signer.sign_file(work / repo / "repodata/repomd.xml")
+                for path in (work / repo / "repodata").iterdir():
+                    files[f"{repo}/repodata/{path.name}"] = sha256_of(path)
+                    sources[f"{repo}/repodata/{path.name}"] = path
+            # without its manifest while it changes, see _upload()
+            remote.delete(self.storage, [f"{latest}/{remote.MANIFEST}"])
+            # all of them, after a publication interrupted, which may have written some already
+            changed = {f: sources[f] for f in files if previous.get(f) != files[f] or (f in sources and not complete)}
+            self._write(latest, files, changed, on_line, lingering=_metadata(previous))
+        self._write_inputs(latest, keys, files, name, {f: left[f].isoformat() for f in sorted(kept)})
+
+    def _previous(self, latest: str) -> tuple[dict[str, str], dict[str, str], bool]:
+        """Return the manifest of the latest snapshot `latest` of a cumulative stage, when its older versions left it,
+        and whether it is complete: otherwise, the manifest of what it was made from, without its own while it
+        changes, or after a publication interrupted then.
+
+        It raises when it, or what it was made from, has a manifest no key trusted signs: its older versions would be
+        lost.
+        """
+        inputs = self._read_inputs(latest)
+        if manifest := remote.read_manifest(self.storage, latest, trusted=self._trusted):
+            return manifest, inputs.left if inputs else {}, True
+        if inputs:
+            return inputs.files, inputs.left, False
+        for tree in (latest, inputs_tree(latest)):
+            if remote.exists(self.storage, f"{tree}/{remote.MANIFEST}"):
+                msg = f"{tree} has a manifest no trusted key signs: the older versions of {latest} would be lost"
+                raise BuildError(msg)
+        return {}, {}, True
 
     def upload_snapshot(
         self,
@@ -356,11 +504,15 @@ class Uploader:
         copies = {f: s.path for f, s in candidates.items() if manifest.get(f) == s.digest}
         with activity(f"publishing {tree}", log=True) as on_line:
             self._write(tree, manifest, {f: copies.get(f, src / f) for f in manifest}, on_line)
-            # only the files changed: without its manifest, a latest tree left incomplete is copied entirely next time
-            remote.delete(self.storage, [f"{latest}/{remote.MANIFEST}"])
-            changed = {f: f"{tree}/{f}" for f in manifest if previous.get(f) != manifest[f]}
-            self._write(latest, manifest, changed, on_line)
-            self._write_inputs(latest, inputs, manifest)
+            if retention := self._retention(kind):
+                self._update_cumulative(tree, name, manifest, inputs, retention, on_line)
+            else:
+                # only the files changed: without its manifest, a latest tree left incomplete is copied entirely next
+                # time
+                remote.delete(self.storage, [f"{latest}/{remote.MANIFEST}"])
+                changed = {f: f"{tree}/{f}" for f in manifest if previous.get(f) != manifest[f]}
+                self._write(latest, manifest, changed, on_line, lingering=_metadata(previous))
+                self._write_inputs(latest, inputs, manifest)
             on_line("the pages of the directories")
             pages = [f"{tree}/", f"{latest}/", f"{inputs_tree(latest)}/", *(pages or [])]
             remote_pages.update_pages(self.project, self.storage, pages)
@@ -372,11 +524,13 @@ class Uploader:
         manifest: dict[str, str],
         files: Mapping[str, str | Path | remote.Located],
         on_line: Callable[[str], None],
+        lingering: set[str] | None = None,
     ) -> None:
         """Write the `files` to `tree`, from their sources, by batches, then its `manifest`, deleting the files
-        of a failed publish of the same name, and of the previous latest snapshot, but the pages.
+        of a failed publish of the same name, and of the previous latest snapshot, but the pages, and the `lingering`
+        ones: the metadata of the previous latest snapshot, which a host may read until the next publication.
         """
         for batch in _batches(sorted(files)):
             remote.transfer(self.storage, {f"{tree}/{f}": files[f] for f in batch}, on_line)
         remote.write_manifest(self.storage, tree, manifest, signer=self._signing)
-        _delete_stale(self.storage, tree, {*manifest, remote.MANIFEST})
+        _delete_stale(self.storage, tree, {*manifest, *(lingering or ()), remote.MANIFEST})

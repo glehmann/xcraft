@@ -51,7 +51,7 @@ from xcraft.__main__ import app
 from xcraft.cache import build_keys, build_path
 from xcraft.iso import cached_iso, checkout_iso, fetch_isos, iso_key, iso_name, iso_path, push_isos
 from xcraft.lock import Pin, load_lock
-from xcraft.project import Project, Remote
+from xcraft.project import Project, Remote, Retention
 from xcraft.resolution import resolve_image
 from xcraft.rpmbuild import prepare_tree
 from xcraft.signing import Signer, check_signatures, create_dev_key, dev_signer, key_signer, release_signer
@@ -1717,6 +1717,113 @@ def test_snapshots_expire(root: Path) -> None:
     today = output.split(f"published repos/9.0/{stage}/")[1].split(",")[0]
     assert remote.tree_exists(storage, f"repos/9.0/{stage}/{today}")
     assert remote.tree_exists(storage, f"repos/9.0/{stage}/latest")
+
+
+def test_kept_versions() -> None:
+    now = datetime(2026, 3, 1, tzinfo=UTC)
+    older = {f"base/x/a-{v}.rpm": ("a", "noarch") for v in (1, 2, 3, 10)} | {"base/x/gone-1.rpm": ("gone", "noarch")}
+    left = {
+        "base/x/a-1.rpm": datetime(2026, 1, 1, tzinfo=UTC), "base/x/a-2.rpm": datetime(2026, 1, 2, tzinfo=UTC),
+        "base/x/a-3.rpm": datetime(2026, 1, 2, 10, tzinfo=UTC), "base/x/a-10.rpm": datetime(2026, 2, 20, tzinfo=UTC),
+        "base/x/gone-1.rpm": datetime(2026, 1, 1, tzinfo=UTC),
+    }  # fmt: skip
+    current = {("base/x", "a", "noarch")}
+    # the recent ones, and the newest of the packages of the snapshot, however old: not those it does not have
+    assert upload.kept_versions(older, left, current, Retention(days=30), now) == {"base/x/a-10.rpm"}
+    # the newest by when they left, of the same day too, not by their names
+    assert upload.kept_versions(older, left, current, Retention(days=30, keep=3), now) == {
+        "base/x/a-3.rpm", "base/x/a-10.rpm",
+    }  # fmt: skip
+    assert upload.kept_versions(older, left, set(), Retention(days=30, keep=3), now) == {"base/x/a-10.rpm"}
+    # all of them, without days
+    assert upload.kept_versions(older, left, current, Retention(), now) == set(older)
+
+
+def _versions(storage: Remote, tree: str) -> list[str]:
+    """Return the versions of trivial in the snapshot `tree`, as its metadata lists them."""
+    manifest = remote.read_manifest(storage, tree)
+    known, _ = publisher.published_packages(Project.find(), storage, None, tree)
+    return sorted(
+        repodata.nevra(known[digest][0])[1].split("-")[0]
+        for f, digest in manifest.items()
+        if f.startswith(f"base/{ARCH}/trivial-") and digest in known
+    )
+
+
+@needs_gpg
+def test_cumulative_stage(root: Path) -> None:  # noqa: PLR0915
+    stage = f"cumulative-{secrets.token_hex(4)}"
+    (root / "xcraft.toml").write_text(f"{REMOTE}\n[publish.stages.{stage}]\nretention = {{ days = 30, keep = 2 }}\n")
+    spec = root / "base/trivial/trivial.spec"
+    project = Project.find()
+    storage, latest = project.config.remote["main"], f"repos/9.0/{stage}/latest"
+    names = []
+    for version in ("1.0", "1.1", "1.2"):
+        spec.write_text(re.sub(r"^Version: .*$", f"Version: {version}", spec.read_text(), flags=re.MULTILINE))
+        code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
+        assert code == 0, output
+        names.append(output.split(f"published repos/9.0/{stage}/")[1].split(",")[0])
+        # the dated snapshot is exact, the latest one has the older versions too, in its metadata
+        assert _versions(storage, f"repos/9.0/{stage}/{names[-1]}") == [version]
+    assert _versions(storage, latest) == ["1.0", "1.1", "1.2"]
+    manifest = remote.read_manifest(storage, latest)
+    sources = sorted(f for f in manifest if f.startswith("base/Source/trivial-"))
+    assert [s.split("-")[1] for s in sources] == ["1.0", "1.1", "1.2"]
+    # as if 1.0 and 1.1 left it long ago: 1.1 is kept, the newest older version of a package it has, 1.0 goes with
+    # its source package, at the next publication, the latest snapshot reused
+    signer = release_signer(project)
+    assert signer
+    uploader = upload.Uploader(project, storage, signer, build=False)
+    project.config.publish.stage = stage
+    inputs = uploader._read_inputs(latest)
+    assert inputs
+    assert sorted(inputs.left) == sorted(f for f in manifest if "trivial-1.0-" in f or "trivial-1.1-" in f)
+    old = inputs.model_copy(
+        update={"left": {f: f"2020-01-0{2 if 'trivial-1.1-' in f else 1}T00:00:00+00:00" for f in inputs.left}}
+    )
+    with project.tmp_dir("inputs") as work:
+        (work / upload.INPUTS).write_text(old.model_dump_json())
+        remote.upload_tree(storage, upload.inputs_tree(latest), work, [upload.INPUTS], signer=signer)
+    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage, "--locked")
+    assert code == 0, output
+    assert "reused the matching snapshot" in output
+    assert _versions(storage, latest) == ["1.1", "1.2"]
+    manifest = remote.read_manifest(storage, latest)
+    assert sorted(f.split("-")[1] for f in manifest if f.startswith("base/Source/trivial-")) == ["1.1", "1.2"]
+    assert not any("trivial-1.0-" in f for f in remote.listing(storage, f"{latest}/"))
+    # published again unchanged, its metadata are the same, rather than new ones the hosts would download
+    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage, "--locked")
+    assert code == 0, output
+    metadata = {f: d for f, d in manifest.items() if "/repodata/" in f}
+    assert {f: d for f, d in remote.read_manifest(storage, latest).items() if "/repodata/" in f} == metadata
+    # a publication interrupted, which left it without its manifest, loses none of its older versions: they are in
+    # what it was made from; 1.2 is kept, the newest older one, 1.1 goes, which left it long ago
+    remote.delete(storage, [f"{latest}/{remote.MANIFEST}"])
+    spec.write_text(spec.read_text().replace("Version: 1.2", "Version: 1.3"))
+    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
+    assert code == 0, output
+    assert _versions(storage, latest) == ["1.2", "1.3"]
+    # nor when the metadata of an older version cannot be read: the publication fails
+    primary = next(
+        f for f in remote.read_manifest(storage, latest) if f.startswith(f"base/{ARCH}/repodata/") and "-primary." in f
+    )
+    remote.delete(storage, [f"{latest}/{primary}"])
+    spec.write_text(spec.read_text().replace("Version: 1.3", "Version: 1.4"))
+    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
+    assert code == 1
+    assert "whose older versions would be lost" in " ".join(output.split())
+    # nor when, without its manifest, what it was made from is signed by a key no longer trusted
+    inputs = uploader._read_inputs(latest)
+    assert inputs
+    remote.delete(storage, [f"{latest}/{remote.MANIFEST}"])
+    with project.tmp_dir("inputs") as work:
+        (work / upload.INPUTS).write_text(inputs.model_dump_json())
+        other = create_dev_key(project, "Other")
+        remote.upload_tree(storage, upload.inputs_tree(latest), work, [upload.INPUTS], signer=other)
+    remote.forget()
+    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
+    assert code == 1
+    assert "has a manifest no trusted key signs" in " ".join(output.split())
 
 
 @pytest.mark.parametrize("command", [[], ["repos"], ["isos"]])
