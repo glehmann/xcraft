@@ -34,6 +34,7 @@ import functools
 import gzip
 import hashlib
 import json
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -461,9 +462,13 @@ class Resolver:
         for p in self.ours.values():
             for name in [p.name, *(str(c).split(" ", 1)[0] for c in p.provides)]:
                 providers.setdefault(name, set()).add(p.name)
+        if not providers:
+            return {}
         relations = ("requires", "recommends", "suggests", "supplements", "enhances", "conflicts", "obsoletes")
         query = self.base.sack.query().available().filter(reponame__neq="xcraft-ours")
-        deps = [str(d) for p in query for r in relations for d in getattr(p, r)]
+        # those naming one of ours only, which most do not, the split of all took most of the time of the resolution
+        naming = re.compile("|".join(map(re.escape, providers))).search
+        deps = [dep for p in query for r in relations for d in getattr(p, r) if naming(dep := str(d))]
         # and those of ours, with their build requirements, from the specs, but the versions following the packages
         # referred to, and the requests of what is published, not in the metadata of packages
         ours, evrs = self.data["ours"], evrs_of(self.data["ours"])
