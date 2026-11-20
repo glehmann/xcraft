@@ -39,7 +39,7 @@ def project(tmp_path, monkeypatch: pytest.MonkeyPatch) -> Project:  # noqa: ANN0
     return Project.find()
 
 
-def test_save_and_load(tmp_path) -> None:  # noqa: ANN001
+def should_save_the_lock_in_a_readable_format(tmp_path) -> None:  # noqa: ANN001
     project = Project(tmp_path, config())
     pin = Pin(evr="2.39-145.el10_2", arch="aarch64", sha256="ab" * 32, source="glibc")
     lock = Lock(
@@ -67,7 +67,7 @@ def test_save_and_load(tmp_path) -> None:  # noqa: ANN001
     assert f'"glibc" = "2.39-145.el10_2 aarch64 {"ab" * 32} glibc"\n' in text
 
 
-def test_lock_parsed_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_parse_the_lock_again_only_when_changed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     project = Project(tmp_path, config())
     save_lock(project, Lock(sources={"glibc": "1-1"}))
     first = load_lock(project)
@@ -81,7 +81,7 @@ def test_lock_parsed_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert load_lock(project).sources == {"glibc": "1-1", "zlib": "1-1"}
 
 
-def test_lock_validation(tmp_path: Path) -> None:
+def should_reject_invalid_locks(tmp_path: Path) -> None:
     project = Project(tmp_path, config())
     # pins of one format, in full
     for text in ("1-1 aarch64", f"1-1 aarch64 {'ab' * 31} glibc", f"1-1 aarch64 {'ab' * 32} glibc extra"):
@@ -120,7 +120,7 @@ def test_lock_validation(tmp_path: Path) -> None:
         assert lock_path(project).read_text().splitlines()[2] == "version = 3"
 
 
-def test_record() -> None:
+def should_share_entries_found_on_the_first_architecture() -> None:
     recorded = Recorded()
 
     def record(arch: str, name: str, values: list[str]) -> None:
@@ -152,7 +152,7 @@ def test_record() -> None:
         assert (recorded.of("x86_64_v2"), recorded.of("aarch64")) == ({}, {"xen": ["lzo"]})
 
 
-def test_frozen(tmp_path) -> None:  # noqa: ANN001
+def should_refuse_lock_changes_when_locked(tmp_path) -> None:  # noqa: ANN001
     project = Project(tmp_path, config())
     lock = Lock(sources={"bash": "5.2-3"})
     save_lock(project, lock)
@@ -164,7 +164,7 @@ def test_frozen(tmp_path) -> None:  # noqa: ANN001
     assert "zlib-ng" not in load_lock(project).sources
 
 
-def test_choose_versions() -> None:
+def should_choose_versions_that_all_the_architectures_have() -> None:
     x86 = {"glibc": ["2.39-142", "2.39-145", "2.39-146"], "macros": ["1-21.el10", "1-22.el10"], "lcov": ["2.0-5"]}
     arm = {"glibc": ["2.39-142", "2.39-145"], "macros": ["1-21.el10", "1-22.el10", "1-23.el10"]}
     # the latest version all the architectures having them have
@@ -180,7 +180,7 @@ def test_choose_versions() -> None:
     }
 
 
-def test_lock_sources_locked_meanwhile(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_keep_sources_locked_meanwhile_by_another_command(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     def versions(platform: Project, _sources: list[str]) -> dict[str, list[str]]:
         if platform == project:  # by another command, meanwhile, once: the architectures are looked for together
             save_lock(project, Lock(sources={"foo": "2-1"}))
@@ -191,7 +191,7 @@ def test_lock_sources_locked_meanwhile(project: Project, monkeypatch: pytest.Mon
     assert load_lock(project).sources == {"foo": "2-1", "bar": "3-1"}
 
 
-def test_record_roots_locked_meanwhile(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_keep_pins_locked_meanwhile_by_another_command(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     # foo's pin, of a source the lock read first does not have
     packages = {"glibc": locked("2.39-1", "glibc"), "foo": locked("2-1", "foo")}
     resolved = Resolved(packages=packages, image=["foo", "glibc"])
@@ -211,7 +211,7 @@ def test_record_roots_locked_meanwhile(project: Project, monkeypatch: pytest.Mon
     assert lock.image == {platform.arch: ["foo", "glibc"] for platform in project.all_platforms()}
 
 
-def test_record_pins(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_keep_pins_until_pinned_again_on_purpose(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     published = {"sha256": "ab" * 32, "evr": "2.39-1"}
 
     def image(_platform: Project) -> Resolved:
@@ -250,7 +250,7 @@ def test_record_pins(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
         resolution._record(project)
 
 
-def test_record_roots_not_resolved(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_keep_the_build_roots_that_cannot_be_resolved(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     (project.root / "base/foo").mkdir(parents=True)
     (project.root / "base/foo/foo.spec").write_text("foo")
     image = Resolved(packages={"glibc": locked("2.39-1", "glibc"), "zlib": locked("1-1", "zlib")}, image=["glibc"])
@@ -268,7 +268,7 @@ def test_record_roots_not_resolved(project: Project, monkeypatch: pytest.MonkeyP
         resolution._record(project)
 
 
-def test_complete_upstream(project: Project) -> None:
+def should_complete_the_names_of_upstream_packages(project: Project) -> None:
     assert complete_upstream("") == []  # no lock yet
     pin = Pin(evr="1:29.4-14.el10_2.4", arch="noarch", sha256="ab" * 32, source="emacs")
     lock = Lock(

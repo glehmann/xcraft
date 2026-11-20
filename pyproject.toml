@@ -98,6 +98,7 @@ ignore = [
     "D100",     # undocumented-public-module
     "D103",     # undocumented-public-function
     "D104",     # undocumented-public-package
+    "D401",     # non-imperative-mood: the should_ functions, which ruff does not see as tests, say what is checked
     "PLR2004",  # magic-value-comparison
     "SLF001",   # private-member-access: the tests reach into the internals they test
     "TC003",    # typing-only-standard-library-import

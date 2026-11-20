@@ -43,7 +43,7 @@ def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.Fixtur
 
 
 @needs_gpg
-def test_dev_key(root: Path) -> None:
+def should_create_and_show_the_developer_key(root: Path) -> None:
     assert xcraft("key", "show") == (1, "no key: see xcraft key create\n")
     code, output = xcraft("key", "create")
     assert code == 0, output
@@ -56,7 +56,7 @@ def test_dev_key(root: Path) -> None:
 
 
 @needs_gpg
-def test_signer_selection(root: Path) -> None:
+def should_choose_the_key_to_sign_with(root: Path) -> None:
     project = Project.find()
     developer = create_dev_key(project, "Developer")
     assert key_signer(project) == developer
@@ -95,7 +95,7 @@ def _served(directory: Path) -> Generator[str]:
             thread.join()
 
 
-def test_repo_keys_of_urls_pinned() -> None:
+def should_require_the_fingerprints_of_downloaded_repository_keys() -> None:
     # a repository without key, of packages not signed, only with gpgcheck = false
     with pytest.raises(ValueError, match="needs a gpgkey, or gpgcheck = false"):
         Repo(baseurl="file:///repo")
@@ -110,7 +110,7 @@ def test_repo_keys_of_urls_pinned() -> None:
         Repo(baseurl="file:///repo", gpgkey="https://example.com/key", fingerprints=["a" * 16])
 
 
-def test_no_build_keys_on_the_dev_bucket() -> None:
+def should_reject_build_keys_for_the_development_bucket() -> None:
     dev = Remote(url="http://dev", build_keys=["A" * 40])
     with pytest.raises(ValueError, match=r"remote\.dev cannot have build_keys"):
         Config.model_validate({**config().model_dump(by_alias=True), "remote": {"dev": dev.model_dump()}})
@@ -154,7 +154,9 @@ def _check_with_keys_at_urls(root: Path, tmp_path: Path, signer: Signer, signed:
 
 
 @needs_gpg
-def test_pinned_packages_are_signed(build_environment: Path, root: Path, tmp_path: Path) -> None:
+def should_check_the_pinned_packages_are_signed_by_their_repositories(
+    build_environment: Path, root: Path, tmp_path: Path
+) -> None:
     project = Project.find().on_host()
     image = {n: p for n, p in pinned.pins(project).items() if n in cached_lock(project).image[project.arch]}
     pinned.repository(project, image)  # checked, but the toys', of gpgcheck = false
@@ -176,7 +178,7 @@ def test_pinned_packages_are_signed(build_environment: Path, root: Path, tmp_pat
 
 
 @needs_gpg
-def test_development_builds_are_signed(build_environment: Path, root: Path, tmp_path: Path) -> None:
+def should_sign_development_builds_with_the_developer_key(build_environment: Path, root: Path, tmp_path: Path) -> None:
     # a change on a branch: development builds
     git(root, "symbolic-ref", "HEAD", "refs/heads/master")
     buildid.update(Project.find())
@@ -233,7 +235,7 @@ def test_development_builds_are_signed(build_environment: Path, root: Path, tmp_
 
 
 @pytest.mark.skipif(ARCH != "x86_64_v2", reason="two architectures the host runs: x86_64_v2 and x86_64")
-def test_signed_builds_of_each_architecture(root: Path, build_environment: Path) -> None:
+def should_sign_the_build_of_each_architecture_apart(root: Path, build_environment: Path) -> None:
     config = root / "xcraft.toml"
     config.write_text(config.read_text().replace('"linux/arm64"', '"linux/amd64"'))
     assert xcraft("build", "trivial")[0] == 0
@@ -249,7 +251,7 @@ def test_signed_builds_of_each_architecture(root: Path, build_environment: Path)
     assert (signed[1] / "RPMS/x86_64").read_text() == "the build of x86_64"
 
 
-def test_final_builds_need_a_key(root: Path) -> None:
+def should_refuse_final_builds_without_a_key(root: Path) -> None:
     code, output = xcraft("build", "trivial", "--final")
     assert code == 2
     assert "no key to sign the final builds" in " ".join(output.replace("│", "").split())
@@ -257,9 +259,7 @@ def test_final_builds_need_a_key(root: Path) -> None:
 
 
 @needs_gpg
-def test_snapshots_of_dev_mode_keep_the_signatures_of_the_builds(
-    build_environment: Path, root: Path, tmp_path: Path
-) -> None:
+def should_keep_the_build_signatures_in_dev_mode_snapshots(build_environment: Path, root: Path, tmp_path: Path) -> None:
     assert xcraft("build", "trivial")[0] == 0
     developer = dev_signer(Project.find())  # made by the build
     assert developer

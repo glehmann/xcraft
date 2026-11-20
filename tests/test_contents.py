@@ -20,7 +20,7 @@ def _requires(root: Path, name: str, requires: str) -> None:
 
 
 @pytest.mark.skipif(ARCH != "x86_64_v2", reason="the ISOs are for x86_64")
-def test_contents(root: Path) -> None:
+def should_list_the_packages_of_the_hosts_and_the_iso(root: Path) -> None:
     (root / "xcraft.toml").write_text(f"{TOML}{ISO}")
     code, output = xcraft("contents", "--set", "base")
     assert code == 0, output
@@ -55,7 +55,7 @@ def test_contents(root: Path) -> None:
     assert xcraft("contents", "--set", "nothing")[0] == 2
 
 
-def test_contents_diff(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_show_the_package_changes_since_a_revision(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     commit_base(root)
     code, output = xcraft("contents", "--diff", "master")
     assert code == 0, output

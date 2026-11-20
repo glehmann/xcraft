@@ -31,7 +31,7 @@ def binfmt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def test_emulation(binfmt: Path) -> None:
+def should_fix_the_emulation_flags_needed_to_run_sudo(binfmt: Path) -> None:
     proc, etc = binfmt / "binfmt_misc", binfmt / "etc"
     (binfmt / "binfmt.d/qemu-aarch64-static.conf").write_text(CONF)
     assert host.emulation_problem("aarch64") == "the emulator of aarch64 is not registered in binfmt_misc"
@@ -62,7 +62,7 @@ def test_emulation(binfmt: Path) -> None:
     assert host.emulation_fix("aarch64") == []
 
 
-def test_emulation_unregistered(binfmt: Path) -> None:
+def should_register_the_emulator_when_the_distribution_does_not(binfmt: Path) -> None:
     # without a file of the distribution, nor /etc/binfmt.d/, like on Slackware
     (binfmt / "systemd").rmdir()
     (binfmt / "etc").rmdir()
@@ -91,7 +91,9 @@ def test_emulation_unregistered(binfmt: Path) -> None:
         ("ID=nixos\n", []),
     ],
 )
-def test_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, os_release: str, commands: list[str]) -> None:
+def should_install_the_missing_tools_with_the_package_manager(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, os_release: str, commands: list[str]
+) -> None:
     (tmp_path / "os-release").write_text(os_release)
     monkeypatch.setattr(host, "_OS_RELEASE", tmp_path / "os-release")
     assert [str(fix) for fix in host.install_fixes(["podman", "gpg", "qemu-x86_64_v2", "qemu-aarch64"])] == commands
@@ -105,7 +107,9 @@ def test_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, os_release: st
         ("slackware", ["sudo sboinstall -r qemu"]),
     ],
 )
-def test_install_vm_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, distro: str, commands: list[str]) -> None:
+def should_install_the_missing_vm_tools_with_the_package_manager(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, distro: str, commands: list[str]
+) -> None:
     (tmp_path / "os-release").write_text(f"ID={distro}\n")
     monkeypatch.setattr(host, "_OS_RELEASE", tmp_path / "os-release")
     tools = ["qemu-system-x86_64", "qemu-img", "ovmf", "qemu-aarch64"]
@@ -113,7 +117,9 @@ def test_install_vm_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, distr
 
 
 @pytest.mark.parametrize("missing_tools", [False, True])
-def test_doctor_outside_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, missing_tools: bool) -> None:
+def should_check_the_host_tools_outside_projects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, missing_tools: bool
+) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("XCRAFT_PROJECT", raising=False)
     if missing_tools:
@@ -131,7 +137,7 @@ def test_doctor_outside_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
         assert "qemu-img: not found" in output
 
 
-def test_doctor_invalid_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_report_an_invalid_project_configuration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path))
     code, output = xcraft("doctor")
     assert code == 1
@@ -155,7 +161,7 @@ def test_doctor_invalid_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     assert "platforms" in output
 
 
-def test_subids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_add_subordinate_ids_after_those_of_others(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     subuid, subgid = tmp_path / "subuid", tmp_path / "subgid"
     monkeypatch.setattr(host, "_SUBIDS", (subuid, subgid))
     assert host.subid_fixes("dev") == [

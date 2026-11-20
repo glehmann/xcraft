@@ -17,7 +17,7 @@ def _hashes(text: str) -> list[str]:
     return re.findall(r'<hash type="sha256">([0-9a-f]{64})</hash>', text)
 
 
-def test_metalink() -> None:
+def should_list_the_mirrors_and_the_previous_metadata_as_alternates() -> None:
     urls = ["https://mirror.example/x/repodata/repomd.xml", "http://ours.example/x/repodata/repomd.xml"]
     first = metalink.text(urls, _repomd(1))
     assert _hashes(first) == [hashlib.sha256(_repomd(1)).hexdigest()]

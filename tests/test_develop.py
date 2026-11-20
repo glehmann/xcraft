@@ -45,7 +45,7 @@ cp hello.txt kept.txt %{buildroot}/usr/share/%{name}/
 """
 
 
-def test_spec_of_a_tree() -> None:
+def should_unpack_the_tree_instead_of_the_sources_and_patches() -> None:
     spec = spec_text(SPEC.replace("%autosetup -p1", "%setup -q\n%patch -P0 -p1\n%autopatch -p1"))
     assert f"Source0: {ARCHIVE}\n" in spec
     assert "Patch" not in spec
@@ -94,7 +94,7 @@ def tree(tmp_path: Path) -> Path:
     return tree
 
 
-def test_develop_from_a_tree(root: Path, tree: Path) -> None:
+def should_build_from_the_tree_as_it_is_until_stopped(root: Path, tree: Path) -> None:
     builds = (root / "xcraft.builds").read_text()
     sources = root / ".xcraft/build/trivial/BUILD/trivial-1.0"
     sources.mkdir(parents=True)
@@ -145,7 +145,7 @@ def test_develop_from_a_tree(root: Path, tree: Path) -> None:
     assert xcraft("develop")[1].endswith("no package developed from a tree\n")
 
 
-def test_develop_errors(root: Path, tmp_path: Path) -> None:
+def should_reject_trees_and_packages_it_cannot_develop(root: Path, tmp_path: Path) -> None:
     code, output = xcraft("develop", str(tmp_path))
     assert code == 2
     assert "is not a git tree" in re.sub(r"[│\s]+", " ", output)

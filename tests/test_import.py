@@ -74,7 +74,9 @@ def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return root
 
 
-def test_import(root: Path, upstream: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_import_the_history_of_a_packaging_repository(
+    root: Path, upstream: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     url = f"file://{upstream}"
     result = runner.invoke(app, ["import", "foo", "--url", url])
     assert result.exit_code == 0, result.output
@@ -144,7 +146,9 @@ def source_rpm(tmp_path: Path, name: str, version: str) -> Path:
     return next((top / "SRPMS").glob("*.src.rpm"))
 
 
-def test_import_srpm(build_environment: Path, root: Path, upstream: Path, tmp_path: Path) -> None:
+def should_import_a_source_rpm_on_top_of_the_imported_history(
+    build_environment: Path, root: Path, upstream: Path, tmp_path: Path
+) -> None:
     assert runner.invoke(app, ["import", "foo", "--url", f"file://{upstream}"]).exit_code == 0
     before = git(root, "rev-parse", "import/foo/XS-9.0")
     srpm = source_rpm(tmp_path, "foo", "3.0")
@@ -178,7 +182,7 @@ def test_import_srpm(build_environment: Path, root: Path, upstream: Path, tmp_pa
     assert git(root, "rev-parse", "import/bar/XS-9.0~") == git(root, "rev-list", "--max-parents=0", "HEAD")
 
 
-def test_import_all(root: Path, upstream: Path) -> None:
+def should_update_all_the_imported_packages_on_their_branches(root: Path, upstream: Path) -> None:
     assert runner.invoke(app, ["import", "foo", "--url", f"file://{upstream}"]).exit_code == 0
     master = git(root, "rev-parse", "import/foo/master")
     commit_files(upstream, {"SPECS/foo.spec": "Name: foo\nVersion: 3.0\n"})
@@ -200,7 +204,7 @@ def test_import_all(root: Path, upstream: Path) -> None:
     assert git(root, "branch", "--list", "import/foo/*").split() == ["import/foo/ydi/9"]
 
 
-def test_import_flat(root: Path, tmp_path: Path) -> None:
+def should_import_repositories_of_other_layouts(root: Path, tmp_path: Path) -> None:
     # like Fedora's dist-git, whose archives are in its lookaside cache, then with them in git LFS, then like those of
     # xcp-ng-rpms
     upstream = tmp_path / "rpms/bar"
@@ -227,7 +231,7 @@ def test_import_flat(root: Path, tmp_path: Path) -> None:
     assert git(root, "show", f"{commits[1]}:base/bar/sources") == f"{digest}  bar-1.0.tar.gz"
 
 
-def test_import_options(root: Path, upstream: Path) -> None:
+def should_import_into_the_given_repository_of_the_project(root: Path, upstream: Path) -> None:
     assert "no package given" in runner.invoke(app, ["import"]).output
     assert "--url applies to a single package" in runner.invoke(app, ["import", "a", "b", "--url", "x"]).output
     assert "not package names: '..'" in runner.invoke(app, ["import", "..", "--url", "x"]).output
@@ -242,7 +246,7 @@ def test_import_options(root: Path, upstream: Path) -> None:
     assert git(root, "for-each-ref", "--format=%(refname:short)", "refs/heads/import") == "import/foo/XS-9.0"
 
 
-def test_import_refuses_links(root: Path, upstream: Path, tmp_path: Path) -> None:
+def should_refuse_links_to_files_out_of_the_package(root: Path, upstream: Path, tmp_path: Path) -> None:
     # to a file of the host, which the builds would read
     (tmp_path / "secret").write_text("secret")
     (upstream / "SOURCES/key").symlink_to(tmp_path / "secret")
@@ -254,7 +258,7 @@ def test_import_refuses_links(root: Path, upstream: Path, tmp_path: Path) -> Non
     assert git(root, "for-each-ref", "refs/heads/import") == ""
 
 
-def test_import_without_files(root: Path, tmp_path: Path) -> None:
+def should_import_nothing_from_a_repository_without_files(root: Path, tmp_path: Path) -> None:
     upstream = tmp_path / "rpms/empty"
     upstream.mkdir(parents=True)
     git(upstream, "init", "-q", "-b", "master")
@@ -262,7 +266,7 @@ def test_import_without_files(root: Path, tmp_path: Path) -> None:
     assert import_history(Project.find(), root / "base/empty", f"file://{upstream}", ["master"]) == ({}, [])
 
 
-def test_import_without_archive(root: Path, upstream: Path) -> None:
+def should_warn_about_archives_that_cannot_be_found(root: Path, upstream: Path) -> None:
     # an archive whose LFS object is gone, listed, but the others cached
     commit_files(upstream, {"SOURCES/foo-3.0.tar.gz": "3.0\n"})
     digest = hashlib.sha256(b"3.0\n").hexdigest()

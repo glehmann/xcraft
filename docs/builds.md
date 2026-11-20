@@ -46,7 +46,8 @@ the dnf cache the containers share, but the recipe the key covers has a placehol
 builds: `_SAME_BUILDS` of `xcraft/buildkey.py` maps its hash to the one of the earliest recipe making the same packages,
 which stays in the keys.
 Not the packages, nor the image: what a package directory has goes in its source RPM, and what the image has can change
-the builds. `test_recipe` fails on a change to the recipe in the keys, giving the new hash, to choose between both.
+the builds. `should_map_earlier_recipes_making_the_same_builds` fails on a change to the recipe in the keys, giving the
+new hash, to choose between both.
 
 `xcraft build --dry-run` shows what would be built or fetched, with how many packages are cached, before building
 anything. The builds only show the packages they build or fetch, with how many are cached.

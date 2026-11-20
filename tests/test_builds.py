@@ -45,7 +45,7 @@ def project(tmp_path: Path) -> Project:
     return project
 
 
-def test_format(project: Project) -> None:
+def should_save_the_builds_one_line_per_entry(project: Project) -> None:
     arch = project.arch
     builds = Builds(
         ids={"xen": BuildId(number=2, key="ab" * 32), "lib.c++": BuildId(number=1, key="cd" * 32, accepts="ef" * 32)},
@@ -89,7 +89,7 @@ def test_format(project: Project) -> None:
     assert parse_builds("") == Builds()
 
 
-def test_recordable() -> None:
+def should_record_only_what_the_spec_does_not_declare() -> None:
     lib = binary("python3-xapi-storage", provides=["python3-xapi-storage = 1:4.2-3.xcpng", "xapi-storage = 1:4.2-3"])
     # not those the spec declares, like its own name; the versions of the package as placeholders
     assert recordable(
@@ -113,7 +113,7 @@ def test_recordable() -> None:
     assert recordable(qemu, ["qemu = 10.1-1", "qemu-img = 10.1-1"]) == ["qemu-img = %{evr}"]
 
 
-def test_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_show_the_history_of_a_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "xcraft.toml").write_text(TOML)
     monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path))
     git(tmp_path, "init", "-q", "-b", "master")

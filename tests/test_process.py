@@ -9,7 +9,7 @@ import pytest
 from xcraft import process
 
 
-def test_thread_pool_interrupted() -> None:
+def should_cancel_pending_tasks_when_interrupted() -> None:
     started, release, ran = threading.Event(), threading.Event(), []
 
     def task(i: int) -> None:
@@ -35,7 +35,7 @@ def test_thread_pool_interrupted() -> None:
     assert ran == [0]
 
 
-def test_thread_pool_waits() -> None:
+def should_wait_for_all_tasks_even_on_error() -> None:
     ran = []
     with process.thread_pool(2) as pool:
         for i in range(4):

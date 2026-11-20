@@ -40,7 +40,7 @@ def states() -> dict[str, str]:
     return {line.split()[0]: line.split()[2] for line in xcraft("status", "--full")[1].splitlines()[:-1]}
 
 
-def test_build_uses_local_builds_and_cache(root: Path) -> None:
+def should_build_against_local_builds_and_cache_them(root: Path) -> None:
     assert states() == {"trivial": "missing", "with-deps": "missing"}
     # with-deps BuildRequires trivial, which only exists once built locally
     code, output = xcraft("build", "with-deps")
@@ -66,14 +66,14 @@ def test_build_uses_local_builds_and_cache(root: Path) -> None:
     assert states() == {"trivial": "ready", "with-deps": "ready"}
 
 
-def test_build_all_by_default(root: Path) -> None:
+def should_build_all_the_packages_when_none_is_given(root: Path) -> None:
     code, output = xcraft("build", "--dry-run")
     assert code == 0, output
     assert output.splitlines() == ["build    trivial", "build    with-deps", "2 to build"]
     assert xcraft("build", "-n") == (code, output)
 
 
-def test_build_steps_count_the_packages_not_cached(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_count_only_the_packages_to_build_in_the_steps(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert xcraft("build", "trivial")[0] == 0
     monkeypatch.setenv("CI", "true")
     result = runner.invoke(app, ["build"])
@@ -81,7 +81,7 @@ def test_build_steps_count_the_packages_not_cached(root: Path, monkeypatch: pyte
     assert "[1/1] building with-deps" in result.stderr
 
 
-def test_build_warnings_header_without_estimate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_show_the_step_header_when_no_duration_is_known(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # out of the build environment, without containers
     (tmp_path / "xcraft.toml").write_text(TOML)
     monkeypatch.delenv("CI", raising=False)
@@ -98,7 +98,7 @@ def test_build_warnings_header_without_estimate(tmp_path: Path, monkeypatch: pyt
     assert headers == ["[1/1] building trivial"]
 
 
-def test_spec_changed_during_build_is_not_cached(root: Path) -> None:
+def should_not_cache_a_build_when_its_spec_changed_meanwhile(root: Path) -> None:
     spec = root / "base/trivial/trivial.spec"
 
     def change() -> None:
@@ -115,7 +115,7 @@ def test_spec_changed_during_build_is_not_cached(root: Path) -> None:
     assert states() == {"trivial": "missing", "with-deps": "missing"}
 
 
-def test_spec_changed_before_its_build_is_not_cached(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_not_cache_a_build_when_its_spec_changed_before_it(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spec = root / "base/trivial/trivial.spec"
     resolved_root = builder.resolved_root
 
@@ -138,7 +138,7 @@ UP_TO_DATE = (
 )
 
 
-def test_binary_of_two_packages(root: Path) -> None:
+def should_refuse_a_binary_package_made_by_two_packages(root: Path) -> None:
     write_spec(root, "twin")
     spec = root / "base/twin/twin.spec"
     spec.write_text(spec.read_text().replace("Name: twin", "Name: trivial"))
@@ -148,7 +148,7 @@ def test_binary_of_two_packages(root: Path) -> None:
     assert re.search(r"binary packages of several packages for \S+: trivial \(trivial, twin\)", output)
 
 
-def test_build_sandbox(root: Path) -> None:
+def should_build_without_network_privileges_or_broken_pipes(root: Path) -> None:
     # without network but its loopback interface, without privileges, and with the pipes closed by their reader killing
     # their writer, as outside of rpmbuild
     write_spec(root, "sandboxed")
@@ -177,7 +177,7 @@ def test_build_sandbox(root: Path) -> None:
     assert '"no new privileges" flag is set' in log
 
 
-def test_dynamic_buildrequires_on_ours(root: Path) -> None:
+def should_build_again_after_dynamic_buildrequires_on_ours(root: Path) -> None:
     spec = root / "base/with-deps/with-deps.spec"
     spec.write_text(spec.read_text().replace("BuildRequires: trivial\n", "").replace(
         "%prep", "%generate_buildrequires\necho trivial\n\n%prep"
@@ -196,7 +196,7 @@ def test_dynamic_buildrequires_on_ours(root: Path) -> None:
     assert load_builds(Project.find()).buildrequires.of(ARCH) == {"with-deps": ["trivial"]}
 
 
-def test_build_root_of_files_of_ours(root: Path) -> None:
+def should_record_the_files_our_builds_provide(root: Path) -> None:
     # xcraft does not know which files our packages provide before they are built
     write_spec(root, "tool", files="/usr/bin/xcraft-test-tool")
     write_spec(root, "tool-user", "/usr/bin/xcraft-test-tool")
@@ -217,7 +217,7 @@ def test_build_root_of_files_of_ours(root: Path) -> None:
     assert "its build root has the upstream bc (ours from bc)" in output
 
 
-def test_build_root_packages_replaced_by_ours(root: Path) -> None:
+def should_put_ours_in_build_roots_instead_of_upstream_ones(root: Path) -> None:
     # kernel-headers comes with gcc, through glibc-devel: ours rather than upstream's, built first
     write_spec(root, "kernel-headers", files="/usr/include/xcraft-test.h")
     spec = root / "base/kernel-headers/kernel-headers.spec"
@@ -236,7 +236,7 @@ def test_build_root_packages_replaced_by_ours(root: Path) -> None:
     assert "ccache" not in load_lock(project).roots.shared.get("trivial", [])
 
 
-def test_image_packages_replaced_by_ours(root: Path) -> None:
+def should_replace_image_packages_by_ours_in_build_roots(root: Path) -> None:
     # openblas-srpm-macros is in the image, and harmless to replace, by one requiring a pinned package it does not have
     write_spec(root, "openblas-srpm-macros", files="/usr/share/xcraft-test/openblas-srpm-macros")
     spec = root / "base/openblas-srpm-macros/openblas-srpm-macros.spec"
@@ -249,7 +249,7 @@ def test_image_packages_replaced_by_ours(root: Path) -> None:
     assert re.search(r"^ toyrun .* xcraft-pinned ", log, re.MULTILINE), log
 
 
-def test_build_ids_without_building(root: Path) -> None:
+def should_update_the_build_ids_without_building(root: Path) -> None:
     code, output = xcraft("build", "--ids")
     assert code == 0, output
     assert set(load_builds(Project.find()).ids) == {"trivial", "with-deps"}
@@ -272,7 +272,7 @@ def test_build_ids_without_building(root: Path) -> None:
     assert "--ids updates the build IDs of all the packages" in " ".join(output.replace("│", "").split())
 
 
-def test_dnf_lock_is_shared_by_containers(root: Path) -> None:
+def should_share_the_dnf_lock_between_containers(root: Path) -> None:
     logs = [root / f"lock-{i}.log" for i in range(2)]
     container.built_image(Project.find())  # before the threads, which would both build it
 
@@ -289,7 +289,7 @@ def test_dnf_lock_is_shared_by_containers(root: Path) -> None:
     assert a_end <= b_start or b_end <= a_start
 
 
-def test_build_back_to_a_cached_key(root: Path) -> None:
+def should_cache_a_build_back_at_the_key_of_a_former_one(root: Path) -> None:
     assert xcraft("build", "trivial")[0] == 0
     # dynamic BuildRequires its build does not find: missing, and built again, back to the key of the first build
     builds = load_builds(Project.find())
@@ -302,7 +302,7 @@ def test_build_back_to_a_cached_key(root: Path) -> None:
     assert not list(root.glob(f".xcraft/cache/builds/*/{ARCH}/trivial/.*"))
 
 
-def test_failed_build_skips_dependents(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_skip_dependents_when_a_build_fails(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace('echo "hello"', 'echo "build failure"; exit 3'))
     monkeypatch.setenv("CI", "true")
@@ -321,7 +321,7 @@ def test_failed_build_skips_dependents(root: Path, monkeypatch: pytest.MonkeyPat
     assert "build failure" in output
 
 
-def test_missing_archive_and_spec_error(root: Path) -> None:
+def should_report_missing_archives_and_broken_specs(root: Path) -> None:
     write_manifest(root / "base/trivial/sources", {"trivial-1.0.tar.gz": "0" * 64})
     (root / "base/broken").mkdir()
     (root / "base/broken/broken.spec").write_text("Name: broken\n%if\n")
@@ -333,7 +333,7 @@ def test_missing_archive_and_spec_error(root: Path) -> None:
     assert xcraft("st") == xcraft("status")
 
 
-def test_repo_checks_dependencies(root: Path) -> None:
+def should_make_a_repository_with_its_dependencies_satisfied(root: Path) -> None:
     code, output = xcraft("repo", "with-deps")
     assert code == 0, output
     assert f"repository in {root / 'repo'}, with all dependencies satisfied" in output
@@ -359,7 +359,7 @@ def test_repo_checks_dependencies(root: Path) -> None:
     assert "some dependencies cannot be satisfied" in output
 
 
-def test_bump(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_bump_the_release_with_a_changelog_entry(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     gitconfig = root / "gitconfig"
     gitconfig.write_text("[user]\n\tname = Me\n\temail = me@example.com\n")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(gitconfig))
@@ -378,7 +378,7 @@ def test_bump(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert xcraft("bump")[0] == 2  # no package
 
 
-def test_bump_version(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_bump_the_version_of_packages_sharing_an_archive(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     gitconfig = root / "gitconfig"
     gitconfig.write_text("[user]\n\tname = Me\n\temail = me@example.com\n")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(gitconfig))
@@ -407,7 +407,7 @@ def test_bump_version(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize("version", ["1.9", "1.10", "1.010", "1.10~rc1"])
-def test_bump_version_must_increase(root: Path, monkeypatch: pytest.MonkeyPatch, version: str) -> None:
+def should_refuse_a_bump_to_a_version_not_greater(root: Path, monkeypatch: pytest.MonkeyPatch, version: str) -> None:
     gitconfig = root / "gitconfig"
     gitconfig.write_text("[user]\n\tname = Me\n\temail = me@example.com\n")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(gitconfig))
@@ -429,7 +429,7 @@ def test_bump_version_must_increase(root: Path, monkeypatch: pytest.MonkeyPatch,
 
 
 @pytest.mark.parametrize("output", ["yes looping", "yes looping | tr -d '\\n'"])  # in lines, or in a single one
-def test_runaway_log_stops_the_build(output: str, root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_stop_a_build_when_its_log_grows_too_large(output: str, root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(container, "MAX_LOG_SIZE", 2**20)
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace('echo "hello" > hello.txt', output))
@@ -440,7 +440,7 @@ def test_runaway_log_stops_the_build(output: str, root: Path, monkeypatch: pytes
     assert subprocess.run(["podman", "container", "exists", name], check=False).returncode != 0
 
 
-def test_lock(root: Path) -> None:
+def should_lock_upstream_sources_when_builds_need_them(root: Path) -> None:
     assert xcraft("build", "trivial")[0] == 0
     lock = load_lock(Project.find())
     assert "rpm" in lock.sources  # of the image
@@ -461,7 +461,7 @@ def test_lock(root: Path) -> None:
     assert xcraft("lock", "--outdated", "lzo") == (0, f"{UP_TO_DATE}\n")
 
 
-def test_upstream_package_of_several_architectures_not_pinned(root: Path) -> None:
+def should_refuse_to_pin_upstream_packages_of_several_architectures(root: Path) -> None:
     # toymulti, for x86_64 and i686 in the repositories of x86_64: one architecture would be pinned by chance
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace("BuildArch: noarch", "BuildArch: noarch\nBuildRequires: toymulti"))
@@ -470,7 +470,7 @@ def test_upstream_package_of_several_architectures_not_pinned(root: Path) -> Non
     assert "upstream packages of several architectures, which the lock cannot pin: toymulti" in output, output
 
 
-def test_lock_versions_of_all_the_architectures(root: Path) -> None:
+def should_lock_versions_that_all_the_architectures_have(root: Path) -> None:
     # toyarch 2 is only for x86_64: toyarch is locked in the version all the architectures have
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace("BuildArch: noarch", "BuildArch: noarch\nBuildRequires: toyarch"))
@@ -491,7 +491,7 @@ def test_lock_versions_of_all_the_architectures(root: Path) -> None:
     assert load_lock(Project.find()).sources["toyrun"] == "2-1"
 
 
-def test_lock_records_runtime(root: Path) -> None:
+def should_pin_what_is_published_on_all_the_architectures(root: Path) -> None:
     (root / "xcraft.toml").write_text(f'{TOML}\n[publish]\nextra = ["bc"]\n')
     assert xcraft("build", "--dry-run")[0] == 0
     lock = load_lock(Project.find())
@@ -514,7 +514,7 @@ def test_lock_records_runtime(root: Path) -> None:
 
 
 @pytest.mark.skipif(ARCH != "x86_64_v2", reason="the tools of the ISO are for x86_64")
-def test_iso_tools(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_pin_and_install_the_tools_making_the_iso(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # with bc, which nothing else needs, in the repository of the ISO: published, for the snapshot to have it
     iso = 'installer = ["bash"]\npackages = ["bc"]\n'
     (root / "xcraft.toml").write_text(f"{TOML}{iso}")
@@ -548,7 +548,7 @@ def test_iso_tools(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize(("kind", "package"), [("sign", "rpm-sign"), ("lint", "rpmlint")])
-def test_side_image_pinned(root: Path, kind: str, package: str) -> None:
+def should_pin_the_side_images_apart_from_the_build_image(root: Path, kind: str, package: str) -> None:
     project = Project.find()
     lock = load_lock(project)
     # pinned when preparing, on every architecture, without the image's
@@ -564,7 +564,7 @@ def test_side_image_pinned(root: Path, kind: str, package: str) -> None:
     assert all(installed[n].evr == lock.binaries[ARCH][n].evr for n in getattr(lock, kind)[ARCH])
 
 
-def test_recorded_requires_of_the_image(root: Path) -> None:
+def should_publish_image_packages_that_our_packages_require(root: Path) -> None:
     # a script of trivial run by sh, of bash, in the image: published, as the snapshot does not have the image
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(
@@ -583,7 +583,7 @@ def test_recorded_requires_of_the_image(root: Path) -> None:
     assert "bash" in load_lock(Project.find()).runtime[ARCH]
 
 
-def test_snapshot_of_a_checkout_changed_while_making_it(
+def should_refuse_a_snapshot_when_the_checkout_changed_meanwhile(
     root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # the lock of another git checkout, once the builds are done: the snapshot is of the one before, not of its keys
@@ -598,7 +598,7 @@ def test_snapshot_of_a_checkout_changed_while_making_it(
         publish.snapshot([Project.find()], tmp_path / "snapshot", signer=None, storage=None, build=False)
 
 
-def test_snapshots_checked_in_turn(root: Path, tmp_path: Path) -> None:
+def should_check_each_snapshot_with_its_own_metadata(root: Path, tmp_path: Path) -> None:
     # like those of two projects: the broken one, made first, is not checked with the newer metadata of the other, which
     # the dnf cache shared by the containers keeps
     project = Project.find()
@@ -619,7 +619,7 @@ def test_snapshots_checked_in_turn(root: Path, tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("cached", [False, True])
-def test_recorded_once_all_built(root: Path, *, cached: bool) -> None:
+def should_record_requirements_once_what_they_need_is_built(root: Path, *, cached: bool) -> None:
     # a script of trivial run by xtool, of ours too, built after it: recorded once xtool is built, without warning
     (root / "base/xtool").mkdir()
     (root / "base/xtool/xtool.spec").write_text(
@@ -650,7 +650,7 @@ def test_recorded_once_all_built(root: Path, *, cached: bool) -> None:
     assert xcraft("build", "trivial", "xtool", "--locked") == (0, "2 cached\n")
 
 
-def test_dune_cache(root: Path) -> None:
+def should_keep_the_dune_cache_of_development_builds(root: Path) -> None:
 
     # the cache of dune of trivial, which writes in it like dune: kept on this machine, for the development builds
     # only, but for the builds without dune
@@ -679,7 +679,7 @@ def test_dune_cache(root: Path) -> None:
     assert not (caches / "trivial").exists()
 
 
-def test_recorded_once_what_they_require_is_built(root: Path, caplog: pytest.LogCaptureFixture) -> None:
+def should_defer_recording_until_what_is_required_is_built(root: Path, caplog: pytest.LogCaptureFixture) -> None:
     # trivial requires what xtool, of ours, provides: recorded once xtool is built, without the problem of dnf
     (root / "base/xtool").mkdir()
     (root / "base/xtool/xtool.spec").write_text(
@@ -720,7 +720,7 @@ def test_recorded_once_what_they_require_is_built(root: Path, caplog: pytest.Log
     assert load_builds(Project.find()).requires.of(ARCH).get("trivial") is None  # what it requires, declared
 
 
-def test_recorded_as_soon_as_resolved(root: Path, caplog: pytest.LogCaptureFixture) -> None:
+def should_record_requirements_as_soon_as_they_resolve(root: Path, caplog: pytest.LogCaptureFixture) -> None:
     # trivial, of dynamic BuildRequires, whose script requires tcl, recorded at once, and trivial-extra, which requires
     # what xtool, of ours, provides, once xtool is built: the builds against trivial get tcl before
     (root / "base/xtool").mkdir()
@@ -765,7 +765,7 @@ def test_recorded_as_soon_as_resolved(root: Path, caplog: pytest.LogCaptureFixtu
     assert xcraft("build", "with-deps", "--locked")[0] == 0
 
 
-def test_names_with_their_releases_by_chance(root: Path) -> None:
+def should_not_treat_a_digit_in_a_name_as_its_release(root: Path) -> None:
     # the digit of its release in its name, without %dist: not named after its release
     write_spec(root, "libfoo1")
     spec = root / "base/libfoo1/libfoo1.spec"
@@ -777,7 +777,7 @@ def test_names_with_their_releases_by_chance(root: Path) -> None:
     ]
 
 
-def test_recorded_of_binaries_named_with_their_releases(root: Path) -> None:
+def should_record_binaries_named_with_their_releases(root: Path) -> None:
     # a binary package named with its version-release, with a requirement rpm generates, of a script
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(
@@ -807,7 +807,7 @@ def test_recorded_of_binaries_named_with_their_releases(root: Path) -> None:
     assert load_builds(Project.find()).requires.of(ARCH) == {"trivial-rel_1.0_1.xcpng8.99": ["tcl"]}
 
 
-def test_recorded_once_after_a_change(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_keep_recordings_when_a_dependent_is_rebuilt(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # what trivial recorded, with the former build of with-deps there, which it does not resolve to: recorded as it is,
     # rather than resolved again; with-deps records its own when built
     assert xcraft("build")[0] == 0
@@ -844,7 +844,9 @@ def _resolved_again(monkeypatch: pytest.MonkeyPatch, *, new_process: bool = True
     return cache, resolution.resolve(project)
 
 
-def test_build_roots_resolved_again_for_versions_upstream_requires(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_resolve_build_roots_again_when_upstream_requires_our_version(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # upstream toyrun-bin, published, requires toyrun = 2-1: ours, while of that version, or else the upstream one
     write_spec(root, "toyrun")
     spec = root / "base/toyrun/toyrun.spec"
@@ -871,7 +873,7 @@ VERSIONED = "trivial >= 1.0-2.xcpng8.99"
     [("build requirement", "errors"), ("rich dependency", "runtime_errors"), ("published", "runtime_errors"),
      ("same process", "errors")],
 )  # fmt: skip
-def test_build_roots_resolved_again_for_versions(
+def should_resolve_build_roots_again_when_a_required_version_changes(
     root: Path, monkeypatch: pytest.MonkeyPatch, case: str, errors: str
 ) -> None:
     # what requires a version of trivial it does not have resolves again for another release, under the same key: on
@@ -906,7 +908,7 @@ def test_build_roots_resolved_again_for_versions(
     ]
 
 
-def test_build_roots_kept_for_another_release_required_by_its_own(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_keep_build_roots_when_subpackages_require_their_release(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # pair requires pair-libs of its own version-release, as subpackages do: another release resolves nothing again
     write_spec(root, "pair")
     spec = root / "base/pair/pair.spec"
@@ -922,7 +924,7 @@ def test_build_roots_kept_for_another_release_required_by_its_own(root: Path, mo
     assert _resolved_again(monkeypatch)[0] == cache
 
 
-def test_resolutions_kept_for_the_pins_they_record(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_keep_resolutions_when_their_packages_get_pinned(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # bc, needed but not locked: locked, then its binary packages pinned, which resolves nothing again
     _resolved_again(monkeypatch)
     spec = root / "base/trivial/trivial.spec"
@@ -933,7 +935,7 @@ def test_resolutions_kept_for_the_pins_they_record(root: Path, monkeypatch: pyte
     _resolved_again(monkeypatch)
 
 
-def test_build_roots_kept_for_an_epoch_0(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_keep_build_roots_when_a_version_has_epoch_0(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # with-deps requires the version of trivial, of epoch 0, which dnf leaves out of what it resolves
     trivial = root / "base/trivial/trivial.spec"
     trivial.write_text(trivial.read_text().replace("Version: 1.0", "Epoch: 0\nVersion: 1.0"))
@@ -944,7 +946,7 @@ def test_build_roots_kept_for_an_epoch_0(root: Path, monkeypatch: pytest.MonkeyP
     assert "with-deps" not in _resolved_again(monkeypatch)[1].errors
 
 
-def test_image_needs_the_packages_of_the_base_image_in_the_repositories(
+def should_reject_an_image_when_a_base_package_is_not_in_the_repositories(
     root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # like a base image with a package of a repository not configured: the checks of the image would reject it, unpinned
@@ -961,7 +963,7 @@ def test_image_needs_the_packages_of_the_base_image_in_the_repositories(
         resolution.resolve_image(project)
 
 
-def test_image_of_the_host_pinned_for_a_project_of_other_architectures(root: Path) -> None:
+def should_pin_the_host_image_when_the_project_is_of_other_architectures(root: Path) -> None:
     # the image of the host parses the specs, and indexes the repositories, natively
     foreign = "linux/arm64" if ARCH == "x86_64_v2" else "linux/amd64/v2"
     (root / "xcraft.toml").write_text(TOML.replace('["linux/amd64/v2", "linux/arm64"]', f'["{foreign}"]'))
@@ -984,7 +986,7 @@ def test_image_of_the_host_pinned_for_a_project_of_other_architectures(root: Pat
     assert pinned.ident(container._side_pins(native, "lint")) in container.checkout_repositories(project)
 
 
-def test_lock_update_changing_implicit_deps(root: Path) -> None:
+def should_rebuild_dependents_when_a_lock_update_changes_implicit_deps(root: Path) -> None:
     # a script run by toyrun, upstream, which rpm generates a requirement on
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(
@@ -1019,7 +1021,7 @@ def test_lock_update_changing_implicit_deps(root: Path) -> None:
     assert xcraft("build", "with-deps", "--locked")[0] == 0
 
 
-def test_doctor(root: Path) -> None:
+def should_report_the_health_of_the_host(root: Path) -> None:
     code, output = xcraft("doctor")
     assert code == 0, output
     assert output.startswith("✓ podman ")
@@ -1032,7 +1034,7 @@ def test_doctor(root: Path) -> None:
         assert f"debug: running {podman}\n" in output.stderr
 
 
-def test_options_before_subcommands(root: Path) -> None:
+def should_apply_options_given_before_subcommands(root: Path) -> None:
     # those of fetch and push apply to their subcommands too, given before them
     for args in (["fetch", "--arch", "sparc", "sources"], ["push", "--arch", "sparc", "builds"]):
         code, output = xcraft(*args)
@@ -1040,20 +1042,20 @@ def test_options_before_subcommands(root: Path) -> None:
         assert "sparc is not an architecture of the project" in output
 
 
-def test_graph(root: Path) -> None:
+def should_show_the_dependencies_and_dependents(root: Path) -> None:
     assert xcraft("graph", "with-deps") == (0, "with-deps\n└── trivial\n")
     assert xcraft("graph", "with-deps", "--flat") == (0, "trivial\nwith-deps\n")
     assert xcraft("graph", "trivial", "--dependents") == (0, "trivial\n└── with-deps\n")
     assert xcraft("graph", "trivial", "--dependents", "--flat") == (0, "with-deps\n")
 
 
-def test_failed_step_shows_its_log(root: Path) -> None:
+def should_show_the_end_of_the_log_when_a_step_fails(root: Path) -> None:
     # like in CI, where the log is out of reach
     with pytest.raises(container.ContainerError, match=r"_failing\.log, which ends with:\n  first\n  boom$"):
         container.run(Project.find(), "failing", "echo first; echo boom; false")
 
 
-def test_clean_removes_the_other_images(root: Path) -> None:
+def should_clean_the_images_of_no_checkout(root: Path) -> None:
     project, since = Project.find(), time.time()
     image = container.built_image(project)
     other = f"{container.BUILD_IMAGE}:other-{os.getpid()}"
@@ -1066,7 +1068,7 @@ def test_clean_removes_the_other_images(root: Path) -> None:
     assert process.run(["podman", "image", "exists", image], check=False).returncode == 0
 
 
-def test_pinned_packages(root: Path) -> None:
+def should_refuse_builds_when_pinned_packages_have_other_contents(root: Path) -> None:
     assert xcraft("build", "trivial")[0] == 0
     project = Project.find()
     lock, tag = load_lock(project), container.image_tag(project)
@@ -1099,7 +1101,7 @@ def test_pinned_packages(root: Path) -> None:
         pinned.repository(Project.find())
 
 
-def test_images_of_other_contents(root: Path, tmp_path: Path) -> None:
+def should_build_distinct_images_for_pins_of_other_contents(root: Path, tmp_path: Path) -> None:
     # two RPMs of a package the base image does not have, of the same name, version and architecture, but other contents
     (specs := tmp_path / "specs").mkdir()
     (specs / "toypayload.spec").write_text(
@@ -1139,7 +1141,7 @@ def test_images_of_other_contents(root: Path, tmp_path: Path) -> None:
     subprocess.run(["podman", "rmi", *images], capture_output=True, check=False)
 
 
-def test_parsing_gets_the_pins_of_the_image_only(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_parse_the_specs_with_the_image_pins_only(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # a store of its own, and a build root with a pin the image does not have
     monkeypatch.setattr(pinned, "VOLUME", volume := f"xcraft-pinned-test-{os.getpid()}-{time.monotonic_ns()}")
     monkeypatch.setattr(pinned, "_checked", set())
@@ -1159,7 +1161,7 @@ def test_parsing_gets_the_pins_of_the_image_only(root: Path, monkeypatch: pytest
         subprocess.run(["podman", "volume", "rm", "-f", volume], check=False, capture_output=True)
 
 
-def test_pinned_store_checked(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_download_again_pinned_packages_damaged_in_the_store(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # a store of its own
     monkeypatch.setattr(pinned, "VOLUME", volume := f"xcraft-pinned-test-{os.getpid()}-{time.monotonic_ns()}")
     monkeypatch.setattr(pinned, "_checked", set())
@@ -1189,7 +1191,7 @@ def test_pinned_store_checked(root: Path, monkeypatch: pytest.MonkeyPatch) -> No
         subprocess.run(["podman", "volume", "rm", "-f", volume], check=False, capture_output=True)
 
 
-def test_clean_removes_the_other_repositories_of_pinned_packages(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_clean_the_repositories_of_pins_no_checkout_uses(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     project = Project.find()
     used = {pinned.repository(project), pinned.repository(project, container._image_pins(project))}
     assert {repo.name for repo in used} <= container.checkout_repositories(project)
@@ -1217,7 +1219,7 @@ def test_clean_removes_the_other_repositories_of_pinned_packages(root: Path, mon
         subprocess.run(["podman", "volume", "rm", "-f", volume], check=False, capture_output=True)
 
 
-def test_signatures_of_the_keys_of_the_repositories(root: Path, tmp_path: Path) -> None:
+def should_check_signatures_with_the_keys_of_the_repositories(root: Path, tmp_path: Path) -> None:
     # signed with the key of AlmaLinux's EPEL, of a URL, which the build image does not have, as it installs the pinned
     # packages without the keys
     srpm = tmp_path / "htop-3.3.0-5.el10_0.alma_altarch.src.rpm"
@@ -1225,7 +1227,7 @@ def test_signatures_of_the_keys_of_the_repositories(root: Path, tmp_path: Path) 
     check_signatures(Project.find(), tmp_path, [srpm.name], what="upstream source packages")
 
 
-def test_building_until_recorded(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_show_a_package_as_building_until_recorded(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # what rpm generated, recorded after the build container, still during the turn of the package, as xcraft status
     # shows it
     states = []
@@ -1244,7 +1246,7 @@ def test_building_until_recorded(root: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert not builder.building(Project.find(), "trivial")
 
 
-def test_status_during_a_build(root: Path) -> None:
+def should_show_the_status_during_a_build(root: Path) -> None:
     assert xcraft("build", "--dry-run")[0] == 0
     with (root / ".xcraft/lock").open("w") as f:
         fcntl.flock(f, fcntl.LOCK_EX)  # as a build does
@@ -1252,7 +1254,7 @@ def test_status_during_a_build(root: Path) -> None:
         assert code == 0, output
 
 
-def test_patchset_during_a_build(root: Path, tmp_path: Path) -> None:
+def should_export_a_patchset_during_a_build(root: Path, tmp_path: Path) -> None:
     repo = tmp_path / "trivial"
     repo.mkdir()
     for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "upstream"], ["tag", "1.0"]):
@@ -1272,7 +1274,7 @@ def test_patchset_during_a_build(root: Path, tmp_path: Path) -> None:
     assert xcraft("patchset", str(repo), "--package", "nope")[0] == 2
 
 
-def test_lock_records_image_and_roots(root: Path) -> None:
+def should_lock_the_image_and_the_build_roots(root: Path) -> None:
     spec = root / "base/trivial/trivial.spec"
     original = spec.read_text()
     spec.write_text(original.replace("BuildArch: noarch", "BuildArch: noarch\nBuildRequires: lzo-devel"))

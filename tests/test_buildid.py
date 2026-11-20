@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def test_build_ids_of_all_architectures(root: Path) -> None:
+def should_give_the_same_build_ids_on_all_architectures(root: Path) -> None:
     # with-deps built against trivial on aarch64 only: %ifarch is noarch for noarch packages
     spec = root / "base/with-deps/with-deps.spec"
     text = spec.read_text().replace("BuildArch: noarch\n", "")
@@ -58,7 +58,7 @@ def built(*args: str) -> list[str]:
     return sorted(p.name for p in _development_rpms() - before)
 
 
-def test_build_id_validation() -> None:
+def should_reject_malformed_build_ids() -> None:
     key = "ab" * 32
     # keys of 64 hexadecimal digits only, which the release suffixes follow in the caches
     for invalid in ({"key": "abc"}, {"key": f"{key}0"}, {"accepts": key[1:]}):
@@ -68,7 +68,7 @@ def test_build_id_validation() -> None:
         BuildId(number=0, key=key)  # the release suffix +b0, before the first build
 
 
-def test_build_ids_of_conflicts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_number_again_the_packages_of_merge_conflicts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "xcraft.toml").write_text(TOML)
     monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path))
     ids = {"bar": BuildId(number=1, key="ab" * 32), "foo": BuildId(number=2, key="cd" * 32)}
@@ -90,7 +90,7 @@ def test_build_ids_of_conflicts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         buildid.read(Project.find())
 
 
-def test_build_ids(root: Path) -> None:
+def should_number_the_builds_and_forbid_new_numbers_when_locked(root: Path) -> None:
     (root / "xcraft.toml").write_text(f'{TOML}installer = ["bash"]\n')  # for the ISO
     code, output = xcraft("build")
     assert code == 0, output
@@ -118,7 +118,7 @@ def test_build_ids(root: Path) -> None:
         checkout_iso(project)
 
 
-def test_shown_inputs(root: Path) -> None:
+def should_show_the_inputs_of_the_build_keys(root: Path) -> None:
     update()
     code, output = xcraft("status", "trivial", "with-deps", "--inputs")
     assert code == 0, output
@@ -140,7 +140,7 @@ def test_shown_inputs(root: Path) -> None:
     assert package != shown["trivial"]["inputs"]["trivial"][0]
 
 
-def test_build_ids_of_main_branch(root: Path) -> None:
+def should_number_branches_against_the_main_branch(root: Path) -> None:
     commit_base(root)
     git(root, "checkout", "-qb", "feature")
     # the same number however many times the branch changes, to the package and those built against it
@@ -169,7 +169,7 @@ def test_build_ids_of_main_branch(root: Path) -> None:
     git(root, "diff", "--quiet", "master", "--", "xcraft.builds")
 
 
-def test_main_branch_setting(root: Path) -> None:
+def should_number_against_the_configured_main_branch(root: Path) -> None:
     (root / "xcraft.toml").write_text(f'main_branch = "main"\n{(root / "xcraft.toml").read_text()}')
     commit_base(root, "main")
     git(root, "checkout", "-qb", "feature")
@@ -191,7 +191,7 @@ def version(name: str) -> str:
     return next(line.split()[1] for line in xcraft("status", "--full")[1].splitlines() if line.split()[0] == name)
 
 
-def test_maintenance_branches(root: Path) -> None:
+def should_number_maintenance_fixes_between_releases(root: Path) -> None:
     commit_base(root)
     release = git(root, "rev-parse", "HEAD")
     edit(root, "master", name="with-deps")
@@ -240,7 +240,7 @@ def test_maintenance_branches(root: Path) -> None:
     assert version("trivial") == "1.0-1+b1.2.xcpng8.99"
 
 
-def test_commit_of_the_checkout(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_identify_the_commit_of_the_checkout(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     project = Project.find()
     assert buildid.commit(project) is None  # out of git
     (root / ".gitignore").write_text(".xcraft/\n")
@@ -267,7 +267,9 @@ def test_commit_of_the_checkout(root: Path, tmp_path: Path, monkeypatch: pytest.
 
 
 @pytest.mark.skipif(not shutil.which("jj"), reason="needs jj")
-def test_maintenance_branch_of_jj(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_number_jj_maintenance_bookmarks_like_branches(
+    root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     (config := tmp_path / "jj.toml").write_text('user.name = "test"\nuser.email = "test@example.com"\n')
     monkeypatch.setenv("JJ_CONFIG", str(config))
 
@@ -292,7 +294,7 @@ def test_maintenance_branch_of_jj(root: Path, tmp_path: Path, monkeypatch: pytes
     assert update() == {"trivial": 2, "with-deps": 2}
 
 
-def test_maintenance_branch_merged_by_fast_forward(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_refuse_maintenance_numbers_merged_by_fast_forward(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     commit_base(root)
     git(root, "checkout", "-qb", "maint/9.0")
     git(root, "checkout", "-qb", "fix")
@@ -321,7 +323,7 @@ def test_maintenance_branch_merged_by_fast_forward(root: Path, monkeypatch: pyte
         locked()
 
 
-def test_development_builds_without_the_tests_of_the_specs(root: Path) -> None:
+def should_skip_spec_tests_only_for_development_builds(root: Path) -> None:
     trivial, with_deps = (root / f"base/{n}/{n}.spec" for n in ("trivial", "with-deps"))
     trivial.write_text(trivial.read_text().replace("%files\n", "%check\necho trivial-checked\n\n%files\n"))
     assert xcraft("build")[0] == 0
@@ -357,7 +359,7 @@ def compression(root: Path, rpm: str) -> str:
     return subprocess.run(query, capture_output=True, text=True, check=True).stdout
 
 
-def test_development_builds(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: PLR0915
+def should_make_development_builds_of_the_changed_packages(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: PLR0915
     # a main branch with what the builds record in its lock, like those CI checks
     assert xcraft("build")[0] == 0
     commit_base(root)
@@ -439,7 +441,7 @@ def test_development_builds(root: Path, monkeypatch: pytest.MonkeyPatch) -> None
     assert "$XCRAFT_DEV_COUNTER must be a positive number: -1" in output
 
 
-def test_iso_of_development_builds(root: Path) -> None:
+def should_make_isos_of_the_development_builds_of_a_branch(root: Path) -> None:
     def key(dev: str | None) -> str:
         return iso_key(Project.find(), netinstall=False, volid=None, signer=None, dev=dev)
 
@@ -459,7 +461,7 @@ def test_iso_of_development_builds(root: Path) -> None:
     )
 
 
-def test_development_builds_against_other_ones(root: Path) -> None:
+def should_rebuild_dependents_against_other_development_builds(root: Path) -> None:
     commit_base(root)
     git(root, "checkout", "-qb", "feature")
     edit(root, "changed")
@@ -477,7 +479,7 @@ def test_development_builds_against_other_ones(root: Path) -> None:
     assert built("--dev", "dev") == []
 
 
-def test_development_builds_changed_by_others(root: Path) -> None:
+def should_number_dependents_again_when_their_dependencies_change(root: Path) -> None:
     commit_base(root)
     git(root, "checkout", "-qb", "feature")
     # another release: what rpm generated for trivial, which with-deps is built against, changes with its build; the
@@ -496,7 +498,7 @@ def test_development_builds_changed_by_others(root: Path) -> None:
     assert built() == []
 
 
-def test_development_builds_with_dependencies_edited_meanwhile(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_count_builds_with_the_inputs_they_had(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     commit_base(root)
     git(root, "checkout", "-qb", "feature")
     edit(root, "changed")
@@ -520,7 +522,7 @@ def test_development_builds_with_dependencies_edited_meanwhile(root: Path, monke
     assert built() == []
 
 
-def test_dynamic_buildrequires_changing_the_build_number(root: Path) -> None:
+def should_cache_builds_under_the_suffix_of_their_rpms(root: Path) -> None:
     # a dynamic BuildRequires the build environment has already, which the lock of the main branch misses: its build
     # records it, which changes its key, and its number
     spec = root / "base/trivial/trivial.spec"
@@ -535,7 +537,7 @@ def test_dynamic_buildrequires_changing_the_build_number(root: Path) -> None:
         assert rpm.parents[2].name[64:] in rpm.name
 
 
-def test_numbers_given_again_on_main_branch(root: Path) -> None:
+def should_refuse_numbers_given_again_on_the_main_branch(root: Path) -> None:
     commit_base(root)
     edit(root, "changed")
     assert update() == {"trivial": 2, "with-deps": 2}
@@ -555,7 +557,7 @@ def test_numbers_given_again_on_main_branch(root: Path) -> None:
     buildid.check_first_parent(project, ids)
 
 
-def test_numbers_start_again_for_a_new_evr(root: Path) -> None:
+def should_number_from_1_again_for_a_new_release(root: Path) -> None:
     commit_base(root)
     assert buildid.read(Project.find())["trivial"].evr == "1.0-1"
     # without the epoch-version-releases, like given before they were recorded: added, for the same numbers
@@ -590,7 +592,7 @@ def test_numbers_start_again_for_a_new_evr(root: Path) -> None:
     assert update()["trivial"] == 1
 
 
-def test_reused_builds(root: Path) -> None:
+def should_reuse_the_main_branch_build_until_its_inputs_change(root: Path) -> None:
     code, output = xcraft("reuse", "with-deps")
     assert code == 1
     assert "reusing builds needs the main branch, master, in a git repository" in output
@@ -645,7 +647,7 @@ def test_reused_builds(root: Path) -> None:
     ) in " ".join(output.split())
 
 
-def test_reused_builds_of_ignored_files(root: Path) -> None:
+def should_not_reuse_builds_of_packages_with_ignored_files(root: Path) -> None:
     # in the key, which hashes all the files: not reused, or only this machine would accept its key
     commit_base(root)
     git(root, "checkout", "-qb", "feature")
@@ -656,7 +658,7 @@ def test_reused_builds_of_ignored_files(root: Path) -> None:
     assert "warning: with-deps: its directory changed since master" in output
 
 
-def test_reused_builds_of_files_changed_through_links(root: Path) -> None:
+def should_not_reuse_builds_of_files_changed_through_links(root: Path) -> None:
     # a file of with-deps, which is the one of trivial
     (root / "base/trivial/notes").write_text("notes")
     (root / "base/with-deps/notes").symlink_to("../trivial/notes")
@@ -668,7 +670,7 @@ def test_reused_builds_of_files_changed_through_links(root: Path) -> None:
     assert "warning: with-deps: its directory changed since master" in output
 
 
-def test_reused_builds_of_upstream_updates(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_reuse_builds_across_upstream_updates(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # a script run by toyrun, upstream, which rpm generates a requirement on: with-deps is built against toyrun
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(

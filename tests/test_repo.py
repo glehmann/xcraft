@@ -15,7 +15,7 @@ from tests import xcraft
 from xcraft.commands.repo import _connected, _Host, _host, _kept
 
 
-def test_packages_kept_by_test_hosts() -> None:
+def should_report_newer_packages_kept_by_test_hosts() -> None:
     rpms = ["xen-4.17-1+b3~2.dev.x86_64.rpm", "xen-libs-4.17-1+b3~2.dev.x86_64.rpm", "qemu-9-1+b5~1.dev.x86_64.rpm"]
     installed = [
         "xen-4.17-1+b3~2.dev.x86_64",  # upgraded
@@ -25,7 +25,7 @@ def test_packages_kept_by_test_hosts() -> None:
     assert _kept(installed, rpms) == [("xen-libs-4.17-1+b3~4.qcow2.x86_64", "xen-libs-4.17-1+b3~2.dev.x86_64")]
 
 
-def test_test_hosts_with_their_ports() -> None:
+def should_accept_test_hosts_with_their_ports() -> None:
     assert _host("root@h") == _Host("root@h", "root@h")
     assert _host("ssh://root@127.0.0.1:2222") == _Host("ssh://root@127.0.0.1:2222", "root@127.0.0.1", ["-p", "2222"])
     assert _host("ssh://h") == _Host("ssh://h", "h")
@@ -35,7 +35,7 @@ def test_test_hosts_with_their_ports() -> None:
 
 
 @pytest.mark.skipif(not shutil.which("sshd", path="/usr/sbin:/usr/bin"), reason="needs sshd")
-def test_test_host_connected_once(tmp_path: Path) -> None:
+def should_connect_once_to_a_test_host(tmp_path: Path) -> None:
     # a real sshd on localhost, as this user, which the commands of a copy reach through one connection
     for key in ("host", "user"):
         subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", tmp_path / key], check=True)
@@ -70,7 +70,7 @@ def test_test_host_connected_once(tmp_path: Path) -> None:
             server.terminate()
 
 
-def test_repo_host_options(root: Path) -> None:
+def should_reject_inconsistent_host_options(root: Path) -> None:
     for args, error in [
         (["--host", "h", "--final"], "--host, --vm and --upgrade are for the development builds of the given packages"),
         (["--upgrade"], "--upgrade needs --host or --vm"),

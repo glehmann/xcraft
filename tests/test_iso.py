@@ -42,7 +42,9 @@ def cache_image(
     return tree
 
 
-def test_iso_inputs(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_change_the_iso_key_only_with_what_the_iso_contains(
+    project: Project, monkeypatch: pytest.MonkeyPatch
+) -> None:
     def key() -> str:
         return iso_key(project, netinstall=False, volid=None, signer=None)
 
@@ -93,7 +95,7 @@ def test_iso_inputs(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
         assert key() != before
 
 
-def test_iso_inputs_of_the_builds(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_change_the_iso_key_with_the_inputs_of_the_builds(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     def key() -> str:
         return iso_key(project, netinstall=False, volid=None, signer=None)
 
@@ -120,7 +122,7 @@ def test_iso_inputs_of_the_builds(project: Project, monkeypatch: pytest.MonkeyPa
 
 
 @needs_gpg
-def test_iso_lookup_before_preparation(project: Project, tmp_path: Path) -> None:
+def should_get_a_cached_iso_without_preparing_the_project(project: Project, tmp_path: Path) -> None:
     # The cache transport treats ISO contents as opaque bytes. No RPM resolution is available in this project.
     image = tmp_path / "test.iso"
     image.write_bytes(b"cached ISO contents")
@@ -145,7 +147,7 @@ def test_iso_lookup_before_preparation(project: Project, tmp_path: Path) -> None
         checkout_iso(project, signer=signer, dev="dev")
 
 
-def test_iso_config_checked_before_the_snapshot(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_check_the_configuration_before_the_snapshot(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(publish, "snapshot", lambda *_, **__: pytest.fail("snapshot"))
     with pytest.raises(RuntimeError, match="the ISO needs the installer's packages"):
         checkout_iso(project)
@@ -157,9 +159,7 @@ def test_iso_config_checked_before_the_snapshot(project: Project, monkeypatch: p
         checkout_iso(Project.find("x86_64_v2"))
 
 
-def test_iso_not_cached_when_the_lock_changed_while_making_it(
-    project: Project, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def should_not_cache_the_iso_when_the_lock_changed_meanwhile(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     # like a checkout of another lock, while the ISO of the one before is assembled
     key = iso_key(project, netinstall=False, volid=None, signer=None)
 
@@ -180,7 +180,7 @@ def test_iso_not_cached_when_the_lock_changed_while_making_it(
     assert not cached_iso(project, iso_key(project, netinstall=False, volid=None, signer=None)).exists()
 
 
-def test_iso_not_made_of_a_snapshot_of_another_checkout(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_refuse_a_snapshot_of_another_checkout(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     # like a git checkout after the snapshot, before its ISO is made: its key would be the new checkout's
     checkout = publish.current_checkout(project)
     lock = load_lock(project)
@@ -191,7 +191,7 @@ def test_iso_not_made_of_a_snapshot_of_another_checkout(project: Project, monkey
         iso._snapshot_iso(project, project.root, checkout, None, netinstall=False, volid=None, signer=None)
 
 
-def test_iso_masked_units_invalidate_cache(project: Project) -> None:
+def should_change_the_iso_key_with_masked_units(project: Project) -> None:
     def key() -> str:
         return iso_key(project, netinstall=False, volid=None, signer=None)
 
@@ -207,12 +207,12 @@ def test_iso_masked_units_invalidate_cache(project: Project) -> None:
     assert key() == original
 
 
-def test_iso_names_are_not_paths() -> None:
+def should_reject_iso_names_that_are_paths() -> None:
     with pytest.raises(ValueError, match="version"):
         Iso(name="toy", version="../../outside")
 
 
-def test_iso_names(project: Project) -> None:
+def should_name_isos_by_their_contents_and_architecture(project: Project) -> None:
     full = iso_name(project, netinstall=False, signer=None)
     assert re.fullmatch(rf"toy-1\.0-[0-9a-f]{{6}}-{project.arch}\.iso", full)
     # the same identifier for the netinstall ISO, and those of the other architectures

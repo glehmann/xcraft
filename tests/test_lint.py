@@ -23,7 +23,7 @@ def edit(path: Path, old: str, new: str) -> None:
     path.write_text(text.replace(old, new, 1))
 
 
-def test_spec_errors(root: Path) -> None:
+def should_fail_final_builds_when_the_spec_has_errors(root: Path) -> None:
     spec = root / "base/trivial/trivial.spec"
     edit(spec, "%build\ncd %{name}-%{version}", "%build\ncd %{name}-%{version} && ls $RPM_SOURCE_DIR")
     code, output = xcraft("lint", "trivial")
@@ -62,7 +62,7 @@ def test_spec_errors(root: Path) -> None:
     assert "no-%check-section" not in output
 
 
-def test_binary_errors(root: Path) -> None:
+def should_fail_final_builds_when_the_packages_have_errors(root: Path) -> None:
     spec = root / "base/trivial/trivial.spec"
     local = "mkdir -p %{buildroot}/usr/local/share\necho x > %{buildroot}/usr/local/share/x\n"
     edit(spec, "%install\n", f"%install\n{local}")

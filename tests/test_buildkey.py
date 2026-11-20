@@ -30,7 +30,7 @@ def project(tmp_path: Path) -> Project:
     return project
 
 
-def test_formulas() -> None:
+def should_compute_the_keys_as_the_specification_has_them() -> None:
     # fixed values: a change of the formulas, or of how their inputs are serialized, changes all the keys
     inputs = {"a": ["1" * 64, "2" * 64, {"x86_64_v2": [{"glibc": "2.39-1"}, {}, [], {}]}, [["b", 2, "3" * 64]]]}
     assert buildkey.key(inputs, "a") == "d253f2c4df8681e755fec12f9fd0c205524908f739f3bdfd7ba0b4b5fbd33401"
@@ -42,7 +42,9 @@ def test_formulas() -> None:
     assert buildkey.key(inputs, "a") == hashlib.sha256(f"{json.dumps(inputs, sort_keys=True)}\0a".encode()).hexdigest()
 
 
-def test_build_key_inputs(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_change_the_keys_of_the_packages_whose_inputs_changed(
+    project: Project, monkeypatch: pytest.MonkeyPatch
+) -> None:
     arch = project.arch
     # b built against a: the binary packages of a, what they need, and what it needs to be built
     ours(project, monkeypatch, {"a": set(), "b": {"a"}})
@@ -98,7 +100,7 @@ def test_build_key_inputs(project: Project, monkeypatch: pytest.MonkeyPatch) -> 
         before = after
 
 
-def test_inputs_read_once(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_read_the_inputs_of_the_keys_once(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     ours(project, monkeypatch, {"a": set(), "b": {"a"}, "c": set()})
     save_lock(project, Lock())
     hashes = {name: digit * 64 for name, digit in zip("abc", "123", strict=True)}
@@ -118,7 +120,7 @@ def test_inputs_read_once(project: Project, monkeypatch: pytest.MonkeyPatch) -> 
     assert buildkey.key(other.of({"c"}, ids), "c") != buildkey.key(other.of({"a"}, ids), "a")
 
 
-def test_image_of_the_lock(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_take_the_image_from_the_lock_given(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     ours(project, monkeypatch, {"a": set(), "b": set()})
     save_lock(project, Lock())
     # a lock of another commit, whose image has a binary package that a of ours replaces, like kernel-headers: b is
@@ -132,7 +134,7 @@ def test_image_of_the_lock(project: Project, monkeypatch: pytest.MonkeyPatch) ->
     )
 
 
-def test_lock_inputs_of_reused_builds() -> None:
+def should_ignore_dependency_updates_for_reused_builds() -> None:
     pin = Pin(evr="1-1", arch="noarch", sha256="1" * 64, source="zlib")
     platforms = [buildkey.Platform("x86_64_v2", {"b": frozenset()}, {"b": ()})]
 
@@ -153,7 +155,7 @@ def test_lock_inputs_of_reused_builds() -> None:
     assert inputs(("zlib", pin.model_copy(update={"source": "zlib-ng"}))) != before
 
 
-def test_keys_of_cycles(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_give_cycles_the_same_keys_whatever_the_order(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     for name in ("a", "b", "0foo"):
         (project.root / "base" / name).mkdir(parents=True)
         (project.root / "base" / name / f"{name}.spec").write_text(name)
@@ -170,7 +172,7 @@ def test_keys_of_cycles(project: Project, monkeypatch: pytest.MonkeyPatch) -> No
     assert build_keys(project)["a"] != keys["a"]
 
 
-def test_hash_dir_covers_what_builds_get(tmp_path: Path) -> None:
+def should_hash_the_package_files_as_builds_get_them(tmp_path: Path) -> None:
     pkg = tmp_path / "pkg"
     (pkg / "sub").mkdir(parents=True)
     script = pkg / "script.sh"
@@ -203,7 +205,7 @@ def test_hash_dir_covers_what_builds_get(tmp_path: Path) -> None:
             hash_dir(pkg, pkg if target == shared else tmp_path)
 
 
-def test_recipe(monkeypatch: pytest.MonkeyPatch) -> None:
+def should_map_earlier_recipes_making_the_same_builds(monkeypatch: pytest.MonkeyPatch) -> None:
     current = "22da793efe192c632edd8408e87a6f30c58b5a98fef97c20f3bcad86892b3eae"
     assert recipe_key() == current, (
         f"the recipe changed, to {buildkey.RECIPE}: map it to {current} in _SAME_BUILDS if it makes the same packages, "
@@ -217,7 +219,7 @@ def test_recipe(monkeypatch: pytest.MonkeyPatch) -> None:
     assert recipe_key() == "a"
 
 
-def test_recipe_inputs(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_change_the_recipe_only_for_what_builds_get(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     config, before = project.config, buildkey.recipe(project)
     # not what the builds do not get: where the source packages are published from, the order of the configuration
     config.repos["baseos"].source_baseurl = "https://example.com/elsewhere/"
@@ -244,7 +246,7 @@ def test_recipe_inputs(project: Project, monkeypatch: pytest.MonkeyPatch) -> Non
     assert after != before
 
 
-def test_keys_of_upstream_packages_without_versions(project: Project) -> None:
+def should_fail_when_the_lock_lacks_an_image_package(project: Project) -> None:
     with pytest.raises(RuntimeError, match="the lock has no pinned glibc"):
         buildkey.lock_inputs(
             [buildkey.Platform(project.arch, {}, {})],
@@ -254,7 +256,7 @@ def test_keys_of_upstream_packages_without_versions(project: Project) -> None:
         )
 
 
-def test_cache_keys_of_development_builds(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_give_new_keys_to_builds_against_development_ones(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     project.config.platforms = [project.platform]  # the one of the dependencies given
     ids = {name: BuildId(number=1, key=digit * 64) for name, digit in zip("abcde", "12345", strict=True)}
 
@@ -277,7 +279,7 @@ def test_cache_keys_of_development_builds(project: Project, monkeypatch: pytest.
 
 
 @pytest.mark.parametrize("cycle", [{"a": {"b"}, "b": {"a"}}, {"a": {"b", "c"}, "b": {"a"}, "c": set()}])
-def test_development_counters_of_components(
+def should_number_the_development_builds_of_a_cycle_together(
     project: Project, monkeypatch: pytest.MonkeyPatch, cycle: dict[str, set[str]]
 ) -> None:
     # a cycle of the dependencies of all the architectures, and maybe a package it is built against, all developed
@@ -301,7 +303,7 @@ def test_development_counters_of_components(
     assert build("dev", list(cycle)) == again
 
 
-def test_keys_of_all_architectures(root: Path) -> None:
+def should_change_the_keys_with_the_image_of_any_architecture(root: Path) -> None:
     # the repositories of the build environment differ by architecture, not the build keys
     projects = [Project.find(arch) for arch in ("x86_64_v2", "aarch64")]
     assert projects[0].repos.keys() != projects[1].repos.keys()

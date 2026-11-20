@@ -39,7 +39,7 @@ def files(path: Path) -> list[str]:
     return sorted(p.relative_to(path).as_posix() for p in path.rglob("*") if p.is_file())
 
 
-def test_stage_like_a_packaging_repository(project: Project, tmp_path: Path) -> None:
+def should_stage_the_build_tree_like_a_packaging_repository(project: Project, tmp_path: Path) -> None:
     pkg = project.root / "base/foo"
     (pkg / "sub").mkdir(parents=True)
     for name in ("foo.spec", "foo-helper.spec", "fix.patch", "sub/conf", "origin"):
@@ -75,7 +75,7 @@ def test_stage_like_a_packaging_repository(project: Project, tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize("name", ["{outside}", "../../../outside", "sub/../x", ".."])
-def test_stage_no_archive_out_of_the_cache(name: str, project: Project, tmp_path: Path) -> None:
+def should_refuse_manifest_archives_outside_the_cache(name: str, project: Project, tmp_path: Path) -> None:
     """A manifest naming a file out of the cache, of the right SHA-256, leaves it as it is."""
     pkg = project.root / "base/foo"
     pkg.mkdir(parents=True)
@@ -88,7 +88,7 @@ def test_stage_no_archive_out_of_the_cache(name: str, project: Project, tmp_path
     assert outside.stat().st_mode & 0o777 != 0o444
 
 
-def test_manifest_lines() -> None:
+def should_parse_the_lines_of_a_sources_manifest() -> None:
     digest = "a" * 64
     assert parse_manifest(f"{digest}  foo.tar.gz\n\n  \n{digest}\tfoo bar.tgz \n") == {
         "foo.tar.gz": digest,
@@ -99,14 +99,14 @@ def test_manifest_lines() -> None:
             parse_manifest(text)
 
 
-def test_link_to_itself(tmp_path: Path) -> None:
+def should_refuse_to_link_a_file_to_itself(tmp_path: Path) -> None:
     (file := tmp_path / "file").write_text("kept")
     with pytest.raises(RepoError, match="to itself"):
         localrepo.link(file, tmp_path / "." / "file")
     assert file.read_text() == "kept"
 
 
-def test_stage_whatever_the_umask(project: Project) -> None:
+def should_stage_the_same_tree_whatever_the_umask(project: Project) -> None:
     pkg = project.root / "base/foo"
     (pkg / "sub").mkdir(parents=True)
     for name in ("foo.spec", "sub/conf"):
@@ -130,7 +130,7 @@ def test_stage_whatever_the_umask(project: Project) -> None:
     assert staged(0o077) == staged(0o022)
 
 
-def test_stage_archives_of_the_manifest_hashed(
+def should_stage_the_archives_of_the_manifest_as_hashed(
     project: Project, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pkg = project.root / "base/foo"
@@ -157,7 +157,7 @@ def test_stage_archives_of_the_manifest_hashed(
     assert sorted(p.name for p in (tree / "SOURCES").iterdir()) == ["foo-1.tar.gz"]
 
 
-def test_extra_upstream_pinned(project: Project, tmp_path: Path) -> None:
+def should_download_extra_upstream_packages_as_pinned(project: Project, tmp_path: Path) -> None:
     (served := tmp_path / "foo-1.0-1.noarch.rpm").write_bytes(b"pinned")
     pinned = hashlib.sha256(b"pinned").hexdigest()
     project.config.extra_upstream = {"foo": Extra(url=served.as_uri(), sha256=pinned)}
@@ -173,7 +173,7 @@ def test_extra_upstream_pinned(project: Project, tmp_path: Path) -> None:
         extra_rpms(project)
 
 
-def test_link_replaces(tmp_path: Path) -> None:
+def should_replace_a_package_linked_in_a_repository(tmp_path: Path) -> None:
     # the builds of two keys, with packages of the same name, in a repository
     first, second, repo = tmp_path / "first.rpm", tmp_path / "second.rpm", tmp_path / "repo.rpm"
     first.write_text("first")
@@ -186,7 +186,7 @@ def test_link_replaces(tmp_path: Path) -> None:
     assert repo.samefile(second)
 
 
-def test_main_spec(tmp_path: Path) -> None:
+def should_find_the_main_spec_of_a_package(tmp_path: Path) -> None:
     (tmp_path / "grub").mkdir()
     (tmp_path / "grub/grub2.spec").write_text("")
     assert main_spec(tmp_path / "grub").name == "grub2.spec"
@@ -202,7 +202,7 @@ def removed(project: Project, removal: dict[str, list[Path]]) -> int:
     return size
 
 
-def test_clean_keeps_the_isos_of_the_checkout(project: Project) -> None:
+def should_keep_the_isos_of_the_checkout_when_cleaning(project: Project) -> None:
     isos, cache = project.state / "iso", project.state / "cache/isos" / project.arch
     isos.mkdir(parents=True)
     for key in ("current", "old"):
@@ -217,7 +217,7 @@ def test_clean_keeps_the_isos_of_the_checkout(project: Project) -> None:
     assert sorted(p.name for p in isos.iterdir()) == ["current.iso"]
 
 
-def test_clean_keeps_sources_and_current_builds(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_keep_sources_and_current_builds_when_cleaning(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     state = project.state
     for path in ("cache/sources/abc/foo.tar.gz", "cache/builds/one/x86_64_v2/foo/current/RPMS/foo.rpm",
                  "cache/builds/one/x86_64_v2/foo/old/RPMS/foo.rpm", "cache/builds/one/x86_64_v2/gone/old/RPMS/gone.rpm",
@@ -296,7 +296,7 @@ def test_clean_keeps_sources_and_current_builds(project: Project, monkeypatch: p
     assert files(state) == sorted([*kept, f"cache/sources/{'0' * 64}/foo-2.tar.gz"])
 
 
-def test_clean_keeps_what_was_used(project: Project) -> None:
+def should_keep_the_outdated_builds_still_used_when_cleaning(project: Project) -> None:
     state, now = project.state, time.time()
     for path in ("cache/builds/one/x86_64_v2/foo/old", "cache/builds/one/x86_64_v2/foo/used",
                  "cache/builds/one/x86_64_v2/foo/current",
@@ -324,7 +324,7 @@ def test_clean_keeps_what_was_used(project: Project) -> None:
     ]  # fmt: skip
 
 
-def test_previous_duration(project: Project) -> None:
+def should_estimate_a_build_from_its_previous_duration(project: Project) -> None:
     assert previous_duration(project, "foo") is None
     log = project.state / "cache/builds/one/x86_64_v2/foo/key/build.log"
     log.parent.mkdir(parents=True)
@@ -332,7 +332,7 @@ def test_previous_duration(project: Project) -> None:
     assert previous_duration(project, "foo") == 253.25
 
 
-def test_queued(project: Project) -> None:
+def should_list_the_packages_queued_to_build(project: Project) -> None:
     assert queued(project) == []
     queue = project.state / "build/.queue"
     queue.parent.mkdir(parents=True)
@@ -342,7 +342,7 @@ def test_queued(project: Project) -> None:
     assert queued(project) == []
 
 
-def test_fresh_dir_only_empties_what_xcraft_made(project: Project, tmp_path: Path) -> None:
+def should_only_empty_directories_xcraft_made(project: Project, tmp_path: Path) -> None:
     mine = tmp_path / "mine"
     mine.mkdir()
     (mine / "notes.txt").write_text("precious")
@@ -364,7 +364,7 @@ def test_fresh_dir_only_empties_what_xcraft_made(project: Project, tmp_path: Pat
         fresh_dir(project, other)
 
 
-def test_build_dependencies(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_list_the_upstream_build_dependencies_to_publish(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     binary = Binary(name="kernel-headers", evr="6.12-1", arch="x86_64_v2", provides=[], requires=[])
     project.packages = {"kernel": Package(name="kernel", binaries=[binary])}
     resolved = Resolved(image=["bash", "gcc", "kernel-headers"], buildroots={"xen": ["zlib-devel", "gcc"]})
@@ -375,7 +375,7 @@ def test_build_dependencies(project: Project, monkeypatch: pytest.MonkeyPatch) -
     assert build_dependencies(project) == ["gcc", "zlib-devel"]  # but ours, and those of the base repository
 
 
-def test_check_made(project: Project, tmp_path: Path) -> None:
+def should_reject_builds_unlike_what_the_spec_declares(project: Project, tmp_path: Path) -> None:
     binary = Binary(name="foo", evr="1.0-1", arch="x86_64", provides=["foo = 1.0-1"], requires=["bar >= 2"])
     debug = Binary(name="foo-debuginfo", evr="1.0-1", arch="x86_64", provides=[], requires=[])
     project.parsed = {"foo": Package(name="foo", binaries=[binary, debug])}
@@ -424,7 +424,7 @@ def test_check_made(project: Project, tmp_path: Path) -> None:
         _check_made(project, "foo", tmp_path, suffix="+b2")
 
 
-def test_record_rpm_deps(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_record_what_rpm_generated_once_resolvable(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     build = project.state / "cache/builds/one/x86_64_v2/foo/key"
     (build / "RPMS/x86_64").mkdir(parents=True)
     (build / "RPMS/x86_64/foo-1.0-1.x86_64.rpm").touch()
@@ -462,7 +462,7 @@ def test_record_rpm_deps(project: Project, monkeypatch: pytest.MonkeyPatch) -> N
         assert load_builds(project).requires.shared == {"foo": [provider]}
 
 
-def test_record_providers_named_with_their_releases(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_record_providers_by_their_names_in_the_spec(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     # foo needs baz-rel, a package of ours named with its release
     keys = {"foo": "1" * 64 + "+b1", "baz": "2" * 64 + "+b3"}
     for name, rpm in (("foo", "foo-1.0-1+b1.x86_64.rpm"), ("baz", "baz-rel_1_1+b3-1.0-1+b3.x86_64.rpm")):
@@ -479,7 +479,7 @@ def test_record_providers_named_with_their_releases(project: Project, monkeypatc
     assert load_builds(project).requires.shared == {"foo": ["baz-rel_1_1"]}
 
 
-def test_builds_still_to_build_again_fail(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_fail_builds_still_to_build_again_after_retries(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     project.deps = {"a": set()}
     monkeypatch.setattr(resolution, "prepare", lambda _: None)
     monkeypatch.setattr(build, "built_image", lambda _: "image")
@@ -491,7 +491,9 @@ def test_builds_still_to_build_again_fail(project: Project, monkeypatch: pytest.
     assert len(attempts) == 2
 
 
-def test_packages_edited_while_building(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_build_packages_as_they_were_when_the_builds_started(
+    project: Project, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(build, "record_rpm_deps", lambda *_: False)
     for name in ("a", "b", "c"):
         (project.root / "base" / name).mkdir(parents=True)
@@ -516,7 +518,7 @@ def test_packages_edited_while_building(project: Project, monkeypatch: pytest.Mo
     assert results == [build.Result("a", "built"), build.Result("c", "built"), build.Result("b", "failed")]
 
 
-def test_keys_changed_by_the_last_recording(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_build_again_when_the_last_recording_changes_a_key(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     for name in ("a", "b"):
         (project.root / "base" / name).mkdir(parents=True)
         (project.root / "base" / name / f"{name}.spec").write_text(name)
@@ -547,7 +549,7 @@ def test_keys_changed_by_the_last_recording(project: Project, monkeypatch: pytes
     assert after["b"] != keys["b"]
 
 
-def test_keys_changed_during_the_builds(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_build_again_when_a_recording_changes_a_key(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     for name in ("a", "b", "c"):
         (project.root / "base" / name).mkdir(parents=True)
         (project.root / "base" / name / f"{name}.spec").write_text(name)
@@ -577,7 +579,7 @@ def test_keys_changed_during_the_builds(project: Project, monkeypatch: pytest.Mo
     assert after["b"] != keys["b"]
 
 
-def test_stored_builds_of_keys_changed(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_build_again_when_stored_builds_have_former_keys(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(build, "record_rpm_deps", lambda *_, **__: False)
     keys = {"a": "1" * 64, "b": "2" * 64}
     stored = {f"a/{keys['a']}": True, f"b/{'3' * 64}": True}
@@ -587,7 +589,7 @@ def test_stored_builds_of_keys_changed(project: Project, monkeypatch: pytest.Mon
     assert after == [build.Result("a", "stored"), build.Result("b", "again")]
 
 
-def test_recordings_not_converging(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_fail_when_the_recordings_keep_changing_the_keys(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(build, "dev_keys", lambda *_: ({}, {}))
     monkeypatch.setattr(build, "record_rpm_deps", lambda *_, **__: True)
     monkeypatch.setattr(resolution, "prepare", lambda _: None)

@@ -60,7 +60,7 @@ def patches(spec: str) -> list[tuple[str, str]]:
     return re.findall(r"^Patch(\d+): (\S+)$", spec, re.MULTILINE)
 
 
-def test_first_update_replaces_previous_exports(repo: Path, pkg: Path) -> None:
+def should_replace_the_patches_exported_by_hand(repo: Path, pkg: Path) -> None:
     result = update_patchset(pkg, pkg / "foo.spec", repo, "v1.0", 1000)
     assert result.replaced == ["0001-first-change.patch", "0002-second-change.patch"]
     spec = (pkg / "foo.spec").read_text()
@@ -76,7 +76,7 @@ def test_first_update_replaces_previous_exports(repo: Path, pkg: Path) -> None:
     assert "From 0000000000000000000000000000000000000000" in (pkg / "0001-first-change.patch").read_text()
 
 
-def test_update_after_rebase(repo: Path, pkg: Path) -> None:
+def should_replace_the_patches_changed_by_a_rebase(repo: Path, pkg: Path) -> None:
     update_patchset(pkg, pkg / "foo.spec", repo, "v1.0", 1000)
     git(repo, "reset", "-q", "--hard", "HEAD~1")
     commit(repo, "third change")
@@ -94,7 +94,7 @@ def test_update_after_rebase(repo: Path, pkg: Path) -> None:
     ]
 
 
-def test_update_errors(repo: Path, pkg: Path) -> None:
+def should_refuse_to_overwrite_what_is_not_its_own(repo: Path, pkg: Path) -> None:
     (pkg / "foo.spec").write_text(SPEC.replace("Patch1001: 0002", "Patch1002: 0002").replace("0002-second", "other"))
     with pytest.raises(PatchsetError, match="patch numbers 1001-1002 are used by other patches"):
         update_patchset(pkg, pkg / "foo.spec", repo, "v1.0", 1001)
@@ -117,7 +117,7 @@ def test_update_errors(repo: Path, pkg: Path) -> None:
         update_patchset(pkg, pkg / "foo.spec", repo, "v1.0", 1000)
 
 
-def test_guesses(repo: Path, pkg: Path) -> None:
+def should_guess_the_base_and_package_of_a_repository(repo: Path, pkg: Path) -> None:
     git(repo, "remote", "add", "origin", "git@github.com:xcp-ng/foo.git")
     assert repo_name(repo) == "foo"
     assert guess_base(repo, "1.0") == "v1.0"

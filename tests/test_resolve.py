@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 RPM, COMMON = "{http://linux.duke.edu/metadata/rpm}", "{http://linux.duke.edu/metadata/common}"
 
 
-def test_canonical() -> None:
+def should_name_source_packages_without_the_rebuild_suffixes() -> None:
     assert canonical("glibc-2.39-145.el10_2.src.rpm", []) == ("glibc", "2.39-145.el10_2")
     # the rebuilds of an architecture have the versions of the others
     assert canonical("lcov-2.0-5.el10_1.alma_altarch.src.rpm", [".alma_altarch"]) == ("lcov", "2.0-5.el10_1")
@@ -35,12 +35,12 @@ def test_canonical() -> None:
         ("q&a < 1", {"name": "q&a", "flags": "LT", "epoch": "0", "ver": "1"}),
     ],
 )
-def test_entry(dep: str, attributes: dict[str, str]) -> None:
+def should_write_dependencies_as_repository_entries(dep: str, attributes: dict[str, str]) -> None:
     element = ET.fromstring(entry(dep).replace("rpm:", ""))  # noqa: S314, ours
     assert element.attrib == attributes
 
 
-def test_repository_of_ours(tmp_path: Path) -> None:
+def should_write_the_repository_metadata_of_our_packages(tmp_path: Path) -> None:
     binary = {
         "name": "xen-libs", "evr": "4.17.6-1.xcpng8.99", "arch": "x86_64", "package": "xen",
         "provides": ["xen-libs = 4.17.6-1.xcpng8.99"], "requires": ["glibc", "lzo"], "recommends": [],
@@ -73,7 +73,7 @@ def test_repository_of_ours(tmp_path: Path) -> None:
         ("((a or b) with c(x))", ["a", "or", "b", "with", "c(x)"]),
     ],
 )
-def test_versioned_names(dep: str, names: list[str]) -> None:
+def should_find_the_names_dependencies_refer_to_with_versions(dep: str, names: list[str]) -> None:
     assert versioned_names(dep) == names
 
 
@@ -88,6 +88,6 @@ def test_versioned_names(dep: str, names: list[str]) -> None:
         ("(pair-libs = 1.0-2.xcpng8.99 or upstream)", False),  # rich
     ],
 )
-def test_follows(dep: str, followed: bool) -> None:  # noqa: FBT001
+def should_follow_only_exact_versions_of_our_packages(dep: str, followed: bool) -> None:  # noqa: FBT001
     ours = [{"name": "pair-libs", "evr": "1.0-2.xcpng8.99", "provides": ["pkgconfig(pair) = 1.0"]}]
     assert follows(dep, evrs_of(ours)) == followed

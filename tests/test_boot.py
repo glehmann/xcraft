@@ -111,7 +111,7 @@ def attached(socket_path: Path, args: list[str], failure: str | None = None) -> 
 
 
 @pytest.mark.skipif(not (shutil.which("qemu-system-x86_64") and shutil.which("qemu-img")), reason="needs QEMU")
-def test_boot_creates_disk_and_reuses_it(root: Path, tmp_path: Path) -> None:
+def should_start_again_from_the_disk_it_created(root: Path, tmp_path: Path) -> None:
     try:
         code, _ = vm.firmware(None, None)
     except RuntimeError as exc:
@@ -148,14 +148,14 @@ def test_boot_creates_disk_and_reuses_it(root: Path, tmp_path: Path) -> None:
         (["--cpus", "0"], "1"),
     ],
 )
-def test_boot_invalid_options(root: Path, args: list[str], message: str) -> None:
+def should_reject_invalid_options_before_making_anything(root: Path, args: list[str], message: str) -> None:
     code, output = xcraft("boot", *args)
     assert code == 2, output
     assert message in " ".join(output.split())
     assert not (root / ".xcraft").exists()
 
 
-def test_boot_in_a_directory_of_other_content(root: Path, tmp_path: Path) -> None:
+def should_refuse_a_vm_directory_of_other_content(root: Path, tmp_path: Path) -> None:
     (tmp_path / "mine").write_text("kept")
     code, output = xcraft("boot", "--vm-dir", str(tmp_path))
     assert code == 2, output
@@ -163,7 +163,7 @@ def test_boot_in_a_directory_of_other_content(root: Path, tmp_path: Path) -> Non
     assert (tmp_path / "mine").read_text() == "kept"
 
 
-def test_vm_start_needs_a_session(root: Path) -> None:
+def should_refuse_vm_commands_without_a_session(root: Path) -> None:
     for command in ("start", "ssh", "ssh-copy-id"):
         code, output = xcraft("vm", "--arch", "x86_64_v2", command)
         assert code == 1, output
@@ -184,13 +184,13 @@ def test_vm_start_needs_a_session(root: Path) -> None:
 
 
 @pytest.mark.parametrize("edit", [["--kernel-args", "quiet"], ["--unattended"]])
-def test_boot_kernel_args_need_the_grub_of_the_iso(root: Path, edit: list[str]) -> None:
+def should_refuse_kernel_args_when_booting_with_bios(root: Path, edit: list[str]) -> None:
     code, output = xcraft("boot", *edit, "--bios")
     assert code == 2, output
     assert "--kernel-args and --unattended edit the GRUB menu of the ISO" in " ".join(output.split())
 
 
-def test_boot_unattended_needs_its_answer_file(root: Path, tmp_path: Path) -> None:
+def should_refuse_unattended_boot_without_answer_file(root: Path, tmp_path: Path) -> None:
     iso = tmp_path / "installer.iso"
     iso.touch()
     code, output = xcraft("boot", "--unattended", "--iso", str(iso))
@@ -202,7 +202,7 @@ def test_boot_unattended_needs_its_answer_file(root: Path, tmp_path: Path) -> No
     assert not (root / ".xcraft").exists()
 
 
-def test_answered() -> None:
+def should_set_the_answers_in_the_answer_file() -> None:
     text = (
         '<?xml version="1.0"?>\n<!-- for test VMs -->\n<installation srtype="ext">\n'
         "  <primary-disk>sda</primary-disk>\n  <keymap>us</keymap>\n</installation>\n"
@@ -218,7 +218,7 @@ def test_answered() -> None:
         _answered(text, ["keymap"])
 
 
-def test_answer_served_by_qemu(tmp_path: Path) -> None:
+def should_serve_the_answer_file_to_the_guest(tmp_path: Path) -> None:
     response = vm.answer_response(tmp_path, "<installation/>\n")
     assert response.read_bytes() == (
         b"HTTP/1.0 200 OK\r\nContent-Type: application/xml\r\nContent-Length: 16\r\n\r\n<installation/>\n"
@@ -244,13 +244,13 @@ EDITOR = """
 """.splitlines()
 
 
-def test_kernel_line() -> None:
+def should_find_the_kernel_line_in_the_grub_editor() -> None:
     assert vm.kernel_line(EDITOR) == 3
     with pytest.raises(RuntimeError, match="no kernel"):
         vm.kernel_line([line.replace("vmlinuz", "linux") for line in EDITOR])
 
 
-def test_boot_missing_qemu(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_fail_when_qemu_is_not_installed(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     iso = tmp_path / "installer.iso"
     iso.touch()
     monkeypatch.setenv("PATH", "")
@@ -276,7 +276,7 @@ def echo_disk(tmp_path: Path) -> Path:
     return disk
 
 
-def test_vm_help_outside_projects(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_show_vm_help_outside_projects(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path))
     code, output = xcraft("vm", "status", "--help")
     assert code == 0, output
@@ -295,7 +295,7 @@ def stop_vm(directory: Path) -> None:
 
 
 @pytest.mark.skipif(not (shutil.which("qemu-system-x86_64") and shutil.which("qemu-img")), reason="needs QEMU")
-def test_detached_vm_controls_and_logs(root: Path, tmp_path: Path, echo_disk: Path) -> None:  # noqa: PLR0915
+def should_control_a_background_vm_and_collect_its_logs(root: Path, tmp_path: Path, echo_disk: Path) -> None:  # noqa: PLR0915
     directory = root / ("long-session-name-" * 4)
     iso = tmp_path / "installer.iso"
     iso.write_bytes(bytes(2048))
@@ -368,7 +368,7 @@ def test_detached_vm_controls_and_logs(root: Path, tmp_path: Path, echo_disk: Pa
 
 
 @pytest.mark.skipif(not (shutil.which("qemu-system-x86_64") and shutil.which("qemu-img")), reason="needs QEMU")
-def test_vm_destroy(root: Path, tmp_path: Path, echo_disk: Path) -> None:
+def should_destroy_the_vm_but_keep_a_given_disk(root: Path, tmp_path: Path, echo_disk: Path) -> None:
     directory = root / "vm"
     iso = tmp_path / "installer.iso"
     iso.write_bytes(bytes(2048))
@@ -397,7 +397,7 @@ def test_vm_destroy(root: Path, tmp_path: Path, echo_disk: Path) -> None:
     assert "no VM session" in output
 
 
-def test_ssh_port_in_use(root: Path, tmp_path: Path) -> None:
+def should_refuse_an_ssh_port_in_use(root: Path, tmp_path: Path) -> None:
     with socket.socket() as taken:
         taken.bind(("127.0.0.1", 0))
         taken.listen()
@@ -414,6 +414,6 @@ def test_ssh_port_in_use(root: Path, tmp_path: Path) -> None:
         assert not (root / ".xcraft").exists()
 
 
-def test_qemu_failure_shown(tmp_path: Path) -> None:
+def should_show_why_qemu_failed(tmp_path: Path) -> None:
     (tmp_path / "qemu.log").write_text("qemu-system-x86_64: -nic user: Could not set up host forwarding rule\n")
     assert vm._failure(tmp_path) == ": qemu-system-x86_64: -nic user: Could not set up host forwarding rule"

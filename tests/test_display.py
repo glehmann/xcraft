@@ -20,7 +20,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def test_activity_logs_are_throttled(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def should_throttle_the_progress_lines_of_logged_activities(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     clock = iter([0, 31, 31, 31, 62])
     monkeypatch.setattr("xcraft.display.time.monotonic", lambda: next(clock))
     with activity("publishing", log=True) as update:
@@ -33,7 +35,9 @@ def test_activity_logs_are_throttled(monkeypatch: pytest.MonkeyPatch, capsys: py
     assert "publishing finished in" in output
 
 
-def test_activity_still_running(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def should_show_an_activity_still_running_with_its_last_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     monkeypatch.setattr("xcraft.display._STILL_INTERVAL", 0.2)
     monkeypatch.setenv("CI", "true")
     with activity("[1/1] building foo", still="building foo") as update:
@@ -67,7 +71,7 @@ def log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.mark.usefixtures("log")
-def test_log_filters() -> None:
+def should_filter_build_logs_by_step_pattern_and_count() -> None:
     assert xcraft("log", "foo") == (0, LOG)
     assert xcraft("log", "foo", "--step", "prep") == (
         0,
@@ -85,7 +89,7 @@ def test_log_filters() -> None:
     assert xcraft("log", "bar") == (1, "bar has no build log")
 
 
-def test_log_follow(log: Path) -> None:
+def should_follow_a_build_log_until_the_build_ends(log: Path) -> None:
     pid_file = log.parent.parent / "build/foo.pid"
     pid_file.write_text(str(os.getpid()))
 
@@ -106,14 +110,14 @@ def test_log_follow(log: Path) -> None:
     thread.join()
 
 
-def test_read_tail(tmp_path: Path) -> None:
+def should_read_the_last_complete_lines_of_a_file(tmp_path: Path) -> None:
     path = tmp_path / "log"
     path.write_text("first line\nsecond\nthird\n")
     assert read_tail(path) == ["first line", "second", "third"]
     assert read_tail(path, size=10) == ["third"]  # without the partial line
 
 
-def test_diagnostics() -> None:
+def should_show_only_the_errors_and_warnings_of_build_output() -> None:
     shown: list[str] = []
     on_line = diagnostics(shown.append)
     for line in [
@@ -147,7 +151,7 @@ def test_diagnostics() -> None:
     ]
 
 
-def test_diagnostics_header() -> None:
+def should_show_the_step_header_before_its_first_diagnostic() -> None:
     shown: list[str] = []
     on_line = diagnostics(shown.append, header="[1/2] building foo")
     on_line("gcc -O2 -c foo.c")
@@ -157,14 +161,14 @@ def test_diagnostics_header() -> None:
     assert shown == ["[1/2] building foo", "error: one", "error: two"]
 
 
-def test_messages_leave_the_last_column() -> None:
+def should_leave_the_last_terminal_column_free() -> None:
     messages = _Messages(width=80, height=24)
     assert messages.size == ConsoleDimensions(79, 24)
     messages.size = (40, 30)
     assert messages.size == ConsoleDimensions(39, 30)
 
 
-def test_diagnostics_are_messages(capsys: pytest.CaptureFixture[str]) -> None:
+def should_print_diagnostics_as_messages_on_stderr(capsys: pytest.CaptureFixture[str]) -> None:
     on_line = diagnostics(print_message_line, header="[1/2] building foo")
     on_line("gcc -O2 -c foo.c")
     on_line("warning: File listed twice: /boot/grub2")
@@ -173,7 +177,7 @@ def test_diagnostics_are_messages(capsys: pytest.CaptureFixture[str]) -> None:
     assert output.err == "[1/2] building foo\nwarning: File listed twice: /boot/grub2\n"
 
 
-def test_progress_in_ci() -> None:
+def should_show_colours_without_progress_frames_in_ci() -> None:
     # coloured, but without the frames of the progress: the logs of CI are not terminals
     code = (
         "from xcraft.display import activity, console\n"
@@ -186,7 +190,7 @@ def test_progress_in_ci() -> None:
     assert output == "\x1b[32mbuilt\x1b[0m\n"
 
 
-def test_commands_highlighted() -> None:
+def should_highlight_the_xcraft_commands_in_messages() -> None:
     # those of the command line of xcraft.__main__, imported
     def highlighted(message: str) -> list[str]:
         text = Text(message)
@@ -201,7 +205,7 @@ def test_commands_highlighted() -> None:
     assert highlighted("the xcraft-build image") == []
 
 
-def test_tree_progress() -> None:
+def should_show_the_progress_of_all_the_files_of_a_download() -> None:
     lines: list[str] = []
     progress = TreeProgress(lines.append, 3, 7 * 2**20)
     first, second = progress.report("a"), progress.report("b")

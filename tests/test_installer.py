@@ -70,7 +70,7 @@ def installer_line(root: Path, *args: str) -> str:
 
 
 @pytest.mark.skipif(not shutil.which("qemu-system-x86_64"), reason="needs QEMU")
-def test_iso_boots(root: Path) -> None:
+def should_boot_the_installer_with_uefi_and_bios(root: Path) -> None:
     iso = made_iso(root)
     listing = subprocess.run(["bsdtar", "-tf", iso], capture_output=True, text=True, check=True).stdout.split()
     assert {"install.img", "boot/vmlinuz", "boot/efiboot.img", "boot/isolinux/isolinux.bin"} <= set(listing)
@@ -92,7 +92,7 @@ def test_iso_boots(root: Path) -> None:
     assert "✗ the guest powered off, rather than the installer asking to reboot: see" in " ".join(output.split())
 
 
-def test_iso_of_changed_packages(root: Path) -> None:
+def should_have_the_development_builds_of_changed_packages(root: Path) -> None:
     # with trivial, which with-deps is built against: the final builds of the main branch, then the development ones
     # of a branch, as their changes rebuild them and those built against them
     (root / "xcraft.toml").write_text(

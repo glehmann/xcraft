@@ -24,7 +24,7 @@ def project(tmp_path: Path) -> Project:
     return Project(tmp_path, config())
 
 
-def test_lock(project: Project) -> None:
+def should_let_one_command_build_at_a_time(project: Project) -> None:
     # the command holding it can take it again, also through the project on another platform
     with project.lock(), project.lock(), project.all_platforms()[1].lock():
         pass
@@ -37,7 +37,7 @@ def test_lock(project: Project) -> None:
         pass
 
 
-def test_sole_use(project: Project) -> None:
+def should_refuse_sole_use_when_other_commands_use_the_project(project: Project) -> None:
     with project.sole_use(), project.sole_use():  # also when this process uses it already
         pass
     fd = os.open(project.root, os.O_RDONLY)
@@ -51,7 +51,7 @@ def test_sole_use(project: Project) -> None:
         pass
 
 
-def test_package_dirs(project: Project) -> None:
+def should_refuse_a_package_in_two_repositories(project: Project) -> None:
     project.config.repositories = ["base", "xostor"]
     for path in ("base/foo", "base/.foo.import", "xostor/bar", "iso/bar"):
         (project.root / path).mkdir(parents=True)
@@ -61,7 +61,7 @@ def test_package_dirs(project: Project) -> None:
         _ = Project(project.root, project.config).package_dirs
 
 
-def test_find(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_find_the_project_in_the_parent_directories(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "project/base/foo").mkdir(parents=True)
     (tmp_path / "project/xcraft.toml").write_text(TOML)
     monkeypatch.delenv("XCRAFT_PROJECT", raising=False)
@@ -76,7 +76,7 @@ def test_find(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize("location", ["outside", "cwd", "override", "missing"])
-def test_find_from_executable(tmp_path: Path, location: str) -> None:
+def should_find_the_project_of_the_installed_executable(tmp_path: Path, location: str) -> None:
     executable = tmp_path / "installed/.venv/bin/xcraft"
     executable.parent.mkdir(parents=True)
     executable.write_text("from xcraft.project import Project\nprint(Project.find().root)\n")
@@ -102,7 +102,7 @@ def test_find_from_executable(tmp_path: Path, location: str) -> None:
         assert result.stdout.strip() == str(tmp_path / ("installed" if location == "outside" else location))
 
 
-def test_platforms(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_build_for_the_host_architecture_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "xcraft.toml").write_text(TOML)
     monkeypatch.setenv("XCRAFT_PROJECT", str(tmp_path))
     monkeypatch.delenv("XCRAFT_ARCH", raising=False)
@@ -120,14 +120,14 @@ def test_platforms(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert ("epel" in arm.repos, "epel-fedora" in arm.repos) == (False, True)
 
 
-def test_unknown_packages_before_preparing(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_refuse_unknown_packages_before_preparing(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("XCRAFT_PROJECT", str(project.root))
     monkeypatch.setattr("xcraft.resolution.prepare", lambda _: pytest.fail("prepared"))
     with pytest.raises(typer.BadParameter, match="unknown package"):
         prepared_project(["nope"])
 
 
-def test_package_of_a_path(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_find_the_package_of_a_path(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     for name in ("xen", "xen-tools"):
         (project.root / "base" / name / "patches").mkdir(parents=True)
     # by name, or by a path in its directory, like . there, but not a package with its name as prefix
@@ -140,7 +140,7 @@ def test_package_of_a_path(project: Project, monkeypatch: pytest.MonkeyPatch) ->
             package_of(project, given)
 
 
-def test_specs_parsed_once_by_platform(project: Project) -> None:
+def should_parse_the_specs_once_per_platform(project: Project) -> None:
     # the project on its platforms shares what it parsed, for each platform
     project.parsed = {"a": Package(name="a")}
     same, other = (p for p in project.all_platforms() if p.platform == project.platform), project.all_platforms()

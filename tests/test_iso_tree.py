@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.skipif(not (shutil.which("objcopy") and shutil.which("modinfo")), reason="needs objcopy and modinfo")
-def test_prune_firmware(tmp_path: Path) -> None:
+def should_keep_only_the_firmware_the_drivers_need(tmp_path: Path) -> None:
     # a driver naming v/driver.bin, a link to the file of a revision, whose name no driver gives
     modules, firmware = tmp_path / "usr/lib/modules/6.6.0/kernel", tmp_path / "usr/lib/firmware"
     modules.mkdir(parents=True)
@@ -38,7 +38,7 @@ def test_prune_firmware(tmp_path: Path) -> None:
     ]
 
 
-def test_copy_templates_with_the_modes_git_keeps(tmp_path: Path) -> None:
+def should_copy_templates_with_the_modes_git_keeps(tmp_path: Path) -> None:
     src, dest = tmp_path / "src", tmp_path / "dest"
     (src / "etc").mkdir(parents=True)
     (src / "etc").chmod(0o700)

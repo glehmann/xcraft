@@ -23,7 +23,7 @@ def packages(*pkgs: Package) -> dict[str, Package]:
     return {p.name: p for p in pkgs}
 
 
-def test_build_deps_follow_runtime_requires_of_required_binaries_only() -> None:
+def should_follow_runtime_requires_of_required_binaries_only() -> None:
     # like qemu and xen: xen-libs-devel is needed, not xen-dom0-tools which requires qemu
     pkgs = packages(
         package("xen", xen_libs=[], xen_libs_devel=["xen-libs", "libc.so.6"], xen_dom0_tools=["qemu"]),
@@ -32,7 +32,7 @@ def test_build_deps_follow_runtime_requires_of_required_binaries_only() -> None:
     assert build_deps(pkgs) == {"xen": set(), "qemu": {"xen"}}
 
 
-def test_build_deps_include_runtime_requires_from_other_packages() -> None:
+def should_include_runtime_requires_from_other_packages() -> None:
     pkgs = packages(
         package("libfoo", libfoo=[]),
         package("bar", bar_devel=["libfoo"]),
@@ -41,7 +41,7 @@ def test_build_deps_include_runtime_requires_from_other_packages() -> None:
     assert build_deps(pkgs)["app"] == {"bar", "libfoo"}
 
 
-def test_build_deps_include_our_binaries_replacing_the_image_ones() -> None:
+def should_include_ours_replacing_the_image_ones() -> None:
     pkgs = packages(
         package("kernel", ["bc"], kernel_headers=[]),
         package("bc", bc=[]),
@@ -51,19 +51,19 @@ def test_build_deps_include_our_binaries_replacing_the_image_ones() -> None:
     assert build_deps(pkgs, ["kernel-headers", "gcc"]) == {"kernel": {"bc"}, "bc": set(), "app": {"kernel"}}
 
 
-def test_build_order_and_dependents() -> None:
+def should_order_the_builds_after_their_dependencies() -> None:
     deps = {"a": set(), "b": {"a"}, "c": {"b"}, "d": set()}
     assert build_order(deps, ["c"]) == ["a", "b", "c"]
     assert build_order(deps, ["c"], with_deps=False) == ["c"]
     assert dependents(deps, ["a"]) == {"b", "c"}
 
 
-def test_build_order_reports_cycles() -> None:
+def should_report_dependency_cycles() -> None:
     with pytest.raises(GraphError, match="dependency cycle: "):
         build_order({"a": {"b"}, "b": {"a"}}, ["a"])
 
 
-def test_upstream_deps_of_build_roots() -> None:
+def should_find_the_upstream_dependencies_of_build_roots() -> None:
     pkgs = packages(
         package("lib", ["gcc"], lib=["glibc"], lib_tools=["python3"]),
         package("app", ["lib", "python3-devel"], app=[]),
@@ -78,7 +78,7 @@ def test_upstream_deps_of_build_roots() -> None:
     assert reachable(deps, ["app"]) == {"app", "glibc", "python3-devel", "python3"}
 
 
-def test_components() -> None:
+def should_group_the_packages_by_cycles_in_build_order() -> None:
     deps = {"app": {"a"}, "a": {"b"}, "b": {"a", "lib"}, "lib": set(), "alone": set()}
     # each after its dependencies
     assert components(deps) == [{"lib"}, {"a", "b"}, {"alone"}, {"app"}]
