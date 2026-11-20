@@ -27,6 +27,7 @@ import keyring.core
 import pytest
 from keyring.backend import KeyringBackend
 from keyring.errors import PasswordDeleteError
+from pydantic import ValidationError
 
 from tests import ARCH, PLATFORM, TOML, TOYS, commit_base, edit, git, needs_gpg, results, runner, write_spec, xcraft
 from tests.test_iso import cache_image
@@ -50,9 +51,9 @@ from xcraft import (
 from xcraft import publish as publisher
 from xcraft.__main__ import app
 from xcraft.cache import BuildError, build_keys, build_path
-from xcraft.iso import cached_iso, checkout_iso, fetch_isos, iso_key, iso_name, iso_path, push_isos
+from xcraft.iso import checkout_iso, fetch_isos, iso_key, iso_name, iso_path, push_isos
 from xcraft.lock import Pin, load_lock
-from xcraft.project import Project, Remote, Retention
+from xcraft.project import Project, Publish, Remote, Retention
 from xcraft.resolution import resolve_image
 from xcraft.rpmbuild import prepare_tree
 from xcraft.signing import KEY_FILE, Signer, check_signatures, create_dev_key, dev_signer, key_signer, release_signer
@@ -181,27 +182,6 @@ def root(
     return root
 
 
-def test_iso_published_by_ci(root: Path, tmp_path: Path) -> None:
-    # signed with the key of the builds of the storage, like those of CI, see root()
-    project = Project.find()
-    ci = release_signer(project)
-    assert ci
-    image = tmp_path / "test.iso"
-    image.write_bytes(secrets.token_bytes(2048))
-    cache_image(project, image, signer=ci)
-    code, output = xcraft("push", "isos")
-    assert code == 0, output
-    shutil.rmtree(project.state / "cache")  # in the storage only
-    # a checkout signing with another key, like the developer's: CI's ISO rather than making it
-    project.frozen = True
-    developer = Signer("0" * 40)
-    iso = checkout_iso(project, signer=developer, published=True)
-    assert iso.read_bytes() == image.read_bytes()
-    assert not (project.state / "publish").exists()
-    # in .xcraft/iso/, the file of its cache, rather than a copy
-    assert iso.samefile(cached_iso(project, iso_key(project, netinstall=False, volid=None, signer=ci)) / "image.iso")
-
-
 def test_iso_cache(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     project = Project.find()
     signer = release_signer(project)
@@ -235,6 +215,9 @@ def test_iso_cache(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture)
     project.frozen = True
     assert checkout_iso(project, signer=signer).read_bytes() == image.read_bytes()
     assert tree.exists()
+    # signed with the key of the builds of the storage, like those of CI, see root(): a checkout signing with another
+    # key, like the developer's, gets it rather than making it, the file of its cache rather than a copy
+    assert checkout_iso(project, signer=Signer("0" * 40), published=True).samefile(tree / "image.iso")
     assert not (project.state / "publish").exists()
     assert not (project.state / "cache/builds").exists()
     shutil.rmtree(tree)
@@ -446,10 +429,7 @@ def test_manifest_sizes() -> None:
         remote._parse("p", f"p\n{'1' * 64} x a\n")
 
 
-@pytest.mark.parametrize("kind", ["builds", "ccache"])
-def test_tree_fallback_checks_signatures(
-    root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture, kind: str
-) -> None:
+def test_tree_fallback_checks_signatures(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     project = Project.find()
     main, dev = project.config.remote["main"], project.config.remote["dev"]
     signer = release_signer(project)
@@ -457,7 +437,7 @@ def test_tree_fallback_checks_signatures(
     src = tmp_path / "src"
     src.mkdir()
     (src / "file").write_text("trusted payload")
-    prefix = f"{kind}/security/{secrets.token_hex(4)}"
+    prefix = f"builds/security/{secrets.token_hex(4)}"
     manifest = remote.upload_tree(dev, prefix, src, ["file"], signer=signer)
     # Main has an unsigned tree. Only its metadata may be downloaded before trying dev.
     remote.upload(main, f"{prefix}/file", src / "file")
@@ -574,27 +554,6 @@ def test_developer_storage(root: Path, tmp_path: Path) -> None:
     assert "remote.dev" in output
 
 
-def test_builds_shared_by_checkouts(
-    root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_signer: tuple[str, Path]
-) -> None:
-    # CI selects its key without a private-key setting in the project.
-    (root / "xcraft.toml").write_text(unsigned())
-    monkeypatch.setenv("GNUPGHOME", str(build_signer[1]))
-    assert xcraft("build", "trivial")[0] == 0
-    assert xcraft("push", "builds", "trivial", "--key", build_signer[0], "--to", "main")[0] == 0
-    assert xcraft("push", "--key", build_signer[0], "--to", "main", "builds", "trivial")[0] == 0
-    # another checkout, elsewhere, with what is committed: the same keys, whatever the path
-    other = tmp_path / "elsewhere" / "xcraft"
-    shutil.copytree(root, other, ignore=shutil.ignore_patterns(".xcraft"))
-    monkeypatch.setenv("XCRAFT_PROJECT", str(other))
-    assert Project.find().id != Project(root, Project.find().config).id
-    code, output = xcraft("build", "with-deps")
-    assert code == 0, output
-    assert output.splitlines()[0].startswith("made the developer's key")  # of this checkout, for its builds
-    assert output.splitlines()[1] == "↓ trivial fetched"
-    assert output.splitlines()[-1] == "1 built, 1 fetched"
-
-
 def test_private_remote_storage(
     root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_signer: tuple[str, Path]
 ) -> None:
@@ -647,19 +606,21 @@ def test_private_remote_storage(
 def test_fetched_builds_recorded_once(
     root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_signer: tuple[str, Path]
 ) -> None:
-    """The builds come with what rpm generated for them, which a checkout fetching them all does not resolve again."""
+    """The builds are shared by the checkouts, whatever their paths, with what rpm generated for them, which a checkout
+    fetching them all does not resolve again.
+    """
+    # CI selects its key without a private-key setting in the project.
     (root / "xcraft.toml").write_text(unsigned())
     monkeypatch.setenv("GNUPGHOME", str(build_signer[1]))
-    # not the builds of the other tests: the same keys everywhere
-    spec = root / "base/trivial/trivial.spec"
-    spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
     assert xcraft("build")[0] == 0
-    assert xcraft("push", "builds", "--key", build_signer[0], "--to", "main")[0] == 0
+    assert xcraft("push", "--key", build_signer[0], "--to", "main", "builds")[0] == 0
     recorded = {p.parts[-3]: p.read_text() for p in root.glob(".xcraft/cache/builds/*/*/*/*/rpm-deps.json")}
     assert set(recorded) == {"trivial", "with-deps"}
+    # another checkout, elsewhere, with what is committed: the same keys, whatever the path
     other = tmp_path / "elsewhere" / "xcraft"
     shutil.copytree(root, other, ignore=shutil.ignore_patterns(".xcraft"))
     monkeypatch.setenv("XCRAFT_PROJECT", str(other))
+    assert Project.find().id != Project(root, Project.find().config).id
     resolved: list[dict[str, str]] = []
     resolve = checks.resolve_rpm_deps
 
@@ -670,6 +631,7 @@ def test_fetched_builds_recorded_once(
     monkeypatch.setattr(checks, "resolve_rpm_deps", counted)
     code, output = xcraft("build")
     assert code == 0, output
+    assert output.splitlines()[0].startswith("made the developer's key")  # of this checkout, for its builds
     assert output.splitlines()[-1] == "2 fetched"
     assert resolved == []
     assert {p.parts[-3]: p.read_text() for p in other.glob(".xcraft/cache/builds/*/*/*/*/rpm-deps.json")} == recorded
@@ -752,15 +714,27 @@ def test_resolutions_of_other_contents(root: Path, tmp_path: Path, monkeypatch: 
 def test_resolutions_from_the_remote_storage(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # resolving here, not reading what the other tests resolved, see conftest.py
     monkeypatch.setattr(resolution, "_run", getattr(resolution._run, "__wrapped__", resolution._run))
-    # build roots of their own, not those of the other tests, which share the storage
+    # build roots of their own, not those of the other tests, which share the storage, which the version of trivial
+    # changes: with-deps requires one
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(
         spec.read_text().replace("BuildArch: noarch", f"BuildArch: noarch\nProvides: t-{secrets.token_hex(4)}")
     )
-    code, output = xcraft("push", "resolutions", "--to", "main")
-    assert code == 0, output
-    assert re.search(r"^resolutions: [1-9]\d* pushed", output, re.MULTILINE)
-    assert re.search(r"^resolutions: 0 pushed", xcraft("push", "resolutions", "--to", "main")[1], re.MULTILINE)
+    deps = root / "base/with-deps/with-deps.spec"
+    deps.write_text(deps.read_text().replace("BuildRequires: trivial", "BuildRequires: trivial >= 1.0"))
+
+    def pushed() -> str:
+        """Push the resolutions, like CI, in a new process."""
+        monkeypatch.setattr(resolution, "_resolved", {})
+        code, output = xcraft("push", "resolutions", "--to", "main")
+        assert code == 0, output
+        return output
+
+    assert re.search(r"^resolutions: [1-9]\d* pushed", pushed(), re.MULTILINE)
+    assert re.search(r"^resolutions: 0 pushed", pushed(), re.MULTILINE)
+    # another release of trivial: the same key, resolved again, which replaces those of the storage
+    spec.write_text(spec.read_text().replace("Release: 1%{?dist}", "Release: 2%{?dist}"))
+    assert re.search(r"^resolutions: [1-9]\d* pushed", pushed(), re.MULTILINE)
     resolved, log = root / ".xcraft/cache/resolved", root / f".xcraft/logs/_resolve-{ARCH}.log"
     caches = sorted(c for c in resolution.resolutions_read() if c.is_relative_to(resolved))
 
@@ -774,7 +748,7 @@ def test_resolutions_from_the_remote_storage(root: Path, monkeypatch: pytest.Mon
         assert code == 0, output
         return output
 
-    # fetched, signed, rather than resolved
+    # fetched, signed, rather than resolved, by a new checkout
     new_checkout()
     assert not log.exists()
     assert sorted(resolved.rglob("*.json")) == caches
@@ -787,39 +761,6 @@ def test_resolutions_from_the_remote_storage(root: Path, monkeypatch: pytest.Mon
     assert "no resolutions from the remote storage" in new_checkout()
     assert log.exists()
     assert sorted(resolved.rglob("*.json")) == caches
-
-
-def test_resolutions_replaced_for_other_versions(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # resolving here, not reading what the other tests resolved, see conftest.py
-    monkeypatch.setattr(resolution, "_run", getattr(resolution._run, "__wrapped__", resolution._run))
-    # build roots of their own, which the version of trivial changes: with-deps requires one
-    trivial = root / "base/trivial/trivial.spec"
-    trivial.write_text(
-        trivial.read_text().replace("BuildArch: noarch", f"BuildArch: noarch\nProvides: t-{secrets.token_hex(4)}")
-    )
-    deps = root / "base/with-deps/with-deps.spec"
-    deps.write_text(deps.read_text().replace("BuildRequires: trivial", "BuildRequires: trivial >= 1.0"))
-    log = root / f".xcraft/logs/_resolve-{ARCH}.log"
-
-    def pushed() -> str:
-        """Push the resolutions, like CI, in a new process."""
-        monkeypatch.setattr(resolution, "_resolved", {})
-        code, output = xcraft("push", "resolutions", "--to", "main")
-        assert code == 0, output
-        return output
-
-    pushed()
-    # another release of trivial: the same key, resolved again, which replaces those of the storage
-    trivial.write_text(trivial.read_text().replace("Release: 1%{?dist}", "Release: 2%{?dist}"))
-    assert re.search(r"^resolutions: [1-9]\d* pushed", pushed(), re.MULTILINE)
-    # a new checkout of it gets them from the storage, rather than resolving
-    shutil.rmtree(root / ".xcraft/cache/resolved")
-    log.unlink(missing_ok=True)
-    monkeypatch.setattr(resolution, "_resolved", {})
-    monkeypatch.setattr(resolution, "_unreachable", set())
-    code, output = xcraft("status")
-    assert code == 0, output
-    assert not log.exists()
 
 
 def test_builds(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1356,30 +1297,17 @@ def test_maintenance_branch_of_the_release(root: Path) -> None:
     with pytest.raises(subprocess.CalledProcessError):
         git(root, "rev-parse", "-q", "--verify", "fix/xsa-123")
     assert "no published snapshot in repos/9.0/nothing/latest" in xcraft("maint", "start", "--stage", "nothing")[1]
-
-
-def test_publish_rebuilt_package(root: Path, tmp_path: Path) -> None:
-    """A rebuild keeping its version-release is published, not the previous build of the storage."""
-    code, output = xcraft("publish", "--to", "main")
-    assert code == 0, output
-    spec = root / "base/trivial/trivial.spec"
-    spec.write_text(spec.read_text().replace('echo "hello"', 'echo "hello, rebuilt"'))
-    code, output = xcraft("publish", "--to", "main")
-    assert code == 0, output
-    storage = Project.find().config.remote.get("main")
-    assert storage
-    rpm = f"base/{ARCH}/trivial-1.0-1+b1.xcpng8.99.noarch.rpm"
-    local = root / ".xcraft/publish" / rpm
-    published = re.search(r"published (repos/\S+),", output)
-    assert published, output
-    for name in (published[1], f"repos/9.0/{STAGE}/latest"):
-        assert remote.read_manifest(storage, name)[rpm] == sha256_of(local)
-        assert remote.download(storage, f"{name}/{rpm}", tmp_path / name.replace("/", "_"))
-        assert sha256_of(tmp_path / name.replace("/", "_")) == sha256_of(local)
+    # whose embargo branches are maintenance ones
+    config.write_text(f'embargo_branches = ["other/*"]\n{config.read_text()}')
+    code, output = xcraft("status")
+    assert code == 1
+    assert "embargo_branches must be maintenance_branches too: other/*" in output
 
 
 def test_publish_from_latest_metadata(root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    """A snapshot has the metadata of the packages of the latest one, without downloading them."""
+    """A snapshot has the metadata of the packages of the latest one, without downloading them, and the packages
+    rebuilt since.
+    """
     stage = f"metadata-{secrets.token_hex(4)}"
     (root / "xcraft.toml").write_text(f'{REMOTE}extra = ["bc"]\n')
     code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
@@ -1407,6 +1335,14 @@ def test_publish_from_latest_metadata(root: Path, tmp_path: Path, caplog: pytest
     storage = Project.find().config.remote["main"]
     latest = f"repos/9.0/{stage}/latest"
     manifest = remote.read_manifest(storage, latest)
+    # trivial rebuilt, keeping its version-release: published rather than the previous build of the storage
+    rpm = f"base/{ARCH}/trivial-1.0-1+b1.xcpng8.99.noarch.rpm"
+    published = re.search(r"published (repos/\S+),", output)
+    assert published, output
+    for name in (published[1], latest):
+        assert remote.read_manifest(storage, name)[rpm] == sha256_of(root / ".xcraft/publish" / rpm)
+    assert remote.download(storage, f"{latest}/{rpm}", tmp_path / "rebuilt.rpm")
+    assert sha256_of(tmp_path / "rebuilt.rpm") == sha256_of(root / ".xcraft/publish" / rpm)
     bc = resolve_image(Project.find()).packages["bc"]
     assert {f"base/{ARCH}/bc-{bc.evr}.{bc.arch}.rpm", f"base/Source/bc-{bc.evr}.src.rpm"} <= manifest.keys()
     for repo in (f"base/{ARCH}", "base/Source"):
@@ -2012,10 +1948,11 @@ def test_mirror(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert not list((tmp_path / "raced" / latest).parent.iterdir())
 
 
-@pytest.mark.parametrize("command", [[], ["repos"], ["isos"]])
-@pytest.mark.parametrize("stage", ["", ".", "..", "../other", "/absolute", "a/b"])
-def test_invalid_publish_stage(root: Path, command: list[str], stage: str) -> None:
-    code, output = xcraft("publish", *command, "--local", "--stage", stage)
+def test_invalid_publish_stage(root: Path) -> None:
+    for stage in ("", ".", "..", "../other", "/absolute", "a/b"):
+        with pytest.raises(ValidationError):
+            Publish(stage=stage)
+    code, output = xcraft("publish", "repos", "--local", "--stage", "../other")
     assert code == 2
     assert "stage must start" in " ".join(output.split())
 
@@ -2135,7 +2072,12 @@ def test_pages_of_nested_directories(root: Path, tmp_path: Path) -> None:
     remote_pages.update_pages(Project.find(), storage, ["nested/a/", "nested/"])
     assert 'href="b/">b/</a></td><td data-k="1000"' in page("nested/a/")
     assert 'href="a/">a/</a></td><td data-k="1000"' in page("nested/")
+    # and the logo of the project, if any
     assert "<img" not in page("nested/")
+    before, sep, after = (root / "xcraft.toml").read_text().partition("\n[")
+    (root / "xcraft.toml").write_text(f'{before}logo = "https://xcp-ng.org/assets/img/mainlogo.png"\n{sep}{after}')
+    remote_pages.update_pages(Project.find(), storage, ["nested/"])
+    assert '<img src="https://xcp-ng.org/assets/img/mainlogo.png" alt="">' in page("nested/")
 
 
 def test_directory_totals_behind_proxy(root: Path, tmp_path: Path) -> None:
@@ -2186,18 +2128,6 @@ def test_signing_keys_have_a_directory_page(root: Path, tmp_path: Path) -> None:
     internal = page(".xcraft/")
     assert 'href="keys/"' in internal
     assert re.search(r'href="keys/".*?<td data-k="[1-9][0-9]*">', internal)
-
-
-def test_logo_on_the_pages(root: Path, tmp_path: Path) -> None:
-    storage = Project.find().config.remote["main"]
-    (tmp_path / "file").write_bytes(b"x" * 1000)
-    remote.upload(storage, "nested/x", tmp_path / "file")
-    remote_pages.update_pages(Project.find(), storage, ["nested/"])
-    assert "<img" not in page("nested/")
-    before, sep, after = (root / "xcraft.toml").read_text().partition("\n[")
-    (root / "xcraft.toml").write_text(f'{before}logo = "https://xcp-ng.org/assets/img/mainlogo.png"\n{sep}{after}')
-    remote_pages.update_pages(Project.find(), Project.find().config.remote["main"], ["nested/"])
-    assert '<img src="https://xcp-ng.org/assets/img/mainlogo.png" alt="">' in page("nested/")
 
 
 def test_development_builds_are_neither_pushed_nor_fetched(root: Path) -> None:

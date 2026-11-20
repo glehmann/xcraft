@@ -408,19 +408,19 @@ def test_check_made(project: Project, tmp_path: Path) -> None:
     made["foo"] |= {"evr": "1.0-2.abc+b2", "provides": ["foo = 1.0-2.abc+b2"]}
     (tmp_path / "made.json").write_text(json.dumps(made))
     _check_made(project, "foo", tmp_path, suffix="+b2")
-    # in the names including the release too, like the livepatch packages of the kernel
+    # in the names including the release too
     for release, built in ((".xcpng", "+b2.xcpng"), ("", "+b2")):
         named = numbered.model_copy(
             update={
-                "name": f"foo-lp_1.0_2.abc{release}",
-                "autorev_name": f"foo-lp_1.0_2.abc%{{autorev}}{release}",  # as parsed
+                "name": f"foo-rel_1.0_2.abc{release}",
+                "autorev_name": f"foo-rel_1.0_2.abc%{{autorev}}{release}",  # as parsed
                 "evr": f"1.0-2.abc{release}",
                 "provides": [],
             }
         )
         project.parsed = {"foo": Package(name="foo", dist=".xcpng", binaries=[named])}
-        lp = {f"foo-lp_1.0_2.abc{built}": made["foo"] | {"evr": f"1.0-2.abc{built}", "provides": []}}
-        (tmp_path / "made.json").write_text(json.dumps(lp))
+        named_made = {f"foo-rel_1.0_2.abc{built}": made["foo"] | {"evr": f"1.0-2.abc{built}", "provides": []}}
+        (tmp_path / "made.json").write_text(json.dumps(named_made))
         _check_made(project, "foo", tmp_path, suffix="+b2")
 
 
@@ -463,20 +463,20 @@ def test_record_rpm_deps(project: Project, monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_record_providers_named_with_their_releases(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    # foo needs baz-lp, a package of ours named with its release, like the livepatch packages of the kernel
+    # foo needs baz-rel, a package of ours named with its release
     keys = {"foo": "1" * 64 + "+b1", "baz": "2" * 64 + "+b3"}
-    for name, rpm in (("foo", "foo-1.0-1+b1.x86_64.rpm"), ("baz", "baz-lp_1_1+b3-1.0-1+b3.x86_64.rpm")):
+    for name, rpm in (("foo", "foo-1.0-1+b1.x86_64.rpm"), ("baz", "baz-rel_1_1+b3-1.0-1+b3.x86_64.rpm")):
         (build := project.state / f"cache/builds/one/x86_64_v2/{name}/{keys[name]}/RPMS/x86_64").mkdir(parents=True)
         (build / rpm).touch()
     foo = Binary(name="foo", evr="1.0-1", arch="x86_64", provides=[], requires=[])
-    lp = Binary(name="baz-lp_1_1", autorev_name="baz-lp_1_1%{autorev}", evr="1.0-1", arch="x86_64", provides=[],
+    named = Binary(name="baz-rel_1_1", autorev_name="baz-rel_1_1%{autorev}", evr="1.0-1", arch="x86_64", provides=[],
                 requires=[])  # fmt: skip
     project.config.platforms = [project.platform]  # the one of the specs given
-    project.parsed = {"foo": Package(name="foo", binaries=[foo]), "baz": Package(name="baz", binaries=[lp])}
-    monkeypatch.setattr("xcraft.checks.resolve_rpm_deps", lambda *_: Resolved(requires={"foo": ["baz-lp_1_1+b3"]}))
+    project.parsed = {"foo": Package(name="foo", binaries=[foo]), "baz": Package(name="baz", binaries=[named])}
+    monkeypatch.setattr("xcraft.checks.resolve_rpm_deps", lambda *_: Resolved(requires={"foo": ["baz-rel_1_1+b3"]}))
     assert record_rpm_deps(project, ["foo"], keys)
     # by its name in the spec, whatever its build
-    assert load_builds(project).requires.shared == {"foo": ["baz-lp_1_1"]}
+    assert load_builds(project).requires.shared == {"foo": ["baz-rel_1_1"]}
 
 
 def test_builds_still_to_build_again_fail(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:

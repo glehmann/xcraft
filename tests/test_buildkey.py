@@ -301,8 +301,18 @@ def test_development_counters_of_components(
     assert build("dev", list(cycle)) == again
 
 
-def test_recipe_of_all_architectures(root: Path) -> None:
+def test_keys_of_all_architectures(root: Path) -> None:
     # the repositories of the build environment differ by architecture, not the build keys
     projects = [Project.find(arch) for arch in ("x86_64_v2", "aarch64")]
     assert projects[0].repos.keys() != projects[1].repos.keys()
     assert buildkey.recipe(projects[0]) == buildkey.recipe(projects[1])
+    # which the pinned binary packages of the image of each architecture change
+    inputs = buildkey.Inputs(projects[0])
+    before = buildkey.key(inputs.of({"trivial"}, {}), "trivial")
+    assert before == buildid.compute(projects[0], None)["trivial"].key
+    for arch in ("x86_64_v2", "aarch64"):
+        name = inputs.lock.image[arch][0]
+        pin = inputs.lock.binaries[arch][name]
+        inputs.lock.binaries[arch][name] = pin.model_copy(update={"sha256": "0" * 64})
+        assert buildkey.key(inputs.of({"trivial"}, {}), "trivial") != before
+        inputs.lock.binaries[arch][name] = pin

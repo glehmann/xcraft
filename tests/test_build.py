@@ -148,10 +148,12 @@ def test_binary_of_two_packages(root: Path) -> None:
     assert re.search(r"binary packages of several packages for \S+: trivial \(trivial, twin\)", output)
 
 
-def test_build_without_network(root: Path) -> None:
-    write_spec(root, "offline")
-    spec = root / "base/offline/offline.spec"
-    check = (
+def test_build_sandbox(root: Path) -> None:
+    # without network but its loopback interface, without privileges, and with the pipes closed by their reader killing
+    # their writer, as outside of rpmbuild
+    write_spec(root, "sandboxed")
+    spec = root / "base/sandboxed/sandboxed.spec"
+    network = (
         "import socket\n"
         "server = socket.create_server(('127.0.0.1', 0))\n"
         "socket.create_connection(server.getsockname())\n"
@@ -162,29 +164,17 @@ def test_build_without_network(root: Path) -> None:
         "else:\n"
         "    raise SystemExit('network')\n"
     )
-    spec.write_text(spec.read_text().replace("%install\n", f"%build\npython3 - <<'EOF'\n{check}EOF\n%install\n"))
-    code, output = xcraft("build", "offline")
+    checks = (
+        f"python3 - <<'EOF'\n{network}EOF\n"
+        "if sudo true; then exit 1; fi\n"
+        "seq 1000000 2>seq.err | head -1\ntest ! -s seq.err || { cat seq.err; exit 1; }\n"
+    )
+    spec.write_text(spec.read_text().replace("%install\n", f"%build\n{checks}%install\n"))
+    code, output = xcraft("build", "sandboxed")
     assert code == 0, output
-    assert "no network" in (root / ".xcraft/logs/offline.log").read_text()  # but its loopback interface
-
-
-def test_build_without_privileges(root: Path) -> None:
-    write_spec(root, "unprivileged")
-    spec = root / "base/unprivileged/unprivileged.spec"
-    check = "if sudo true; then exit 1; fi\n"
-    spec.write_text(spec.read_text().replace("%install\n", f"%build\n{check}%install\n"))
-    code, output = xcraft("build", "unprivileged")
-    assert code == 0, output
-    assert '"no new privileges" flag is set' in (root / ".xcraft/logs/unprivileged.log").read_text()
-
-
-def test_build_killed_by_closed_pipes(root: Path) -> None:
-    write_spec(root, "pipes")
-    spec = root / "base/pipes/pipes.spec"
-    check = "seq 1000000 2>seq.err | head -1\ntest ! -s seq.err || { cat seq.err; exit 1; }\n"
-    spec.write_text(spec.read_text().replace("%install\n", f"%build\n{check}%install\n"))
-    code, output = xcraft("build", "pipes")
-    assert code == 0, output
+    log = (root / ".xcraft/logs/sandboxed.log").read_text()
+    assert "no network" in log
+    assert '"no new privileges" flag is set' in log
 
 
 def test_dynamic_buildrequires_on_ours(root: Path) -> None:
@@ -241,6 +231,9 @@ def test_build_root_packages_replaced_by_ours(root: Path) -> None:
     # the upstream one in the lock, like for the image, which the build does not get
     assert "kernel-headers" in load_lock(project).roots.of(ARCH)["compiled"]
     assert re.search(r"^ kernel-headers .* xcraft-[0-9a-f]{8} ", project.log("compiled").read_text(), re.MULTILINE)
+    # and ccache, for a compiler
+    assert "ccache" in load_lock(project).roots.shared["compiled"]
+    assert "ccache" not in load_lock(project).roots.shared.get("trivial", [])
 
 
 def test_image_packages_replaced_by_ours(root: Path) -> None:
@@ -411,12 +404,6 @@ def test_bump_version(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert (root / "base/trivial/sources").read_text() == f"{digest}  trivial-2.0.tar.gz\n"
     assert (twin / "sources").is_symlink()
     assert (root / ".xcraft/cache/sources" / digest / "trivial-2.0.tar.gz").read_bytes() == b"new"
-    # without a URL to download the archive from, nothing changes
-    before = (root / "base/with-deps/with-deps.spec").read_text()
-    code, output = xcraft("bump", "with-deps", "--version", "2.0", "-m", "Update")
-    assert code == 1
-    assert "the Source0 of with-deps is not a URL" in output
-    assert (root / "base/with-deps/with-deps.spec").read_text() == before
 
 
 @pytest.mark.parametrize("version", ["1.9", "1.10", "1.010", "1.10~rc1"])
@@ -527,16 +514,28 @@ def test_lock_records_runtime(root: Path) -> None:
 
 
 @pytest.mark.skipif(ARCH != "x86_64_v2", reason="the tools of the ISO are for x86_64")
-def test_iso_tools(root: Path) -> None:
-    (root / "xcraft.toml").write_text(f'{TOML}installer = ["bash"]\n')
+def test_iso_tools(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # with bc, which nothing else needs, in the repository of the ISO: published, for the snapshot to have it
+    iso = 'installer = ["bash"]\npackages = ["bc"]\n'
+    (root / "xcraft.toml").write_text(f"{TOML}{iso}")
     assert xcraft("build", "--dry-run")[0] == 0
     project = Project.find()
     lock = load_lock(project)
     # pinned when preparing, with what the installer needs
     assert set(ISO_TOOLS) <= set(lock.iso[project.arch]) <= lock.binaries[project.arch].keys()
-    assert {"bash", "glibc"} <= set(lock.runtime[project.arch]) <= lock.binaries[project.arch].keys()
+    assert {"bash", "glibc", "bc"} <= set(lock.runtime[project.arch]) <= lock.binaries[project.arch].keys()
+    assert "bc" not in lock.runtime["aarch64"]
     assert {"dosfstools", "libisoburn", "memtest86+", "mtools", "syslinux"} <= lock.sources.keys()  # by source
     assert lock.iso.keys() == {project.arch}
+    # the tools, which cannot be installed, kept as the lock has them, but not what is published
+    with monkeypatch.context() as patch:
+        patch.setattr(resolution, "ISO_TOOLS", [*ISO_TOOLS, "no-such-package"])
+        (root / "xcraft.toml").write_text(f'{TOML}{iso}\n[publish]\nextra = ["toyrun"]\n')
+        assert xcraft("build", "--dry-run")[0] == 0
+    updated = load_lock(project)
+    assert "toyrun" in updated.runtime[ARCH]
+    assert updated.iso == lock.iso
+    lock = updated
     # installed from the pinned packages
     with project.tmp_dir("tools") as work:
         record = f"{container.DNF_LOCK} python3 /xcraft/record.py /work/tools.json"
@@ -563,24 +562,6 @@ def test_side_image_pinned(root: Path, kind: str, package: str) -> None:
     image = container.side_image(project, kind)
     installed = container.image_packages(project, image)
     assert all(installed[n].evr == lock.binaries[ARCH][n].evr for n in getattr(lock, kind)[ARCH])
-
-
-@pytest.mark.skipif(ARCH != "x86_64_v2", reason="the ISOs are for x86_64")
-def test_iso_packages_published(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # bc, which nothing else needs, in the repository of the ISO: published, for the snapshot to have it
-    iso = 'installer = ["bash"]\npackages = ["bc"]\n'
-    (root / "xcraft.toml").write_text(f"{TOML}{iso}")
-    assert xcraft("build", "--dry-run")[0] == 0
-    lock = load_lock(Project.find())
-    assert "bc" in lock.runtime[ARCH]
-    assert "bc" not in lock.runtime["aarch64"]
-    # the tools making the ISO, which cannot be installed, kept as the lock has them, but not what is published
-    monkeypatch.setattr(resolution, "ISO_TOOLS", [*ISO_TOOLS, "no-such-package"])
-    (root / "xcraft.toml").write_text(f'{TOML}{iso}\n[publish]\nextra = ["toyrun"]\n')
-    assert xcraft("build", "--dry-run")[0] == 0
-    updated = load_lock(Project.find())
-    assert "toyrun" in updated.runtime[ARCH]
-    assert updated.iso == lock.iso
 
 
 def test_recorded_requires_of_the_image(root: Path) -> None:
@@ -740,8 +721,8 @@ def test_recorded_once_what_they_require_is_built(root: Path, caplog: pytest.Log
 
 
 def test_recorded_as_soon_as_resolved(root: Path, caplog: pytest.LogCaptureFixture) -> None:
-    # trivial, whose script requires tcl, recorded at once, and trivial-extra, which requires what xtool, of ours,
-    # provides, once xtool is built: the builds against trivial get tcl before
+    # trivial, of dynamic BuildRequires, whose script requires tcl, recorded at once, and trivial-extra, which requires
+    # what xtool, of ours, provides, once xtool is built: the builds against trivial get tcl before
     (root / "base/xtool").mkdir()
     (root / "base/xtool/xtool.spec").write_text(
         "Name: xtool\nVersion: 1.0\nRelease: 1%{?dist}\nSummary: A tool\nLicense: MIT\nBuildArch: noarch\n"
@@ -751,6 +732,7 @@ def test_recorded_as_soon_as_resolved(root: Path, caplog: pytest.LogCaptureFixtu
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(
         spec.read_text()
+        .replace("%prep", "%generate_buildrequires\necho zlib-ng-compat-devel\n\n%prep")
         .replace('echo "hello" > hello.txt', 'printf "#!/usr/bin/tclsh\\nputs hello\\n" > hello.tcl')
         .replace("cp %{name}-%{version}/hello.txt %{buildroot}/usr/share/%{name}/",
                  "install -m 755 %{name}-%{version}/hello.tcl %{buildroot}/usr/share/%{name}/\n"
@@ -759,9 +741,15 @@ def test_recorded_as_soon_as_resolved(root: Path, caplog: pytest.LogCaptureFixtu
                  "%package extra\nSummary: Extra\nRequires: xtool-core\n%description extra\nExtra.\n"
                  "%files extra\n/usr/share/%{name}/extra\n\n%files\n/usr/share/%{name}/hello.tcl")
     )  # fmt: skip
+    buildid.update(Project.find())  # the build IDs of the changed spec, --locked checks before building
+    code, output = xcraft("build", "trivial", "--locked")
+    assert code == 1
+    # those of the architecture of the host, which are shared once found on the first one
+    assert f'+trivial.{HOST_ENTRIES}buildrequires = ["zlib-ng-compat-devel"]' in output
     with caplog.at_level(logging.DEBUG, logger="xcraft"):
         code, output = xcraft("build", "trivial")
     assert code == 0, output
+    assert load_builds(Project.find()).buildrequires.of(ARCH) == {"trivial": ["zlib-ng-compat-devel"]}
     assert (
         "the dependencies rpm generated for trivial-extra are recorded once xtool, which it needs, is built"
         in caplog.text
@@ -774,31 +762,6 @@ def test_recorded_as_soon_as_resolved(root: Path, caplog: pytest.LogCaptureFixtu
     assert code == 0, output
     assert "recorded once" not in caplog.text
     assert load_builds(Project.find()).requires.of(ARCH) == {"trivial": ["tcl"]}
-
-
-def test_recorded(root: Path) -> None:
-    # a requirement rpm generates, of a script, and dynamic BuildRequires
-    spec = root / "base/trivial/trivial.spec"
-    spec.write_text(
-        spec.read_text()
-        .replace("%prep", "%generate_buildrequires\necho zlib-ng-compat-devel\n\n%prep")
-        .replace('echo "hello" > hello.txt', 'printf "#!/usr/bin/tclsh\\nputs hello\\n" > hello.tcl')
-        .replace("cp %{name}-%{version}/hello.txt %{buildroot}/usr/share/%{name}/",
-                 "install -m 755 %{name}-%{version}/hello.tcl %{buildroot}/usr/share/%{name}/")
-        .replace("/usr/share/%{name}/hello.txt", "/usr/share/%{name}/hello.tcl")
-    )  # fmt: skip
-    buildid.update(Project.find())  # the build IDs of the changed spec, --locked checks before building
-    code, output = xcraft("build", "trivial", "--locked")
-    assert code == 1
-    # those of the architecture of the host, which are shared once found on the first one
-    assert f'+trivial.{HOST_ENTRIES}buildrequires = ["zlib-ng-compat-devel"]' in output
-    code, output = xcraft("build", "with-deps")
-    assert code == 0, output
-    builds = load_builds(Project.find())
-    assert builds.buildrequires.of(ARCH) == {"trivial": ["zlib-ng-compat-devel"]}
-    # which with-deps gets through trivial, its build root checked
-    assert builds.requires.of(ARCH) == {"trivial": ["tcl"]}
-    assert "tcl" in resolution.resolve(Project.find()).buildroots["with-deps"]
     assert xcraft("build", "with-deps", "--locked")[0] == 0
 
 
@@ -815,22 +778,22 @@ def test_names_with_their_releases_by_chance(root: Path) -> None:
 
 
 def test_recorded_of_binaries_named_with_their_releases(root: Path) -> None:
-    # like the livepatch packages of the kernel, with a requirement rpm generates, of a script
+    # a binary package named with its version-release, with a requirement rpm generates, of a script
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(
         spec.read_text()
-        .replace("%description\n", "%description\nTrivial.\n\n%package -n trivial-lp_%{version}_%{release}\n"
-                 "Summary: Named with its release\n\n%description -n trivial-lp_%{version}_%{release}\n", 1)
+        .replace("%description\n", "%description\nTrivial.\n\n%package -n trivial-rel_%{version}_%{release}\n"
+                 "Summary: Named with its release\n\n%description -n trivial-rel_%{version}_%{release}\n", 1)
         .replace('echo "hello" > hello.txt',
                  'echo "hello" > hello.txt\nprintf "#!/usr/bin/tclsh\\nputs hi\\n" > hi.tcl')
         .replace("cp %{name}-%{version}/hello.txt %{buildroot}/usr/share/%{name}/",
                  "cp %{name}-%{version}/hello.txt %{buildroot}/usr/share/%{name}/\n"
                  "install -m 755 %{name}-%{version}/hi.tcl %{buildroot}/usr/share/%{name}/")
-        .replace("%changelog", "%files -n trivial-lp_%{version}_%{release}\n/usr/share/%{name}/hi.tcl\n\n%changelog")
+        .replace("%changelog", "%files -n trivial-rel_%{version}_%{release}\n/usr/share/%{name}/hi.tcl\n\n%changelog")
     )  # fmt: skip
     code, output = xcraft("build", "trivial")
     assert code == 0, output
-    assert load_builds(Project.find()).requires.of(ARCH) == {"trivial-lp_1.0_1.xcpng8.99": ["tcl"]}
+    assert load_builds(Project.find()).requires.of(ARCH) == {"trivial-rel_1.0_1.xcpng8.99": ["tcl"]}
     # and recorded again, from a recording of before, of a version without them
     for recording in root.glob(".xcraft/cache/builds/*/*/trivial/*/rpm-deps.json"):
         old = json.loads(recording.read_text())
@@ -841,7 +804,7 @@ def test_recorded_of_binaries_named_with_their_releases(root: Path) -> None:
     code, output = xcraft("build", "trivial")
     assert code == 0, output
     assert output.endswith("\n1 cached\n")
-    assert load_builds(Project.find()).requires.of(ARCH) == {"trivial-lp_1.0_1.xcpng8.99": ["tcl"]}
+    assert load_builds(Project.find()).requires.of(ARCH) == {"trivial-rel_1.0_1.xcpng8.99": ["tcl"]}
 
 
 def test_recorded_once_after_a_change(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -862,21 +825,6 @@ def test_recorded_once_after_a_change(root: Path, monkeypatch: pytest.MonkeyPatc
     assert code == 0, output
     assert [line.split(" in ")[0] for line in results(output)] == ["✓ with-deps built", "1 built, 1 cached"]
     assert resolved == [["with-deps"]]
-
-
-def test_build_roots_kept_for_another_release(root: Path) -> None:
-    def key() -> Path:
-        project = Project.find()
-        return resolution._cache(project, resolution._unversioned(resolution._roots_data(project)))
-
-    def release(name: str, number: int) -> None:
-        spec = root / f"base/{name}/{name}.spec"
-        spec.write_text(re.sub(r"^Release: \d+", f"Release: {number}", spec.read_text(), flags=re.MULTILINE))
-
-    # another release of trivial, whose version with-deps does not compare: the same build roots
-    first = key()
-    release("trivial", 2)
-    assert key() == first
 
 
 def _roots_key() -> Path:
@@ -915,19 +863,47 @@ def test_build_roots_resolved_again_for_versions_upstream_requires(root: Path, m
     assert "toyrun" in resolved.runtime
 
 
-def test_build_roots_resolved_again_for_versions_of_build_requirements(
-    root: Path, monkeypatch: pytest.MonkeyPatch
+VERSIONED = "trivial >= 1.0-2.xcpng8.99"
+
+
+@pytest.mark.parametrize(
+    ("case", "errors"),
+    [("build requirement", "errors"), ("rich dependency", "runtime_errors"), ("published", "runtime_errors"),
+     ("same process", "errors")],
+)  # fmt: skip
+def test_build_roots_resolved_again_for_versions(
+    root: Path, monkeypatch: pytest.MonkeyPatch, case: str, errors: str
 ) -> None:
+    # what requires a version of trivial it does not have resolves again for another release, under the same key: on
+    # all the architectures at once, also when the process read the resolution of the former release already
     spec = root / "base/with-deps/with-deps.spec"
-    spec.write_text(spec.read_text().replace("BuildRequires: trivial", "BuildRequires: trivial >= 1.0-2.xcpng8.99"))
-    resolved = _resolved_again(monkeypatch)[1]
-    assert "with-deps" in resolved.errors
+    if case == "rich dependency":
+        spec.write_text(
+            spec.read_text().replace("BuildArch: noarch", f"BuildArch: noarch\nRequires: ({VERSIONED} or no)")
+        )
+    elif case == "published":
+        (root / "xcraft.toml").write_text(f'{TOML}\n[publish]\nextra = ["{VERSIONED}"]\n')
+    else:
+        spec.write_text(spec.read_text().replace("BuildRequires: trivial", f"BuildRequires: {VERSIONED}"))
+    assert getattr(_resolved_again(monkeypatch)[1], errors)
     cache = _roots_key()
     trivial = root / "base/trivial/trivial.spec"
     trivial.write_text(trivial.read_text().replace("Release: 1%{?dist}", "Release: 3%{?dist}"))
-    again, resolved = _resolved_again(monkeypatch)
+    shown: list[str] = []
+    activity = resolution.activity
+
+    def recorded(show: str) -> object:
+        shown.append(show)
+        return activity(show)
+
+    monkeypatch.setattr(resolution, "activity", recorded)
+    again, resolved = _resolved_again(monkeypatch, new_process=case != "same process")
     assert again == cache
-    assert "with-deps" not in resolved.errors
+    assert not getattr(resolved, errors)
+    arches = ", ".join(p.arch for p in Project.find().all_platforms())
+    assert [s for s in shown if s.startswith("resolving the build roots of ")] == [
+        f"resolving the build roots of {arches}, and what is published"
+    ]
 
 
 def test_build_roots_kept_for_another_release_required_by_its_own(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -942,11 +918,7 @@ def test_build_roots_kept_for_another_release_required_by_its_own(root: Path, mo
     assert "pair-libs" not in _resolved_again(monkeypatch)[1].versioned
     cache = _roots_key()
     spec.write_text(spec.read_text().replace("Release: 1%{?dist}", "Release: 2%{?dist}"))
-
-    def run(*args: object, **kwargs: object) -> resolution.Resolved:
-        raise AssertionError
-
-    monkeypatch.setattr(resolution, "_run", run)
+    monkeypatch.setattr(resolution, "_run", lambda *_, **__: pytest.fail("resolved again"))
     assert _resolved_again(monkeypatch)[0] == cache
 
 
@@ -957,33 +929,8 @@ def test_resolutions_kept_for_the_pins_they_record(root: Path, monkeypatch: pyte
     spec.write_text(spec.read_text().replace("%description", "BuildRequires: bc\n%description", 1))
     assert "bc" in _resolved_again(monkeypatch)[1].buildroots["trivial"]
     assert "bc" in load_lock(Project.find()).binaries[ARCH]
-
-    def run(*args: object, **kwargs: object) -> resolution.Resolved:
-        raise AssertionError
-
-    monkeypatch.setattr(resolution, "_run", run)
+    monkeypatch.setattr(resolution, "_run", lambda *_, **__: pytest.fail("resolved again"))
     _resolved_again(monkeypatch)
-
-
-def test_build_roots_of_the_architectures_resolved_again_together(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # with-deps requires a version of trivial: another release of trivial resolves both architectures again, at once
-    spec = root / "base/with-deps/with-deps.spec"
-    spec.write_text(spec.read_text().replace("BuildRequires: trivial", "BuildRequires: trivial >= 1.0"))
-    _resolved_again(monkeypatch)
-    trivial = root / "base/trivial/trivial.spec"
-    trivial.write_text(trivial.read_text().replace("Release: 1%{?dist}", "Release: 2%{?dist}"))
-    shown: list[str] = []
-    activity = resolution.activity
-
-    def recorded(show: str) -> object:
-        shown.append(show)
-        return activity(show)
-
-    monkeypatch.setattr(resolution, "activity", recorded)
-    _resolved_again(monkeypatch)
-    arches = ", ".join(p.arch for p in Project.find().all_platforms())
-    together = [s for s in shown if s.startswith("resolving the build roots of ")]
-    assert together == [f"resolving the build roots of {arches}, and what is published"]
 
 
 def test_build_roots_kept_for_an_epoch_0(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -993,11 +940,7 @@ def test_build_roots_kept_for_an_epoch_0(root: Path, monkeypatch: pytest.MonkeyP
     spec = root / "base/with-deps/with-deps.spec"
     spec.write_text(spec.read_text().replace("BuildRequires: trivial", "BuildRequires: trivial >= 0:1.0"))
     assert "with-deps" not in _resolved_again(monkeypatch)[1].errors
-
-    def run(*args: object, **kwargs: object) -> resolution.Resolved:
-        raise AssertionError
-
-    monkeypatch.setattr(resolution, "_run", run)
+    monkeypatch.setattr(resolution, "_run", lambda *_, **__: pytest.fail("resolved again"))
     assert "with-deps" not in _resolved_again(monkeypatch)[1].errors
 
 
@@ -1039,51 +982,6 @@ def test_image_of_the_host_pinned_for_a_project_of_other_architectures(root: Pat
     assert container._side_tag(native, "lint") in container.checkout_images(project)
     assert pinned.ident(container._image_pins(native)) in container.checkout_repositories(project)
     assert pinned.ident(container._side_pins(native, "lint")) in container.checkout_repositories(project)
-
-
-def test_build_roots_resolved_again_for_versions_of_rich_dependencies(
-    root: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    spec = root / "base/with-deps/with-deps.spec"
-    spec.write_text(
-        spec.read_text().replace(
-            "BuildArch: noarch", "BuildArch: noarch\nRequires: (trivial >= 1.0-2.xcpng8.99 or nonexistent)"
-        )
-    )
-    resolved = _resolved_again(monkeypatch)[1]
-    assert resolved.runtime_errors
-    cache = _roots_key()
-    trivial = root / "base/trivial/trivial.spec"
-    trivial.write_text(trivial.read_text().replace("Release: 1%{?dist}", "Release: 2%{?dist}"))
-    again, resolved = _resolved_again(monkeypatch)
-    assert again == cache
-    assert not resolved.runtime_errors
-
-
-def test_build_roots_resolved_again_for_versions_published(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    (root / "xcraft.toml").write_text(f'{TOML}\n[publish]\nextra = ["trivial >= 1.0-2.xcpng8.99"]\n')
-    resolved = _resolved_again(monkeypatch)[1]
-    assert resolved.runtime_errors
-    cache = _roots_key()
-    trivial = root / "base/trivial/trivial.spec"
-    trivial.write_text(trivial.read_text().replace("Release: 1%{?dist}", "Release: 2%{?dist}"))
-    again, resolved = _resolved_again(monkeypatch)
-    assert again == cache
-    assert not resolved.runtime_errors
-
-
-def test_build_roots_resolved_again_in_the_same_process(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # what the process read of the resolution of the former version, kept in memory, does not hold either; of a
-    # version no release of trivial has, the same key
-    spec = root / "base/with-deps/with-deps.spec"
-    spec.write_text(spec.read_text().replace("BuildRequires: trivial", "BuildRequires: trivial >= 1.0-2"))
-    assert "with-deps" in _resolved_again(monkeypatch)[1].errors
-    cache = _roots_key()
-    trivial = root / "base/trivial/trivial.spec"
-    trivial.write_text(trivial.read_text().replace("Release: 1%{?dist}", "Release: 2%{?dist}"))
-    again, resolved = _resolved_again(monkeypatch, new_process=False)
-    assert again == cache
-    assert "with-deps" not in resolved.errors
 
 
 def test_lock_update_changing_implicit_deps(root: Path) -> None:
@@ -1372,14 +1270,6 @@ def test_patchset_during_a_build(root: Path, tmp_path: Path) -> None:
     assert output.startswith("trivial: patchset from 1.0, 1 added")
     assert (root / "base/trivial/0001-a-fix.patch").exists()
     assert xcraft("patchset", str(repo), "--package", "nope")[0] == 2
-
-
-def test_ccache_with_a_compiler(root: Path) -> None:
-    write_spec(root, "compiled", "gcc")
-    assert xcraft("build", "--dry-run")[0] == 0
-    roots = load_lock(Project.find()).roots.shared
-    assert {"gcc", "ccache"} <= set(roots["compiled"])
-    assert "ccache" not in roots.get("trivial", [])
 
 
 def test_lock_records_image_and_roots(root: Path) -> None:

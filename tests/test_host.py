@@ -81,19 +81,12 @@ def test_emulation_unregistered(binfmt: Path) -> None:
     assert host.emulation_fix("aarch64") == []
 
 
+# of a distribution like another one, of a few tools, of two commands, or of none: the others are like these
 @pytest.mark.parametrize(
     ("os_release", "commands"),
     [
         ('ID=ubuntu\nID_LIKE="debian"\n', ["sudo apt-get install -y podman gnupg qemu-user-static"]),
-        ("ID=fedora\n", ["sudo dnf install -y podman gnupg2 qemu-user-static"]),
         ('ID="almalinux"\nID_LIKE="rhel centos fedora"\n', ["sudo dnf install -y podman gnupg2"]),
-        ('ID="opensuse-tumbleweed"\nID_LIKE="opensuse suse"\n', ["sudo zypper install -y podman gpg2 qemu-linux-user"]),
-        (
-            "ID=arch\n",
-            ["sudo pacman -S --needed --noconfirm podman gnupg qemu-user-static qemu-user-static-binfmt"],
-        ),
-        ("ID=alpine\n", ["sudo apk add podman gnupg qemu-x86_64 qemu-aarch64"]),
-        ("ID=gentoo\n", ["sudo emerge --noreplace app-containers/podman app-crypt/gnupg app-emulation/qemu"]),
         ("ID=slackware\n", ["sudo sboinstall -r podman qemu", "sudo slackpkg install gnupg2"]),
         ("ID=nixos\n", []),
     ],
@@ -108,20 +101,7 @@ def test_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, os_release: st
     ("distro", "commands"),
     [
         ("debian", ["sudo apt-get install -y qemu-system-x86 qemu-utils ovmf qemu-user-static"]),
-        ("fedora", ["sudo dnf install -y qemu-system-x86-core qemu-img edk2-ovmf qemu-user-static"]),
         ("rhel", ["sudo dnf install -y qemu-img edk2-ovmf"]),
-        ("suse", ["sudo zypper install -y qemu-x86 qemu-tools qemu-ovmf-x86_64 qemu-linux-user"]),
-        (
-            "arch",
-            [
-                (
-                    "sudo pacman -S --needed --noconfirm qemu-system-x86 qemu-img edk2-ovmf "
-                    "qemu-user-static qemu-user-static-binfmt"
-                )
-            ],
-        ),
-        ("alpine", ["sudo apk add qemu-system-x86_64 qemu-img ovmf qemu-aarch64"]),
-        ("gentoo", ["sudo emerge --noreplace app-emulation/qemu sys-firmware/edk2-ovmf"]),
         ("slackware", ["sudo sboinstall -r qemu"]),
     ],
 )

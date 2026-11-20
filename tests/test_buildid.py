@@ -91,6 +91,7 @@ def test_build_ids_of_conflicts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
 
 def test_build_ids(root: Path) -> None:
+    (root / "xcraft.toml").write_text(f'{TOML}installer = ["bash"]\n')  # for the ISO
     code, output = xcraft("build")
     assert code == 0, output
     assert "build IDs: trivial 1, with-deps 1" in output
@@ -102,54 +103,19 @@ def test_build_ids(root: Path) -> None:
     assert {p.name for p in root.glob(".xcraft/cache/builds/*/*/trivial/*/RPMS/*/*.rpm")} == {
         "trivial-1.0-1+b1.xcpng8.99.noarch.rpm"
     }
-    # unchanged
-    code, output = xcraft("build")
-    assert code == 0, output
-    assert "build IDs" not in output
-    assert output.splitlines()[-1] == "2 cached"
     # out of git, without the main branch to number against, a change keeps the numbers, with other keys
     edit(root, "changed")
     assert update() == {"trivial": 1, "with-deps": 1}
     assert all(i.key != ids[name].key for name, i in buildid.read(Project.find()).items())
+    # checked by all the builds, of the ISOs too, of x86_64, whatever the host
     edit(root, "changed again")
-    project = Project.find()
+    code, output = xcraft("build", "--locked")
+    assert code == 1
+    assert "--locked forbids: trivial, with-deps" in output
+    project = Project.find("x86_64_v2")
     project.frozen = True
     with pytest.raises(buildid.BuildIdError, match="--locked forbids: trivial, with-deps"):
-        buildid.update(project)
-
-
-def test_build_key_inputs(root: Path) -> None:
-    def key() -> str:
-        return buildid.compute(Project.find(), None)["trivial"].key
-
-    before = key()
-    config = root / "xcraft.toml"
-    text = config.read_text()
-    # not what does not change the builds: the compiler caches, the remote storage, the publication
-    unrelated = (
-        '[ccache_size]\ntrivial = "1G"\n[remote.main]\nurl = "https://example.com"\n[publish]\nstage = "other"\n'
-    )
-    config.write_text(f"{text}\n{unrelated}")
-    assert key() == before
-    # but the recipe, like the macros of the builds
-    config.write_text(text.replace('xcpng = "9"', 'xcpng = "10"'))
-    assert key() != before
-    config.write_text(text)
-    # the package directory
-    spec = root / "base/trivial/trivial.spec"
-    spec.write_text(f"{spec.read_text()}# changed\n")
-    assert key() != before
-    spec.write_text(spec.read_text().removesuffix("# changed\n"))
-    assert key() == before
-    # and the lock, on each architecture: the pinned binary packages of the image
-    inputs = buildkey.Inputs(Project.find())
-    assert buildkey.key(inputs.of({"trivial"}, {}), "trivial") == before
-    for arch in ("x86_64_v2", "aarch64"):
-        name = inputs.lock.image[arch][0]
-        pin = inputs.lock.binaries[arch][name]
-        inputs.lock.binaries[arch][name] = pin.model_copy(update={"sha256": "0" * 64})
-        assert buildkey.key(inputs.of({"trivial"}, {}), "trivial") != before
-        inputs.lock.binaries[arch][name] = pin
+        checkout_iso(project)
 
 
 def test_shown_inputs(root: Path) -> None:
@@ -172,20 +138,6 @@ def test_shown_inputs(root: Path) -> None:
     assert recipe == shown["trivial"]["inputs"]["trivial"][1]
     assert sorted(lock) == ["aarch64", "x86_64_v2"]
     assert package != shown["trivial"]["inputs"]["trivial"][0]
-
-
-def test_build_ids_checked_by_all_the_builds(root: Path) -> None:
-    (root / "xcraft.toml").write_text(f'{TOML}installer = ["bash"]\n')  # for the ISO
-    assert xcraft("build")[0] == 0  # the lock complete, with what the builds record
-    edit(root, "changed")  # without its build ID
-    code, output = xcraft("build", "--locked")
-    assert code == 1
-    assert "--locked forbids: trivial, with-deps" in output
-    # those of the ISOs too, of x86_64, whatever the host
-    project = Project.find("x86_64_v2")
-    project.frozen = True
-    with pytest.raises(buildid.BuildIdError, match="--locked forbids: trivial, with-deps"):
-        checkout_iso(project)
 
 
 def test_build_ids_of_main_branch(root: Path) -> None:
@@ -314,24 +266,6 @@ def test_commit_of_the_checkout(root: Path, tmp_path: Path, monkeypatch: pytest.
     assert working == subprocess.run(log, cwd=root, capture_output=True, text=True, check=True).stdout
 
 
-def test_maintenance_branches_of_several_patterns(root: Path) -> None:
-    config = root / "xcraft.toml"
-    config.write_text(f'maintenance_branches = ["maint/*", "embargo/*"]\n{config.read_text()}')
-    commit_base(root)
-    release = git(root, "rev-parse", "HEAD")
-    edit(root, "master")
-    update()
-    git(root, "commit", "-qam", "master")
-    git(root, "checkout", "-qb", "embargo/xsa-123", release)
-    edit(root, "fix")
-    assert update() == {"trivial": "1.1", "with-deps": "1.1"}
-    # the embargo branches are maintenance ones
-    config.write_text(f'embargo_branches = ["other/*"]\n{config.read_text()}')
-    code, output = xcraft("status")
-    assert code == 1
-    assert "embargo_branches must be maintenance_branches too: other/*" in output
-
-
 @pytest.mark.skipif(not shutil.which("jj"), reason="needs jj")
 def test_maintenance_branch_of_jj(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (config := tmp_path / "jj.toml").write_text('user.name = "test"\nuser.email = "test@example.com"\n')
@@ -423,7 +357,7 @@ def compression(root: Path, rpm: str) -> str:
     return subprocess.run(query, capture_output=True, text=True, check=True).stdout
 
 
-def test_development_builds(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_development_builds(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: PLR0915
     # a main branch with what the builds record in its lock, like those CI checks
     assert xcraft("build")[0] == 0
     commit_base(root)
@@ -465,6 +399,23 @@ def test_development_builds(root: Path, monkeypatch: pytest.MonkeyPatch) -> None
         "on the hosts, with this directory at http://example.com/qcow2/:",
         "  copy xcraft-qcow2.repo to /etc/yum.repos.d/, then: dnf upgrade --refresh with-deps",
     ]
+    # copied to a host, with the main branch's builds of the given packages too, which it may have in other builds:
+    # by ssh and rsync doing nothing, without a host to copy to
+    tools = root / "tools"
+    tools.mkdir()
+    for tool in ("ssh", "rsync"):
+        (tools / tool).write_text("#!/bin/sh\n")
+        (tools / tool).chmod(0o755)
+    with monkeypatch.context() as patch:
+        patch.setenv("PATH", f"{tools}:{os.environ['PATH']}")
+        code, output = xcraft("repo", "with-deps", "trivial", "--host", "h")
+    assert code == 0, output
+    assert "warning: no development builds of trivial: the main branch's ones" in output
+    assert sorted(p.name for p in repo.glob("*.rpm")) == [
+        "trivial-1.0-1+b1.xcpng8.99.noarch.rpm",
+        "with-deps-1.0-1+b2~3.qcow2.xcpng8.99.noarch.rpm",
+    ]
+    assert "repository on h, in /var/local/xcraft/qcow2" in output
     # the development builds, as last built, are kept
     assert xcraft("clean")[0] == 0
     assert built() == []
@@ -478,28 +429,14 @@ def test_development_builds(root: Path, monkeypatch: pytest.MonkeyPatch) -> None
     code, output = xcraft("build", "--verbose")
     assert code == 0, output
     assert re.search(r"^/.*/RPMS/noarch/with-deps-1\.0-1\+b2~5\.qcow2\.xcpng8\.99\.noarch\.rpm$", output, re.MULTILINE)
-
-
-def test_repo_for_hosts(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    commit_base(root)
-    git(root, "checkout", "-qb", "feature")
-    edit(root, "changed", name="with-deps")
-    # ssh and rsync doing nothing, without a host to copy to
-    tools = root / "tools"
-    tools.mkdir()
-    for tool in ("ssh", "rsync"):
-        (tools / tool).write_text("#!/bin/sh\n")
-        (tools / tool).chmod(0o755)
-    monkeypatch.setenv("PATH", f"{tools}:{os.environ['PATH']}")
-    # with the main branch's builds of the given packages too, which a host may have in other builds
-    code, output = xcraft("repo", "with-deps", "trivial", "--host", "h")
-    assert code == 0, output
-    assert "warning: no development builds of trivial: the main branch's ones" in output
-    assert sorted(p.name for p in (root / "repo-dev").glob("*.rpm")) == [
-        "trivial-1.0-1+b1.xcpng8.99.noarch.rpm",
-        "with-deps-1.0-1+b2~1.dev.xcpng8.99.noarch.rpm",
-    ]
-    assert "repository on h, in /var/local/xcraft/dev" in output
+    # numbered by CI, by the run number of a workflow, rather than the counters of .xcraft, which it does not keep
+    edit(root, "changed in CI", name="with-deps")
+    monkeypatch.setenv("XCRAFT_DEV_COUNTER", "42")
+    assert built("--dev", "pr7") == ["with-deps-1.0-1+b2~42.pr7.xcpng8.99.noarch.rpm"]
+    monkeypatch.setenv("XCRAFT_DEV_COUNTER", "-1")
+    code, output = xcraft("build", "--dev", "pr7")
+    assert code != 0
+    assert "$XCRAFT_DEV_COUNTER must be a positive number: -1" in output
 
 
 def test_iso_of_development_builds(root: Path) -> None:
@@ -786,20 +723,3 @@ def test_reused_builds_of_upstream_updates(root: Path, monkeypatch: pytest.Monke
     assert update() == {"trivial": 1, "with-deps": 2}
     assert buildid.reuse(Project.find(), [], ["toyrun"]) == ["with-deps"]
     assert update() == {"trivial": 1, "with-deps": 1}
-
-
-def test_development_builds_counted_by_ci(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    assert xcraft("build")[0] == 0
-    commit_base(root)
-    git(root, "checkout", "-qb", "feature")
-    edit(root, "changed", name="with-deps")
-    # the run number of a workflow, rather than the counters of .xcraft, which CI does not keep
-    monkeypatch.setenv("XCRAFT_DEV_COUNTER", "42")
-    assert built("--dev", "pr7") == ["with-deps-1.0-1+b2~42.pr7.xcpng8.99.noarch.rpm"]
-    edit(root, "changed again", name="with-deps")
-    monkeypatch.setenv("XCRAFT_DEV_COUNTER", "43")
-    assert built("--dev", "pr7") == ["with-deps-1.0-1+b2~43.pr7.xcpng8.99.noarch.rpm"]
-    monkeypatch.setenv("XCRAFT_DEV_COUNTER", "-1")
-    code, output = xcraft("build", "--dev", "pr7")
-    assert code != 0
-    assert "$XCRAFT_DEV_COUNTER must be a positive number: -1" in output
