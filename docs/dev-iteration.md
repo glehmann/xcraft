@@ -94,7 +94,7 @@ that may need them: a new checkout fetched all of them in 82 s rather than 118 s
 parsing the specs.
 
 `xcraft boot` and `xcraft iso` also take the ISO CI published, signed with a key of the builds of the storage, rather
-than making one signed with the developer's key, when they are given neither `--key` nor `--unsigned`.
+than making one signed with the developer's key, when they are not given `--key`.
 
 ### Incremental builds: `xcraft develop`
 

@@ -20,8 +20,8 @@
 | `xcraft repo <pkg>... --vm [--upgrade]` | The same, for the VM `xcraft boot` installed, running |
 | `xcraft publish [repos\|isos] [--stage s] [--locked] [--local] [--dev-key] [--dev ID] [--arch a] [--summary FILE]` | Publish a snapshot of the distribution, its repositories and its ISOs, or only those given, for all the architectures or `--arch`, as the stage's latest one; a `--local` one is of the host's architecture by default; `--dev` in dev mode, like the CI of a pull request; `--summary` writes where it is published, as Markdown |
 | `xcraft unpublish --stage s [--to main\|dev]` | Remove a stage of the remote storage, all its snapshots, like that of a closed pull request |
-| `xcraft iso [--netinstall] [--output f] [-V id] [--locked] [--unsigned] [--dev ID \| --final] [--nocheck]` | Make the installation ISO, from a local snapshot (see [Installation ISO](iso.md)) |
-| `xcraft boot [--iso f] [--disk f] [--headless] [--unsigned] [--dev ID \| --final] [--nocheck]` | Build the ISO and boot its installer in a local QEMU VM, creating a virtual disk if missing |
+| `xcraft iso [--netinstall] [--output f] [-V id] [--locked] [--dev ID \| --final] [--nocheck]` | Make the installation ISO, from a local snapshot (see [Installation ISO](iso.md)) |
+| `xcraft boot [--iso f] [--disk f] [--headless] [--dev ID \| --final] [--nocheck]` | Build the ISO and boot its installer in a local QEMU VM, creating a virtual disk if missing |
 | `xcraft vm start [--background]` | Start the VM again from its installed disk, without the ISO, with the options of `xcraft boot` |
 | `xcraft vm <command>` | Inspect a VM, read its console, send input, save diagnostics, or stop it |
 | `xcraft vm destroy [--yes]` | Stop the VM and delete its session, with its disk, for a new installation |
@@ -34,7 +34,7 @@
 | `xcraft push` | Upload everything the remote storage misses: the source archives and the builds of all packages, with the `index.html` pages of their directories, and the resolutions |
 | `xcraft push sources [<pkg>...] [--check] [--to main\|dev]` | Upload cached sources, or check the selected bucket; defaults to dev |
 | `xcraft push builds [<pkg>...]` | Upload the current builds missing from the remote storage, for CI |
-| `xcraft push isos [--unsigned] [--to main\|dev]` | Upload cached full and netinstall ISOs matching the checkout |
+| `xcraft push isos [--to main\|dev]` | Upload cached full and netinstall ISOs matching the checkout |
 | `xcraft push resolutions` | Upload the resolutions of the project as it is, which new checkouts fetch rather than resolving, for CI |
 | `xcraft push index` | Make the `index.html` pages of all the directories of the remote storage |
 | `xcraft push ccache [<pkg>...]` | Update the compiler caches of the remote storage with those of the packages, for CI |

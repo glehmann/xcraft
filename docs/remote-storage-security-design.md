@@ -210,8 +210,7 @@ protected CI secret into a temporary keyring. Pass `--to main` and its fingerpri
 `push ccache` and `publish`; the workflow does not modify `xcraft.toml`. Set `GNUPGHOME` when `[sign].gnupghome` is omitted,
 unlock the agent before signing if the key has
 a passphrase, and kill the agent and remove the temporary keyring at job exit. Only trusted jobs receive the private
-key and S3 write credentials. See [the signing key in CI](remote-storage.md#the-signing-key-in-ci). Snapshot manifests use the publishing signer,
-or the default signing key when package signing is disabled with `--unsigned`.
+key and S3 write credentials. See [the signing key in CI](remote-storage.md#the-signing-key-in-ci). Snapshot manifests use the publishing signer.
 
 ### What stays as it is
 

@@ -246,23 +246,11 @@ def builds(packages: Packages = None, final: Final = False, arch: Arch = None, k
 
 
 @app.command()
-def isos(
-    arch: Arch = None,
-    key: Key = None,
-    to: To = "dev",
-    unsigned: Annotated[
-        bool, typer.Option("--unsigned", help="Upload cached ISOs made without package signing.")
-    ] = False,
-) -> None:
+def isos(arch: Arch = None, key: Key = None, to: To = "dev") -> None:
     """Upload cached full and netinstall ISOs matching the checkout, without building them."""
     project = Project.find(arch)
     with project.lock():
-        push_isos(
-            project,
-            remote_storage(project, to),
-            signer=None if unsigned else key_signer(project, key),
-            upload_signer=key_signer(project, key),
-        )
+        push_isos(project, remote_storage(project, to), signer=key_signer(project, key))
 
 
 @app.command()

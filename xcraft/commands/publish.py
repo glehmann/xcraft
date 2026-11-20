@@ -224,9 +224,7 @@ def _publish(  # noqa: C901, PLR0912
         project,
         key,
         final=False,
-        signer=choose_signer(
-            project, local=local, unsigned=False, dev_key=dev_key or (not local and to == "dev" and not key), key=key
-        ),
+        signer=choose_signer(project, local=local, dev_key=dev_key or (not local and to == "dev" and not key), key=key),
     )  # before the platforms, which copy it
     signer = project.signer
     platforms = project.all_platforms() if arch == "all" or (arch is None and not local) else [project]

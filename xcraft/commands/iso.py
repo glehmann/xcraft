@@ -7,7 +7,7 @@ from typing import Annotated
 
 import typer
 
-from xcraft.commands import Arch, Dev, Final, Key, NoCheck, choose_signer, dev_ident, sign_builds
+from xcraft.commands import Arch, Dev, Final, Key, NoCheck, dev_ident, iso_signer, sign_builds
 from xcraft.display import console
 from xcraft.iso import checkout_iso
 from xcraft.project import Project
@@ -25,14 +25,6 @@ def iso(
     locked: Annotated[
         bool, typer.Option("--locked", help="Fail when making the ISO would change the lock, for CI.")
     ] = False,
-    unsigned: Annotated[
-        bool,
-        typer.Option(
-            "--unsigned",
-            help="Without signing the packages and the repository. They are signed with the release key of "
-            "xcraft.toml by default, or with the developer's key.",
-        ),
-    ] = False,
     arch: Arch = None,
     key: Key = None,
     dev: Dev = None,
@@ -49,7 +41,7 @@ def iso(
     ident = dev_ident(ctx, dev, final=final, nocheck=nocheck)
     project = Project.find(arch)
     project.frozen = locked
-    signer = choose_signer(project, local=True, unsigned=unsigned, dev_key=False, key=key)
+    signer = iso_signer(project, key)
     sign_builds(project, key, final=ident is None, signer=signer)
     path = checkout_iso(
         project,
@@ -59,6 +51,6 @@ def iso(
         signer=signer,
         dev=ident,
         nocheck=nocheck,
-        published=not (key or unsigned),  # CI's, rather than one made with the developer's key
+        published=not key,  # CI's, rather than one made with the developer's key
     )
     console.print(f"[bold green]✓[/] {path}")

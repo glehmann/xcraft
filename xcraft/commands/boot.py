@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 
 from xcraft import process, vm
-from xcraft.commands import Arch, Dev, Final, Key, NoCheck, choose_signer, dev_ident, sign_builds
+from xcraft.commands import Arch, Dev, Final, Key, NoCheck, dev_ident, iso_signer, sign_builds
 from xcraft.commands.vm import check_port, show
 from xcraft.display import console
 from xcraft.iso import checkout_iso
@@ -173,7 +173,6 @@ def boot(
         ),
     ] = None,
     locked: Annotated[bool, typer.Option("--locked", help="Fail when making the ISO would change the lock.")] = False,
-    unsigned: Annotated[bool, typer.Option("--unsigned", help="Do not sign the ISO's packages or repository.")] = False,
     arch: Arch = None,
     key: Key = None,
     dev: Dev = None,
@@ -211,9 +210,9 @@ def boot(
     vm.check_stopped(vm_dir)
     if not iso:
         project.frozen = locked
-        signer = choose_signer(project, local=True, unsigned=unsigned, dev_key=False, key=key)
+        signer = iso_signer(project, key)
         sign_builds(project, key, final=ident is None, signer=signer)
-        iso = checkout_iso(project, signer=signer, dev=ident, nocheck=nocheck, published=not (key or unsigned))
+        iso = checkout_iso(project, signer=signer, dev=ident, nocheck=nocheck, published=not key)
         console.print(f"[bold green]✓[/] {iso}")
     with project.lock():
         vm.check_stopped(vm_dir)

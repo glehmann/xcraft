@@ -45,12 +45,12 @@ Like `xcraft build`, `xcraft iso` and `xcraft boot` take the development builds 
 the main branch's, see [Development builds](builds.md#development-builds), with `--dev ID`, or final builds with `--final`: the
 ISO is the one of what `xcraft build` just made, without building them again as final ones. Its key covers the
 suffixes of the development builds, and its name has their identifier, like `<name>-<version>-<id>.dev-<arch>.iso`;
-it is never taken from the remote storage, nor pushed to it, like them. Of final builds, without `--key` nor
-`--unsigned`, when the ISO signed with the default key, like the developer's, is neither cached nor in the remote
-storage, the one CI published, signed with a key of `build_keys` of the storage, is taken rather than made.
+it is never taken from the remote storage, nor pushed to it, like them. Of final builds, without `--key`, when the
+ISO signed with the default key, like the developer's, is neither cached nor in the remote storage, the one CI
+published, signed with a key of `build_keys` of the storage, is taken rather than made. The ISOs are always signed:
+without a key, the developer's is made, as for the builds of dev mode.
 
-`xcraft push isos` uploads cached images matching the checkout, with signed manifests like RPM builds. Use
-`xcraft push isos --unsigned` for images built with `--unsigned`; the upload manifest still needs a signing key.
+`xcraft push isos` uploads cached images matching the checkout, with signed manifests like RPM builds.
 Publishing ISOs also populates this keyed remote cache, independently of the dated snapshots.
 
 Repository assembly caches successful RPM signature and installability checks locally. Signature checks are keyed
@@ -68,7 +68,7 @@ and an 80 GiB sparse qcow2 disk in `.xcraft/vm/<arch>/disk.qcow2`.
 
 ```bash
 xcraft patchset /path/to/host-installer --package host-installer --base <ref>
-xcraft boot --unsigned                 # reuse, fetch or build the matching ISO, then run the installer
+xcraft boot                            # reuse, fetch or build the matching ISO, then run the installer
 xcraft vm start                        # boot the resulting installation, without the ISO
 xcraft boot --iso /path/to/image.iso   # boot an existing ISO
 ```

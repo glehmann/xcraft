@@ -237,9 +237,7 @@ def fetch_isos(project: Project, *, signer: Signer | None) -> bool:
         return False
 
 
-def push_isos(
-    project: Project, storage: Remote, *, signer: Signer | None, upload_signer: Signer | None = None
-) -> dict[str, publish.Stored]:
+def push_isos(project: Project, storage: Remote, *, signer: Signer | None) -> dict[str, publish.Stored]:
     """Upload the cached ISOs of the checkout the storage misses, and return their paths there, with their SHA-256,
     by file name.
     """
@@ -251,7 +249,7 @@ def push_isos(
         if not tree.exists():
             continue
         _verified_image(tree)
-        trusted = upload_signer or signer or key_signer(project)
+        trusted = signer or key_signer(project)
         if remote.tree_exists(storage, path, trusted=trusted):
             present += 1
         else:

@@ -1,9 +1,9 @@
 # Design: the layout of the published repositories, and their signatures
 
-Status: the first three steps of the [order](#order) implemented: the builds signed at build and stored by signer,
-the upstream packages signed again in final mode, and the publications of dev mode and of the pull requests; the
-expiry of the snapshots of incoming, the release bucket, the cumulative stages, the mirrors and the pruning of the
-builds to come. It gathers the questions of the publication of the pull requests, of the mirrors, of the rollbacks of
+Status: the first three steps of the [order](#order) implemented, and the last one: the builds signed at build and
+stored by signer, the upstream packages signed again in final mode, the publications of dev mode and of the pull
+requests, and the end of `--unsigned`; the expiry of the snapshots of incoming, the release bucket, the cumulative
+stages, the mirrors and the pruning of the builds to come. It gathers the questions of the publication of the pull requests, of the mirrors, of the rollbacks of
 the hosts, of the release keys and of the signatures of our packages and of the upstream ones. It builds on [the
 buckets of the CI secrets design](ci-secret-management-design.md#4-a-bucket-for-the-releases) and [the CI of pull
 requests](pr-ci-design.md).

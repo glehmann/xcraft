@@ -61,7 +61,7 @@ def test_signer_selection(root: Path) -> None:
     project = Project.find()
     developer = create_dev_key(project, "Developer")
     assert key_signer(project) == developer
-    assert choose_signer(project, local=False, unsigned=False, dev_key=False) == developer
+    assert choose_signer(project, local=False, dev_key=False) == developer
     assert key_signer(project, "A" * 40) == Signer("A" * 40)
     project.config.sign = Sign(key="B" * 40, gnupghome=str(root / "release-keyring"))
     assert key_signer(project) == Signer("B" * 40, root / "release-keyring")
@@ -73,11 +73,9 @@ def test_signer_selection(root: Path) -> None:
     assert Sign(key="b" * 40).key == "B" * 40
     with pytest.raises(ValueError, match="not the fingerprint of a key"):
         Sign(key="B" * 39)
-    assert choose_signer(project, local=True, unsigned=False, dev_key=True) == developer
-    assert choose_signer(project, local=True, unsigned=True, dev_key=False) is None
-    for unsigned, dev_key, key in ((False, True, "A" * 40), (True, False, "A" * 40), (True, True, None)):
-        with pytest.raises(typer.BadParameter, match="cannot be used"):
-            choose_signer(project, local=True, unsigned=unsigned, dev_key=dev_key, key=key)
+    assert choose_signer(project, local=True, dev_key=True) == developer
+    with pytest.raises(typer.BadParameter, match="cannot be used"):
+        choose_signer(project, local=True, dev_key=True, key="A" * 40)
 
 
 @contextmanager

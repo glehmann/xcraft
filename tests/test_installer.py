@@ -37,8 +37,8 @@ def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_environment: Pat
 
 
 def made_iso(root: Path) -> Path:
-    """Make the ISO of the checkout, unsigned, and return it."""
-    code, output = xcraft("iso", "--unsigned", "--output", str(root / "toy.iso"))
+    """Make the ISO of the checkout, signed by the developer's key, and return it."""
+    code, output = xcraft("iso", "--output", str(root / "toy.iso"))
     assert code == 0, output
     return root / "toy.iso"
 
@@ -55,7 +55,7 @@ def booted(root: Path, *args: str) -> tuple[int, str, str]:
     vm_dir = root / "vm"
     shutil.rmtree(vm_dir, ignore_errors=True)
     code, output = xcraft(
-        "boot", "--unsigned", "--headless", "--accel", accel, "--memory", "2048", "--cpus", "2", "--ssh-port", "0",
+        "boot", "--headless", "--accel", accel, "--memory", "2048", "--cpus", "2", "--ssh-port", "0",
         "--disk-size", "1G", "--vm-dir", str(vm_dir), *args,
     )  # fmt: skip
     return code, output, (vm_dir / "serial.log").read_bytes().decode(errors="replace")
@@ -82,7 +82,7 @@ def test_iso_boots(root: Path) -> None:
     assert "EFI/BOOT/efiboot.cfg" not in listing
     assert [p.split("-1.0-")[0] for p in packages(iso)] == ["with-deps"]
     hooked = subprocess.run(["bsdtar", "-xOf", iso, "toy-hook.json"], capture_output=True, check=True).stdout
-    assert json.loads(hooked) == {"netinstall": False, "signed": False}
+    assert json.loads(hooked) == {"netinstall": False, "signed": True}
     assert iso.read_bytes()[0x8028:0x8048].rstrip() == b"TOY_1_0"  # the volume id of the primary volume descriptor
     # the ISO of the checkout, cached: with UEFI, with kernel arguments added in GRUB's editor, and with BIOS
     assert installer_line(root, "--kernel-args", "xcraft.test=1") == (
@@ -114,7 +114,7 @@ def test_iso_of_changed_packages(root: Path) -> None:
     ):
         spec = root / f"base/{name}/{name}.spec"
         spec.write_text(spec.read_text().replace("%install\n", "%install\necho changed\n"))
-        code, output = xcraft("iso", "--unsigned", "--output", str(root / "toy.iso"))
+        code, output = xcraft("iso", "--output", str(root / "toy.iso"))
         assert code == 0, output
         assert re.findall(r"^✓ (\S+) built", output, re.MULTILINE) == built, output
         assert packages(root / "toy.iso") == [f"{p}.xcpng8.99.noarch.rpm" for p in expected]

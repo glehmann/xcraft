@@ -11,7 +11,7 @@ from xcraft import buildid, resolution
 from xcraft import develop as developer
 from xcraft.lock import cached_lock
 from xcraft.project import Destination, Project, Remote
-from xcraft.signing import Signer, SigningError, build_signer, dev_signer, key_signer
+from xcraft.signing import Signer, SigningError, build_signer, dev_signer, key_signer, new_dev_key
 
 
 def complete_package(incomplete: str) -> list[str]:
@@ -182,23 +182,25 @@ def sign_builds(project: Project, key: str | None, *, final: bool, signer: Signe
         raise typer.BadParameter(str(e)) from None
 
 
-def choose_signer(
-    project: Project, *, local: bool, unsigned: bool, dev_key: bool, key: str | None = None
-) -> Signer | None:
+def choose_signer(project: Project, *, local: bool, dev_key: bool, key: str | None = None) -> Signer | None:
     """Return the key signing a snapshot: `key`, the developer's with `dev_key`, or the default one, see
-    key_signer(), or none when `unsigned`.
+    key_signer(), or none, for a `local` one only.
     """
     if key and dev_key:
         msg = "--key and --dev-key cannot be used together"
         raise typer.BadParameter(msg)
-    if unsigned and (key or dev_key):
-        msg = "--unsigned cannot be used with --key or --dev-key"
-        raise typer.BadParameter(msg)
-    signer = None if unsigned else dev_signer(project) if dev_key else key_signer(project, key)
+    signer = dev_signer(project) if dev_key else key_signer(project, key)
     if dev_key and not signer:
         msg = "no developer's key: run xcraft key create"
         raise typer.BadParameter(msg)
-    if not (signer or local or unsigned):
-        msg = "no key to sign the packages: run xcraft key create, configure [sign], or use --key or --unsigned"
+    if not (signer or local):
+        msg = "no key to sign the packages: run xcraft key create, configure [sign], or use --key"
         raise typer.BadParameter(msg)
     return signer
+
+
+def iso_signer(project: Project, key: str | None) -> Signer:
+    """Return the key signing the ISO of the checkout: `key`, or the default one, see key_signer(), or else the
+    developer's, made now.
+    """
+    return choose_signer(project, local=True, dev_key=False, key=key) or new_dev_key(project)

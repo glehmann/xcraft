@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from tests import PROJECT, TOML
+from tests import PROJECT, TOML, needs_gpg
 from tests.test_build import xcraft
 from xcraft import buildkey, iso, publish
 from xcraft.builds import BuildId, load_builds, save_builds
@@ -17,7 +17,7 @@ from xcraft.container import BUILDENV
 from xcraft.iso import Image, cached_iso, checkout_iso, iso_id, iso_key, iso_name
 from xcraft.lock import Pin, load_lock, save_lock
 from xcraft.project import Iso, Project, Remote
-from xcraft.signing import Signer
+from xcraft.signing import Signer, create_dev_key
 from xcraft.sources import sha256_of
 
 
@@ -120,28 +120,30 @@ def test_iso_inputs_of_the_builds(project: Project, monkeypatch: pytest.MonkeyPa
     assert key() != before
 
 
+@needs_gpg
 def test_iso_lookup_before_preparation(project: Project, tmp_path: Path) -> None:
     # The cache transport treats ISO contents as opaque bytes. No RPM resolution is available in this project.
     image = tmp_path / "test.iso"
     image.write_bytes(b"cached ISO contents")
-    tree = cache_image(project, image, keep=True)
-    code, output = xcraft("iso", "--locked", "--unsigned")
+    signer = create_dev_key(project, "Developer")
+    tree = cache_image(project, image, signer=signer, keep=True)
+    code, output = xcraft("iso", "--locked")
     assert code == 0, output
-    output = project.state / "iso" / iso_name(project, netinstall=False, signer=None)
+    output = project.state / "iso" / iso_name(project, netinstall=False, signer=signer)
     assert output.read_bytes() == image.read_bytes()
     # the file of the cache, read-only: replaced, rather than changed
     with pytest.raises(PermissionError):
         output.write_bytes(b"changed output")
     output.unlink()
     output.write_bytes(b"changed output")
-    assert checkout_iso(project, dev="dev") == output
+    assert checkout_iso(project, signer=signer, dev="dev") == output
     assert output.read_bytes() == image.read_bytes()
-    assert checkout_iso(project, tmp_path / "other.iso", dev="dev").read_bytes() == image.read_bytes()
+    assert checkout_iso(project, tmp_path / "other.iso", signer=signer, dev="dev").read_bytes() == image.read_bytes()
     assert (tree / "image.iso").read_bytes() == image.read_bytes()
     (tree / "image.iso").chmod(0o644)
     (tree / "image.iso").write_bytes(b"corrupted cache")
     with pytest.raises(RuntimeError, match="does not match its SHA-256"):
-        checkout_iso(project, dev="dev")
+        checkout_iso(project, signer=signer, dev="dev")
 
 
 def test_iso_config_checked_before_the_snapshot(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
