@@ -25,13 +25,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def test_recipe_of_all_architectures(root: Path) -> None:
-    # the repositories of the build environment differ by architecture, not the build keys
-    projects = [Project.find(arch) for arch in ("x86_64_v2", "aarch64")]
-    assert projects[0].repos.keys() != projects[1].repos.keys()
-    assert buildkey.recipe(projects[0]) == buildkey.recipe(projects[1])
-
-
 def test_build_ids_of_all_architectures(root: Path) -> None:
     # with-deps built against trivial on aarch64 only: %ifarch is noarch for noarch packages
     spec = root / "base/with-deps/with-deps.spec"

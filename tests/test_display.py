@@ -1,3 +1,5 @@
+"""The display of the commands: their activities, diagnostics and progress, and xcraft log of their logs."""
+
 from __future__ import annotations
 
 import os

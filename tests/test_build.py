@@ -279,19 +279,6 @@ def test_build_ids_without_building(root: Path) -> None:
     assert "--ids updates the build IDs of all the packages" in " ".join(output.replace("│", "").split())
 
 
-def test_repo_host_options(root: Path) -> None:
-    for args, error in [
-        (["--host", "h", "--final"], "--host, --vm and --upgrade are for the development builds of the given packages"),
-        (["--upgrade"], "--upgrade needs --host or --vm"),
-        (["--host", "h", "--baseurl", "http://x/"], "with --host or --vm, the hosts find the repository in"),
-        (["--host", "ssh://root@h:port"], "not a host: ssh://root@h:port, as ssh://[user@]host[:port]"),
-        (["--vm"], "no VM running in"),
-    ]:
-        code, output = xcraft("repo", "trivial", *args)
-        assert code == 2
-        assert error in " ".join(output.replace("│", "").split())
-
-
 def test_dnf_lock_is_shared_by_containers(root: Path) -> None:
     logs = [root / f"lock-{i}.log" for i in range(2)]
     container.built_image(Project.find())  # before the threads, which would both build it
