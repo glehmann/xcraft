@@ -69,6 +69,25 @@ below its URL:
 mirrors = ["https://mirror.example.org/xcp-ng/"]
 ```
 
+The mirrors sync by rsync from a copy of the latest snapshots of the stage, its repositories and ISOs, which
+`xcraft mirror DIR --stage s` makes on the primary mirror host, after each publication and periodically, an rsync
+module serving `DIR`: Garage has no rsync. It reads the public endpoint of the storage, without S3 credentials, checks
+the signed manifest of each latest snapshot, then makes a new version of the copy, switched at once by a symlink, at
+the paths of the storage: an rsync session sees one complete tree. A latest snapshot published again during the copy,
+its manifest dated otherwise after it than before, fails it, without switching: the next run makes it again. A file
+has the date of the storage, its Last-Modified, and the modes 0644 and 0755, so a copy made again from scratch, on a
+new host, is the same for rsync, and the mirrors transfer nothing again; a file of the previous version, the same, is
+hard linked rather than downloaded. `--check` checks the copy against its manifests, downloads the damaged files
+again, and reports those the manifests do not have; without xcraft, a mirror checks its own copy with the public keys
+of the storage:
+
+```sh
+gpgv --keyring <keys> manifest.asc && gpg --decrypt manifest.asc | tail -n +2 | sha256sum -c --quiet
+```
+
+The mirrors sync with `rsync -a --delay-updates --delete-after`: the files changed are put in place together, at the
+end.
+
 - Our packages are built or fetched, but only fetched for the architectures the host emulates: those are built by
   native builders, which push them. The publish fails when the remote storage misses one of their builds.
 

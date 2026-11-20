@@ -35,6 +35,7 @@ from xcraft.commands import (
     log,
     login,
     maint,
+    mirror,
     patchset,
     prune,
     publish,
@@ -87,7 +88,7 @@ for panel, commands in {
     ],
     "Packages": [bump.bump, patchset.patchset, develop.develop, history.history],
     "Upstream packages": [lock.lock, reuse.reuse],
-    "Publishing": [iso.iso, boot.boot, unpublish.unpublish, prune.prune],
+    "Publishing": [iso.iso, boot.boot, unpublish.unpublish, prune.prune, mirror.mirror],
     "Host": [doctor.doctor],
 }.items():
     for command in commands:

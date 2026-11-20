@@ -18,7 +18,7 @@ import time
 import urllib.error
 import urllib.request
 from contextlib import closing
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import quote
@@ -38,6 +38,7 @@ from xcraft import (
     checks,
     container,
     metalink,
+    mirror,
     pinned,
     prune,
     remote,
@@ -50,7 +51,7 @@ from xcraft import (
 )
 from xcraft import publish as publisher
 from xcraft.__main__ import app
-from xcraft.cache import build_keys, build_path
+from xcraft.cache import BuildError, build_keys, build_path
 from xcraft.iso import cached_iso, checkout_iso, fetch_isos, iso_key, iso_name, iso_path, push_isos
 from xcraft.lock import Pin, load_lock
 from xcraft.project import Project, Remote, Retention
@@ -1932,6 +1933,85 @@ def test_prune(root: Path, tmp_path: Path) -> None:
     code, output = xcraft("prune", "--to", "main", "--keep-days", "0")
     assert code == 0, output
     assert "removed 0 builds, 0 files" in output
+
+
+def _stats(directory: Path) -> dict[str, tuple[int, float, int]]:
+    """Return the sizes, dates and modes of the files of `directory`, as rsync compares them, by path."""
+    return {
+        p.relative_to(directory).as_posix(): (p.stat().st_size, p.stat().st_mtime, p.stat().st_mode)
+        for p in directory.rglob("*")
+        if p.is_file()
+    }
+
+
+@needs_gpg
+def test_mirror(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: PLR0915
+    stage = f"mirror-{secrets.token_hex(4)}"
+    spec = root / "base/trivial/trivial.spec"
+    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
+    assert code == 0, output
+    storage, latest = Project.find().config.remote["main"], f"repos/9.0/{stage}/latest"
+    copy = tmp_path / "copy"
+    code, output = xcraft("mirror", str(copy), "--stage", stage)
+    assert code == 0, output
+    assert f"copied {latest}" in output
+    link = copy / latest
+    assert link.is_symlink()
+    manifest = remote.read_manifest(storage, latest)
+    assert {f: sha256_of(link / f) for f in manifest} == manifest
+    # the dates of the storage, and fixed modes
+    rpm = next(f for f in manifest if f.endswith(".rpm"))
+    date = remote.modified(storage, f"{latest}/{rpm}")
+    assert date
+    assert (link / rpm).stat().st_mtime == date.timestamp()
+    assert {oct(p.stat().st_mode & 0o777) for p in link.resolve().rglob("*")} == {"0o644", "0o755"}
+    code, output = xcraft("mirror", str(copy), "--stage", stage)
+    assert code == 0, output
+    assert "is up to date" in output
+    # a new publication: the files it did not change are hard links to those of the previous version, kept
+    first = link.resolve()
+    spec.write_text(spec.read_text().replace("Version: 1.0", "Version: 1.1"))
+    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
+    assert code == 0, output
+    code, output = xcraft("mirror", str(copy), "--stage", stage)
+    assert code == 0, output
+    assert link.resolve() != first
+    assert first.exists()
+    key = next(f for f in remote.read_manifest(storage, latest) if f.startswith("RPM-GPG-KEY"))
+    assert (link / key).stat().st_ino == (first / key).stat().st_ino
+    # made again from scratch, the copy is the same for rsync
+    again = tmp_path / "again"
+    code, output = xcraft("mirror", str(again), "--stage", stage)
+    assert code == 0, output
+    assert _stats((again / latest).resolve()) == _stats(link.resolve())
+    # checked against its manifests: the damaged files downloaded again, the others reported
+    code, output = xcraft("mirror", str(copy), "--stage", stage, "--check")
+    assert code == 0, output
+    (link / key).chmod(0o644)
+    (link / key).write_text("damaged")
+    (link / "extra").write_text("extra")
+    code, output = xcraft("mirror", str(copy), "--stage", stage, "--check")
+    assert code == 1
+    assert f"✗ {latest}/{key}: damaged" in output
+    assert f"✗ {latest}/extra: not in the manifest" in output
+    assert sha256_of(link / key) == remote.read_manifest(storage, latest)[key]
+    (link / "extra").unlink()
+    code, output = xcraft("mirror", str(copy), "--stage", stage, "--check")
+    assert code == 0, output
+    # a publication finished during the copy, its manifest dated otherwise after it than before: not switched to
+    real = remote.modified
+    dated = iter(range(1, 10))
+
+    def later(storage: Remote, path: str) -> datetime | None:
+        date = real(storage, path)
+        return date + timedelta(seconds=next(dated)) if date and path.endswith(remote.MANIFEST) else date
+
+    monkeypatch.setattr(remote, "modified", later)
+    project = Project.find()
+    project.config.publish.stage = stage
+    with pytest.raises(BuildError, match="was published again while it was copied"):
+        mirror.mirrored(project, storage, tmp_path / "raced", key_signer(project))
+    assert not list((tmp_path / "raced" / latest).parent.iterdir())
 
 
 @pytest.mark.parametrize("command", [[], ["repos"], ["isos"]])

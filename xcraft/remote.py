@@ -550,20 +550,20 @@ def public_key(storage: Remote, fingerprint: str) -> str | None:
 
 
 def _checked_manifest(
-    storage: Remote, prefix: str, trusted: Signer | None, fingerprints: frozenset[str]
+    storage: Remote, prefix: str, trusted: Signer | None, fingerprints: frozenset[str], text: bytes | None = None
 ) -> tuple[str, dict[str, str], frozenset[str]] | None:
-    """Return the directory of the files of the MANIFEST of `prefix`, those files, and the keys of `fingerprints`
-    signing it, when one does.
+    """Return the directory of the files of the MANIFEST of `prefix`, of the storage or the `text` given, those
+    files, and the keys of `fingerprints` signing it, when one does.
 
     Only the text gpg verified is read, not what may be around its signed part.
     """
     with tempfile.TemporaryDirectory(prefix="xcraft-manifest-") as tmp:
         work = Path(tmp)
         manifest, payload = work / MANIFEST, work / "payload"
-        if (storage.url, prefix) not in _manifests:
+        if text is None and (storage.url, prefix) not in _manifests:
             found = download(storage, f"{prefix}/{MANIFEST}", manifest)
             _manifests[storage.url, prefix] = manifest.read_bytes() if found else None
-        if (text := _manifests[storage.url, prefix]) is None:
+        if (text := _manifests[storage.url, prefix] if text is None else text) is None:
             return None
         manifest.write_bytes(text)
         keyring = work / "keys"
@@ -619,6 +619,45 @@ def unverified_manifest(storage: Remote, prefix: str) -> tuple[str, dict[str, st
     except ValueError:
         return None
     return root, files
+
+
+def checked_manifest(
+    storage: Remote, prefix: str, text: bytes, *, trusted: Signer | None = None
+) -> tuple[str, dict[str, str]] | None:
+    """Return the directory of the files of the tree `prefix` of the storage, and their SHA-256, from the `text` of
+    its manifest, like a copy of it has, when a key the storage trusts signs it: None otherwise.
+    """
+    fingerprints = frozenset(storage.build_keys + ([trusted.key.upper()] if trusted else []))
+    return checked[:2] if (checked := _checked_manifest(storage, prefix, trusted, fingerprints, text)) else None
+
+
+def manifest_bytes(storage: Remote, prefix: str) -> bytes | None:
+    """Return the manifest of the tree `prefix` as it was read, and checked if it was, by read_tree(), or None."""
+    return _manifests.get((storage.url, prefix))
+
+
+def modified(storage: Remote, path: str) -> dt.datetime | None:
+    """Return the date of the file `path` of the shared storage, its Last-Modified, or None when it does not have it."""
+    import email.utils  # noqa: PLC0415
+    import urllib.request  # noqa: PLC0415
+
+    url = _url(storage, path)
+    log.debug("dating %s", url)
+    try:
+        if _pooled(url):
+            response = _request("HEAD", url)
+            response.release_conn()
+            date = response.headers.get("Last-Modified")
+        else:
+            with urllib.request.urlopen(urllib.request.Request(url, method="HEAD")) as found:  # noqa: S310
+                date = found.headers.get("Last-Modified")
+    except OSError as e:
+        _absent_or_raise(storage, path, e)
+        return None
+    if not date:
+        msg = f"{url}: no Last-Modified"
+        raise RemoteError(msg)
+    return email.utils.parsedate_to_datetime(date)
 
 
 def tree_exists(storage: Remote, prefix: str, *, trusted: Signer | None = None, signer: str | None = None) -> bool:
