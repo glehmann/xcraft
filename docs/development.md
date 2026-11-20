@@ -14,4 +14,6 @@ the pushes to master and the pull requests, those of forks too. The tests run in
 with its own Garage server for the tests of the remote storage: `pytest -n0` runs them in one process, like to debug one
 with `--pdb`. `pytest -m 'not podman'` runs the tests which need no container, in seconds: the others have the `podman`
 marker. The tests have upstream packages of their own too, built once from the specs of `tests/upstream/` into a
-repository on this machine, `tests/upstream/repos/`, with versions to update to, some for one architecture only.
+repository on this machine, `tests/upstream/repos/`, with versions to update to, some for one architecture only. The
+resolutions the tests make the same each time, without built packages, are kept in `tests/resolutions/` for the next
+runs, until unused for a month.

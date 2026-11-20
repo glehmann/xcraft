@@ -120,10 +120,12 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             item.add_marker(pytest.mark.skip(reason="needs podman"))
 
 
-def _shared_resolutions(directory: Path) -> Callable[..., Resolved]:
+def _shared_resolutions(kept: Path, session: Path) -> Callable[..., Resolved]:
     """Return resolution._run(), resolving once for all the workers what the tests resolve the same, by what it is
     resolved from: the built RPMs too, by SHA-256, and the metadata of the local repositories, which some tests change.
-    The original is its __wrapped__, for the tests of the resolutions.
+    Those resolved from neither, but the toys, are `kept` for the next sessions; the others, which their signatures,
+    timestamps and temporary paths make different each time, are for the `session` only. The original is its
+    __wrapped__, for the tests of the resolutions.
     """
     run = resolution._run
 
@@ -135,9 +137,10 @@ def _shared_resolutions(directory: Path) -> Callable[..., Resolved]:
             project.config.base_image, data, sorted(sha256_of(f) for f in [*rpms, *extra_rpms(project)]),
             [sha256_of(f) if f.exists() else "" for f in local],
         ]  # fmt: skip
+        directory = session if rpms or not all(f.is_relative_to(TOYS) for f in local) else kept
         path = directory / f"{hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()}.json"
         if path.exists():
-            os.utime(path)  # used, see XCRAFT_TEST_RESOLUTIONS
+            os.utime(path)  # used, see build_environment()
             return Resolved.model_validate_json(path.read_text())
         resolved = run(project, data, show=show, rpms=rpms, quiet=quiet)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -159,8 +162,9 @@ def build_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path
     basetemp = tmp_path_factory.getbasetemp()
     xdist = "PYTEST_XDIST_WORKER" in os.environ
     shared = basetemp.parent if xdist else basetemp  # of all the workers of the session
-    # of all the sessions, like those of CI, which keeps the ones used
-    resolutions = Path(os.environ.get("XCRAFT_TEST_RESOLUTIONS", shared / "resolutions"))
+    # of all the sessions, those CI keeps the ones used of, and those of this one only
+    kept = Path(os.environ.get("XCRAFT_TEST_RESOLUTIONS", Path(__file__).parent / "resolutions"))
+    resolutions = _shared_resolutions(kept, shared / "resolutions")
     # Workers run real dnf transactions, with separate caches so their locks do not serialize the tests: in volumes,
     # with the others, rather than in the temporary files, often in memory, which the copies of all the workers fill
     cache_name = container._dnf_cache
@@ -180,12 +184,15 @@ def build_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path
         return volumes[source]
 
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(resolution, "_run", _shared_resolutions(resolutions))
+        patch.setattr(resolution, "_run", resolutions)
         with (shared / "build-environment.lock").open("w") as f:
             fcntl.flock(f, fcntl.LOCK_EX)
             _build_toys(shared)
             root = shared / "template"
             if not (root / "xcraft.lock").exists():
+                for path in kept.glob("*.json"):  # unused for a month, like those of other versions of the tests
+                    if path.stat().st_mtime < time.time() - 30 * 86400:
+                        path.unlink(missing_ok=True)
                 shutil.rmtree(root, ignore_errors=True)
                 shutil.copytree(PROJECT, root)
                 (root / "xcraft.toml").write_text(TOML)
