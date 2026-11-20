@@ -108,8 +108,7 @@ def signed_build(project: Project, name: str, key: str, signer: Signer) -> Path:
         work = signed.with_name(f".{key}")
         shutil.rmtree(work, ignore_errors=True)
         shutil.copytree(build, work)  # a copy: signing changes the packages
-        for output in ("RPMS", "SRPMS"):
-            signer.sign_rpms(project, work / output)
+        signer.sign_rpms(project, work / "RPMS", work / "SRPMS")
         (work / KEY_FILE).write_text(signer.public_key())
         work.rename(signed)
     os.utime(signed)  # used, see xcraft clean --keep-days

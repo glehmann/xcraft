@@ -75,14 +75,15 @@ class Signer:
     def _env(self) -> dict[str, str]:
         return {**os.environ, **({"GNUPGHOME": str(self.gnupghome)} if self.gnupghome else {})}
 
-    def sign_rpms(self, project: Project, root: Path) -> None:
-        """Sign the RPMs under `root`, in place, with rpmsign in a container, and the key through the host's gpg,
+    def sign_rpms(self, project: Project, *roots: Path) -> None:
+        """Sign the RPMs under the `roots`, in place, with rpmsign in a container, and the key through the host's gpg,
         replacing their signatures, if any.
 
         The container uses the restricted socket of the host's gpg agent, made for that: the secret key, in a
         keyring or an HSM, stays out of it.
         """
-        if not (rpms := sorted(f.relative_to(root).as_posix() for f in root.rglob("*.rpm"))):
+        rpms = {i: sorted(f.relative_to(root).as_posix() for f in root.rglob("*.rpm")) for i, root in enumerate(roots)}
+        if not (rpms := {i: files for i, files in rpms.items() if files}):
             return
         env = self._env()
         try:
@@ -98,14 +99,14 @@ class Signer:
         )
         with project.tmp_dir("sign") as work:
             (work / "key.asc").write_text(self.public_key())
-            (work / "rpms").write_text("".join(f"/signed/{rpm}\n" for rpm in rpms))
+            (work / "rpms").write_text("".join(f"/signed/{i}/{rpm}\n" for i, files in rpms.items() for rpm in files))
             try:
                 container.run(
                     project.on_host(),  # natively: the signatures do not depend on the architecture
                     "sign",
                     script,
-                    volumes=[f"{root}:/signed", f"{work}:/work:ro", f"{socket}:/gpg-agent"],
-                    show=f"signing {len(rpms)} packages",
+                    volumes=[*(f"{roots[i]}:/signed/{i}" for i in rpms), f"{work}:/work:ro", f"{socket}:/gpg-agent"],
+                    show=f"signing {sum(map(len, rpms.values()))} packages",
                     image=side_image(project.on_host(), "sign"),
                 )
             except ContainerError as e:

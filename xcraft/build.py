@@ -568,8 +568,7 @@ class _Run:
         the specs never get near the key.
         """
         project, signer = self.project, run_signer(self.project)
-        for output in ("RPMS", "SRPMS"):
-            signer.sign_rpms(project, tree / output)
+        signer.sign_rpms(project, tree / "RPMS", tree / "SRPMS")
         build_dir = signed_build_dir(project, signer.key, name, key)
         # assembled next to it, and renamed, not to leave a partial build in the cache
         new = build_dir.with_name(f".{build_dir.name}")
