@@ -26,6 +26,15 @@ xcraft publish --to main --stage incoming --arch x86_64_v2 --key <fingerprint>
 xcraft publish --stage kernel-fix  # developer bucket, custom stage
 ```
 
+A stage keeps its dated snapshots for the life of the release, unless `[publish.stages.<stage>] snapshot_days` gives
+how long: each publication to it then removes those of its repositories and ISOs published more than that many days
+ago, but the latest one of each, by the dates of their names.
+
+```toml
+[publish.stages.incoming]
+snapshot_days = 90
+```
+
 - Our packages are built or fetched, but only fetched for the architectures the host emulates: those are built by
   native builders, which push them. The publish fails when the remote storage misses one of their builds.
 

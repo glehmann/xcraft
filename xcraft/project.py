@@ -16,7 +16,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PositiveInt, field_validator, model_validator
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -160,6 +160,15 @@ class Sign(BaseModel):
         return fingerprint(key)
 
 
+class Stage(BaseModel):
+    """What a stage keeps of its snapshots."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    snapshot_days: PositiveInt | None = None
+    """How long its dated snapshots are kept, but the latest one; for the life of the release without it."""
+
+
 class Publish(BaseModel):
     """What xcraft publish makes."""
 
@@ -173,6 +182,12 @@ class Publish(BaseModel):
     """Upstream packages to publish too, for convenience, like mc, with what they need."""
     build: bool = True
     """Whether to publish the build repository too: the upstream packages the builds need, not in the base one."""
+    stages: dict[str, Stage] = {}
+    """What the stages keep of their snapshots, by name: the others keep them all."""
+
+    def current(self) -> Stage:
+        """Return what the stage published to keeps of its snapshots."""
+        return self.stages.get(self.stage, Stage())
 
 
 class Import(BaseModel):

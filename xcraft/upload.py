@@ -6,9 +6,10 @@ The repositories and the ISOs of a snapshot are published as ``<kind>/<release>/
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from pathlib import Path
+from datetime import UTC, date, datetime
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
@@ -56,6 +57,37 @@ def inputs_tree(latest: str) -> str:
 def _delete_stale(storage: Remote, prefix: str, keep: set[str]) -> None:
     """Delete the files under `prefix` but those of `keep`, and the pages of the directories, written again after."""
     remote.delete(storage, [f"{prefix}/{p}" for p in remote.listing(storage, f"{prefix}/") if p not in keep])
+
+
+def remove_trees(project: Project, storage: Remote, prefixes: list[str]) -> int:
+    """Remove the directories `prefixes` from the storage, with the pages of their directories, and update those of
+    their parents, and return the number of files removed.
+
+    The manifests go first: an interrupted removal must not leave a tree trusted without all its files.
+    """
+    files = [f"{prefix}/{f}" for prefix in prefixes for f in remote.listing(storage, f"{prefix}/")]
+    directories = {
+        str(d) for f in files for d in PurePosixPath(f).parents if any(f"{d}/".startswith(f"{p}/") for p in prefixes)
+    }
+    manifests = [f for f in files if f.endswith(f"/{remote.MANIFEST}")]
+    remote.delete(storage, manifests)
+    remote.delete(
+        storage, [f for f in files if f not in manifests] + [f"{d}/{remote.INDEX}" for d in sorted(directories)]
+    )
+    parents = sorted({f"{PurePosixPath(prefix).parent}/" for prefix in prefixes})
+    remote_pages.update_pages(project, storage, parents)
+    return len(files)
+
+
+_DATED = re.compile(r"(\d{4}-\d{2}-\d{2})(\.\d+)?")
+"""The name of a dated snapshot, by the day of its publication, with a suffix after the first one of the day."""
+
+
+def expired_snapshots(names: set[str], days: int, today: date) -> list[str]:
+    """Return those of the snapshots `names` published more than `days` ago, but the latest one, which is kept."""
+    dated = {name: m for name in names if (m := _DATED.fullmatch(name))}
+    newest = max(dated, key=lambda n: (dated[n][1], int(dated[n][2][1:] if dated[n][2] else 1)), default=None)
+    return sorted(n for n, m in dated.items() if n != newest and (today - date.fromisoformat(m[1])).days > days)
 
 
 def _batches(files: list[str]) -> list[list[str]]:
@@ -119,6 +151,25 @@ class Uploader:
                 return name
         msg = f"too many snapshots on {day}"
         raise BuildError(msg)
+
+    def expire(self) -> None:
+        """Remove the dated snapshots of the stage, of its repositories and of its ISOs, published more than its
+        snapshot_days ago, but the latest one of each.
+        """
+        if not (days := self.project.config.publish.current().snapshot_days):
+            return
+        today = datetime.now(UTC).date()
+        trees = [
+            snapshot_tree(self.project, kind, name)
+            for kind in ("repos", "isos")
+            for name in expired_snapshots(
+                remote.subdirectories(self.storage, snapshot_tree(self.project, kind, "")), days, today
+            )
+        ]
+        if trees:
+            with activity(f"removing the {len(trees)} snapshots published more than {days} days ago", log=True):
+                remove_trees(self.project, self.storage, trees)
+            console.print(f"removed {', '.join(trees)}, published more than {days} days ago")
 
     def reuse(
         self,

@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import PurePosixPath
 from typing import Annotated
 
 import typer
 from pydantic import ValidationError
 
-from xcraft import remote, remote_pages
+from xcraft import upload
 from xcraft.commands import To, remote_storage, unprepared_project
 from xcraft.display import activity, console
 from xcraft.project import INTERNAL, Publish
@@ -35,21 +34,6 @@ def unpublish(
         msg = "no release: see [publish] in xcraft.toml"
         raise typer.BadParameter(msg)
     trees = [f"{kind}/{release}/{stage}" for kind in ("repos", "isos")]
-    prefixes = [*trees, *(f"{INTERNAL}/inputs/{tree}" for tree in trees)]
     with activity(f"removing the stage {stage}"):
-        files = [f"{prefix}/{f}" for prefix in prefixes for f in remote.listing(storage, f"{prefix}/")]
-        # with the pages of their directories
-        directories = {
-            str(d)
-            for f in files
-            for d in PurePosixPath(f).parents
-            if any(f"{d}/".startswith(f"{prefix}/") for prefix in prefixes)
-        }
-        # the manifests first: an interrupted removal must not leave a tree trusted without all its files
-        manifests = [f for f in files if f.endswith(f"/{remote.MANIFEST}")]
-        remote.delete(storage, manifests)
-        remote.delete(
-            storage, [f for f in files if f not in manifests] + [f"{d}/{remote.INDEX}" for d in sorted(directories)]
-        )
-        remote_pages.update_pages(project, storage, [f"{kind}/{release}/" for kind in ("repos", "isos")])
-    console.print(f"removed {len(files)} files of the stage {stage}" if files else f"no stage {stage} to remove")
+        removed = upload.remove_trees(project, storage, [*trees, *(f"{INTERNAL}/inputs/{tree}" for tree in trees)])
+    console.print(f"removed {removed} files of the stage {stage}" if removed else f"no stage {stage} to remove")

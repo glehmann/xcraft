@@ -18,7 +18,7 @@ import time
 import urllib.error
 import urllib.request
 from contextlib import closing
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import quote
@@ -1675,6 +1675,48 @@ def test_publish_reuses_remote_snapshot(root: Path, caplog: pytest.LogCaptureFix
     # nor with what it was made from changed
     remote.upload(storage, f"{upload.inputs_tree(f'{prefix}/latest')}/{upload.INPUTS}", root / "xcraft.toml")
     assert not uploader.reuse([project], only="repos", isos=[])
+
+
+def test_expired_snapshots() -> None:
+    names = {"latest", "2026-01-01", "2026-01-01.2", "2026-01-01.10", "2026-02-01", "other"}
+    assert upload.expired_snapshots(names, 30, date(2026, 3, 1)) == ["2026-01-01", "2026-01-01.10", "2026-01-01.2"]
+    # the latest one is kept, however old, and the order of the suffixes is numeric
+    assert upload.expired_snapshots(names, 30, date(2026, 3, 5)) == ["2026-01-01", "2026-01-01.10", "2026-01-01.2"]
+    assert upload.expired_snapshots({"2026-01-01", "2026-01-01.2", "2026-01-01.10"}, 1, date(2026, 3, 1)) == [
+        "2026-01-01", "2026-01-01.2",
+    ]  # fmt: skip
+
+
+@needs_gpg
+def test_snapshots_expire(root: Path) -> None:
+    stage = f"expiry-{secrets.token_hex(4)}"
+    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
+    assert code == 0, output
+    project = Project.find()
+    storage, signer = project.config.remote["main"], release_signer(project)
+    assert signer
+    # older ones, of the repositories and of the ISOs
+    old = [f"{kind}/9.0/{stage}/{name}" for kind in ("repos", "isos") for name in ("2020-01-01", "2020-01-01.2")]
+    for tree in old:
+        remote.upload(storage, f"{tree}/file", root / "xcraft.toml")
+        remote.write_manifest(storage, tree, {"file": sha256_of(root / "xcraft.toml")}, signer=signer)
+    remote_pages.update_pages(project, storage, [f"{tree}/" for tree in old])
+    # kept without snapshot_days, like the stages of the releases
+    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage, "--locked")
+    assert code == 0, output
+    assert all(remote.tree_exists(storage, tree) for tree in old)
+    (root / "xcraft.toml").write_text(f"{REMOTE}\n[publish.stages.{stage}]\nsnapshot_days = 30\n")
+    code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage, "--locked")
+    assert code == 0, output
+    # but the latest ISOs, which have no newer ones
+    assert f"removed {', '.join(old[:3])}, published more than 30 days ago" in " ".join(output.split())
+    for tree in old[:3]:
+        assert not remote.listing(storage, f"{tree}/")
+        assert f'href="{tree.rsplit("/", 1)[1]}/"' not in page(f"{tree.rsplit('/', 1)[0]}/")
+    assert remote.tree_exists(storage, old[3])
+    today = output.split(f"published repos/9.0/{stage}/")[1].split(",")[0]
+    assert remote.tree_exists(storage, f"repos/9.0/{stage}/{today}")
+    assert remote.tree_exists(storage, f"repos/9.0/{stage}/latest")
 
 
 @pytest.mark.parametrize("command", [[], ["repos"], ["isos"]])

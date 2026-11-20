@@ -188,7 +188,7 @@ def _reused(
     return True
 
 
-def _publish(  # noqa: C901, PLR0912
+def _publish(  # noqa: C901, PLR0912, PLR0915
     only: str | None,
     *,
     locked: bool,
@@ -246,6 +246,7 @@ def _publish(  # noqa: C901, PLR0912
         uploader = Uploader(project, storage, signer, build, dev=dev is not None) if storage else None
         # the latest snapshot reused, but in dev mode: each run makes its development builds
         if uploader and output is None and dev is None and _reused(uploader, platforms, only, with_isos, summary):
+            uploader.expire()
             return
         console.print("assembling the snapshot")
         built, stored, checkout = snapshot(
@@ -285,6 +286,7 @@ def _publish(  # noqa: C901, PLR0912
                     uploader.storage,
                     name,
                 )
+            uploader.expire()
 
 
 @app.callback(invoke_without_command=True)

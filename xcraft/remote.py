@@ -430,6 +430,12 @@ def listing(storage: Remote, prefix: str) -> list[str]:
         return list(objects(s3, storage.bucket, prefix, below=True)[1])
 
 
+def subdirectories(storage: Remote, prefix: str) -> set[str]:
+    """Return the names of the subdirectories of the directory `prefix`, with the S3 credentials."""
+    with writing(storage, f"list {prefix}") as s3:
+        return objects(s3, storage.bucket, prefix, below=False)[0]
+
+
 def delete(storage: Remote, paths: list[str]) -> None:
     """Delete `paths` from the storage."""
     for path in paths:
