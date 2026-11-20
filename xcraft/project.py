@@ -178,6 +178,9 @@ class Stage(BaseModel):
 
     retention: Retention | None = None
     """The older versions its latest snapshot keeps, which makes it cumulative; exact without it."""
+    mirrors: list[str] = []
+    """The URLs of the mirrors of its latest snapshot, which have the paths of the storage below them, listed by the
+    metalinks of its repositories with our server."""
     snapshot_days: PositiveInt | None = None
     """How long its dated snapshots are kept, but the latest one; for the life of the release without it."""
 

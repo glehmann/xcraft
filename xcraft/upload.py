@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 from rich.markup import escape
 
-from xcraft import buildid, remote, remote_pages, repodata
+from xcraft import buildid, metalink, remote, remote_pages, repodata
 from xcraft.cache import BuildError, build_keys, build_path
 from xcraft.display import activity, console
 from xcraft.iso import iso_inputs
@@ -104,6 +104,11 @@ def _name_arch(entry: Entry) -> tuple[str, str]:
     """Return the name and the architecture of a package, from its metadata."""
     name, _, arch = repodata.nevra(entry)
     return name, arch
+
+
+def _repos(manifest: dict[str, str]) -> list[str]:
+    """Return the repositories of a snapshot of `manifest`, by path in it."""
+    return sorted(f.removesuffix("/repodata/repomd.xml") for f in manifest if f.endswith("/repodata/repomd.xml"))
 
 
 def _metadata(manifest: dict[str, str]) -> set[str]:
@@ -314,7 +319,14 @@ class Uploader:
             self.project.tmp_dir("snapshot-files") as work,
             activity(f"reusing the published {kind} as {target}", log=True) as on_line,
         ):
+            try:
+                if kind == "repos":
+                    own = own | self._metalinks(target, self._repomds(source, manifest), {})
+            except BuildError as e:  # a file missing in the latest snapshot
+                console.print(f"[yellow]the published {kind} cannot be reused[/]: {escape(str(e))}")
+                return False
             for f, text in own.items():
+                (work / f).parent.mkdir(parents=True, exist_ok=True)
                 (work / f).write_text(text)
             files = manifest | {f: sha256_of(work / f) for f in own}
             try:
@@ -329,14 +341,66 @@ class Uploader:
             if retention := self._retention(kind):
                 self._update_cumulative(target, name, files, keys, retention, on_line)
             else:
-                if files != manifest:  # without its manifest while it changes, see _upload()
-                    remote.delete(self.storage, [f"{latest}/{remote.MANIFEST}"])
-                    remote.transfer(self.storage, {f"{latest}/{f}": work / f for f in own}, on_line)
-                    remote.write_manifest(self.storage, latest, files, signer=self._signing)
-                self._write_inputs(latest, keys, files)
+                self._update_latest(kind, target, files, keys, on_line)
             remote_pages.update_pages(self.project, self.storage, [f"{target}/", f"{latest}/"])
         console.print(f"[bold green]✓[/] published {target}, and as {latest} (reused the matching snapshot)")
         return True
+
+    def _repomds(self, tree: str, manifest: dict[str, str]) -> dict[str, bytes]:
+        """Return the repomd.xml of the repositories of the snapshot `tree`, with its `manifest`, by repository."""
+        repomds = {}
+        with self.project.tmp_dir("repomd") as work:
+            for repo in _repos(manifest):
+                path = f"{repo}/repodata/repomd.xml"
+                if not remote.download(self.storage, f"{tree}/{path}", work / path) or (
+                    sha256_of(work / path) != manifest[path]
+                ):
+                    msg = f"{tree}/{path} is missing or corrupted in the storage"
+                    raise BuildError(msg)
+                repomds[repo] = (work / path).read_bytes()
+        return repomds
+
+    def _metalinks(self, tree: str, repomds: dict[str, bytes], previous: dict[str, str]) -> dict[str, str]:
+        """Return the metalinks of the repositories of the snapshot `tree`, whose repomd.xml are `repomds`, by
+        repository, by path in it: on the mirrors of the stage first, for its latest snapshot, then on our server; with
+        the repomd.xml of the latest snapshot of `previous` manifest as alternates.
+        """
+        if self.storage.private:  # which the hosts do not read
+            return {}
+        latest = tree.endswith("/latest")
+        servers = [*(self.project.config.publish.current().mirrors if latest else []), self.storage.url]
+        links = {}
+        with self.project.tmp_dir("metalinks") as work:
+            for repo, repomd in repomds.items():
+                path = f"{repo}/repodata/{metalink.FILE}"
+                before = None
+                if path in previous and remote.download(self.storage, f"{tree}/{path}", work / path):
+                    before = (work / path).read_text() if sha256_of(work / path) == previous[path] else None
+                urls = [f"{server.rstrip('/')}/{tree}/{repo}/repodata/repomd.xml" for server in servers]
+                links[path] = metalink.text(urls, repomd, before)
+        return links
+
+    def _update_latest(
+        self, kind: str, tree: str, manifest: dict[str, str], keys: dict[str, str], on_line: Callable[[str], None]
+    ) -> None:
+        """Make the latest snapshot of `kind` of an exact stage the snapshot `tree`, with its `manifest`, made from the
+        input `keys`, with metalinks of its own, writing only the files changed.
+
+        It is without its manifest while it changes: a latest snapshot left incomplete is copied entirely next time.
+        """
+        latest = snapshot_tree(self.project, kind, "latest")
+        previous = remote.read_manifest(self.storage, latest, trusted=self._trusted)
+        with self.project.tmp_dir("latest") as work:
+            links = self._metalinks(latest, self._repomds(tree, manifest), previous) if kind == "repos" else {}
+            for path, text in links.items():
+                (work / path).parent.mkdir(parents=True, exist_ok=True)
+                (work / path).write_text(text)
+            files = manifest | {path: sha256_of(work / path) for path in links}
+            changed = {f: work / f if f in links else f"{tree}/{f}" for f in files if previous.get(f) != files[f]}
+            if files != previous:
+                remote.delete(self.storage, [f"{latest}/{remote.MANIFEST}"])
+                self._write(latest, files, changed, on_line, lingering=_metadata(previous))
+        self._write_inputs(latest, keys, files)
 
     def _update_cumulative(
         self,
@@ -373,19 +437,29 @@ class Uploader:
         kept |= {f for f in older if _source(f) and (f.split("/")[0], f.rsplit("/", 1)[1]) in srpms}
         files = {f: d for f, d in manifest.items() if "/repodata/" not in f} | {f: previous[f] for f in kept}
         sources: dict[str, str | Path] = {f: f"{tree}/{f}" for f in manifest}
-        repos = sorted(f.removesuffix("/repodata/repomd.xml") for f in manifest if f.endswith("/repodata/repomd.xml"))
+        repos = _repos(manifest)
         with self.project.tmp_dir("cumulative") as work:
-            listed = entries | {f: older[f] for f in kept}
+            listed, unchanged = entries | {f: older[f] for f in kept}, []
             for repo in repos:
                 packages = {f: d for f, d in files.items() if f.rsplit("/", 1)[0] == repo}
                 if complete and packages == {f: d for f, d in previous.items() if f.rsplit("/", 1)[0] == repo}:
                     # the same metadata, rather than a new repomd.xml, which the hosts would download for nothing
                     files |= {f: d for f, d in previous.items() if f.startswith(f"{repo}/repodata/")}
+                    unchanged.append(f"{repo}/repodata/repomd.xml")
                     continue
                 repodata.write(work / repo, {f.rsplit("/", 1)[1]: listed[f] for f in packages if f in listed})
                 if self.signer:
                     self.signer.sign_file(work / repo / "repodata/repomd.xml")
-                for path in (work / repo / "repodata").iterdir():
+            repomds = {
+                repo: (work / repo / "repodata/repomd.xml").read_bytes()
+                for repo in repos
+                if f"{repo}/repodata/repomd.xml" not in unchanged
+            } | self._repomds(latest, {f: previous[f] for f in unchanged})
+            for path, text in self._metalinks(latest, repomds, previous).items():
+                (work / path).parent.mkdir(parents=True, exist_ok=True)
+                (work / path).write_text(text)
+            for repo in repos:
+                for path in (work / repo / "repodata").glob("*"):
                     files[f"{repo}/repodata/{path.name}"] = sha256_of(path)
                     sources[f"{repo}/repodata/{path.name}"] = path
             # without its manifest while it changes, see _upload()
@@ -498,6 +572,13 @@ class Uploader:
         copied there, with those of `stored` not in `src`.
         """
         tree, latest = snapshot_tree(self.project, kind, name), snapshot_tree(self.project, kind, "latest")
+        if kind == "repos":
+            repomds = {
+                repo.parent.parent.relative_to(src).as_posix(): repo.read_bytes()
+                for repo in src.glob("*/*/repodata/repomd.xml")
+            }
+            for path, text in self._metalinks(tree, repomds, {}).items():
+                (src / path).write_text(text)
         manifest = _manifest(src, stored)
         previous = remote.read_manifest(self.storage, latest, trusted=self._trusted)
         candidates = {f: Stored(f"{latest}/{f}", digest) for f, digest in previous.items()} | stored
@@ -507,12 +588,7 @@ class Uploader:
             if retention := self._retention(kind):
                 self._update_cumulative(tree, name, manifest, inputs, retention, on_line)
             else:
-                # only the files changed: without its manifest, a latest tree left incomplete is copied entirely next
-                # time
-                remote.delete(self.storage, [f"{latest}/{remote.MANIFEST}"])
-                changed = {f: f"{tree}/{f}" for f in manifest if previous.get(f) != manifest[f]}
-                self._write(latest, manifest, changed, on_line, lingering=_metadata(previous))
-                self._write_inputs(latest, inputs, manifest)
+                self._update_latest(kind, tree, manifest, inputs, on_line)
             on_line("the pages of the directories")
             pages = [f"{tree}/", f"{latest}/", f"{inputs_tree(latest)}/", *(pages or [])]
             remote_pages.update_pages(self.project, self.storage, pages)

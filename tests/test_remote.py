@@ -37,6 +37,7 @@ from xcraft import (
     ccache,
     checks,
     container,
+    metalink,
     pinned,
     remote,
     remote_pages,
@@ -1641,7 +1642,12 @@ def test_publish_reuses_remote_snapshot(root: Path, caplog: pytest.LogCaptureFix
     prefix = f"repos/9.0/{stage}"
     manifest = remote.read_manifest(storage, target)
     assert manifest
-    assert manifest == remote.read_manifest(storage, f"{prefix}/latest")
+    # but their metalinks, of their own trees
+    links = {f for f in manifest if f.endswith(f"/{metalink.FILE}")}
+    assert links
+    assert {f: d for f, d in manifest.items() if f not in links} == {
+        f: d for f, d in remote.read_manifest(storage, f"{prefix}/latest").items() if f not in links
+    }
     # with its own .repo file, of its tree, in the latest one too
     for tree in (target, f"{prefix}/latest"):
         assert remote.download(storage, f"{tree}/xcraft-{stage}-{ARCH}.repo", project.state / "reused.repo")
@@ -1663,9 +1669,10 @@ def test_publish_reuses_remote_snapshot(root: Path, caplog: pytest.LogCaptureFix
     signer = release_signer(project)
     assert signer
     uploader = upload.Uploader(project, storage, signer, build=False)
-    remote.write_manifest(storage, f"{prefix}/latest", {**manifest, "other": "0" * 64}, signer=signer)
+    latest = remote.read_manifest(storage, f"{prefix}/latest")
+    remote.write_manifest(storage, f"{prefix}/latest", {**latest, "other": "0" * 64}, signer=signer)
     assert not uploader.reuse([project], only="repos", isos=[])
-    remote.write_manifest(storage, f"{prefix}/latest", manifest, signer=signer)
+    remote.write_manifest(storage, f"{prefix}/latest", latest, signer=signer)
     assert uploader.reuse([project], only="repos", isos=[])
     # nor with a package missing in the latest snapshot: assembled again, as the name of the copy, deleted
     remote.delete(storage, [f"{prefix}/latest/{next(f for f in manifest if f.endswith('.rpm'))}"])
@@ -1824,6 +1831,46 @@ def test_cumulative_stage(root: Path) -> None:  # noqa: PLR0915
     code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
     assert code == 1
     assert "has a manifest no trusted key signs" in " ".join(output.split())
+
+
+@needs_gpg
+@pytest.mark.parametrize("cumulative", [False, True])
+def test_metalinks(root: Path, tmp_path: Path, *, cumulative: bool) -> None:
+    stage = f"metalinks-{secrets.token_hex(4)}"
+    retention = "retention = { days = 30 }\n" if cumulative else ""
+    mirror = "https://mirror.example/xcp-ng"
+    (root / "xcraft.toml").write_text(f'{REMOTE}\n[publish.stages.{stage}]\nmirrors = ["{mirror}/"]\n{retention}')
+    storage = Project.find().config.remote["main"]
+    repo, latest = f"base/{ARCH}/repodata", f"repos/9.0/{stage}/latest"
+
+    def read(tree: str, file: str) -> bytes:
+        assert remote.download(storage, f"{tree}/{repo}/{file}", tmp_path / file)
+        assert sha256_of(tmp_path / file) == remote.read_manifest(storage, tree)[f"{repo}/{file}"]
+        return (tmp_path / file).read_bytes()
+
+    hashes = []
+    for version in ("1.0", "1.1"):
+        spec = root / "base/trivial/trivial.spec"
+        spec.write_text(re.sub(r"^Version: .*$", f"Version: {version}", spec.read_text(), flags=re.MULTILINE))
+        code, output = xcraft("publish", "repos", "--to", "main", "--stage", stage)
+        assert code == 0, output
+        name = output.split(f"published repos/9.0/{stage}/")[1].split(",")[0]
+        dated = f"repos/9.0/{stage}/{name}"
+        # the dated snapshot on our server only, the latest one on the mirrors first
+        for tree, servers in ((dated, [WEB]), (latest, [mirror, WEB])):
+            text = read(tree, metalink.FILE).decode()
+            assert re.findall(r'preference="\d+">([^<]*)<', text) == [
+                f"{server}/{tree}/{repo}/repomd.xml" for server in servers
+            ]
+            assert (
+                re.findall(r'<hash type="sha256">([0-9a-f]{64})</hash>', text)[0]
+                == hashlib.sha256(read(tree, "repomd.xml")).hexdigest()
+            )
+        hashes.append(hashlib.sha256(read(latest, "repomd.xml")).hexdigest())
+    # with the previous repomd.xml of the latest snapshot as an alternate
+    assert (
+        re.findall(r'<hash type="sha256">([0-9a-f]{64})</hash>', read(latest, metalink.FILE).decode()) == hashes[::-1]
+    )
 
 
 @pytest.mark.parametrize("command", [[], ["repos"], ["isos"]])

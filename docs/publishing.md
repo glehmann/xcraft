@@ -57,6 +57,18 @@ retention = { days = 90, keep = 2 }
 - The metadata files of the previous `latest` are deleted at the next publication, not at once: a host which has read
   the previous `repomd.xml` still finds them.
 
+Each repository has a metalink, `repodata/metalink.xml`, for the `metalink=` of the hosts' repository files: the URL
+of its `repomd.xml` on each server, with its size and SHA-256, and for `latest`, those of its last three previous
+ones, for the mirrors a few syncs behind. dnf takes the repository from the first server whose `repomd.xml` matches,
+skipping the stale or broken ones. The metalinks of `latest` list the mirrors of the stage first, then our server;
+those of the dated snapshots, which the mirrors do not have, our server only. A mirror has the paths of the storage
+below its URL:
+
+```toml
+[publish.stages.stable]
+mirrors = ["https://mirror.example.org/xcp-ng/"]
+```
+
 - Our packages are built or fetched, but only fetched for the architectures the host emulates: those are built by
   native builders, which push them. The publish fails when the remote storage misses one of their builds.
 

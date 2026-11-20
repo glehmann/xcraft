@@ -1,10 +1,12 @@
 # Design: the layout of the published repositories, and their signatures
 
-Status: the first four steps of the [order](#order) implemented, the cumulative stages of the sixth one, and the
-last one: the builds signed at build and stored by signer, the upstream packages signed again in final mode, the
-publications of dev mode and of the pull requests, the expiry of the dated snapshots, by `snapshot_days`, the
-cumulative stages, and the end of `--unsigned`; the release bucket, the mirrors and the pruning of the builds to come. It gathers the questions of the publication of the pull requests, of the mirrors, of the rollbacks of
-the hosts, of the release keys and of the signatures of our packages and of the upstream ones. It builds on [the
+Status: the first four steps of the [order](#order) implemented, the cumulative stages of the sixth one, the
+metalinks of the seventh one, and the last one: the builds signed at build and stored by signer, the upstream packages
+signed again in final mode, the publications of dev mode and of the pull requests, the expiry of the dated snapshots,
+by `snapshot_days`, the cumulative stages, the metalinks, and the end of `--unsigned`; the release bucket, `xcraft
+mirror` and the pruning of the builds to come. It gathers the questions of the publication of the pull requests, of
+the mirrors, of the rollbacks of the hosts, of the release keys and of the signatures of our packages and of the
+upstream ones. It builds on [the
 buckets of the CI secrets design](ci-secret-management-design.md#4-a-bucket-for-the-releases) and [the CI of pull
 requests](pr-ci-design.md).
 
@@ -317,8 +319,9 @@ mirrors a sync behind. dnf takes the repository from the first mirror whose `rep
 by latency with `fastestmirror=True`, which the package of the repositories sets, and skips the stale or broken ones:
 a mirror can be late or slow, never wrong, the packages being checked by the metadata, and the metadata by their
 signature. The metalinks of the dated snapshots list our server alone. A static metalink sends every host the same
-list, without the routing by country of MirrorManager, enough for a few mirrors; the mirrors are a list of
-`xcraft.toml`, and changing it writes the metalinks again, without changing the repositories.
+list, without the routing by country of MirrorManager, enough for a few mirrors; the mirrors are a list by stage
+of `xcraft.toml`, `[publish.stages.<stage>] mirrors`, and changing it writes the metalinks again, without changing
+the repositories.
 
 Compared to mirrorbits, which redirects each file of XCP-ng 8:
 
