@@ -101,6 +101,7 @@ runner = CliRunner()
 def xcraft(*args: str) -> tuple[int, str]:
     """Run xcraft, returning its exit code and output, including the error main() would show."""
     result = runner.invoke(app, list(args))
+    buildid.target = None  # of its --maintenance, for this command only, not the functions the next tests call
     error = result.exception if result.exception and not isinstance(result.exception, SystemExit) else ""
     return result.exit_code, f"{result.output}{error}"
 

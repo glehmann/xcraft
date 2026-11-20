@@ -137,7 +137,8 @@ def should_build_from_the_tree_as_it_is(root: Path, tree: Path) -> None:
 
 
 def should_refuse_final_builds_until_developing_stops(root: Path, tree: Path) -> None:
-    assert xcraft("key", "create")[0] == 0  # which the development builds make, to sign the final ones with
+    # which the development builds make, to sign the final ones with
+    assert xcraft("key", "create", "--name", "test")[0] == 0
     assert xcraft("develop", str(tree))[0] == 0
     code, output = xcraft("build", "--final", "trivial")
     assert code == 1, output
