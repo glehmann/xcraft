@@ -116,4 +116,5 @@ fail_under = 80
 # in parallel: -n0 for one process, like with --pdb
 addopts = "-n logical --dist worksteal --pdbcls=IPython.terminal.debugger:TerminalPdb"
 testpaths = ["tests"]
+python_functions = ["test_*", "should_*"]
 markers = ["podman: needs podman, for containers like those of the build environment: -m 'not podman' leaves them out"]
