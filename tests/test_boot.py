@@ -17,8 +17,7 @@ import pytest
 import typer
 from pydantic import BaseModel, Field, TypeAdapter
 
-from tests import PROJECT, TOML
-from tests.test_build import xcraft
+from tests import PROJECT, TOML, xcraft
 from xcraft import vm
 from xcraft.commands.boot import _answered
 

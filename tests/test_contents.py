@@ -5,23 +5,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests import ARCH, TOML, copy_project
-from tests.test_build import runner, xcraft
-from tests.test_buildid import commit_base
+from tests import ARCH, TOML, commit_base, runner, xcraft
 from xcraft.__main__ import app
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 ISO = 'installer = ["bash"]\npackages = ["bc"]\n'
-
-
-@pytest.fixture
-def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_environment: Path) -> Path:
-    root = tmp_path / "project"
-    copy_project(root, build_environment)
-    monkeypatch.setenv("XCRAFT_PROJECT", str(root))
-    return root
 
 
 def _requires(root: Path, name: str, requires: str) -> None:

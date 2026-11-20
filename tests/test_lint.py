@@ -5,30 +5,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
 
-from tests import copy_project
-from tests.test_buildid import commit_base, git
-from xcraft.__main__ import app
-
-runner = CliRunner()
+from tests import commit_base, git, xcraft
 
 
 @pytest.fixture
-def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_environment: Path) -> Path:
+def root(root: Path) -> Path:
     """Return the project, on a branch of its main one, for its builds to be development builds."""
-    root = tmp_path / "project"
-    copy_project(root, build_environment)
-    monkeypatch.setenv("XCRAFT_PROJECT", str(root))
     commit_base(root)
     git(root, "checkout", "-qb", "feature")
     return root
-
-
-def xcraft(*args: str) -> tuple[int, str]:
-    result = runner.invoke(app, list(args))
-    error = result.exception if result.exception and not isinstance(result.exception, SystemExit) else ""
-    return result.exit_code, f"{result.output}{error}"
 
 
 def edit(path: Path, old: str, new: str) -> None:

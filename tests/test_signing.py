@@ -13,8 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 import typer
 
-from tests import ARCH, PROJECT, TOYS, config, copy_project, needs_gpg
-from tests.test_build import xcraft
+from tests import ARCH, PROJECT, TOYS, config, copy_project, git, needs_gpg, xcraft
 from xcraft import buildid, pinned, publish
 from xcraft.cache import build_keys, cached_build
 from xcraft.commands import choose_signer
@@ -179,11 +178,11 @@ def test_pinned_packages_are_signed(build_environment: Path, root: Path, tmp_pat
 @needs_gpg
 def test_development_builds_are_signed(build_environment: Path, root: Path, tmp_path: Path) -> None:
     # a change on a branch: development builds
-    subprocess.run(["git", "-C", str(root), "symbolic-ref", "HEAD", "refs/heads/master"], check=True)
+    git(root, "symbolic-ref", "HEAD", "refs/heads/master")
     buildid.update(Project.find())
-    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
-    subprocess.run(["git", "-C", str(root), "commit", "-qm", "base"], check=True)
-    subprocess.run(["git", "-C", str(root), "checkout", "-qb", "feature"], check=True)
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "base")
+    git(root, "checkout", "-qb", "feature")
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(f"# changed\n{spec.read_text()}")
     # signed by the developer's key, which the first build makes

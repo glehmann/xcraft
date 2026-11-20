@@ -28,9 +28,7 @@ import pytest
 from keyring.backend import KeyringBackend
 from keyring.errors import PasswordDeleteError
 
-from tests import ARCH, PLATFORM, TOML, TOYS, copy_project, needs_gpg
-from tests.test_build import results, runner, write_spec, xcraft
-from tests.test_buildid import commit_base, edit, git
+from tests import ARCH, PLATFORM, TOML, TOYS, commit_base, edit, git, needs_gpg, results, runner, write_spec, xcraft
 from tests.test_iso import cache_image
 from xcraft import (
     buildid,
@@ -155,16 +153,15 @@ def build_signer(tmp_path_factory: pytest.TempPathFactory) -> tuple[str, Path]:
     return fingerprint, home
 
 
+def unsigned() -> str:
+    """Return the configuration of the tests, without the [sign] section of the key of their builds."""
+    return re.sub(r"\[sign\]\n.*?(?=\[remote.main\])", "", REMOTE, flags=re.DOTALL)
+
+
 @pytest.fixture
 def root(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    s3: dict[str, str],
-    build_environment: Path,
-    build_signer: tuple[str, Path],
+    root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, s3: dict[str, str], build_signer: tuple[str, Path]
 ) -> Path:
-    root = tmp_path / "project"
-    copy_project(root, build_environment)
     # builds and snapshots of its own, not to find those of the other tests in the storage, which they share
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
@@ -179,7 +176,6 @@ def root(
     )
     (root / "xcraft.toml").write_text(REMOTE)
     monkeypatch.setenv("GNUPGHOME", str(tmp_path / "unused-keyring"))
-    monkeypatch.setenv("XCRAFT_PROJECT", str(root))
     for name, value in s3.items():
         monkeypatch.setenv(name, value)
     return root
@@ -537,7 +533,7 @@ def test_developer_permissions(root: Path, tmp_path: Path, monkeypatch: pytest.M
 
 
 def test_developer_storage(root: Path, tmp_path: Path) -> None:
-    config = re.sub(r"\[sign\]\n.*?(?=\[remote.main\])", "", REMOTE, flags=re.DOTALL)
+    config = unsigned()
     config = re.sub(r"\[remote.main\]\n.*?(?=\[remote.dev\])", "", config, flags=re.DOTALL)
     (root / "xcraft.toml").write_text(config)
     signer = create_dev_key(Project.find(), "Developer")
@@ -582,7 +578,7 @@ def test_builds_shared_by_checkouts(
     root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_signer: tuple[str, Path]
 ) -> None:
     # CI selects its key without a private-key setting in the project.
-    (root / "xcraft.toml").write_text(re.sub(r"\[sign\]\n.*?(?=\[remote.main\])", "", REMOTE, flags=re.DOTALL))
+    (root / "xcraft.toml").write_text(unsigned())
     monkeypatch.setenv("GNUPGHOME", str(build_signer[1]))
     assert xcraft("build", "trivial")[0] == 0
     assert xcraft("push", "builds", "trivial", "--key", build_signer[0], "--to", "main")[0] == 0
@@ -606,7 +602,7 @@ def test_private_remote_storage(
     garage("bucket", "allow", "--read", "--write", bucket, "--key", "test")
     branches = 'maintenance_branches = ["maint/*", "embargo/*"]\nembargo_branches = ["embargo/*"]\n'
     private = f'[remote.private]\ns3_endpoint = "http://localhost:{S3_PORT}"\nbucket = "{bucket}"\n'
-    config = re.sub(r"\[sign\]\n.*?(?=\[remote.main\])", "", REMOTE, flags=re.DOTALL)
+    config = unsigned()
     (root / "xcraft.toml").write_text(f'{branches}{config}{private}build_keys = ["{build_signer[0]}"]\n')
     (root / ".gitignore").write_text(".xcraft/\n")
     commit_base(root)
@@ -652,7 +648,7 @@ def test_fetched_builds_recorded_once(
     root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_signer: tuple[str, Path]
 ) -> None:
     """The builds come with what rpm generated for them, which a checkout fetching them all does not resolve again."""
-    (root / "xcraft.toml").write_text(re.sub(r"\[sign\]\n.*?(?=\[remote.main\])", "", REMOTE, flags=re.DOTALL))
+    (root / "xcraft.toml").write_text(unsigned())
     monkeypatch.setenv("GNUPGHOME", str(build_signer[1]))
     # not the builds of the other tests: the same keys everywhere
     spec = root / "base/trivial/trivial.spec"
@@ -936,7 +932,7 @@ def test_ccache(  # noqa: PLR0915
     *,
     developer: bool,
 ) -> None:
-    config = re.sub(r"\[sign\]\n.*?(?=\[remote.main\])", "", REMOTE, flags=re.DOTALL)
+    config = unsigned()
     if developer:
         config = re.sub(r"build_keys = \[.*?\]", "build_keys = []", config)
     (root / "xcraft.toml").write_text(config)
@@ -1011,7 +1007,7 @@ def test_ccache(  # noqa: PLR0915
 
 
 def test_ccache_without_key(root: Path) -> None:
-    (root / "xcraft.toml").write_text(re.sub(r"\[sign\]\n.*?(?=\[remote.main\])", "", REMOTE, flags=re.DOTALL))
+    (root / "xcraft.toml").write_text(unsigned())
     cache = root / ".xcraft/ccache/trivial/0"
     cache.mkdir(parents=True)
     (cache / "entry").write_text("cached")
@@ -1265,8 +1261,8 @@ def test_publish(root: Path) -> None:  # noqa: PLR0915
 
 @needs_gpg
 def test_signed_publish(root: Path) -> None:  # noqa: PLR0915
-    unsigned = re.sub(r"\[sign\]\n.*?(?=\[remote.main\])", "", REMOTE, flags=re.DOTALL)
-    (root / "xcraft.toml").write_text(unsigned)
+    toml = unsigned()
+    (root / "xcraft.toml").write_text(toml)
     code, output = xcraft("publish", "--to", "main")
     assert code == 2
     assert "no key to sign the packages" in " ".join(output.replace("│", "").split())
@@ -1289,9 +1285,10 @@ def test_signed_publish(root: Path) -> None:  # noqa: PLR0915
         assert storage
         assert remote.tree_exists(storage, f"repos/9.0/{STAGE}/latest", trusted=signer)
         assert not remote.tree_exists(storage, f"repos/9.0/{STAGE}/latest")
+        # again, on that latest snapshot, which the configuration does not trust
         assert xcraft("publish", "--to", "main")[0] == 0
         (root / "xcraft.toml").write_text(
-            re.sub(r"build_keys = \[.*?\]", f'build_keys = ["{signer.key}"]', unsigned)
+            re.sub(r"build_keys = \[.*?\]", f'build_keys = ["{signer.key}"]', toml)
             + f'[sign]\nkey = "{signer.key}"\ngnupghome = "{signer.gnupghome}"\n'
         )
         code, output = xcraft("publish", "--to", "main")
@@ -1334,7 +1331,7 @@ def test_maintenance_branch_of_the_release(root: Path) -> None:
     code, output = xcraft("publish", "repos", "--to", "main")  # of the platforms of the test, locking them
     assert code == 0, output
     commit_base(root)
-    release = git(root, "rev-parse", "HEAD").stdout.strip()
+    release = git(root, "rev-parse", "HEAD")
     # published again, from the commit: the same snapshot, reused, with the commit
     code, output = xcraft("publish", "repos", "--to", "main", "--locked")
     assert code == 0, output
@@ -1345,18 +1342,19 @@ def test_maintenance_branch_of_the_release(root: Path) -> None:
     code, output = xcraft("maint", "start", "--stage", STAGE)
     assert code == 0, output
     assert f"maint/9.0, from {release[:12]}" in output
-    assert git(root, "rev-parse", "maint/9.0").stdout.strip() == release
+    assert git(root, "rev-parse", "maint/9.0") == release
     assert "maint/9.0 exists already" in xcraft("maint", "start", "--stage", STAGE)[1]
     # of another pattern
     config = root / "xcraft.toml"
     config.write_text(f'maintenance_branches = ["maint/*", "embargo/*"]\n{config.read_text()}')
     code, output = xcraft("maint", "start", "--stage", STAGE, "--name", "embargo/xsa-123")
     assert code == 0, output
-    assert git(root, "rev-parse", "embargo/xsa-123").stdout.strip() == release
+    assert git(root, "rev-parse", "embargo/xsa-123") == release
     code, output = xcraft("maint", "start", "--stage", STAGE, "--name", "fix/xsa-123")
     assert code == 1
     assert "fix/xsa-123 is of none of the maintenance_branches: maint/*, embargo/*" in output
-    assert git(root, "rev-parse", "-q", "--verify", "fix/xsa-123").returncode != 0
+    with pytest.raises(subprocess.CalledProcessError):
+        git(root, "rev-parse", "-q", "--verify", "fix/xsa-123")
     assert "no published snapshot in repos/9.0/nothing/latest" in xcraft("maint", "start", "--stage", "nothing")[1]
 
 
@@ -2203,15 +2201,8 @@ def test_logo_on_the_pages(root: Path, tmp_path: Path) -> None:
 
 
 def test_development_builds_are_neither_pushed_nor_fetched(root: Path) -> None:
-    def git(*args: str) -> None:
-        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@e", *args], cwd=root, check=True,
-                       capture_output=True)  # fmt: skip
-
-    git("init", "-q", "-b", "master")
-    buildid.update(Project.find())
-    git("add", "-A")
-    git("commit", "-qm", "base")
-    git("checkout", "-qb", "feature")
+    commit_base(root)
+    git(root, "checkout", "-qb", "feature")
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(f"# {secrets.token_hex(4)}\n{spec.read_text()}")
     assert xcraft("build", "trivial")[0] == 0
@@ -2235,18 +2226,11 @@ def test_development_builds_are_neither_pushed_nor_fetched(root: Path) -> None:
 
 
 def test_reused_builds_are_fetched(root: Path) -> None:
-    def git(*args: str) -> None:
-        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@e", *args], cwd=root, check=True,
-                       capture_output=True)  # fmt: skip
-
     assert xcraft("build")[0] == 0
-    git("init", "-q", "-b", "master")
-    buildid.update(Project.find())
-    git("add", "-A")
-    git("commit", "-qm", "base")
+    commit_base(root)
     assert xcraft("push", "builds", "--to", "main")[0] == 0
     # on a branch, with-deps reuses the build of the main branch, built against the previous trivial
-    git("checkout", "-qb", "feature")
+    git(root, "checkout", "-qb", "feature")
     trivial = root / "base/trivial/trivial.spec"
     trivial.write_text(f"# changed\n{trivial.read_text()}")
     assert xcraft("reuse", "with-deps")[0] == 0

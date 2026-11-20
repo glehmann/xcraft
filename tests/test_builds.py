@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests import TOML, config
+from tests import TOML, config, git
 from xcraft.builds import (
     BuildId,
     Builds,
@@ -111,15 +111,6 @@ def test_recordable() -> None:
     # an epoch 0 the same as none, which rpm leaves out of what it generates
     qemu = binary("qemu", evr="0:10.1-1")
     assert recordable(qemu, ["qemu = 10.1-1", "qemu-img = 10.1-1"]) == ["qemu-img = %{evr}"]
-
-
-def git(root: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "-C", str(root), *args],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
 
 
 def test_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

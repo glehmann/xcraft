@@ -13,9 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from tests import ARCH, TOML, copy_project
-from tests.test_build import xcraft
-from tests.test_buildid import commit_base, git
+from tests import ARCH, TOML, commit_base, git, xcraft
 
 pytestmark = [
     pytest.mark.skipif(ARCH != "x86_64_v2", reason="the ISOs are for x86_64"),
@@ -28,11 +26,8 @@ GRUB = '"grub2-efi-x64-cdboot", "grub2-efi-x64-modules"'
 
 
 @pytest.fixture
-def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_environment: Path) -> Path:
-    root = tmp_path / "project"
-    copy_project(root, build_environment)
+def root(root: Path) -> Path:
     (root / "xcraft.toml").write_text(f'{TOML}{INSTALLER}packages = ["with-deps"]\n\n[publish]\nextra = [{GRUB}]\n')
-    monkeypatch.setenv("XCRAFT_PROJECT", str(root))
     return root
 
 

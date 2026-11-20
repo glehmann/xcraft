@@ -6,14 +6,9 @@ import re
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
 
-from tests import copy_project
-from tests.test_buildid import commit_base, git
-from xcraft.__main__ import app
+from tests import commit_base, git, xcraft
 from xcraft.develop import ARCHIVE, DevelopError, spec_text
-
-runner = CliRunner()
 
 SPEC = """\
 Name: trivial
@@ -76,13 +71,10 @@ def test_spec_of_a_tree() -> None:
 
 
 @pytest.fixture
-def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_environment: Path) -> Path:
+def root(root: Path) -> Path:
     """Return the project, on a branch of its main one, with trivial built from its sources."""
-    root = tmp_path / "project"
-    copy_project(root, build_environment)
     (root / "base/trivial/trivial.spec").write_text(SPEC)
     (root / "base/trivial/0001-fix.patch").write_text("not applied: the tree has its patches\n")
-    monkeypatch.setenv("XCRAFT_PROJECT", str(root))
     commit_base(root)
     git(root, "checkout", "-qb", "feature")
     return root
@@ -100,12 +92,6 @@ def tree(tmp_path: Path) -> Path:
     git(tree, "commit", "-qm", "first")
     git(tree, "tag", "v1.0")
     return tree
-
-
-def xcraft(*args: str) -> tuple[int, str]:
-    result = runner.invoke(app, list(args))
-    error = result.exception if result.exception and not isinstance(result.exception, SystemExit) else ""
-    return result.exit_code, f"{result.output}{error}"
 
 
 def test_develop_from_a_tree(root: Path, tree: Path) -> None:

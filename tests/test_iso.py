@@ -8,8 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from tests import PROJECT, TOML, needs_gpg
-from tests.test_build import xcraft
+from tests import PROJECT, TOML, needs_gpg, xcraft
 from xcraft import buildkey, iso, publish
 from xcraft.builds import BuildId, load_builds, save_builds
 from xcraft.cache import BuildError

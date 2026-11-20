@@ -4,8 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests import PROJECT
-from tests.test_build import xcraft
+from tests import PROJECT, xcraft
 from xcraft import host
 from xcraft.host import Fix
 

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import re
-import subprocess
 from typing import TYPE_CHECKING
 
 import pytest
 
+from tests import git
 from xcraft.packages import Binary, Package
 from xcraft.patchset import BEGIN, END, PatchsetError, guess_base, guess_package, repo_name, update_patchset
 
@@ -24,16 +24,6 @@ Patch1001: 0002-second-change.patch
 %prep
 %autosetup -p1
 """
-
-
-def git(repo: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", "-c", "user.name=test", "-c", "user.email=test@example.com", *args],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
 
 
 def commit(repo: Path, subject: str) -> None:

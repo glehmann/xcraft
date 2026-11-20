@@ -12,8 +12,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests import ARCH, TOML, copy_project
-from tests.test_build import xcraft
+from tests import ARCH, TOML, commit_base, edit, git, xcraft
 from xcraft import build as builder
 from xcraft import buildid, buildkey
 from xcraft.builds import BuildId, builds_path, load_builds, save_builds
@@ -24,14 +23,6 @@ from xcraft.project import Project
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-
-@pytest.fixture
-def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_environment: Path) -> Path:
-    root = tmp_path / "project"
-    copy_project(root, build_environment)
-    monkeypatch.setenv("XCRAFT_PROJECT", str(root))
-    return root
 
 
 def test_recipe_of_all_architectures(root: Path) -> None:
@@ -54,34 +45,11 @@ def test_build_ids_of_all_architectures(root: Path) -> None:
     assert build_keys(projects[0], autorev, ids=ids) == build_keys(projects[1], autorev, ids=ids)
 
 
-def git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", "-c", "user.name=test", "-c", "user.email=test@example.com", *args],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-
-def commit_base(root: Path, branch: str = "master") -> None:
-    """Make `root` a git repository, whose main branch, `branch`, has the build IDs."""
-    assert git(root, "init", "-q", "-b", branch).returncode == 0
-    update()
-    git(root, "add", "-A")
-    git(root, "commit", "-qm", "base")
-
-
 def update() -> dict[str, int | str]:
     """Update the build IDs, and return their numbers, like 2, or "1.1" for maintenance ones."""
     project = Project.find()
     buildid.update(project)
     return {name: i.build for name, i in buildid.read(project).items()}
-
-
-def edit(root: Path, line: str, *, name: str = "trivial", top: bool = True) -> None:
-    spec = root / f"base/{name}/{name}.spec"
-    spec.write_text(f"# {line}\n{spec.read_text()}" if top else f"{spec.read_text()}# {line}\n")
 
 
 def _development_rpms() -> set[Path]:
@@ -246,13 +214,14 @@ def test_build_ids_of_main_branch(root: Path) -> None:
     git(root, "checkout", "-q", "feature")
     # not until merged: the branch is numbered against its fork only
     assert update() == {"trivial": 2, "with-deps": 2}
-    assert git(root, "merge", "-q", "master").returncode != 0
+    with pytest.raises(subprocess.CalledProcessError):
+        git(root, "merge", "-q", "master")
     assert "<<<<<<<" in (root / "xcraft.builds").read_text()
     assert update() == {"trivial": 3, "with-deps": 3}
     # back to the main branch's packages: its build IDs
     git(root, "checkout", "-q", "master", "--", "base")
     update()
-    assert git(root, "diff", "--quiet", "master", "--", "xcraft.builds").returncode == 0
+    git(root, "diff", "--quiet", "master", "--", "xcraft.builds")
 
 
 def test_main_branch_setting(root: Path) -> None:
@@ -279,7 +248,7 @@ def version(name: str) -> str:
 
 def test_maintenance_branches(root: Path) -> None:
     commit_base(root)
-    release = git(root, "rev-parse", "HEAD").stdout.strip()
+    release = git(root, "rev-parse", "HEAD")
     edit(root, "master", name="with-deps")
     assert update() == {"trivial": 1, "with-deps": 2}
     git(root, "commit", "-qam", "master")
@@ -292,7 +261,7 @@ def test_maintenance_branches(root: Path) -> None:
     assert version("trivial") == "1.0-1+b1.1~1.dev.xcpng8.99"
     git(root, "commit", "-qam", "fix")
     git(root, "checkout", "-q", "maint/9.0")
-    assert git(root, "merge", "-q", "--no-ff", "fix").returncode == 0
+    git(root, "merge", "-q", "--no-ff", "fix")
     # final builds there, checked as on master
     locked()
     assert version("trivial") == "1.0-1+b1.1.xcpng8.99"
@@ -308,7 +277,8 @@ def test_maintenance_branches(root: Path) -> None:
     # merged into master: trivial keeps its build, master changed none of its inputs; with-deps, which master changed,
     # gets master's next number
     git(root, "checkout", "-q", "master")
-    assert git(root, "merge", "-q", "--no-ff", "maint/9.0").returncode != 0
+    with pytest.raises(subprocess.CalledProcessError):
+        git(root, "merge", "-q", "--no-ff", "maint/9.0")
     assert update() == {"trivial": "1.2", "with-deps": 3}
     assert version("trivial") == "1.0-1+b1.2.xcpng8.99"
     git(root, "commit", "-qam", "merge")
@@ -330,7 +300,7 @@ def test_commit_of_the_checkout(root: Path, tmp_path: Path, monkeypatch: pytest.
     assert buildid.commit(project) is None  # out of git
     (root / ".gitignore").write_text(".xcraft/\n")
     commit_base(root)
-    head = git(root, "rev-parse", "HEAD").stdout.strip()
+    head = git(root, "rev-parse", "HEAD")
     assert buildid.commit(project) == head
     edit(root, "changed")
     assert buildid.commit(project) == f"{head}-dirty"
@@ -355,7 +325,7 @@ def test_maintenance_branches_of_several_patterns(root: Path) -> None:
     config = root / "xcraft.toml"
     config.write_text(f'maintenance_branches = ["maint/*", "embargo/*"]\n{config.read_text()}')
     commit_base(root)
-    release = git(root, "rev-parse", "HEAD").stdout.strip()
+    release = git(root, "rev-parse", "HEAD")
     edit(root, "master")
     update()
     git(root, "commit", "-qam", "master")

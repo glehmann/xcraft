@@ -10,16 +10,12 @@ from typing import TYPE_CHECKING
 import pytest
 from rich.console import ConsoleDimensions
 from rich.text import Text
-from typer.testing import CliRunner
 
-from tests import TOML
-from xcraft.__main__ import app
+from tests import TOML, xcraft
 from xcraft.display import TreeProgress, _commands, _Messages, activity, diagnostics, print_message_line, read_tail
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-runner = CliRunner()
 
 
 def test_activity_logs_are_throttled(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -66,12 +62,6 @@ def log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path = tmp_path / ".xcraft/logs/foo.log"
     path.write_text(LOG)
     return path
-
-
-def xcraft(*args: str) -> tuple[int, str]:
-    result = runner.invoke(app, list(args))
-    error = result.exception if result.exception and not isinstance(result.exception, SystemExit) else ""
-    return result.exit_code, f"{result.output}{error}"
 
 
 @pytest.mark.usefixtures("log")

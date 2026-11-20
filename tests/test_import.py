@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import hashlib
-import subprocess
 from typing import TYPE_CHECKING
 
 import pytest
 from typer.testing import CliRunner
 
-from tests import TOML, needs_git_lfs
+from tests import TOML, git, needs_git_lfs
 from xcraft import container, resolution
 from xcraft.__main__ import app
 from xcraft.importer import PackageImportError, import_history
@@ -19,17 +18,6 @@ if TYPE_CHECKING:
 runner = CliRunner()
 
 pytestmark = needs_git_lfs  # for the archives of the packaging repositories
-
-
-def git(repo: Path, *args: str, input: str | None = None) -> str:  # noqa: A002, like subprocess.run
-    return subprocess.run(
-        ["git", "-c", "user.name=test", "-c", "user.email=test@example.com", *args],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-        text=True,
-        input=input,
-    ).stdout.strip()
 
 
 def commit_files(repo: Path, files: dict[str, str]) -> None:

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests import ARCH, PROJECT, TOML, TOYS, UPSTREAM, config
+from tests import ARCH, PROJECT, TOML, TOYS, UPSTREAM, config, copy_project
 from xcraft import container, process, resolution, upstream_copy
 from xcraft.cache import build_keys
 from xcraft.container import BUILDENV, built_image, repo_file, run_natively
@@ -197,3 +197,14 @@ def build_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path
     finally:
         for volume in volumes.values():
             process.run(["podman", "volume", "rm", "-f", volume], check=False, capture=True)
+
+
+@pytest.fixture
+def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_environment: Path) -> Path:
+    """Return a copy of the prepared test project, the project of xcraft: in the build environment, whose image is
+    built the first time, which needs the network, see the podman marker.
+    """
+    root = tmp_path / "project"
+    copy_project(root, build_environment)
+    monkeypatch.setenv("XCRAFT_PROJECT", str(root))
+    return root

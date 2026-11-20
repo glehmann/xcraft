@@ -18,9 +18,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
 
-from tests import ARCH, TOML, TOYS, config, copy_project
+from tests import ARCH, TOML, TOYS, commit_base, config, git, results, runner, write_spec, xcraft
 from xcraft import build as builder
 from xcraft import buildid, checks, clean, container, localrepo, pinned, process, publish, resolution
 from xcraft.__main__ import app
@@ -34,31 +33,6 @@ from xcraft.publish import _check_installable
 from xcraft.resolution import ISO_TOOLS, ResolutionError
 from xcraft.signing import check_signatures
 from xcraft.sources import write_manifest
-
-runner = CliRunner()
-
-
-# in the build environment, whose image is built the first time, which needs the network: see the podman marker
-
-
-@pytest.fixture
-def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_environment: Path) -> Path:
-    root = tmp_path / "project"
-    copy_project(root, build_environment)
-    monkeypatch.setenv("XCRAFT_PROJECT", str(root))
-    return root
-
-
-def results(output: str) -> list[str]:
-    """Return the lines of the results of a build, without its errors and warnings."""
-    return [line for line in output.splitlines() if line.startswith(("✓", "✗", "-", "↓")) or line[:1].isdigit()]
-
-
-def xcraft(*args: str) -> tuple[int, str]:
-    """Run xcraft, returning its exit code and output, including the error main() would show."""
-    result = runner.invoke(app, list(args))
-    error = result.exception if result.exception and not isinstance(result.exception, SystemExit) else ""
-    return result.exit_code, f"{result.output}{error}"
 
 
 def states() -> dict[str, str]:
@@ -162,17 +136,6 @@ UP_TO_DATE = (
     "versions up to date, not looking for other contents of the same versions\n"
     "hint: xcraft lock --update looks for them too"
 )
-
-
-def write_spec(root: Path, name: str, requires: str = "", files: str = "/usr/share/doc/%{name}") -> None:
-    """Write a minimal noarch package installing `files`, with the BuildRequires `requires`."""
-    (root / "base" / name).mkdir()
-    (root / "base" / name / f"{name}.spec").write_text(
-        f"Name: {name}\nVersion: 1.0\nRelease: 1%{{?dist}}\nSummary: test\nLicense: MIT\nBuildArch: noarch\n"
-        + (f"BuildRequires: {requires}\n" if requires else "")
-        + f"%description\ntest\n%install\nmkdir -p %{{buildroot}}{files.rsplit('/', 1)[0]}\n"
-        + f"touch %{{buildroot}}{files}\n%files\n{files}\n"
-    )
 
 
 def test_binary_of_two_packages(root: Path) -> None:
@@ -720,7 +683,6 @@ def test_recorded_once_all_built(root: Path, *, cached: bool) -> None:
 
 
 def test_dune_cache(root: Path) -> None:
-    from tests.test_buildid import commit_base, git  # noqa: PLC0415, which imports this module
 
     # the cache of dune of trivial, which writes in it like dune: kept on this machine, for the development builds
     # only, but for the builds without dune
@@ -1408,12 +1370,11 @@ def test_status_during_a_build(root: Path) -> None:
 def test_patchset_during_a_build(root: Path, tmp_path: Path) -> None:
     repo = tmp_path / "trivial"
     repo.mkdir()
-    git = ["git", "-C", str(repo), "-c", "user.name=test", "-c", "user.email=test@example.com"]
     for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "upstream"], ["tag", "1.0"]):
-        subprocess.run([*git, *args], check=True)
+        git(repo, *args)
     (repo / "fix").write_text("fix\n")
-    subprocess.run([*git, "add", "fix"], check=True)
-    subprocess.run([*git, "commit", "-qm", "a fix"], check=True)
+    git(repo, "add", "fix")
+    git(repo, "commit", "-qm", "a fix")
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(spec.read_text().replace("%prep\n", "%prep\n%autopatch -p1\n"))
     with (root / ".xcraft/lock").open("w") as f:
