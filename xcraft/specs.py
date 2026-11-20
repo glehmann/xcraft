@@ -84,24 +84,35 @@ _read: set[Path] = set()
 
 
 def parse(project: Project, dirs: list[Path]) -> dict[str, Package]:
-    """Return the metadata of the packages of the directories `dirs`, by name, for the architecture of `project`."""
+    """Return the metadata of the packages of the directories `dirs`, by name, for the architecture of `project`: those
+    of the other platforms are parsed with it, in the same container, when not cached either, as they are needed next.
+    """
     hashes = [(d.name, hash_dir(d, project.root)) for d in dirs]
     native = project.on_host()
-    key = json.dumps([*_SCRIPTS, image_tag(native), rpm_target(project.arch), *hashes])
-    cache = project.state / "cache/specs" / project.arch / f"{hashlib.sha256(key.encode()).hexdigest()}.json"
-    if not cache.exists():
+
+    def cached(arch: str) -> Path:
+        key = json.dumps([*_SCRIPTS, image_tag(native), rpm_target(arch), *hashes])
+        return project.state / "cache/specs" / arch / f"{hashlib.sha256(key.encode()).hexdigest()}.json"
+
+    if not (cache := cached(project.arch)).exists():
+        arches = [
+            a
+            for a in dict.fromkeys([project.arch, *(p.arch for p in project.all_platforms())])
+            if not cached(a).exists()
+        ]
         built_image(native)
         specs = " ".join(f"/project/{main_spec(d).relative_to(project.root)}" for d in dirs)
         with project.tmp_dir("specs") as work:
             container.run(
                 native,
                 "specs",
-                f"python3 /xcraft/parse.py /work/specs.json {rpm_target(project.arch)} {specs}",
+                " && ".join(f"python3 /xcraft/parse.py /work/{a}.json {rpm_target(a)} {specs}" for a in arches),
                 volumes=[f"{project.root}:/project:ro", f"{work}:/work"],
                 show="parsing the specs",
             )
-            cache.parent.mkdir(parents=True, exist_ok=True)
-            (work / "specs.json").rename(cache)
+            for arch in arches:
+                cached(arch).parent.mkdir(parents=True, exist_ok=True)
+                (work / f"{arch}.json").rename(cached(arch))
     _read.add(cache)
     os.utime(cache)  # used, see xcraft clean --keep-days
     packages = _Packages.validate_json(cache.read_bytes())
