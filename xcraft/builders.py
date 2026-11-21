@@ -87,10 +87,10 @@ def _xcraft(host: Host, work: Path) -> list[str]:
     if command := os.environ.get("XCRAFT_BUILDER_XCRAFT"):
         return shlex.split(command)
     if isinstance(source := _source(work), Path):
-        wheel = f"wheels/{hashlib.sha256(source.read_bytes()).hexdigest()}/{source.name}"
-        process.run(host.ssh(f"mkdir -p {ROOT}/{Path(wheel).parent}"), capture=True)
-        _rsync(host, str(source), f"{host.destination}:{ROOT}/{wheel}")
-        source = f"../{wheel}"  # from the copy of the checkout, where it runs
+        wheel = f"{ROOT}/wheels/{hashlib.sha256(source.read_bytes()).hexdigest()}/{source.name}"
+        # by ssh, rather than rsync, which a builder to provision lacks, see provision()
+        copy = f"mkdir -p {Path(wheel).parent} && cat > {wheel}.partial && mv {wheel}.partial {wheel} && pwd"
+        source = f"{process.run_bytes(host.ssh(copy), source.read_bytes()).decode().strip()}/{wheel}"
     return ["uv", "--quiet", "tool", "run", "--from", str(source), "xcraft"]
 
 
@@ -110,14 +110,39 @@ def check(host: Host) -> None:
     tools = [*TOOLS, *([] if os.environ.get("XCRAFT_BUILDER_XCRAFT") else ["uv"])]
     script = f"PATH=$HOME/.local/bin:$PATH; for tool in {' '.join(tools)}; do command -v $tool >/dev/null || echo $tool"
     script += "; done"
-    script += "; command -v podman >/dev/null && podman info --format 'rootless {{.Host.Security.Rootless}}'"
+    rootless = "podman info --format 'rootless {{.Host.Security.Rootless}}' 2>/dev/null || echo rootless failing"
+    script += f"; command -v podman >/dev/null && {{ {rootless}; }}"
     found = process.run(host.ssh(script), check=False, capture=True).stdout.split()
     if missing := [word for word in found if word in tools]:
-        msg = f"the builder {host.name} lacks {', '.join(missing)}: install them there"
+        msg = f"the builder {host.name} lacks {', '.join(missing)}: install them there, or see xcraft doctor --fix"
         raise BuilderError(msg)
     if "false" in found:
         msg = f"podman of the builder {host.name} runs as root, while xcraft runs it rootless: build as another user"
         raise BuilderError(msg)
+    if "failing" in found:
+        msg = f"podman of the builder {host.name} does not work rootless: see xcraft doctor --fix"
+        raise BuilderError(msg)
+
+
+UV_INSTALLER = "https://astral.sh/uv/install.sh"
+"""The installer of uv, in ~/.local/bin, for the user, which a builder without uv gets, see provision()."""
+
+
+def provision(name: str) -> None:
+    """Make the builder `name` able to build, from an SSH account with sudo only: install uv for the user, which runs
+    xcraft there, if missing, then run the same xcraft as this process there, xcraft doctor --fix --builder, which
+    installs the rest with the package manager of the builder, asking for the password of sudo, and configures podman.
+    """
+    with tempfile.TemporaryDirectory(prefix="xcraft-builder-") as tmp, connected(ssh_host(name)) as host:
+        install = f"curl -LsSf {UV_INSTALLER} | sh || wget -qO- {UV_INSTALLER} | sh"
+        with activity(f"installing uv on {name}, if missing"):
+            process.run(host.ssh(f"PATH=$HOME/.local/bin:$PATH; command -v uv >/dev/null || {{ {install}; }}"))
+            xcraft_command = _xcraft(host, Path(tmp))
+        doctor = shlex.join([*xcraft_command, "doctor", "--fix", "--builder"])
+        # with a terminal, for the confirmation and sudo; what it could not fix, xcraft doctor tells after
+        process.run(
+            ["ssh", "-t", *host.options, host.destination, f"PATH=$HOME/.local/bin:$PATH {doctor}"], check=False
+        )
 
 
 def build(project: Project, name: str, args: list[str], keys: list[str]) -> tuple[int, dict[str, str]]:

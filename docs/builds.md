@@ -235,7 +235,10 @@ the counters of the development builds and the developer's key, runs the same xc
 wheel of the local one for a development version, or `$XCRAFT_BUILDER_XCRAFT`, and copies its builds back into the
 cache, with their logs and `xcraft.builds`: the same builds as local ones, of the same keys, which the other commands
 use as they are. The builder keeps its caches, and needs podman, rootless, gpg, git, uv, rsync and flock only, which
-xcraft checks first. `--local` builds locally still. A builder makes development builds, signed by the developer's
+xcraft checks first, and `xcraft doctor` too. `xcraft doctor --fix` provisions the builders that lack them, from an
+SSH account with sudo only: it installs uv for the account, with the installer of uv, then runs the same xcraft there,
+`xcraft doctor --fix --builder`, which installs the rest with the package manager of the builder, asking for the
+password of sudo, and configures rootless podman. `--local` builds locally still. A builder makes development builds, signed by the developer's
 key: `--final` and `--key` build locally. See [the design](remote-builders-design.md).
 
 ## Builds without their tests

@@ -140,3 +140,33 @@ def should_refuse_a_builder_running_another_xcraft(tmp_path: Path, monkeypatch: 
     code, output = xcraft("build", "trivial")
     assert code == 1, output
     assert "h runs another xcraft, of the recipe 0123456789ab, rather than" in output
+
+
+def should_report_the_builders_and_what_they_lack_in_doctor(
+    builder: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert f"✓ builder of {ARCH}: h\n" in xcraft("doctor")[1]
+    lacking = tmp_path / "lacking"
+    lacking.mkdir()
+    for tool in ("rsync", "flock"):
+        (lacking / tool).symlink_to(shutil.which(tool) or tool)
+    monkeypatch.setenv("BUILDER_PATH", str(lacking))
+    monkeypatch.setenv("XCRAFT_BUILDER_XCRAFT", "xcraft")  # rather than uv, see the tools check
+    code, output = xcraft("doctor")
+    assert code == 1, output
+    assert (
+        f"✗ builder of {ARCH}: the builder h lacks podman, gpg, git: install them there, or see xcraft doctor --fix"
+        in (" ".join(output.split()))
+    )
+
+
+def should_check_only_what_a_builder_needs_on_a_builder() -> None:
+    output = xcraft("doctor", "--builder")[1]
+    # neither the tools of the other commands, nor emulation
+    assert [line.split()[1].rstrip(":") for line in output.splitlines()] == ["podman", "gpg", "git", "rsync", "flock"]
+
+
+@pytest.mark.usefixtures("builder")
+def should_provision_a_builder_by_the_doctor_of_this_xcraft_there(capfd: pytest.CaptureFixture[str]) -> None:
+    builders.provision("h")
+    assert "✓ flock: " in capfd.readouterr().out

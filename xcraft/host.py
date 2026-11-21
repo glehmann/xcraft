@@ -43,6 +43,7 @@ _DISTROS = {
             {
                 "gpg": "gnupg",
                 "ssh": "openssh-client",
+                "flock": "util-linux",
                 "newuidmap": "uidmap",
                 "qemu": "qemu-user-static",
                 "qemu-system-x86_64": "qemu-system-x86",
@@ -57,6 +58,7 @@ _DISTROS = {
             {
                 "gpg": "gnupg2",
                 "ssh": "openssh-clients",
+                "flock": "util-linux-core",
                 "newuidmap": "shadow-utils",
                 "qemu": "qemu-user-static",
                 "qemu-system-x86_64": "qemu-system-x86-core",
@@ -72,6 +74,7 @@ _DISTROS = {
             {
                 "gpg": "gnupg2",
                 "ssh": "openssh-clients",
+                "flock": "util-linux-core",
                 "newuidmap": "shadow-utils",
                 "qemu": "",
                 # qemu-kvm installs /usr/libexec/qemu-kvm rather than the executable boot uses.
@@ -87,6 +90,7 @@ _DISTROS = {
             {
                 "gpg": "gpg2",
                 "ssh": "openssh-clients",
+                "flock": "util-linux",
                 "newuidmap": "shadow",
                 "qemu": "qemu-linux-user",
                 "qemu-system-x86_64": "qemu-x86",
@@ -101,6 +105,7 @@ _DISTROS = {
             {
                 "gpg": "gnupg",
                 "ssh": "openssh",
+                "flock": "util-linux",
                 "newuidmap": "shadow",
                 "qemu": "qemu-user-static qemu-user-static-binfmt",
                 "qemu-system-x86_64": "qemu-system-x86",
@@ -115,6 +120,7 @@ _DISTROS = {
             {
                 "gpg": "gnupg",
                 "ssh": "openssh-client",
+                "flock": "flock",
                 "newuidmap": "shadow-uidmap",
                 "qemu": "qemu-{arch}",
                 "qemu-system-x86_64": "qemu-system-x86_64",
@@ -133,6 +139,7 @@ _DISTROS = {
                 "gpg": "app-crypt/gnupg",
                 "rsync": "net-misc/rsync",
                 "ssh": "net-misc/openssh",
+                "flock": "sys-apps/util-linux",
                 "newuidmap": "sys-apps/shadow",
                 "qemu": "app-emulation/qemu",
                 "qemu-system-x86_64": "app-emulation/qemu",
@@ -143,7 +150,7 @@ _DISTROS = {
     ],
     # podman, git-lfs and qemu are not in Slackware, but in SlackBuilds.org
     "slackware": [
-        ("slackpkg install", {"gpg": "gnupg2", "ssh": "openssh", "newuidmap": "shadow"}),
+        ("slackpkg install", {"gpg": "gnupg2", "ssh": "openssh", "flock": "util-linux", "newuidmap": "shadow"}),
         (
             "sboinstall -r",
             {

@@ -1,8 +1,7 @@
 # Design: remote builders
 
 Status: implemented for `xcraft build`, in `xcraft/builders.py`: the builder of the architecture of the command. To
-do: `xcraft clean --builders`, the checks of `xcraft doctor`, the final builds, and the builds of several architectures
-at the same time.
+do: `xcraft clean --builders`, the final builds, and the builds of several architectures at the same time.
 
 ## The problem
 
@@ -150,7 +149,7 @@ held during the whole build, keeps from changing meanwhile. With `--locked`, the
 | The SSH helpers of `xcraft repo --host` shared | `hosts.py`, new | done |
 | The lock of the remote checkout | `builders.py` | done |
 | `xcraft clean --builders` | `commands/clean.py` | to do |
-| `xcraft doctor` checking the builders: SSH, podman rootless, uv | `commands/doctor.py` | to do |
+| `xcraft doctor` checking the builders, and provisioning them with `--fix`, from an SSH account with sudo | `commands/doctor.py`, `builders.py` | done |
 | The final builds, with `--final` or `--key`, refused on a builder for now | `commands/build.py` | to do |
 
 ## Decisions

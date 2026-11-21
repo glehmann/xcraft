@@ -5,12 +5,14 @@ from __future__ import annotations
 import getpass
 import os
 import shutil
+import subprocess
 from typing import Annotated
 
 import typer
 
-from xcraft import host, process, remote, vm
+from xcraft import builders, host, hosts, process, remote, vm
 from xcraft.display import console
+from xcraft.hosts import ssh_host
 from xcraft.project import Project, ProjectNotFoundError
 
 _MARKS = {"ok": "[green]✓[/]", "warning": "[yellow]![/]", "error": "[red]✗[/]"}
@@ -24,6 +26,8 @@ _TOOLS = {
     "qemu-system-x86_64": ("by xcraft boot, to run installer VMs", False),
     "qemu-img": ("by xcraft boot, to create virtual disks", False),
 }
+
+_BUILDER_TOOLS = dict.fromkeys([t for t in builders.TOOLS if t != "podman"], ("by the builds of the builder", True))
 
 
 def _podman() -> tuple[list[tuple[str, str]], list[str], list[host.Fix]]:
@@ -85,20 +89,44 @@ def _vm() -> tuple[list[tuple[str, str]], list[str]]:
     return checks, missing
 
 
-def _checks(project: Project | None) -> tuple[list[tuple[str, str]], list[host.Fix]]:
-    """Return the checks of the host, as their state, ok, warning or error, and what they found, and their fixes."""
+def _builders(project: Project | None) -> tuple[list[tuple[str, str]], list[str]]:
+    """Return the checks of the builders of the architectures of `project`, or all, and those to provision."""
+    checks, failing = [], []
+    for arch, name in builders.builders().items():
+        if project and arch not in {p.arch for p in project.all_platforms()}:
+            continue
+        try:
+            with hosts.connected(ssh_host(name)) as builder:
+                builders.check(builder)
+            checks.append(("ok", f"builder of {arch}: {name}"))
+        except builders.BuilderError as e:
+            checks.append(("error", f"builder of {arch}: {e}"))
+            failing.append(name)
+        except subprocess.CalledProcessError:
+            checks.append(("error", f"builder of {arch}: {name} unreachable by ssh"))
+    return checks, failing
+
+
+def _checks(project: Project | None, *, builder: bool = False) -> tuple[list[tuple[str, str]], list[host.Fix]]:
+    """Return the checks of the host, as their state, ok, warning or error, and what they found, and their fixes; of
+    what a builder needs only, with `builder`.
+    """
     checks, missing, fixes = _podman()
-    for tool, (needed, required) in _TOOLS.items():
+    for tool, (needed, required) in (_BUILDER_TOOLS if builder else _TOOLS).items():
         if path := shutil.which(tool):
             checks.append(("ok", f"{tool}: {path}"))
         else:
             checks.append(("error" if required else "warning", f"{tool}: not found, needed {needed}"))
             missing.append(tool)
-    vm_checks, vm_missing = _vm()
-    checks += vm_checks
-    missing += vm_missing
-    if project:
+    if not builder:
+        vm_checks, vm_missing = _vm()
+        checks += vm_checks
+        missing += vm_missing
+    if project and not builder:
+        built = builders.builders()
         for arch in (p.arch for p in project.all_platforms() if not p.native):
+            if arch in built:
+                continue  # built natively, see _builders()
             if problem := host.emulation_problem(arch):
                 checks.append(("warning", problem))
                 if not host.emulator(arch):
@@ -116,17 +144,30 @@ def _checks(project: Project | None) -> tuple[list[tuple[str, str]], list[host.F
 
 def doctor(
     fix: Annotated[
-        bool, typer.Option("--fix", help="Fix what it can: install what is missing, configure podman and emulation.")
+        bool,
+        typer.Option(
+            "--fix",
+            help="Fix what it can: install what is missing, configure podman and emulation, provision the builders.",
+        ),
+    ] = False,
+    builder: Annotated[
+        bool,
+        typer.Option(
+            "--builder", help="Check only what a builder needs, see $XCRAFT_BUILDERS: what --fix runs on the builders."
+        ),
     ] = False,
 ) -> None:
-    """Check that the host has what xcraft needs, and tell how to get what it misses."""
+    """Check that the host has what xcraft needs, and its builders, see $XCRAFT_BUILDERS, and tell how to get what
+    they miss: --fix provisions the builders too, from an SSH account with sudo, installing uv for it, which runs xcraft
+    there.
+    """
     try:
-        project = Project.find()
+        project = None if builder else Project.find()
     except ProjectNotFoundError:
         if "XCRAFT_PROJECT" in os.environ:
             raise
         project = None
-    checks, fixes = _checks(project)
+    checks, fixes = _checks(project, builder=builder)
     done: set[str] = set()
     # an install can make other fixes possible, like registering the emulator it installs
     while fix and fixes and not done >= {str(f) for f in fixes}:
@@ -135,7 +176,13 @@ def doctor(
         for f in fixes:
             f.run()
         done |= {str(f) for f in fixes}
-        checks, fixes = _checks(project)
+        checks, fixes = _checks(project, builder=builder)
+    builder_checks, failing = ([], []) if builder else _builders(project)
+    for name in failing if fix else []:
+        builders.provision(name)
+    if failing and fix:
+        builder_checks = _builders(project)[0]
+    checks += builder_checks
     for state, what in checks:
         console.print(f"{_MARKS[state]} {what}")
     if fixes and not fix:
