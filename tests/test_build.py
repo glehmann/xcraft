@@ -981,10 +981,13 @@ def should_clean_the_images_of_no_checkout(root: Path) -> None:
     image = container.built_image(project)
     other = f"{container.BUILD_IMAGE}:other-{os.getpid()}"
     process.run(["podman", "tag", image, other])
-    # but those of the machine, of other checkouts, and those the other tests build since
+    # but those of the checkout, and of the machine, of other checkouts; among which those the other tests tag
+    # meanwhile, of images built in the second of `since`, as podman tells, or before
     listed = ["podman", "images", "--format", "{{.Repository}}:{{.Tag}}"]
     machine = {tag for tag in process.run(listed, capture=True).stdout.split() if tag != other}
-    assert clean.other_images(machine | container.checkout_images(project), since) == [other]
+    found = clean.other_images(machine | container.checkout_images(project), since)
+    assert other in found
+    assert image not in found
     assert clean.remove_images([other]) == [other]
     assert process.run(["podman", "image", "exists", image], check=False).returncode == 0
 
