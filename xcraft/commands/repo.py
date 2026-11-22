@@ -12,7 +12,7 @@ from rich.text import Text
 from xcraft import build as builder
 from xcraft import process, vm
 from xcraft.cache import cached_build, release_suffix
-from xcraft.commands import Arch, Dev, Final, Key, NoCheck, Packages, dev_ident, prepared_project, sign_builds
+from xcraft.commands import Arch, Dev, Final, Jobs, Key, NoCheck, Packages, dev_ident, prepared_project, sign_builds
 from xcraft.display import COMMAND, activity, console
 from xcraft.graph import dependents
 from xcraft.hosts import Host, connected, ssh_host
@@ -161,6 +161,7 @@ def repo(
     nocheck: NoCheck = False,
     arch: Arch = None,
     key: Key = None,
+    jobs: Jobs = None,
 ) -> None:
     """Build the given packages, all by default, and what they need, put them in a repository, and check them.
 
@@ -184,7 +185,7 @@ def repo(
     if with_dependents:
         names += sorted(dependents(project.deps, names) - set(names))
     with project.lock():
-        results, keys, autorev = builder.build(project, names, dev=ident, nocheck=nocheck)
+        results, keys, autorev = builder.build(project, names, dev=ident, nocheck=nocheck, jobs=jobs)
         if failed := [r.name for r in results if r.failed]:
             msg = f"not built: {', '.join(failed)}"
             raise RuntimeError(msg)

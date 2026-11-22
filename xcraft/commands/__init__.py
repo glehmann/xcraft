@@ -127,6 +127,20 @@ Dev = Annotated[
 ]
 
 
+Jobs = Annotated[
+    int | None,
+    typer.Option(
+        "--jobs",
+        "-j",
+        min=1,
+        envvar="XCRAFT_JOBS",
+        show_default=False,
+        help="How many packages build at once, those independent of each other: a third of the processors, rounded, "
+        "and one by 4 GiB of memory at most, by default.",
+    ),
+]
+
+
 Final = Annotated[
     bool, typer.Option("--final", help="Final builds, without development suffixes, like CI on the main branch.")
 ]

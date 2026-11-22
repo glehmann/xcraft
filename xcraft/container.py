@@ -181,7 +181,8 @@ def _dnf_cache(project: Project) -> str:
     return "xcraft-dnf-" + re.sub(r"[^a-z0-9]+", "-", project.platform)
 
 
-def _kill(container: str) -> None:
+def kill(container: str) -> None:
+    """Kill `container` and remove it at once, if it runs."""
     # bash, the init process of the container, ignores the signals stopping podman: killed, and removed at once,
     # not later by --rm, as another container of the same name may follow
     process.run(["podman", "rm", "--force", "--time", "0", container], check=False, capture=True)
@@ -200,7 +201,7 @@ def _run_logged(cmd: list[str], log: Path, on_line: Callable[[str], None] | None
         for line in iter(lambda: out.readline(_LINE), ""):
             f.write(line)
             if f.tell() > MAX_LOG_SIZE and container:
-                _kill(container)  # before leaving the block, which waits for podman
+                kill(container)  # before leaving the block, which waits for podman
                 msg = f"stopped, its log got larger than {MAX_LOG_SIZE // 2**20} MiB, see {log}"
                 raise ContainerError(msg)
             if on_line:
@@ -281,7 +282,7 @@ def run_container(
             process.run(cmd, check=False).returncode if log is None else _run_logged(cmd, log, on_line, container)
         )
     except BaseException:
-        _kill(container)
+        kill(container)
         raise
     if returncode:
         msg = "failed" + (f", see {log}" if log else "")
@@ -491,7 +492,7 @@ def run_natively(
             try:
                 failed = _run_logged(cmd, log, on_line, container)
             except BaseException:
-                _kill(container)
+                kill(container)
                 raise
         if failed:
             msg = f"{show} failed, see {log}{_tail(log)}"

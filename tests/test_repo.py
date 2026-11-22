@@ -105,11 +105,11 @@ def should_make_a_repository_with_its_dependencies_satisfied(root: Path) -> None
     code, output = xcraft("clean", "-n")
     assert code == 0, output
     assert re.search(r"^local repositories +1 to remove$", output, re.MULTILINE), output
-    assert (root / ".xcraft/repo").exists()
+    assert (root / ".xcraft/repos/with-deps").exists()  # those of the builds
     code, output = xcraft("clean")
     assert code == 0, output
     assert re.search(r"^local repositories +1 removed$", output, re.MULTILINE), output
-    assert not (root / ".xcraft/repo").exists()
+    assert not (root / ".xcraft/repos").exists()
     code, output = xcraft("repo", "with-deps")
     assert code == 0, output
 

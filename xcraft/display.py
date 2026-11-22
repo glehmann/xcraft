@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import io
 import os
 import re
 import shlex
@@ -14,11 +15,13 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from rich.console import Console, ConsoleDimensions
+from rich.console import Console, ConsoleDimensions, Group
 from rich.highlighter import Highlighter
+from rich.live import Live
 from rich.measure import Measurement
 from rich.progress import Progress, ProgressColumn, SpinnerColumn, Task, TextColumn
 from rich.progress_bar import ProgressBar
+from rich.spinner import Spinner
 from rich.table import Column, Table
 from rich.text import Text
 
@@ -110,6 +113,9 @@ _DIAGNOSTIC_RE = re.compile(r"\b(?:error|errors):|\bFAILED\b|^warning:")
 _RULES = [
     (_ERROR_RE, "bold red"),
     (_WARNING_RE, "yellow"),
+    # those of rpmlint, after the file or package and its line
+    (re.compile(r"(?<=: )E:(?= )"), "bold red"),
+    (re.compile(r"(?<=: )W:(?= )"), "yellow"),
     (re.compile(r"Executing\(%\w+\)"), "bold cyan"),
     (re.compile(r"^\+\s+.*"), "dim cyan"),
     (re.compile(r"Wrote:\s+\S+\.rpm"), "bold green"),
@@ -140,6 +146,26 @@ def print_message_line(line: str) -> None:
     progress of the activities.
     """
     messages.print(_colorize(line))
+
+
+def print_log_lines(lines: Iterable[str]) -> None:
+    """Print lines of build log with colors, at once: not mixed with those of other builds running meanwhile."""
+    console.print(Text("\n").join(_colorize(line) for line in lines))
+
+
+_TAG_STYLES = ["cyan", "magenta", "green", "blue", "bright_cyan", "bright_magenta", "bright_green", "bright_blue"]
+
+
+def tagged(tag: str, width: int, out: Console = messages) -> Callable[[str], None]:
+    """Return a function printing lines of build log after `tag`, padded to `width`, like docker compose: those of a
+    build running with others, or of the findings of rpmlint, among the messages, or `out`, like the results for whole
+    logs. Without `tag`, the lines alone.
+    """
+    style = _TAG_STYLES[sum(tag.encode()) % len(_TAG_STYLES)]
+    # assembled: the style of the name and its bar only, the line as xcraft log colors it
+    return lambda line: out.print(
+        Text.assemble((f"{tag.ljust(width)} |", style), " ", _colorize(line)) if tag else _colorize(line)
+    )
 
 
 def diagnostics(on_line: Callable[[str], None], header: str = "") -> Callable[[str], None]:
@@ -313,6 +339,10 @@ def activity(
     every minute that it is still running, as `still` or `description`, with the elapsed time and the last line, even
     when no line came. With `log`, other non-interactive output shows the phase and progress at most every 30 seconds.
     """
+    if _board:
+        with _board.line(description, expected) as on_line:
+            yield on_line
+        return
     if not messages.is_interactive:
         if in_ci() and not log:
             messages.print(description)
@@ -349,6 +379,150 @@ def activity(
     ) as progress:
         task = progress.add_task(description, line="")
         yield lambda line: progress.update(task, line=Text.from_ansi(line).plain.strip()[:100])
+
+
+@dataclass
+class _Line:
+    """A line of a Board: an activity, its `step` and the `last` line it gave."""
+
+    description: str
+    expected: float | None
+    started: float = field(default_factory=time.monotonic)
+    step: str = ""
+    last: str = ""
+
+
+@dataclass
+class Board:
+    """The progress of activities running at the same time, like the builds, on a terminal, like cargo-nextest's: a
+    main line, with the `title`, the elapsed time, a bar of the `done` part of the `total` expected duration, the
+    `summary` and the time left, from `left`, or by `jobs` at once, then a line for each running activity, with its
+    elapsed time over its expected one, its step, and the last line it gave. See board().
+    """
+
+    title: str
+    total: float
+    jobs: int
+    left: Callable[[], float] | None = None
+    """The time left, if known better than by the `total` left divided by the `jobs`."""
+    done: float = 0
+    summary: str = ""
+    lines: dict[int, _Line] = field(default_factory=dict)
+    started: float = field(default_factory=time.monotonic)
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    spinner: Spinner = field(default_factory=lambda: Spinner("dots"))
+
+    @contextlib.contextmanager
+    def line(self, description: str, expected: float | None = None) -> Generator[Callable[[str], None]]:
+        """Show a line for `description`, as long as it runs, expected to last `expected` seconds, with the step and
+        the last line given to the returned function: the steps of rpmbuild, like %build.
+        """
+        entry = _Line(description, expected)
+        with self.lock:
+            key = max(self.lines, default=0) + 1
+            self.lines[key] = entry
+
+        def update(line: str) -> None:
+            plain = Text.from_ansi(line).plain.strip()
+            if m := _STEP_RE.match(plain):
+                entry.step = f"%{m[1]}"
+            entry.last = plain[:200]
+
+        try:
+            yield update
+        finally:
+            with self.lock:
+                del self.lines[key]
+
+    def render(self) -> Group:
+        """Return what the board shows now."""
+        now = time.monotonic()
+        with self.lock:
+            lines = list(self.lines.values())
+        # the running ones count for their elapsed time, up to what they are expected to take
+        done = self.done + sum(min(now - e.started, e.expected) for e in lines if e.expected)
+        if self.left:
+            left = self.left()
+        else:  # the work left by the builds at once, but no less than what the running ones are expected to take still
+            running = max((e.expected - (now - e.started) for e in lines if e.expected), default=0)
+            left = max(max(self.total - done, 0) / max(self.jobs, 1), running)
+        main = Table.grid(padding=(0, 1))
+        main.add_row(
+            self.spinner.render(now),
+            Text(self.title, style="bold"),
+            Text(f"[{duration(now - self.started)}]", style="progress.elapsed"),
+            ProgressBar(total=max(self.total, 1), completed=min(done, self.total), width=30, complete_style="blue"),
+            Text.from_markup(self.summary + (f", ~{duration(left)} left" if self.total else "")),
+        )
+        width = max((Text.from_markup(e.description).cell_len for e in lines), default=0)
+        elapsed = [duration(now - e.started) + (f" ~{duration(e.expected)}" if e.expected else "") for e in lines]
+        elapsed_width = max(map(len, elapsed), default=0)
+        rows = []
+        for e, spent in zip(lines, elapsed, strict=True):
+            over = e.expected is not None and now - e.started > e.expected
+            description = Text.from_markup(e.description)
+            description.pad_right(width - description.cell_len)
+            row = Text.assemble(
+                "    ",
+                (f"[{spent:>{elapsed_width}}]", "yellow" if over else "progress.elapsed"),
+                " ",
+                description,
+                " ",
+                (f"{e.step:<10}", "cyan"),
+                (e.last, "dim"),
+            )
+            row.no_wrap, row.overflow = True, "ellipsis"
+            rows.append(row)
+        return Group(main, *rows)
+
+
+_board: Board | None = None
+"""The board shown on the terminal, if any: the activities show their lines in it, see activity()."""
+
+
+class _AboveBoard(io.StringIO):
+    """The output of the results' console while a board shows, on the same terminal: printed by the messages' console,
+    line by line, above the board, which a write of its own at the cursor would leave its lines behind of.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.pending = ""
+        self.lock = threading.Lock()
+
+    def write(self, text: str) -> int:
+        with self.lock:
+            *lines, self.pending = (self.pending + text).split("\n")
+            for line in lines:
+                messages.print(Text.from_ansi(line))
+        return len(text)
+
+    def isatty(self) -> bool:
+        return True
+
+
+@contextlib.contextmanager
+def board(title: str, total: float, jobs: int, left: Callable[[], float] | None = None) -> Generator[Board]:
+    """Show a Board of activities running at the same time, expected to last `total` seconds, by `jobs` at once, with
+    the time `left` they give, if any, on a terminal: the activities started meanwhile show their lines in it, and the
+    messages show above it. Elsewhere, like in CI, it shows nothing, and the activities show as usual.
+    """
+    global _board  # noqa: PLW0603, the one live display rich allows
+    shown = Board(title, total, jobs, left)
+    if not messages.is_interactive or _board:
+        yield shown
+        return
+    above = console.is_terminal  # rather than a pipe, like that of tee
+    with Live(get_renderable=shown.render, console=messages, transient=True, refresh_per_second=8):
+        _board = shown
+        if above:
+            console.file = _AboveBoard()
+        try:
+            yield shown
+        finally:
+            _board = None
+            if above:
+                console.file = sys.stdout
 
 
 @dataclass

@@ -93,11 +93,22 @@ def extra_rpms(project: Project) -> list[Path]:
 
 @dataclass
 class LocalRepo:
-    """A repository of locally built packages, as seen by the containers."""
+    """A repository of locally built packages, as seen by the containers: the repository of our builds of the project,
+    or, with a `name`, one of its own, for the build of that package, which builds at the same time as others have
+    theirs.
+    """
 
     project: Project
     path: Path
     up_to_date: bool = False
+    name: str = ""
+
+    @property
+    def id(self) -> str:
+        """Return its id in the containers: one of its own for a build, as they share the cache of dnf, whose
+        metadata of another one, refreshed by another build, would otherwise replace its own.
+        """
+        return f"{repo_id(self.project)}-{self.name}" if self.name else repo_id(self.project)
 
     def reset(self, *, extra_upstream: bool = True) -> None:
         """Start the repository over, with only the extra upstream RPMs, or empty."""
@@ -115,8 +126,8 @@ class LocalRepo:
     def volumes(self) -> list[str]:
         """Return the volumes making the repository available to a container, as the xcraft repository."""
         self.index()
-        repo_file = self.project.state / "xcraft.repo"
-        repo_file.write_text(REPO_FILE.format(repo=repo_id(self.project)))
+        repo_file = self.path.with_name(f"{self.path.name}.repo")
+        repo_file.write_text(REPO_FILE.format(repo=self.id))
         return [f"{self.path}:/xcraft-repo:ro", f"{repo_file}:/etc/yum.repos.d/xcraft.repo:ro"]
 
     def index(self, signer: Signer | None = None) -> None:

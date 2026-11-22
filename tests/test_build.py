@@ -67,6 +67,45 @@ def should_build_against_local_builds_and_cache_them(root: Path) -> None:
     assert states() == {"trivial": "ready", "with-deps": "ready"}
 
 
+def _timed(root: Path, name: str, requires: str = "", build: str = "") -> None:
+    """Write a package whose build writes when it starts and ends in its log, after `build`."""
+    write_spec(root, name, requires, files=f"/usr/share/xcraft-test/{name}")
+    spec = root / f"base/{name}/{name}.spec"
+    timed = f"%build\n{build}\necho start=$(date +%s.%N)\nsleep 2\necho end=$(date +%s.%N)\n%install\n"
+    spec.write_text(spec.read_text().replace("%install\n", timed))
+
+
+def _span(root: Path, name: str) -> tuple[float, float]:
+    """Return when the build of `name` started and ended, as its log says, see _timed()."""
+    log = root.joinpath(f".xcraft/logs/{name}.log").read_text()
+    return float(re.findall(r"^start=(\S+)$", log, re.MULTILINE)[-1]), float(
+        re.findall(r"^end=(\S+)$", log, re.MULTILINE)[-1]
+    )
+
+
+def should_build_the_packages_independent_of_each_other_at_once(root: Path) -> None:
+    _timed(root, "first")
+    _timed(root, "second")
+    _timed(root, "after-first", requires="first")
+    code, output = xcraft("build", "--jobs", "3", "first", "second", "after-first")
+    assert code == 0, output
+    assert results(output)[-1] == "3 built"
+    first, second, after = (_span(root, name) for name in ("first", "second", "after-first"))
+    # at the same time
+    assert first[0] < second[1]
+    assert second[0] < first[1]
+    assert after[0] > first[1]  # once what it is built against is built
+
+
+def should_show_the_warnings_of_builds_running_at_once_after_their_names(root: Path) -> None:
+    _timed(root, "first", build="echo 'warning: from first'")
+    _timed(root, "second", build="echo 'warning: from second'")
+    result = runner.invoke(app, ["build", "--jobs", "2", "first", "second"])
+    assert result.exit_code == 0, result.output
+    assert "first  | warning: from first" in result.stderr
+    assert "second | warning: from second" in result.stderr
+
+
 def should_build_all_the_packages_when_none_is_given(root: Path) -> None:
     code, output = xcraft("build", "--dry-run")
     assert code == 0, output
@@ -218,7 +257,9 @@ def should_put_ours_in_build_roots_instead_of_upstream_ones(root: Path) -> None:
     # the upstream one in the lock, like for the image, which the build does not get
     roots = load_lock(project).roots
     assert "kernel-headers" in roots.of(ARCH)["compiled"]
-    assert re.search(r"^ kernel-headers .* xcraft-[0-9a-f]{8} ", project.log("compiled").read_text(), re.MULTILINE)
+    assert re.search(
+        r"^ kernel-headers .* xcraft-[0-9a-f]{8}-compiled ", project.log("compiled").read_text(), re.MULTILINE
+    )
     # and ccache, for a compiler
     assert "ccache" in roots.shared["compiled"]
 
@@ -232,7 +273,7 @@ def should_replace_image_packages_by_ours_in_build_roots(root: Path) -> None:
     assert code == 0, output
     assert [line.split(" built")[0] for line in results(output)[:2]] == ["✓ openblas-srpm-macros", "✓ trivial"]
     log = root.joinpath(".xcraft/logs/trivial.log").read_text()
-    assert re.search(r"^Downgrading:\n openblas-srpm-macros .* xcraft-[0-9a-f]{8} ", log, re.MULTILINE)
+    assert re.search(r"^Downgrading:\n openblas-srpm-macros .* xcraft-[0-9a-f]{8}-trivial ", log, re.MULTILINE)
     assert re.search(r"^ toyrun .* xcraft-pinned ", log, re.MULTILINE), log
 
 

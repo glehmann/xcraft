@@ -135,24 +135,26 @@ def has_normal_build(project: Project, name: str) -> bool:
     )
 
 
-def builds_repo(project: Project, keys: dict[str, str], names: Iterable[str] | None = None) -> LocalRepo:
+def builds_repo(
+    project: Project, keys: dict[str, str], names: Iterable[str] | None = None, *, build: str = ""
+) -> LocalRepo:
     """Return the repository the builds run against, with the cached builds matching `keys`, of `names` only, or of
-    all the packages.
+    all the packages: the one of the build of `build`, if given, see LocalRepo.
     """
-    repo = LocalRepo(project, project.state / "repo")
+    repo = LocalRepo(project, project.state / ("repos/" + build if build else "repo"), name=build)
     repo.reset()
     for name in keys if names is None else names:
-        if (build := cached_build(project, name, keys[name])).exists():
-            os.utime(build)  # used, see xcraft clean --keep-days
-            repo.add(build)
+        if (cached := cached_build(project, name, keys[name])).exists():
+            os.utime(cached)  # used, see xcraft clean --keep-days
+            repo.add(cached)
     return repo
 
 
 def deps_repo(project: Project, name: str, keys: dict[str, str]) -> LocalRepo:
-    """Return the repository the build of `name` runs against: the builds of its dependencies, with their `keys`,
-    which its build root can have.
+    """Return the repository the build of `name` runs against, its own: the builds of its dependencies, with their
+    `keys`, which its build root can have.
     """
-    return builds_repo(project, keys, reachable(project.deps, project.deps[name]))
+    return builds_repo(project, keys, reachable(project.deps, project.deps[name]), build=name)
 
 
 def build_path(project: Project, name: str, key: str, fingerprint: str) -> str:

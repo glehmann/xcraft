@@ -138,7 +138,7 @@ def builds_removal(
     """
     state = project.state
     removal = _builds(project, keys, names, current=current, used_since=used_since)
-    return _existing({"local repositories": [state / "repo", state / "publish"], **removal})
+    return _existing({"local repositories": [state / "repo", state / "repos", state / "publish"], **removal})
 
 
 def caches_removal(project: Project, cache: str, names: list[str] | None = None) -> dict[str, list[Path]]:

@@ -241,6 +241,43 @@ SSH account with sudo only: it installs uv for the account, with the installer o
 password of sudo, and configures rootless podman. `--local` builds locally still. A builder makes development builds, signed by the developer's
 key: `--final` and `--key` build locally. See [the design](remote-builders-design.md).
 
+## Builds at once
+
+`xcraft build` and `xcraft repo` build the packages independent of each other at once: `--jobs` of them, `-j`, or
+`$XCRAFT_JOBS`. A package starts once those it is built against are done, the one starting the longest chain of builds
+first, from the durations of their last builds. Each compiler already uses all the processors, but many builds use
+them only part of the time: their configure scripts, links, tests and packaging, which the others fill. On 8
+processors, all the development builds of XCP-ng took 43 minutes one at a time, 33 two at once, and 28 three at once,
+the processors then busy 87% of the time: more at once compete for them, the large builds slowing each other down, for
+little more. A build alone kept about 4 processors busy on average, so the default is a third of the processors,
+rounded, 3 for 8, and one by 4 GiB of memory at most, as each build runs its compilers on all the processors, and
+links the large packages with LTO: 1 on the 4 processors of a CI runner, 5 for 16. Only measured with 8 processors:
+the longest chain of builds, about 11 minutes there, bounds the gain of more processors.
+
+Only the containers of the builds run at once: xcraft does the rest one package at a time, like the recordings in the
+lock and in `xcraft.builds`, and the checks and caching of the builds. Each build has its own repository of the builds
+of its dependencies, `.xcraft/repos/<package>`, under a repository id of its own: the containers share the cache of
+dnf, whose metadata of another build's repository would otherwise replace its own, between the refresh and the
+installation of its build root. A build finding what changes the build root of another one, like its dynamic
+BuildRequires, has it built again, as one at a time.
+
+On a terminal, a main line shows the progress of the builds, by their expected durations, how many are finished out
+of those to build, without the packages cached or fetched, and the time left, the rest of the builds replayed by their
+expected durations; and a line below it for each running build, with its elapsed time over its expected one, its step,
+like `%build`, and the last line of its log, like cargo-nextest, and the other activities meanwhile, like indexing a
+repository:
+
+```
+⠏ Building [12m04s] ━━━━━━━━━━━━━━╺━━━━━━━━━━━━━━━ 11/43, ~9m30s left
+    [ 4m12s ~7m40s] kernel       %build    LD [M] drivers/net/ethernet/intel/ice/ice.ko
+    [6m40s ~10m50s] openvswitch  %check    2154: ovn -- load balancing ok
+    [ 1m02s ~4m03s] xs-opam-repo %install  Wrote: /build/RPMS/x86_64/xs-opam-repo-6.99.0…
+```
+
+The errors and warnings of the builds show above it, after the name of their package, like docker compose:
+`openvswitch | warning: …`, as with `--verbose` the whole logs. In CI, each build shows its step when it starts, and
+every minute that it is still running.
+
 ## Builds without their tests
 
 `--nocheck`, for `xcraft build`, `repo`, `iso` and `boot`, builds the packages without running the tests of their

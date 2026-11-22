@@ -550,19 +550,19 @@ def should_count_builds_with_the_inputs_they_had(root: Path, monkeypatch: pytest
     edit(root, "changed")
     spec = root / "base/trivial/trivial.spec"
     before = spec.read_text()
-    build_shown = builder._Run._build_shown
+    launch = builder._Run._launch
 
-    def edited(run: builder._Run, name: str, status: str | None) -> builder.Result:
+    def edited(run: builder._Run, name: str, status: str | None) -> builder.Result | builder._Started:
         if name == "with-deps":  # a dependency of the build edited during the build
             spec.write_text(f"{before}# edited meanwhile\n")
-        return build_shown(run, name, status)
+        return launch(run, name, status)
 
-    monkeypatch.setattr(builder._Run, "_build_shown", edited)
+    monkeypatch.setattr(builder._Run, "_launch", edited)
     assert built() == [
         "trivial-1.0-1+b2~1.dev.xcpng8.99.noarch.rpm",
         "with-deps-1.0-1+b2~1.dev.xcpng8.99.noarch.rpm",
     ]
-    monkeypatch.setattr(builder._Run, "_build_shown", build_shown)
+    monkeypatch.setattr(builder._Run, "_launch", launch)
     # the counters of the inputs the builds had
     spec.write_text(before)
     assert built() == []

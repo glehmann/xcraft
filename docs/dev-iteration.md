@@ -261,11 +261,7 @@ to maintain.
 ### Other ideas
 
 - **Parallel builds** of the packages independent of each other, for full rebuilds, or a change of a package many are
-  built against, like xen: not for iterating on one package. The builds share the local repository of their
-  dependencies, `.xcraft/repo`, which each build would need its own of; the lock of the project is re-entrant in a
-  process, which does not keep the threads of the builds from writing `xcraft.lock` and `xcraft.builds` at the same
-  time; the build roots are installed one at a time anyway, under the lock of dnf; each compiler would use all the
-  processors; and the progress shows one activity at a time.
+  built against, like xen: done, see [Builds at once](builds.md#builds-at-once). Not for iterating on one package.
 
 ## Appendix: the OCaml dependency generator for the multifile protocol
 

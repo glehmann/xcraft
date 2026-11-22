@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 from xcraft import ccache, develop, localrepo, resolution
 from xcraft.cache import BuildError, build_keys, deps_repo
 from xcraft.container import DNF_LOCK, run_container
-from xcraft.localrepo import LocalRepo, repo_id
 from xcraft.sources import fetch_sources, parse_manifest
 from xcraft.specs import STAGED_TIME, hash_dir, main_spec
 
@@ -19,6 +18,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from xcraft.localrepo import LocalRepo
     from xcraft.project import Project
     from xcraft.resolution import Resolved
 
@@ -105,6 +105,11 @@ def dune_cache(project: Project, name: str) -> Path:
     return project.state / "dune-cache" / name
 
 
+def build_container(project: Project, name: str) -> str:
+    """Return the name of the container of the build of `name`."""
+    return f"xcraft-{project.id}-{name}"
+
+
 def run_build(
     project: Project,
     name: str,
@@ -132,7 +137,7 @@ def run_build(
     parameters = {
         "spec": main_spec(project.package_dirs[name]).name,
         "stage": rpmbuild_stage,
-        "repo": repo_id(project),
+        "repo": repo.id,
         "lock": DNF_LOCK,
         "autorev": suffix,
         "replace": " ".join(replace),
@@ -158,7 +163,7 @@ def run_build(
         run_container(
             project,
             (DUNE_CACHE if fast else "export DUNE_CACHE=disabled\n") + script,
-            container=f"xcraft-{project.id}-{name}",
+            container=build_container(project, name),
             volumes=volumes,
             network=network,
             log=log,

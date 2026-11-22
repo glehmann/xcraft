@@ -16,6 +16,7 @@ from xcraft.commands import (
     Arch,
     Dev,
     Final,
+    Jobs,
     Key,
     NoCheck,
     Packages,
@@ -123,6 +124,7 @@ def build(
     nocheck: NoCheck = False,
     arch: Arch = None,
     key: Key = None,
+    jobs: Jobs = None,
     local: Annotated[
         bool,
         typer.Option("--local", help="Build on this machine, rather than on the builder of the architecture, if any."),
@@ -152,6 +154,7 @@ def build(
             "--nocheck": nocheck,
             "--fetch": fetch,
             "--key": key or "",
+            "--jobs": str(jobs or ""),
         }
         _build_remotely(project, host, packages, options, ident)
         return
@@ -173,6 +176,7 @@ def build(
             nocheck=nocheck,
             fetch=fetch,
             lint_dev=lint_dev,
+            jobs=jobs,
         )
     if dev_built := [r.name for r in results if r.name in autorev and r.status == "built"]:
         if verbose:

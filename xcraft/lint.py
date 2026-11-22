@@ -19,7 +19,7 @@ from rich.text import Text
 
 from xcraft import container
 from xcraft.container import side_image
-from xcraft.display import activity, console, messages
+from xcraft.display import activity, console, messages, tagged
 from xcraft.packages import is_debug
 from xcraft.specs import main_spec
 
@@ -71,10 +71,10 @@ def _shown(path: Path) -> str:
     return str(path.relative_to(Path.cwd()) if path.is_relative_to(Path.cwd()) else path)
 
 
-def findings(project: Project, files: dict[str, list[Path]], *, show: str) -> dict[str, bool]:
+def findings(project: Project, files: dict[str, list[Path]], *, show: str, tag: bool = True) -> dict[str, bool]:
     """Return whether rpmlint finds errors in the `files` of each package, its spec, or its binary packages, or fails
-    to run, by package, showing `show` with the package linted while it runs, and the errors in red and the warnings
-    in yellow as they come.
+    to run, by package, showing `show` with the package linted while it runs, and what it finds as it comes, after the
+    name of the package, unless not `tag`, like for the editors, colored like the build logs.
     """
     native = project.on_host()
     image = side_image(native, "lint")
@@ -97,12 +97,16 @@ def findings(project: Project, files: dict[str, list[Path]], *, show: str) -> di
                 f"{shlex.join(cmd)} 2>&1 | tee /work/{name}.out; echo ${{PIPESTATUS[0]}} > /work/{name}.status"
             )
 
+        width, shown = max(map(len, files), default=0), tagged("", 0, _out())
+
         def on_line(line: str) -> None:
+            nonlocal shown
             if line.startswith(_MARK):
-                progress(line.removeprefix(_MARK))
+                progress(current := line.removeprefix(_MARK))
+                # after the name of the package, like the warnings of the builds
+                shown = tagged(current.rsplit(" (", 1)[0] if tag else "", width, _out())
             elif match := _FINDING.match(line.rstrip("\n")):
-                found = f"{specs.get(match[1], match[1])}{match[2]}"
-                _out().print(Text(found, style={"E": "red", "W": "yellow"}[match[3]]), soft_wrap=True)
+                shown(f"{specs.get(match[1], match[1])}{match[2]}")
 
         container.run(
             native,

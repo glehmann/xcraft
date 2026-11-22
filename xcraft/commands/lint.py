@@ -31,7 +31,7 @@ def _lint_spec(spec: Path, arch: str | None) -> None:
     if not (names := [n for n, d in project.package_dirs.items() if d.resolve() == spec.resolve().parent]):
         msg = f"{spec} is not in the directory of a package"
         raise typer.BadParameter(msg)
-    if linter.findings(project, {names[0]: [spec.resolve()]}, show=f"linting {spec.name}")[names[0]]:
+    if linter.findings(project, {names[0]: [spec.resolve()]}, show=f"linting {spec.name}", tag=False)[names[0]]:
         raise typer.Exit(1)
 
 
