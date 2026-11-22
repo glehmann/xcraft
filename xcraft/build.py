@@ -45,6 +45,7 @@ from xcraft.display import (
     console,
     diagnostics,
     duration,
+    for_package,
     in_ci,
     log_step,
     print_log_line,
@@ -144,7 +145,11 @@ def _shown(project: Project, name: str, tag: int, *, whole: bool = False) -> Gen
         yield tagged(name, tag, console)
         return
     with activity(
-        name, expected=previous_duration(project, name), still=f"building {name}", announced=False
+        name,
+        expected=previous_duration(project, name),
+        still="building",
+        announced=False,
+        shown=tagged(name, tag),
     ) as progress:
         diagnose = diagnostics(tagged(name, tag))
 
@@ -505,7 +510,8 @@ class _Run:
             self.step += 1
             self.steps = max(self.steps, self.step)  # or more than counted, when the keys changed
             if self.use_remote:
-                self._fetch_for(name)
+                with for_package(name, self.tag):
+                    self._fetch_for(name)
             self._record_fetched()  # for its build root, with what the builds of its dependencies generated
             if isinstance(launched := self._launch(name), _Started):
                 launched.turn = turn.pop_all()
@@ -522,10 +528,11 @@ class _Run:
             pinned.repository(project)  # here, for the build: checking it runs a container of its own, once
             if error := project.packages[name].error:
                 raise BuildError(error)
-            replace = image_replacements(resolved_root(project, name), name)
-            tree = prepare_tree(project, name, self.hashes[name])
-            repo = deps_repo(project, name, self.keys)
-            repo.index()  # here: indexing runs a container of its own
+            with for_package(name, self.tag):
+                replace = image_replacements(resolved_root(project, name), name)
+                tree = prepare_tree(project, name, self.hashes[name])
+                repo = deps_repo(project, name, self.keys)
+                repo.index()  # here: indexing runs a container of its own
         except (OSError, RuntimeError, ValueError) as e:
             _show_failure(project, name, e, verbose=self.verbose)
             return Result(name, "failed")
@@ -703,11 +710,12 @@ class _Run:
                     msg += "what they need"
                     raise BuildRootChangedError(msg) from None
                 raise
-            ccache.note_build(project, name, started.wall_start)
-            keys = self._checked(name, tree, started.suffix)
-            self._lint_binaries(name, tree)
-            self._cache(name, keys[name], tree)
-            record_rpm_deps(project, [name], keys, quiet=True)  # see _recorded_again()
+            with for_package(name, self.tag):
+                ccache.note_build(project, name, started.wall_start)
+                keys = self._checked(name, tree, started.suffix)
+                self._lint_binaries(name, tree)
+                self._cache(name, keys[name], tree)
+                record_rpm_deps(project, [name], keys, quiet=True)  # see _recorded_again()
         except BuildRootChangedError as e:
             console.print(f"[yellow]↻[/] {name}: {escape(str(e))}")
             return Result(name, "again")

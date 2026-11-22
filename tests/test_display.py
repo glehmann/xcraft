@@ -13,7 +13,7 @@ import pytest
 
 from tests import TOML, config, xcraft
 from xcraft import build
-from xcraft.display import TreeProgress, activity, console, diagnostics, print_message_line, read_tail
+from xcraft.display import TreeProgress, activity, console, diagnostics, for_package, print_message_line, read_tail
 from xcraft.project import Project
 
 if TYPE_CHECKING:
@@ -246,3 +246,40 @@ def should_show_the_diagnostics_of_a_build_after_its_package(
             on_line("gcc -O2 -c foo.c")
             on_line("error: boom")
         assert capsys.readouterr().err == "trivial   | error: boom\n"
+
+
+def should_show_a_build_still_running_after_its_package_in_ci(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr("xcraft.display._STILL_INTERVAL", 0.1)
+    monkeypatch.setenv("CI", "true")
+    (tmp_path / "xcraft.toml").write_text(TOML)
+    output = ""
+    with build._shown(Project(tmp_path, config()), "trivial", 9) as on_line:
+        on_line("gcc -c foo.c")
+        for _ in range(100):
+            output += capsys.readouterr().err
+            if "still" in output:
+                break
+            time.sleep(0.02)
+        else:
+            pytest.fail(f"no line telling the build is still running in 2s: {output!r}")
+    assert output.startswith("trivial   | still building (0s): gcc -c foo.c\n")
+
+
+def should_show_the_activities_of_a_package_after_its_name_in_ci(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("CI", "true")
+    with for_package("trivial", 9):
+        with activity("downloading the ccache of trivial"):
+            pass
+        with activity("downloading the build of with-deps"):  # of another package, named still
+            pass
+    with activity("parsing the specs"):  # of none
+        pass
+    assert capsys.readouterr().err.splitlines() == [
+        "trivial   | downloading the ccache",
+        "trivial   | downloading the build of with-deps",
+        "parsing the specs",
+    ]

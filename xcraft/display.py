@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import io
 import os
 import re
@@ -303,9 +304,9 @@ class _ExpectedBar(ProgressColumn):
 
 
 @contextlib.contextmanager
-def _still(what: str) -> Generator[Callable[[str], None]]:
+def _still(what: str, shown: Callable[[str], None] | None = None) -> Generator[Callable[[str], None]]:
     """Print every minute that `what` is still running, with the elapsed time and the last line given to the returned
-    function.
+    function, among the messages, or given to `shown`, like the lines of a build after the name of its package.
     """
     started, last, done = time.monotonic(), "", threading.Event()
 
@@ -315,7 +316,11 @@ def _still(what: str) -> Generator[Callable[[str], None]]:
 
     def report() -> None:
         while not done.wait(_STILL_INTERVAL):
-            messages.print(f"  still {what} ({duration(time.monotonic() - started)}): {last}", markup=False)
+            line = f"still {what} ({duration(time.monotonic() - started)}): {last}"
+            if shown:
+                shown(line)
+            else:
+                messages.print(f"  {line}", markup=False)
 
     thread = threading.Thread(target=report, daemon=True)
     thread.start()
@@ -334,13 +339,15 @@ def activity(
     log: bool = False,
     still: str | None = None,
     announced: bool = True,
+    shown: Callable[[str], None] | None = None,
 ) -> Generator[Callable[[str], None]]:
     """Show `description` with the elapsed time, and the last line given to the returned function.
 
-    With an `expected` duration in seconds, a bar shows the elapsed time over it. In CI, it shows `description`, then
-    every minute that it is still running, as `still` or `description`, with the elapsed time and the last line, even
-    when no line came, without `description` unless `announced`. With `log`, other non-interactive output shows the
-    phase and progress at most every 30 seconds.
+    With an `expected` duration in seconds, a bar shows the elapsed time over it. In CI, it shows `description`, unless
+    not `announced`, then every minute that it is still running, as `still` or `description`, with the elapsed time
+    and the last line, even when no line came, given to `shown` if any. With `log`, other non-interactive output shows
+    the phase and progress at most every 30 seconds. The activities of a package show after its name, see
+    for_package().
     """
     if _board:
         with _board.line(description, expected) as on_line:
@@ -348,9 +355,13 @@ def activity(
         return
     if not messages.is_interactive:
         if in_ci() and not log:
+            plain = Text.from_markup(description).plain
+            if package := _package.get():  # after its name, like the lines of its build
+                name, width = package
+                plain, shown = plain.removesuffix(f" of {name}"), shown or tagged(name, width)
             if announced:
-                messages.print(description)
-            with _still(still or Text.from_markup(description).plain) as on_line:
+                (shown or messages.print)(plain if package else description)
+            with _still(still or plain, shown) as on_line:
                 yield on_line
             return
         if not log:
@@ -478,6 +489,22 @@ class Board:
             row.no_wrap, row.overflow = True, "ellipsis"
             rows.append(row)
         return Group(main, *rows)
+
+
+_package: contextvars.ContextVar[tuple[str, int] | None] = contextvars.ContextVar("package", default=None)
+"""The package the activities are for meanwhile, if any, with the width of the names of the packages: for_package()."""
+
+
+@contextlib.contextmanager
+def for_package(name: str, width: int) -> Generator[None]:
+    """Show the activities meanwhile as those of the package `name`, in CI: after its name, padded to `width`, like the
+    lines of its build, without the name at the end of their descriptions, like downloading the ccache of `name`.
+    """
+    token = _package.set((name, width))
+    try:
+        yield
+    finally:
+        _package.reset(token)
 
 
 _board: Board | None = None
