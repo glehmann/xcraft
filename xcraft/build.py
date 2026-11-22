@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 from rich.markup import escape
+from rich.text import Text
 
 from xcraft import buildid, buildkey, ccache, container, develop, lint, pinned, remote, resolution
 from xcraft.builds import load_builds
@@ -272,9 +273,10 @@ def _lock_state(project: Project) -> bytes:
     return (path.read_bytes() if (path := lock_path(project)).exists() else b"") + records
 
 
-def _show_failure(project: Project, name: str, error: Exception, *, verbose: bool) -> None:
+def _show_failure(project: Project, name: str, error: Exception, *, verbose: bool, tag: int) -> None:
     """Show why the build of `name` failed, with the end of its log when it failed in the build environment, after
-    the whole log in CI, to debug it there: folded on GitHub Actions.
+    the whole log in CI, to debug it there: folded on GitHub Actions. The end of its log follows its name, padded to
+    `tag`, like the other lines of its build; the whole log is as xcraft log shows it.
     """
     console.print(f"[bold red]✗[/] {name}: {escape(str(error))}")
     if isinstance(error, ContainerError) and not verbose:
@@ -283,8 +285,7 @@ def _show_failure(project: Project, name: str, error: Exception, *, verbose: boo
             fold = os.environ.get("GITHUB_ACTIONS") == "true"
             console.file.write(f"::group::full {name} build log\n" if fold else f"full {name} build log:\n")
             console.file.write("".join(f"{line}\n" for line in lines) + ("::endgroup::\n" if fold else ""))
-        print_log_lines(log_step(lines)[-40:])
-        console.print(f"[dim]full log: xcraft log {name}[/]")
+        print_log_lines([*log_step(lines)[-40:], Text(f"full log: xcraft log {name}", style="dim")], name, tag)
 
 
 @dataclass
@@ -534,7 +535,7 @@ class _Run:
                 repo = deps_repo(project, name, self.keys)
                 repo.index()  # here: indexing runs a container of its own
         except (OSError, RuntimeError, ValueError) as e:
-            _show_failure(project, name, e, verbose=self.verbose)
+            _show_failure(project, name, e, verbose=self.verbose, tag=self.tag)
             return Result(name, "failed")
         shown = ExitStack()
         on_line = shown.enter_context(_shown(project, name, self.tag, whole=self.verbose))
@@ -571,7 +572,9 @@ class _Run:
         self._lint_specs([name])
         if name in self.autorev or not self.linted.get(name):
             return None
-        _show_failure(self.project, name, BuildError("rpmlint found errors in its spec"), verbose=self.verbose)
+        _show_failure(
+            self.project, name, BuildError("rpmlint found errors in its spec"), verbose=self.verbose, tag=self.tag
+        )
         return Result(name, "failed")
 
     def _lint_binaries(self, name: str, tree: Path) -> None:
@@ -609,7 +612,7 @@ class _Run:
             n for n in sorted(reachable(project.deps, [name])) if buildkey.directory(project, n) != self.hashes[n]
         ]:
             error = BuildError(f"{', '.join(edited)} changed since the builds started: build again")
-            _show_failure(project, name, error, verbose=self.verbose)
+            _show_failure(project, name, error, verbose=self.verbose, tag=self.tag)
             return Result(name, "failed")
         return Result(name, "cached") if self._cached(name) else None  # nothing to show: only the counts
 
@@ -651,7 +654,9 @@ class _Run:
         if self.build_missing and not reused:
             return None
         why = "not in the remote storage" if self.use_remote else "not built, and the remote storage is not used"
-        _show_failure(self.project, name, BuildError(f"{why}, for {self.project.arch}"), verbose=self.verbose)
+        _show_failure(
+            self.project, name, BuildError(f"{why}, for {self.project.arch}"), verbose=self.verbose, tag=self.tag
+        )
         return Result(name, "failed")
 
     def _fetch_for(self, name: str) -> None:
@@ -720,7 +725,7 @@ class _Run:
             console.print(f"[yellow]↻[/] {name}: {escape(str(e))}")
             return Result(name, "again")
         except (OSError, RuntimeError, ValueError) as e:  # ValueError: like invalid JSON the build wrote
-            _show_failure(project, name, e, verbose=self.verbose)
+            _show_failure(project, name, e, verbose=self.verbose, tag=self.tag)
             return Result(name, "failed")
         finally:
             started.turn.close()

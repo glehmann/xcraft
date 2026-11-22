@@ -321,7 +321,10 @@ def should_skip_dependents_when_a_build_fails(root: Path, monkeypatch: pytest.Mo
     # the whole log, folded, in CI, then the failed rpmbuild step
     log = output[output.index("::group::full trivial build log\n") : output.index("::endgroup::\n")]
     assert "Executing(%prep)" in log
-    assert "echo 'build failure'" in output[output.index("::endgroup::\n") :]
+    # then its end, after the name of the package, padded to the longest of the builds, with-deps
+    end = output[output.index("::endgroup::\n") :]
+    assert "trivial   | + echo 'build failure'" in end
+    assert "trivial   | full log: xcraft log trivial" in end
     assert "- with-deps skipped, needs trivial" in output
     assert output.splitlines()[-1] == "1 failed, 1 skipped"
     code, output = xcraft("log", "trivial", "--step", "build", "--grep", "failure")

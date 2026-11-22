@@ -149,12 +149,23 @@ def print_message_line(line: str) -> None:
     messages.print(_colorize(line))
 
 
-def print_log_lines(lines: Iterable[str]) -> None:
-    """Print lines of build log with colors, at once: not mixed with those of other builds running meanwhile."""
-    console.print(Text("\n").join(_colorize(line) for line in lines))
-
-
 _TAG_STYLES = ["cyan", "magenta", "green", "blue", "bright_cyan", "bright_magenta", "bright_green", "bright_blue"]
+
+
+def _tagged_line(tag: str, width: int, line: str | Text) -> Text:
+    """Return a line of build log after `tag`, padded to `width`, colored as xcraft log colors it, or `line` already
+    colored: the style of the tag only, the name and its bar. Without `tag`, the line alone.
+    """
+    text = line if isinstance(line, Text) else _colorize(line)
+    style = _TAG_STYLES[sum(tag.encode()) % len(_TAG_STYLES)]
+    return Text.assemble((f"{tag.ljust(width)} |", style), " ", text) if tag else text
+
+
+def print_log_lines(lines: Iterable[str | Text], tag: str = "", width: int = 0) -> None:
+    """Print lines of build log with colors, after `tag`, if any, see tagged(), at once: not mixed with those of other
+    builds running meanwhile.
+    """
+    console.print(Text("\n").join(_tagged_line(tag, width, line) for line in lines))
 
 
 def tagged(tag: str, width: int, out: Console = messages) -> Callable[[str], None]:
@@ -162,11 +173,7 @@ def tagged(tag: str, width: int, out: Console = messages) -> Callable[[str], Non
     build running with others, or of the findings of rpmlint, among the messages, or `out`, like the results for whole
     logs. Without `tag`, the lines alone.
     """
-    style = _TAG_STYLES[sum(tag.encode()) % len(_TAG_STYLES)]
-    # assembled: the style of the name and its bar only, the line as xcraft log colors it
-    return lambda line: out.print(
-        Text.assemble((f"{tag.ljust(width)} |", style), " ", _colorize(line)) if tag else _colorize(line)
-    )
+    return lambda line: out.print(_tagged_line(tag, width, line))
 
 
 def diagnostics(on_line: Callable[[str], None]) -> Callable[[str], None]:
