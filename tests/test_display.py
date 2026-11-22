@@ -240,12 +240,12 @@ def should_show_the_diagnostics_of_a_build_after_its_package(
 ) -> None:
     # of a package without a previous duration, in CI too, padded to the longest name of the builds
     (tmp_path / "xcraft.toml").write_text(TOML)
-    for ci in ("", "true"):
+    for ci, start in (("", ""), ("true", "trivial   | building\n")):  # its start in CI
         monkeypatch.setenv("CI", ci)
         with build._shown(Project(tmp_path, config()), "trivial", 9) as on_line:
             on_line("gcc -O2 -c foo.c")
             on_line("error: boom")
-        assert capsys.readouterr().err == "trivial   | error: boom\n"
+        assert capsys.readouterr().err == f"{start}trivial   | error: boom\n"
 
 
 def should_show_a_build_still_running_after_its_package_in_ci(
@@ -264,7 +264,7 @@ def should_show_a_build_still_running_after_its_package_in_ci(
             time.sleep(0.02)
         else:
             pytest.fail(f"no line telling the build is still running in 2s: {output!r}")
-    assert output.startswith("trivial   | still building (0s): gcc -c foo.c\n")
+    assert output.startswith("trivial   | building\ntrivial   | still building (0s): gcc -c foo.c\n")
 
 
 def should_show_the_activities_of_a_package_after_its_name_in_ci(

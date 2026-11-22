@@ -71,10 +71,13 @@ def _shown(path: Path) -> str:
     return str(path.relative_to(Path.cwd()) if path.is_relative_to(Path.cwd()) else path)
 
 
-def findings(project: Project, files: dict[str, list[Path]], *, show: str, tag: bool = True) -> dict[str, bool]:
+def findings(
+    project: Project, files: dict[str, list[Path]], *, show: str, tag: bool = True, width: int = 0
+) -> dict[str, bool]:
     """Return whether rpmlint finds errors in the `files` of each package, its spec, or its binary packages, or fails
     to run, by package, showing `show` with the package linted while it runs, and what it finds as it comes, after the
-    name of the package, unless not `tag`, like for the editors, colored like the build logs.
+    name of the package, padded to `width`, or to the longest name of `files`, unless not `tag`, like for the editors,
+    colored like the build logs.
     """
     native = project.on_host()
     image = side_image(native, "lint")
@@ -97,7 +100,7 @@ def findings(project: Project, files: dict[str, list[Path]], *, show: str, tag: 
                 f"{shlex.join(cmd)} 2>&1 | tee /work/{name}.out; echo ${{PIPESTATUS[0]}} > /work/{name}.status"
             )
 
-        width, shown = max(map(len, files), default=0), tagged("", 0, _out())
+        width, shown = width or max(map(len, files), default=0), tagged("", 0, _out())
 
         def on_line(line: str) -> None:
             nonlocal shown

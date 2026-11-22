@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from tests import ARCH, TOML, TOYS, copy_project, git, results, runner, write_spec, xcraft
+from tests import ARCH, TOML, TOYS, copy_project, edit, git, results, runner, write_spec, xcraft
 from xcraft import build as builder
 from xcraft import buildid, clean, container, localrepo, pinned, process, publish, resolution
 from xcraft.__main__ import app
@@ -68,10 +68,12 @@ def should_build_against_local_builds_and_cache_them(root: Path) -> None:
 
 
 def _timed(root: Path, name: str, requires: str = "", build: str = "") -> None:
-    """Write a package whose build writes when it starts and ends in its log, after `build`."""
+    """Write a package whose build writes when it starts and ends in its log, after `build`: 10 s apart, for the next
+    build to start meanwhile, even on a loaded machine.
+    """
     write_spec(root, name, requires, files=f"/usr/share/xcraft-test/{name}")
     spec = root / f"base/{name}/{name}.spec"
-    timed = f"%build\n{build}\necho start=$(date +%s.%N)\nsleep 2\necho end=$(date +%s.%N)\n%install\n"
+    timed = f"%build\n{build}\necho start=$(date +%s.%N)\nsleep 10\necho end=$(date +%s.%N)\n%install\n"
     spec.write_text(spec.read_text().replace("%install\n", timed))
 
 
@@ -110,6 +112,20 @@ def should_build_all_the_packages_when_none_is_given(root: Path) -> None:
     code, output = xcraft("build", "--dry-run")
     assert code == 0, output
     assert output.splitlines() == ["build    trivial", "build    with-deps", "2 to build"]
+
+
+def should_show_the_lint_of_the_specs_after_the_names_of_their_packages_in_ci(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CI", "true")
+    result = runner.invoke(app, ["build", "trivial"])
+    assert result.exit_code == 0, result.output
+    assert "trivial | linting the spec\n" in result.stderr
+    # with others, what rpmlint finds padded like the other lines of the builds, to the longest name, with-deps
+    edit(root, "linted again")
+    result = runner.invoke(app, ["build", "trivial", "with-deps"])
+    assert result.exit_code == 0, result.output
+    assert re.search(r"^trivial   \| \S*trivial\.spec:\S* [WE]: ", result.stdout, re.MULTILINE), result.stdout
 
 
 def should_show_the_diagnostics_after_the_names_of_their_packages_in_ci(

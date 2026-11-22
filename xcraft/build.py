@@ -139,12 +139,14 @@ def queued(project: Project) -> list[str]:
 @contextmanager
 def _shown(project: Project, name: str, tag: int, *, whole: bool = False) -> Generator[Callable[[str], None]]:
     """Show the build log of `name`, given line by line to the function yielded: whole with `whole`, or only its errors
-    and warnings, while it runs, on a line of the board of the builds on a terminal, and every minute in CI. The lines
-    shown follow the name of the package, padded to `tag`, like those of the other builds.
+    and warnings, while it runs, on a line of the board of the builds on a terminal, and in CI when it starts and every
+    minute. The lines shown follow the name of the package, padded to `tag`, like those of the other builds.
     """
     if whole:
         yield tagged(name, tag, console)
         return
+    if in_ci():  # its start, which its activity does not show there, after the name of the package
+        tagged(name, tag)("building")
     with activity(
         name,
         expected=previous_duration(project, name),
@@ -559,11 +561,17 @@ class _Run:
 
     def _lint_specs(self, names: list[str]) -> None:
         """Lint the specs of `names`, but those that cannot be parsed, which fail to build, and show what rpmlint
-        found.
+        found: the spec of one package after its name, like the lines of its build.
         """
         project = self.project
-        if names := [n for n in names if n not in self.linted and not project.packages[n].error]:
-            self.linted |= lint.findings(project, {n: [lint.spec(project, n)] for n in names}, show="linting the specs")
+        if not (names := [n for n in names if n not in self.linted and not project.packages[n].error]):
+            return
+        specs = {n: [lint.spec(project, n)] for n in names}
+        if len(names) > 1:
+            self.linted |= lint.findings(project, specs, show="linting the specs", width=self.tag)
+            return
+        with for_package(names[0], self.tag):
+            self.linted |= lint.findings(project, specs, show=f"linting the spec of {names[0]}", width=self.tag)
 
     def _lint_failed(self, name: str) -> Result | None:
         """Return the result of `name` when rpmlint found errors in its spec, failed for a final build: a development
@@ -584,7 +592,7 @@ class _Run:
         if name in self.autorev and not self.lint_dev:
             return
         files = {name: lint.binaries(tree / "RPMS")}
-        failed = lint.findings(self.project, files, show=f"linting the packages of {name}")[name]
+        failed = lint.findings(self.project, files, show=f"linting the packages of {name}", width=self.tag)[name]
         if name not in self.autorev and failed:
             msg = "rpmlint found errors in its packages"
             raise BuildError(msg)
