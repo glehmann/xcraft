@@ -258,7 +258,7 @@ def should_put_ours_in_build_roots_instead_of_upstream_ones(root: Path) -> None:
     roots = load_lock(project).roots
     assert "kernel-headers" in roots.of(ARCH)["compiled"]
     assert re.search(
-        r"^ kernel-headers .* xcraft-[0-9a-f]{8}-compiled ", project.log("compiled").read_text(), re.MULTILINE
+        r"^ kernel-headers .* xcraft-[0-9a-f]{8}-compiled\s", project.log("compiled").read_text(), re.MULTILINE
     )
     # and ccache, for a compiler
     assert "ccache" in roots.shared["compiled"]
@@ -273,7 +273,7 @@ def should_replace_image_packages_by_ours_in_build_roots(root: Path) -> None:
     assert code == 0, output
     assert [line.split(" built")[0] for line in results(output)[:2]] == ["✓ openblas-srpm-macros", "✓ trivial"]
     log = root.joinpath(".xcraft/logs/trivial.log").read_text()
-    assert re.search(r"^Downgrading:\n openblas-srpm-macros .* xcraft-[0-9a-f]{8}-trivial ", log, re.MULTILINE)
+    assert re.search(r"^Downgrading:\n openblas-srpm-macros .* xcraft-[0-9a-f]{8}-trivial\s", log, re.MULTILINE)
     assert re.search(r"^ toyrun .* xcraft-pinned ", log, re.MULTILINE), log
 
 
