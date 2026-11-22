@@ -658,7 +658,7 @@ def should_fetch_pushed_builds_rather_than_building_them(root: Path, monkeypatch
     assert code == 0, output
     assert results(output)[0] == "↓ trivial fetched"
     assert results(output)[-1] == "1 built, 1 fetched"
-    assert "[1/1] building with-deps" in output  # but trivial, fetched rather than built
+    assert "✓ with-deps built" in output  # but trivial, fetched rather than built
     (fetched,) = root.glob(f".xcraft/cache/builds/*/{ARCH}/trivial")
     assert list(fetched.glob("*/RPMS/noarch/trivial-1.0-1+b1.xcpng8.99.noarch.rpm"))
     # built, even though the storage has it
@@ -692,7 +692,6 @@ def should_fetch_only_the_builds_others_are_built_against(root: Path, monkeypatc
     code, output = xcraft("build", "--fetch=needed")
     monkeypatch.delenv("CI")
     assert code == 0, output
-    assert "[1/1] building with-deps" in output  # but those in the storage
     assert [line.split(" in ")[0] for line in results(output)] == [
         "↓ trivial fetched",
         "✓ with-deps built",

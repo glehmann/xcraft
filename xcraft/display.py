@@ -168,17 +168,17 @@ def tagged(tag: str, width: int, out: Console = messages) -> Callable[[str], Non
     )
 
 
-def diagnostics(on_line: Callable[[str], None], header: str = "") -> Callable[[str], None]:
+def diagnostics(on_line: Callable[[str], None]) -> Callable[[str], None]:
     """Return a function giving to `on_line` the errors and warnings among the lines of build log it gets.
 
     Those are the lines with ``error:`` or ``FAILED``, those of rpm's warnings, starting
     with ``warning:``, and the indented ones under the ``RPM build errors:`` and ``RPM
-    build warnings:`` of rpmbuild. `header` is given before the first of them, if any.
+    build warnings:`` of rpmbuild.
     """
     under_rpmbuild = False
 
     def filter_line(line: str) -> None:
-        nonlocal under_rpmbuild, header
+        nonlocal under_rpmbuild
         plain = Text.from_ansi(line).plain.rstrip()
         if _RPMBUILD_DIAGNOSTICS_RE.match(plain):
             under_rpmbuild = True
@@ -187,9 +187,6 @@ def diagnostics(on_line: Callable[[str], None], header: str = "") -> Callable[[s
             if not _DIAGNOSTIC_RE.search(plain):
                 return
         if plain.strip():
-            if header:
-                on_line(header)
-                header = ""
             on_line(line)
 
     return filter_line
@@ -331,13 +328,19 @@ def _still(what: str) -> Generator[Callable[[str], None]]:
 
 @contextlib.contextmanager
 def activity(
-    description: str, expected: float | None = None, *, log: bool = False, still: str | None = None
+    description: str,
+    expected: float | None = None,
+    *,
+    log: bool = False,
+    still: str | None = None,
+    announced: bool = True,
 ) -> Generator[Callable[[str], None]]:
     """Show `description` with the elapsed time, and the last line given to the returned function.
 
     With an `expected` duration in seconds, a bar shows the elapsed time over it. In CI, it shows `description`, then
     every minute that it is still running, as `still` or `description`, with the elapsed time and the last line, even
-    when no line came. With `log`, other non-interactive output shows the phase and progress at most every 30 seconds.
+    when no line came, without `description` unless `announced`. With `log`, other non-interactive output shows the
+    phase and progress at most every 30 seconds.
     """
     if _board:
         with _board.line(description, expected) as on_line:
@@ -345,7 +348,8 @@ def activity(
         return
     if not messages.is_interactive:
         if in_ci() and not log:
-            messages.print(description)
+            if announced:
+                messages.print(description)
             with _still(still or Text.from_markup(description).plain) as on_line:
                 yield on_line
             return

@@ -165,14 +165,12 @@ def should_show_only_the_errors_and_warnings_of_build_output() -> None:
     ]
 
 
-def should_show_the_step_header_before_its_first_diagnostic() -> None:
+def should_give_only_the_diagnostics() -> None:
     shown: list[str] = []
-    on_line = diagnostics(shown.append, header="[1/2] building foo")
-    on_line("gcc -O2 -c foo.c")
-    assert shown == []
-    for line in ["error: one", "error: two"]:
+    on_line = diagnostics(shown.append)
+    for line in ["gcc -O2 -c foo.c", "error: one", "error: two"]:
         on_line(line)
-    assert shown == ["[1/2] building foo", "error: one", "error: two"]
+    assert shown == ["error: one", "error: two"]
 
 
 def should_leave_the_last_terminal_column_free() -> None:
@@ -186,12 +184,12 @@ def should_leave_the_last_terminal_column_free() -> None:
 
 
 def should_print_diagnostics_as_messages_on_stderr(capsys: pytest.CaptureFixture[str]) -> None:
-    on_line = diagnostics(print_message_line, header="[1/2] building foo")
+    on_line = diagnostics(print_message_line)
     on_line("gcc -O2 -c foo.c")
     on_line("warning: File listed twice: /boot/grub2")
     output = capsys.readouterr()
     assert output.out == ""
-    assert output.err == "[1/2] building foo\nwarning: File listed twice: /boot/grub2\n"
+    assert output.err == "warning: File listed twice: /boot/grub2\n"
 
 
 def should_show_colours_without_progress_frames_in_ci() -> None:
@@ -237,13 +235,14 @@ def should_show_the_progress_of_all_the_files_of_a_download() -> None:
     assert lines == ["0/2 files, 3.0 MiB"]
 
 
-def should_show_the_build_step_before_its_first_diagnostic(
+def should_show_the_diagnostics_of_a_build_after_its_package(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # of a package without a previous duration, out of CI
+    # of a package without a previous duration, in CI too, padded to the longest name of the builds
     (tmp_path / "xcraft.toml").write_text(TOML)
-    monkeypatch.delenv("CI", raising=False)
-    with build._shown(Project(tmp_path, config()), "trivial", "[1/1]") as on_line:
-        on_line("gcc -O2 -c foo.c")
-        on_line("error: boom")
-    assert capsys.readouterr().err == "[1/1] building trivial\nerror: boom\n"
+    for ci in ("", "true"):
+        monkeypatch.setenv("CI", ci)
+        with build._shown(Project(tmp_path, config()), "trivial", 9) as on_line:
+            on_line("gcc -O2 -c foo.c")
+            on_line("error: boom")
+        assert capsys.readouterr().err == "trivial   | error: boom\n"

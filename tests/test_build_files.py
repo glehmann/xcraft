@@ -479,7 +479,7 @@ def ours_cached(
     monkeypatch.setattr(lint, "findings", lambda *_, **__: {})
     monkeypatch.setattr(build, "record_rpm_deps", lambda *_, **__: False)
 
-    def built(run: build._Run, name: str, _step: str | None) -> build.Result:
+    def built(run: build._Run, name: str) -> build.Result:
         cache.cached_build(project, name, run.keys[name]).mkdir(parents=True)
         return build.Result(name, "built")
 
@@ -503,10 +503,10 @@ def should_build_packages_as_they_were_when_the_builds_started(
     ours_cached(project, monkeypatch, {"a": set(), "c": {"a"}, "b": {"a", "c"}}, ["b"])
     fake = build._Run._launch
 
-    def editing(run: build._Run, name: str, step: str | None) -> build.Result | build._Started:
+    def editing(run: build._Run, name: str) -> build.Result | build._Started:
         if name == "c":  # a, which b depends on, edited meanwhile
             (project.root / "base/a/a.spec").write_text("a edited")
-        return fake(run, name, step)
+        return fake(run, name)
 
     monkeypatch.setattr(build._Run, "_launch", editing)
     # the builds work on the packages as they were at the start: b fails, rather than b cached with the old a
@@ -545,13 +545,13 @@ def should_build_again_when_a_recording_during_the_builds_changes_a_key(
     keys = ours_cached(project, monkeypatch, {"a": set(), "b": {"a"}, "c": {"b"}}, ["a", "b"])
     fake = build._Run._launch
 
-    def recording(run: build._Run, name: str, step: str | None) -> build.Result | build._Started:
+    def recording(run: build._Run, name: str) -> build.Result | build._Started:
         # what changes the build root of b, cached already, found during the build of c after it, like by another
         # command
         builds = load_builds(project)
         builds.buildrequires.shared["b"] = ["found"]
         save_builds(project, builds)
-        return fake(run, name, step)
+        return fake(run, name)
 
     monkeypatch.setattr(build._Run, "_launch", recording)
     results, after, _ = build.build(project, ["c"])

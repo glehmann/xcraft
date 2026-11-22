@@ -112,12 +112,15 @@ def should_build_all_the_packages_when_none_is_given(root: Path) -> None:
     assert output.splitlines() == ["build    trivial", "build    with-deps", "2 to build"]
 
 
-def should_count_only_the_packages_to_build_in_the_steps(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    assert xcraft("build", "trivial")[0] == 0
+def should_show_the_diagnostics_after_the_names_of_their_packages_in_ci(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("CI", "true")
-    result = runner.invoke(app, ["build"])
+    result = runner.invoke(app, ["build", "--jobs", "1"])
     assert result.exit_code == 0, result.output
-    assert "[1/1] building with-deps" in result.stderr
+    # padded to the longest name, with-deps
+    assert "trivial   | warning: bogus date in %changelog" in result.stderr
+    assert "building trivial" not in result.stderr  # nor a header of its step
 
 
 def should_not_cache_a_build_when_its_spec_changed_meanwhile(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:

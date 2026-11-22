@@ -275,8 +275,8 @@ repository:
 ```
 
 The errors and warnings of the builds show above it, after the name of their package, like docker compose:
-`openvswitch | warning: …`, as with `--verbose` the whole logs. In CI, each build shows its step when it starts, and
-every minute that it is still running.
+`openvswitch | warning: …`, as with `--verbose` the whole logs, and the findings of rpmlint. In CI, without the board,
+the same lines show, and every minute each build still running, with the last line of its log.
 
 ## Builds without their tests
 

@@ -47,10 +47,8 @@ from xcraft.display import (
     duration,
     in_ci,
     log_step,
-    messages,
     print_log_line,
     print_log_lines,
-    print_message_line,
     read_tail,
     tagged,
 )
@@ -137,22 +135,18 @@ def queued(project: Project) -> list[str]:
 
 
 @contextmanager
-def _shown(project: Project, name: str, step: str | None, tag: int = 0) -> Generator[Callable[[str], None]]:
-    """Show the build log of `name`, given line by line to the function yielded: whole without `step`, or only its
-    errors and warnings, with the build at `step` shown while it runs. With a `tag` width, as several builds run at
-    once, the lines shown follow the name of the package, padded to it, rather than a header.
+def _shown(project: Project, name: str, tag: int, *, whole: bool = False) -> Generator[Callable[[str], None]]:
+    """Show the build log of `name`, given line by line to the function yielded: whole with `whole`, or only its errors
+    and warnings, while it runs, on a line of the board of the builds on a terminal, and every minute in CI. The lines
+    shown follow the name of the package, padded to `tag`, like those of the other builds.
     """
-    if not step:
-        yield tagged(name, tag, console) if tag else print_log_line
+    if whole:
+        yield tagged(name, tag, console)
         return
-    # on a terminal, a line of the board of the builds; elsewhere, like in CI, the step and the estimate
-    description = name if messages.is_interactive else f"{step} building {name}{_estimate(project, name)}"
-    with activity(description, expected=previous_duration(project, name), still=f"building {name}") as progress:
-        # the errors and warnings above the progress, like with the whole log, after the step, which CI shows
-        if tag:
-            diagnose = diagnostics(tagged(name, tag))
-        else:
-            diagnose = diagnostics(print_message_line, header="" if in_ci() else f"{step} building {name}")
+    with activity(
+        name, expected=previous_duration(project, name), still=f"building {name}", announced=False
+    ) as progress:
+        diagnose = diagnostics(tagged(name, tag))
 
         def on_line(line: str) -> None:
             progress(line)
@@ -372,7 +366,7 @@ class _Run:
     board: Board | None = field(default=None, init=False)
     """The board of the builds, on a terminal, see display.board()."""
     tag: int = field(default=0, init=False)
-    """The width of the names of the packages, which their lines follow when several build at once, see _shown()."""
+    """The width of the names of the packages, which their lines follow, see _shown()."""
     expected: dict[str, float] = field(default_factory=dict, init=False)
     """The expected durations of the packages to build, as known at the start, which the board shows the progress of."""
     pending: list[str] = field(default_factory=list, init=False)
@@ -400,7 +394,7 @@ class _Run:
         self.steps = sum(self._to_build(name) for name in plan)
         # those surely built, before their builds; the others at their turn, unless fetched
         self._lint_specs([n for n in plan if self._to_build(n) and (n in self.autorev or not self.use_remote)])
-        self.tag = max(map(len, plan), default=0) if self.jobs > 1 else 0
+        self.tag = max(map(len, plan), default=0)
         priorities = _priorities(project, plan)
         pending = self.pending = sorted(plan, key=lambda n: -priorities[n])
         running = self.running
@@ -493,8 +487,8 @@ class _Run:
     def _start(self, name: str, *, reused: bool) -> Result | _Started:
         """Return the result of `name`, unless it is to build: then start its build, and return it, see _finish(). It
         is not built when it is done, in the remote storage, or not to build, like when `reused`, the build of the
-        main branch, made by CI. Its step numbers the packages built: those counted to build but not built, like those
-        fetched or skipped, are counted out.
+        main branch, made by CI. It counts in the steps the board shows, the packages to build: those counted to build
+        but not built, like those fetched or skipped, are counted out.
         """
         project = self.project
         turn = ExitStack()
@@ -510,18 +504,17 @@ class _Run:
                 return result
             self.step += 1
             self.steps = max(self.steps, self.step)  # or more than counted, when the keys changed
-            step = f"[{self.step}/{self.steps}]"
             if self.use_remote:
                 self._fetch_for(name)
             self._record_fetched()  # for its build root, with what the builds of its dependencies generated
-            if isinstance(launched := self._launch(name, None if self.verbose else step), _Started):
+            if isinstance(launched := self._launch(name), _Started):
                 launched.turn = turn.pop_all()
             return launched
         finally:
             turn.close()
 
-    def _launch(self, name: str, step: str | None) -> Result | _Started:
-        """Start the build of `name` at `step` of the builds, see _run_build(), and return it, or its failure."""
+    def _launch(self, name: str) -> Result | _Started:
+        """Start the build of `name`, see _run_build(), and return it, or its failure."""
         project = self.project
         built_image(project)  # only when a package is to build, rather than cached, fetched or stored: failing all
         start = time.monotonic()
@@ -537,7 +530,7 @@ class _Run:
             _show_failure(project, name, e, verbose=self.verbose)
             return Result(name, "failed")
         shown = ExitStack()
-        on_line = shown.enter_context(_shown(project, name, step, self.tag))
+        on_line = shown.enter_context(_shown(project, name, self.tag, whole=self.verbose))
         return _Started(name, tree, repo, replace, release_suffix(self.keys[name]), start, on_line, shown)
 
     def _run_build(self, started: _Started) -> None:

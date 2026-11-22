@@ -552,10 +552,10 @@ def should_count_builds_with_the_inputs_they_had(root: Path, monkeypatch: pytest
     before = spec.read_text()
     launch = builder._Run._launch
 
-    def edited(run: builder._Run, name: str, status: str | None) -> builder.Result | builder._Started:
+    def edited(run: builder._Run, name: str) -> builder.Result | builder._Started:
         if name == "with-deps":  # a dependency of the build edited during the build
             spec.write_text(f"{before}# edited meanwhile\n")
-        return launch(run, name, status)
+        return launch(run, name)
 
     monkeypatch.setattr(builder._Run, "_launch", edited)
     assert built() == [
