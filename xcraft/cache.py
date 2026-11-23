@@ -14,6 +14,7 @@ import shutil
 from typing import TYPE_CHECKING
 
 from xcraft import buildkey
+from xcraft.display import read_tail
 from xcraft.graph import components, reachable
 from xcraft.localrepo import LocalRepo
 from xcraft.project import INTERNAL
@@ -184,8 +185,8 @@ def previous_duration(project: Project, name: str) -> float | None:
         key=lambda log: log.stat().st_mtime,
     )
     for log in reversed(builds):
-        # the build environment runs the build under `time`
-        if times := re.findall(r"^real\s+(\d+)m([\d.]+)s$", log.read_text(errors="replace"), re.MULTILINE):
+        # the build environment runs the build under `time`, which writes last
+        if times := re.findall(r"^real\s+(\d+)m([\d.]+)s$", "\n".join(read_tail(log)), re.MULTILINE):
             minutes, seconds = times[-1]
             return int(minutes) * 60 + float(seconds)
     return None
