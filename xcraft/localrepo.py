@@ -138,7 +138,7 @@ class LocalRepo:
                 "repo",
                 "createrepo_c -q /repo",
                 volumes=[f"{self.path}:/repo"],
-                show="indexing the local repository",
+                show=f"indexing the dependencies of {self.name}" if self.name else "indexing the local repository",
             )
             self.up_to_date = True
         if signer:

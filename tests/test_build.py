@@ -121,6 +121,7 @@ def should_show_the_lint_of_the_specs_after_the_names_of_their_packages_in_ci(
     result = runner.invoke(app, ["build", "trivial"])
     assert result.exit_code == 0, result.output
     assert "trivial | linting the spec\n" in result.stderr
+    assert "trivial | indexing the dependencies\n" in result.stderr  # of its build, rather than the local repository
     # with others, what rpmlint finds padded like the other lines of the builds, to the longest name, with-deps
     edit(root, "linted again")
     result = runner.invoke(app, ["build", "trivial", "with-deps"])
