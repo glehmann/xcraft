@@ -202,7 +202,7 @@ def kill(container: str) -> None:
 
 
 def _run_logged(cmd: list[str], log: Path, on_line: Callable[[str], None] | None, container: str | None) -> int:
-    """Run `cmd` with its output in `log`, stopping `container` when the log gets too large."""
+    """Run `cmd` with its output in `log`, stopping `container`, or else `cmd`, when the log gets too large."""
     log.parent.mkdir(parents=True, exist_ok=True)
     with (
         log.open("w", buffering=1) as f,  # line buffered, for xcraft log --follow
@@ -213,8 +213,9 @@ def _run_logged(cmd: list[str], log: Path, on_line: Callable[[str], None] | None
         # in parts of the longest lines, not to keep in memory those never ending
         for line in iter(lambda: out.readline(_LINE), ""):
             f.write(line)
-            if f.tell() > MAX_LOG_SIZE and container:
-                kill(container)  # before leaving the block, which waits for podman
+            if f.tell() > MAX_LOG_SIZE:
+                # before leaving the block, which waits for podman
+                kill(container) if container else proc.kill()
                 msg = f"stopped, its log got larger than {MAX_LOG_SIZE // 2**20} MiB, see {log}"
                 raise ContainerError(msg)
             if on_line:
