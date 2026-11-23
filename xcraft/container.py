@@ -179,7 +179,7 @@ def _image_pins(project: Project) -> dict[str, Pin]:
 
 
 def _image_files(project: Project) -> dict[str, str]:
-
+    """Return the text of the files of the build context of the build environment image, by name."""
     return {
         "Containerfile": (BUILDENV / "Containerfile").read_text(),
         "pinned.repo": pinned.REPO_FILE,
