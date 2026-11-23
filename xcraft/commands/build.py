@@ -186,7 +186,7 @@ def build(
                     console.print(str(rpm), markup=False)
         hint("", f"xcraft repo {' '.join(dev_built)}", " makes a repository of these development builds, for the hosts")
     counts = Counter(r.status for r in results)
-    statuses = ("built", "fetched", "cached", "stored", "failed", "skipped")
+    statuses = ("built", "reused", "fetched", "cached", "stored", "failed", "skipped")
     console.print(", ".join(f"{counts[status]} {status}" for status in statuses if counts[status]))
     if any(r.failed for r in results):
         raise typer.Exit(1)

@@ -70,7 +70,7 @@ if TYPE_CHECKING:
 
     from xcraft.project import Project
 
-Status = Literal["cached", "stored", "fetched", "built", "failed", "skipped", "again"]
+Status = Literal["cached", "stored", "fetched", "built", "reused", "failed", "skipped", "again"]
 """What became of a package in a build: stored, in the remote storage only, see Fetch; again, to build again."""
 Fetch = Literal["all", "needed", "none"]
 """What the builds fetch from the remote storage rather than build: all they can, or the builds of the dependencies
@@ -184,6 +184,22 @@ def fetch_build(project: Project, name: str, key: str) -> bool:
             )
             for f in build_signers(project)
         )
+
+
+def differences(project: Project, name: str, key: str, other: str) -> list[str]:
+    """Return how the cached builds of `name` with the keys `key` and `other` differ, see buildenv/same.py, nothing
+    when they are the same: compared in the image of the host, as they do not depend on the architecture.
+    """
+    builds = cached_build(project, name, key), cached_build(project, name, other)
+    with project.tmp_dir("same") as work:
+        container.run(
+            project.on_host(),
+            "same",
+            f"python3 /xcraft/same.py /work/same.json /a {release_suffix(key)} /b {release_suffix(other)}",
+            volumes=[f"{builds[0]}:/a:ro", f"{builds[1]}:/b:ro", f"{work}:/work"],
+            show=f"comparing {name} to its build {release_suffix(other)}",
+        )
+        return json.loads((work / "same.json").read_text())
 
 
 def _stored_build(project: Project, name: str, key: str) -> bool:
@@ -742,6 +758,7 @@ class _Run:
                 self._cache(name, keys[name], tree)
                 record_rpm_deps(project, [name], keys, quiet=True)  # see _recorded_again()
                 keep_built(project, self.dev, self.autorev, [name], self.hashes)
+                reproduced = self._reproduced(name, keys[name])
         except BuildRootChangedError as e:
             console.print(f"[yellow]↻[/] {name}: {escape(str(e))}")
             return Result(name, "again")
@@ -750,8 +767,51 @@ class _Run:
             return Result(name, "failed")
         finally:
             started.turn.close()
-        console.print(f"[bold green]✓[/] {name} [green]built[/] in {duration(time.monotonic() - started.start)}")
+        took = duration(time.monotonic() - started.start)
+        if reproduced:
+            console.print(
+                f"[bold green]✓[/] {name} [green]built the same as its build {reproduced}[/], reused, in {took}"
+            )
+            return Result(name, "reused")
+        console.print(f"[bold green]✓[/] {name} [green]built[/] in {took}")
         return Result(name, "built")
+
+    def _forked(self, name: str) -> str | None:
+        """Return the key of the build of `name` of the main branch, where the current one forks from it, when it has
+        another build ID now, cached, or fetched from the remote storage: one it may reuse, see _reproduced(). Not with
+        --locked, which forbids changing the build IDs.
+        """
+        project = self.project
+        if project.frozen or not (fork := buildid.base(project)) or not (forked := fork.ids.get(name)):
+            return None
+        if (current := buildid.read(project).get(name)) is None or current.matches(forked.key):
+            return None
+        key = f"{forked.key}+b{forked.build}"
+        try:
+            if cached_build(project, name, key).exists() or (self.use_remote and fetch_build(project, name, key)):
+                return key
+        except remote.RemoteError as e:
+            console.print(f"[yellow]remote storage unavailable[/]: {escape(str(e))}")
+        return None
+
+    def _reproduced(self, name: str, key: str) -> str | None:
+        """Return the release suffix of the build of the main branch, see _forked(), which the build of `name` with
+        `key` made again, when it reuses it now, as xcraft reuse would, see buildid.reuse(): with the same package
+        directory, and the builds the same, see differences(), on the architecture of the command. The keys of those
+        built against it follow, and its new build is dropped.
+        """
+        project = self.project
+        if not (forked := self._forked(name)):
+            return None
+        if found := differences(project, name, key, forked):
+            console.print(f"{name}: not the same as its build {release_suffix(forked)}: {escape(found[0])}")
+            return None
+        if name not in buildid.reuse(project, [name], []) or not buildid.read(project)[name].accepts:
+            return None
+        shutil.rmtree(cached_build(project, name, key))
+        self.keys, self.autorev = dev_keys(project, self.dev, self.hashes)
+        self.recorded = _lock_state(project)
+        return release_suffix(forked)
 
     def _checked(self, name: str, tree: Path, suffix: str) -> dict[str, str]:
         """Check the build of `name` in `tree`, with the release `suffix`, see _build_one(), and return the keys, with
@@ -816,7 +876,8 @@ class _Run:
         if result.status == "stored":
             return bool(self.stored.get(f"{result.name}/{key}"))
         return (
-            result.status not in ("built", "fetched", "cached") or cached_build(self.project, result.name, key).exists()
+            result.status not in ("built", "reused", "fetched", "cached")
+            or cached_build(self.project, result.name, key).exists()
         )
 
 

@@ -695,6 +695,27 @@ def should_reuse_the_main_branch_build_until_its_inputs_change(root: Path) -> No
     ) in " ".join(output.split())
 
 
+def should_reuse_the_main_branch_build_a_rebuild_makes_the_same(root: Path) -> None:
+    assert xcraft("build")[0] == 0  # the builds of the main branch
+    commit_base(root)
+    base = buildid.read(Project.find())
+    git(root, "checkout", "-qb", "feature")
+    edit(root, "changed")
+    # with-deps, built against trivial, built again the same: it reuses its build, accepting the change
+    code, output = xcraft("build")
+    assert code == 0, output
+    assert "✓ with-deps built the same as its build +b1, reused" in output
+    assert output.splitlines()[-1] == "1 built, 1 reused"
+    ids = buildid.read(Project.find())
+    assert (ids["with-deps"].number, ids["with-deps"].key) == (1, base["with-deps"].key)
+    assert ids["with-deps"].accepts
+    # not trivial, which changed itself
+    assert "trivial: not the same as its build +b1" in output
+    assert (ids["trivial"].number, ids["trivial"].accepts) == (2, None)
+    # nothing to build again
+    assert xcraft("build") == (0, "2 cached\n")
+
+
 def should_not_reuse_builds_of_packages_with_ignored_files(root: Path) -> None:
     # in the key, which hashes all the files: not reused, or only this machine would accept its key
     commit_base(root)

@@ -1,8 +1,9 @@
 # Design: reusing the builds that a rebuild reproduces
 
-Status: the build environment is done, in xcraft and xcp-ng-dist, whose 43 packages all rebuild identically with
-their specs fixed, see [With the specs fixed](#with-the-specs-fixed). The comparison of the builds and the reuse are
-not done.
+Status: done. The build environment, in xcraft and xcp-ng-dist, whose 43 packages all rebuild identically with their
+specs fixed, see [With the specs fixed](#with-the-specs-fixed), and the reuse, see
+[Reusing builds](builds.md#reusing-builds): the architecture of the build decides for all, and only the builds of a
+developer, not those of CI with `--locked`, which forbids changing the build IDs.
 
 ## Problem
 

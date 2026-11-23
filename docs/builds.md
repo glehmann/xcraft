@@ -109,6 +109,19 @@ in theirs, so they keep their builds too, unless they changed otherwise. A reuse
 one of the main branch, cached, or in the remote storage, on each architecture. Reusing builds needs the main branch,
 in a git repository.
 
+The builds reuse a build of the main branch by themselves when they make it again: a package given another build ID,
+but with the same directory as there, like after a change of a package it is built against, is built, then compared to
+the build of the main branch, cached or fetched from the remote storage, in the image of the host. When they are the
+same, it reuses it, as `xcraft reuse` would, and its new build is dropped: those built against it keep theirs too,
+unless they changed otherwise. The same, for two builds, is the same packages, with the same files, by their paths,
+digests, modes, owners, groups, flags and link targets, not their times, the same dependencies, with the release of the
+build replaced in those on its own packages, but the requirements rpm adds for a `~` or a `^` in a release, and the
+same scriptlets, see `buildenv/same.py`: a build environment and specs making the same files whatever the release,
+like xcp-ng-dist's, see [identical-rebuilds-design.md](identical-rebuilds-design.md). The architecture of the build
+decides for all of them, as the build ID is the same on all: the others then take the build of the main branch, without
+comparing. With `--locked`, like in CI, the builds never reuse, as it would change the build IDs: the developer's builds
+do, to commit.
+
 ## Maintenance branches
 
 A fix of a release, like a security fix under embargo, is made on a maintenance branch, of the patterns of
