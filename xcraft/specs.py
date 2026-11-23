@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import stat
 from typing import TYPE_CHECKING
 
@@ -101,7 +102,7 @@ def parse(project: Project, dirs: list[Path]) -> dict[str, Package]:
             if not cached(a).exists()
         ]
         built_image(native)
-        specs = " ".join(f"/project/{main_spec(d).relative_to(project.root)}" for d in dirs)
+        specs = shlex.join(f"/project/{main_spec(d).relative_to(project.root)}" for d in dirs)
         with project.tmp_dir("specs") as work:
             container.run(
                 native,

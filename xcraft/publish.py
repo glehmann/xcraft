@@ -13,6 +13,7 @@ import contextlib
 import hashlib
 import json
 import re
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -196,7 +197,7 @@ def _srpm_names(project: Project, names: list[str]) -> dict[str, str]:
                 "-c",
                 (
                     f"dnf -q repoquery --forcearch={project.arch} --qf '%{{name}} %{{sourcerpm}}' "
-                    f"{' '.join(nevras.values())} > /work/srpms"
+                    f"{shlex.join(nevras.values())} > /work/srpms"
                 ),
             ],
             volumes=[f"{work}:/work"],
