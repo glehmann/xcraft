@@ -110,7 +110,10 @@ def should_require_the_fingerprints_of_downloaded_repository_keys() -> None:
         Repo(baseurl="file:///repo", gpgkey="https://example.com/key", fingerprints=["a" * 16])
 
 
-def should_reject_build_keys_for_the_development_bucket() -> None:
+def should_accept_fingerprints_as_build_keys_outside_the_development_bucket() -> None:
+    assert Remote(url="http://main", build_keys=["a" * 40]).build_keys == ["A" * 40]
+    with pytest.raises(ValueError, match="not the fingerprint of a key"):
+        Remote(url="http://main", build_keys=["A" * 64])
     dev = Remote(url="http://dev", build_keys=["A" * 40])
     with pytest.raises(ValueError, match=r"remote\.dev cannot have build_keys"):
         Config.model_validate({**config().model_dump(by_alias=True), "remote": {"dev": dev.model_dump()}})

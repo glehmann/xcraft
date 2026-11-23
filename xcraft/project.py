@@ -137,11 +137,8 @@ class Remote(BaseModel):
     @field_validator("build_keys")
     @classmethod
     def fingerprints(cls, keys: list[str]) -> list[str]:
-        """Check they are full fingerprints, and put them in uppercase, like gpg gives them in its status."""
-        if any(len(key) not in (40, 64) or any(c not in "0123456789abcdefABCDEF" for c in key) for key in keys):
-            msg = "build_keys must contain full GPG fingerprints"
-            raise ValueError(msg)
-        return [key.upper() for key in keys]
+        """Check they are fingerprints, and put them in uppercase, like gpg gives them in its status."""
+        return [fingerprint(key) for key in keys]
 
 
 def fingerprint(key: str) -> str:
