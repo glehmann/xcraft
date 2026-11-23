@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import os
 import subprocess
 import sys
@@ -104,15 +105,15 @@ def should_refuse_the_log_of_a_package_never_built() -> None:
 
 
 def should_follow_a_build_log_until_the_build_ends(log: Path) -> None:
-    pid_file = log.parent.parent / "build/foo.pid"
-    pid_file.write_text(str(os.getpid()))
+    turn = (log.parent.parent / "build/foo.turn").open("w")
+    fcntl.flock(turn, fcntl.LOCK_EX)  # the lock a running build holds on it
 
     def build() -> None:
         time.sleep(0.5)
         with log.open("a") as f:
             f.write("Wrote: foo-1.0-1.x86_64.rpm\nnot a match\n")
         time.sleep(0.5)
-        pid_file.unlink()
+        turn.close()  # like when its process ends, even killed, leaving the file
 
     thread = threading.Thread(target=build)
     thread.start()

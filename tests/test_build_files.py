@@ -4,6 +4,7 @@ they made, the local repositories, the queue, the estimates, and cleaning.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -320,9 +321,11 @@ def should_list_the_packages_queued_to_build(project: Project) -> None:
     assert queued(project) == []
     queue = project.state / "build/.queue"
     queue.parent.mkdir(parents=True)
-    queue.write_text(f"{os.getpid()}\nfoo\nbar\n")
-    assert queued(project) == ["foo", "bar"]
-    queue.write_text("999999999\nfoo\n")  # its build is gone
+    with queue.open("w") as running:  # the lock a running build holds on it
+        fcntl.flock(running, fcntl.LOCK_EX)
+        queue.write_text("foo\nbar\n")
+        assert queued(project) == ["foo", "bar"]
+    # its build is gone, even killed, without removing it: its process may be another one's pid now
     assert queued(project) == []
 
 

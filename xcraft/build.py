@@ -7,6 +7,7 @@ repositories. Packages not built locally come from those repositories.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import shutil
@@ -94,34 +95,46 @@ def _estimate(project: Project, name: str) -> str:
     return f" [dim](~{duration(previous)})[/]" if previous else ""
 
 
-def _pid_file(project: Project, name: str) -> Path:
-    return project.state / "build" / f"{name}.pid"
+@contextmanager
+def _marking(path: Path) -> Generator[None]:
+    """Mark what runs in the context with `path`, locked meanwhile: the kernel releases the lock when the process ends,
+    however it does, and another process can take the same pid, which a pid in the file would not tell apart.
+    """
+    with path.open("w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            path.unlink(missing_ok=True)
+
+
+def _marked_text(path: Path) -> str | None:
+    """Return the text of the marker `path` while what it marks runs, see _marking(), or None."""
+    try:
+        with path.open() as f:
+            try:
+                fcntl.flock(f, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return f.read()
+    except OSError:
+        pass
+    return None
+
+
+def _turn_file(project: Project, name: str) -> Path:
+    return project.state / "build" / f"{name}.turn"
 
 
 @contextmanager
 def _turn(project: Project, name: str) -> Generator[None]:
     """Mark `name` as being built during its turn: from the resolutions before its build, to the recording after it."""
-    (path := _pid_file(project, name)).write_text(str(os.getpid()))
-    try:
+    with _marking(_turn_file(project, name)):
         yield
-    finally:
-        path.unlink(missing_ok=True)
-
-
-def _alive(pid: str) -> bool:
-    try:
-        os.kill(int(pid), 0)
-    except (OSError, ValueError):
-        return False
-    return True
 
 
 def building(project: Project, name: str) -> bool:
     """Return whether `name` is being built."""
-    try:
-        return _alive(_pid_file(project, name).read_text())
-    except OSError:
-        return False
+    return _marked_text(_turn_file(project, name)) is not None
 
 
 def _queue_file(project: Project) -> Path:
@@ -130,11 +143,7 @@ def _queue_file(project: Project) -> Path:
 
 def queued(project: Project) -> list[str]:
     """Return the packages a running build is still to build, after the current one, in order."""
-    try:
-        pid, *names = _queue_file(project).read_text().split()
-    except (OSError, ValueError):
-        return []
-    return names if _alive(pid) else []
+    return text.split() if (text := _marked_text(_queue_file(project))) else []
 
 
 @contextmanager
@@ -419,7 +428,7 @@ class _Run:
                 while pending or running:
                     while len(running) < self.jobs and (name := self._startable(pending, set(plan), running)):
                         pending.remove(name)
-                        _queue_file(project).write_text("\n".join([str(os.getpid()), *pending]) + "\n")
+                        _queue_file(project).write_text("".join(f"{n}\n" for n in pending))
                         started = self._start(name, reused=name in reused)
                         if isinstance(started, Result):
                             self._done_with(started)
@@ -870,10 +879,8 @@ def build(
             lint_dev=lint_dev,
             jobs=jobs or default_jobs(),
         )
-        try:
+        with _marking(_queue_file(project)):
             results = run.build(plan)
-        finally:
-            _queue_file(project).unlink(missing_ok=True)
         keys, autorev = run.keys, run.autorev
         if attempt or all(r.status != "again" for r in results):
             break
