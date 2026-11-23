@@ -24,8 +24,9 @@ The output has the locked binary ``packages``, those of them the ``unchecked`` r
 ``provides`` of the recorded binary packages, the ``errors``, by package, ``image`` for the image, the upstream packages
 of the ``runtime``, with its ``runtime_errors``, and of the ``tools``, besides the image's, with their ``tools_error``,
 those of ``sign`` and ``lint`` likewise, with their ``sign_error`` and ``lint_error``, the ``unlocked`` source
-packages needed, the ``versions`` of those and of the given ones, oldest first, the packages of the ``sets`` of the
-ISO, ``iso`` and ``install.img``, and ``why`` each package is in each set, see Resolver.why().
+packages needed, the ``versions`` of those and of the given ones, oldest first, with the ``repos`` of their binary
+packages, the packages of the ``sets`` of the ISO, ``iso`` and ``install.img``, and ``why`` each package is in each
+set, see Resolver.why().
 """
 
 from __future__ import annotations
@@ -195,6 +196,7 @@ class Resolver:
         base.fill_sack(load_system_repo=False)
         self.built = {p.name: p for p in base.add_remote_rpms(data["rpms"])}
         self.versions: dict[str, set[str]] = {}
+        self.repos: dict[str, set[str]] = {}  # of their binary packages, by source package
         sources: dict[str, tuple[str, str]] = {}  # by source RPM, which many binaries share
         excluded = []
         for p in base.sack.query().available().filter(reponame__neq=OURS):
@@ -202,6 +204,7 @@ class Resolver:
                 sources[sourcerpm] = self.canonical(sourcerpm)
             source, vr = sources[sourcerpm]
             self.versions.setdefault(source, set()).add(vr)
+            self.repos.setdefault(source, set()).add(p.reponame)
             if source in data["sources"] and vr != data["sources"][source]:
                 excluded.append(p)
         base.sack.add_excludes(excluded)
@@ -606,6 +609,7 @@ def main() -> None:
         for s in {*result["unlocked"], *data["versions"]}
         if s in resolver.versions
     }
+    result["repos"] = {s: sorted(resolver.repos[s]) for s in result["versions"]}
     Path(sys.argv[2]).write_text(json.dumps(result))
 
 

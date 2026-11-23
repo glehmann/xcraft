@@ -24,8 +24,13 @@ def _update(project: Project, packages: list[str], *, write: bool) -> int:
     # first, as it may lock them
     sources = upstream_sources(project, packages) if packages else sorted(load_lock(project).sources)
     current = load_lock(project)
-    chosen = latest_versions(project, sources)
+    # the latest versions whose source packages are published, older ones when the locked ones have none
+    chosen, held = latest_versions(project, sources)
     changed = {s: v for s, v in chosen.items() if v != current.sources[s]}
+    for source, version in sorted(held.items()):
+        kept = current.sources[source]
+        kept = f", kept at {kept}" if source not in changed and kept != version else ""
+        console.print(f"[yellow]{source}[/] {version}: its source package is not published{kept}")
     for source, version in changed.items():
         console.print(f"[bold]{source}[/] {current.sources[source]} -> {version}")
     if not write:
@@ -75,7 +80,8 @@ def lock(
     """Show the lock of upstream packages and the lock of the builds, or update the first.
 
     --update takes the latest version all the architectures have, but the suffixes of the releases of release_suffixes
-    in xcraft.toml, looking for them natively, on any machine, and pins their binary packages again, by their SHA-256,
+    in xcraft.toml, whose source package is published, which publishing needs, looking for them natively, on any
+    machine, and pins their binary packages again, by their SHA-256,
     even in the same versions, like those published again. Otherwise, the pinned packages are kept, whatever the
     repositories have now: a build fails rather than getting other ones. --outdated, for CI, fails when an update
     would change the versions in the lock: not when it would only pin other contents of the same versions, which only

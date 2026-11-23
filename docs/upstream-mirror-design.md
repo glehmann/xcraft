@@ -177,7 +177,8 @@ dnf finds a pinned package in the copy when its repository no longer has it, and
 the same checksum, so either is fine. Nothing else changes:
 
 - the build keys: they have the versions, not where they come from;
-- `xcraft lock --update`: it takes the latest version all the architectures have, which is upstream;
+- `xcraft lock --update`: it takes the latest version all the architectures have, which is upstream, but with its
+  source package published, there or in the copy: an older one copied when the upstream one has none;
 - going back to an older version copied before: edit it in `xcraft.lock`, and it resolves from the copy, as
   `xcraft lock` does not change the versions it has.
 

@@ -48,7 +48,7 @@
 | `xcraft fetch ccache [<pkg>...]` | Add to the local compiler caches of the packages the entries of the remote storage |
 | `xcraft lock` | Show the lock of upstream packages, the same for all the architectures, and the lock of the builds |
 | `xcraft lock --outdated [<pkg>...]` | Show what `--update` would change, without changing it, and fail then, for CI |
-| `xcraft lock --update [<pkg>...]` | Update locked packages, all or some (binary or source names), to the latest version all the architectures have, looked for natively, on any machine |
+| `xcraft lock --update [<pkg>...]` | Update locked packages, all or some (binary or source names), to the latest version all the architectures have, with its source package published, looked for natively, on any machine |
 | `xcraft reuse <pkg>... [--dep <upstream>]` | Reuse the builds of the main branch despite changes, but to the packages' own directories, or despite updates of the `--dep` upstream packages only (see [Reusing builds](builds.md#reusing-builds)) |
 | `xcraft repo [<pkg>...] [--output dir]` | Build packages, all by default, and what they need, put them in a repository, and check that everything they require is available |
 | `xcraft shell <pkg>` | Open a shell in the build tree of a package, given by name or by a path in its directory, like `xcraft shell .` in it, with its build dependencies installed and its sources prepared, where `rpmbuild -ba SPECS/<spec>` builds it, without the network like the builds, the exact command shown before the prompt |

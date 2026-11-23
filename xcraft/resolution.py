@@ -27,10 +27,10 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 from rich.markup import escape
 
-from xcraft import remote
-from xcraft.buildenv.resolve import evrs_of, follows
+from xcraft import remote, upstream_copy
+from xcraft.buildenv.resolve import canonical, evrs_of, follows
 from xcraft.builds import drop_gone
-from xcraft.container import BUILDENV, PACKAGES, SIDE_IMAGES, base_packages, repo_file, run_natively
+from xcraft.container import BUILDENV, PACKAGES, SIDE_IMAGES, base_packages, repo_file, run_natively, source_repos
 from xcraft.display import activity, console
 from xcraft.graph import reachable
 from xcraft.localrepo import extra_rpms
@@ -72,6 +72,8 @@ class Resolved(BaseModel):
     """The upstream source packages needed, not locked yet."""
     versions: dict[str, list[str]] = {}
     """The available versions of upstream source packages, oldest first."""
+    repos: dict[str, list[str]] = {}
+    """The repositories of the binary packages of the upstream source packages of `versions`."""
     requires: dict[str, list[str]] = {}
     """For the binary packages of ours recorded, the packages their generated requirements resolve to."""
     provides: dict[str, list[str]] = {}
@@ -273,23 +275,80 @@ def _image_data(project: Project) -> dict:
     }
 
 
-def available_versions(project: Project, sources: list[str]) -> dict[str, list[str]]:
-    """Return the available versions of the upstream source packages `sources` on the platform, oldest first, under
-    the activity of latest_versions().
+def available_versions(project: Project, sources: list[str]) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Return the available versions of the upstream source packages `sources` on the platform, oldest first, and the
+    repositories of their binary packages, under the activity of latest_versions().
     """
     data = {**_image_data(project), "base": [], "image": [], "versions": sources}
-    return _run(project, data, show="", quiet=True).versions
+    resolved = _run(project, data, show="", quiet=True)
+    return resolved.versions, resolved.repos
 
 
-def latest_versions(project: Project, sources: list[str]) -> dict[str, str]:
+def published_sources(project: Project, repos: dict[str, set[str]]) -> dict[str, set[str]]:
+    """Return the versions of the upstream source packages of `repos`, by the repositories of their binary packages,
+    their source repositories publish, or the copies of the storages have, as locked, by name, for those of
+    repositories with source repositories, under the activity of latest_versions(): natively, for all the
+    architectures.
+    """
+    with_sources = {name for name, repo in project.config.repos.items() if repo.source_baseurl}
+    if not (checked := {s: names & with_sources for s, names in repos.items() if names & with_sources}):
+        return {}
+    copies = upstream_copy.repo_file(project, upstream_copy.SOURCE)
+    copied = [line[1:-1].removesuffix("-source") for line in copies.splitlines() if line.startswith("[")]
+    enabled = ",".join(f"{name}-source" for name in [*sorted(set().union(*checked.values())), *copied])
+    with project.tmp_dir("sources") as work:
+        run_natively(
+            project,
+            "sources",
+            [
+                "bash",
+                "-c",
+                (
+                    f"dnf -q repoquery --disablerepo='*' --enablerepo={enabled} --arch=src "
+                    f"--qf '%{{name}}-%{{version}}-%{{release}}.src.rpm' {' '.join(sorted(checked))} > /work/sources"
+                ),
+            ],
+            volumes=[f"{work}:/work"],
+            show="looking for the published source packages",
+            repos={**source_repos(project.config.repos), "xcraft-upstream-sources.repo": copies},
+            quiet=True,
+        )
+        published: dict[str, set[str]] = {s: set() for s in checked}
+        for srpm in (work / "sources").read_text().split():
+            name, vr = canonical(srpm, project.config.release_suffixes)
+            published.setdefault(name, set()).add(vr)
+        return published
+
+
+def latest_versions(project: Project, sources: list[str]) -> tuple[dict[str, str], dict[str, str]]:
     """Return the versions to lock of the upstream source packages `sources`, see choose_versions(), looked for on all
-    the architectures at the same time.
+    the architectures at the same time, and those held back: the latest versions whose source packages their source
+    repositories, if any, do not publish, which the published repositories could not have.
     """
     platforms = project.all_platforms()
     show = f"looking for the versions of the upstream packages of {', '.join(p.arch for p in platforms)}"
-    with activity(show), thread_pool(len(platforms)) as pool:
-        found = list(pool.map(lambda p: available_versions(p, sources), platforms))
-    return choose_versions({p.arch: versions for p, versions in zip(platforms, found, strict=True)})
+    with activity(show):
+        with thread_pool(len(platforms)) as pool:
+            found = dict(
+                zip(
+                    [p.arch for p in platforms],
+                    pool.map(lambda p: available_versions(p, sources), platforms),
+                    strict=True,
+                )
+            )
+        repos: dict[str, set[str]] = {}
+        for _, by_source in found.values():
+            for source, names in by_source.items():
+                repos.setdefault(source, set()).update(names)
+        published = published_sources(project, repos)
+    latest = choose_versions({arch: versions for arch, (versions, _) in found.items()})
+    chosen = choose_versions(
+        {
+            arch: {s: [v for v in vs if s not in published or v in published[s]] for s, vs in versions.items()}
+            for arch, (versions, _) in found.items()
+        }
+    )
+    return chosen, {s: v for s, v in latest.items() if chosen.get(s) != v}
 
 
 def lock_sources(project: Project, sources: list[str]) -> None:
@@ -301,7 +360,10 @@ def lock_sources(project: Project, sources: list[str]) -> None:
     if project.frozen:
         msg = f"upstream packages not locked, which --locked forbids: {', '.join(sorted(sources))}"
         raise ResolutionError(msg)
-    chosen = latest_versions(project, sources)
+    chosen, held = latest_versions(project, sources)
+    if unpublished := sorted(set(held) - chosen.keys()):
+        msg = "upstream source packages whose source packages are published in no version: "
+        raise ResolutionError(msg + ", ".join(f"{s} {held[s]}" for s in unpublished))
     if missing := sorted(set(sources) - chosen.keys()):
         msg = f"upstream source packages found on no architecture: {', '.join(missing)}"
         raise ResolutionError(msg)

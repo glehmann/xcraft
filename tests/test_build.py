@@ -515,6 +515,28 @@ def should_lock_versions_that_all_the_architectures_have(root: Path) -> None:
     assert load_lock(Project.find()).sources["toyrun"] == "2-1"
 
 
+def should_lock_only_versions_whose_source_packages_are_published(root: Path) -> None:
+    # the source packages of the toys, of toyrun 1 only, while the repositories have toyrun 2 too
+    toys = f'baseurl = "file://{TOYS}/{{arch}}/"\n'
+    toml = f'{TOML.replace(toys, f'{toys}source_baseurl = "file://{TOYS}/Source/"\n')}\n[publish]\nextra = ["toyrun"]\n'
+    (root / "xcraft.toml").write_text(toml)
+    assert xcraft("build", "--dry-run")[0] == 0
+    assert load_lock(Project.find()).sources["toyrun"] == "1-1"
+    # not updated to a version whose source package is not published
+    expected = "toyrun 2-1: its source package is not published, kept at 1-1\n"
+    assert xcraft("lock", "--outdated", "toyrun") == (0, f"{expected}{UP_TO_DATE}\n")
+    code, output = xcraft("lock", "--update", "toyrun")
+    assert (code, output.splitlines()[0], output.splitlines()[-1]) == (0, expected.strip(), "0 updated")
+    assert load_lock(Project.find()).sources["toyrun"] == "1-1"
+    # nor kept in a version locked whose source package is not published, but the latest one with one
+    lock = load_lock(Project.find())
+    lock.sources["toyrun"] = "2-1"
+    save_lock(Project.find(), lock)
+    code, output = xcraft("lock", "--update", "toyrun")
+    assert (code, output.splitlines()[:2]) == (0, [expected.strip().removesuffix(", kept at 1-1"), "toyrun 2-1 -> 1-1"])
+    assert load_lock(Project.find()).sources["toyrun"] == "1-1"
+
+
 def should_pin_what_is_published_on_all_the_architectures(root: Path) -> None:
     (root / "xcraft.toml").write_text(f'{TOML}\n[publish]\nextra = ["bc"]\n')
     assert xcraft("build", "--dry-run")[0] == 0

@@ -40,25 +40,27 @@ class UpstreamError(RuntimeError):
     """Raised when the copy cannot be read."""
 
 
-def _copied(storage: Remote, arch: str) -> bool:
-    """Return whether `storage` has a copy for `arch`: not when it cannot be reached, like offline."""
+def _copied(storage: Remote, directory: str) -> bool:
+    """Return whether `storage` has a copy `directory`: not when it cannot be reached, like offline."""
     try:
-        return remote.exists(storage, f"{PREFIX}/{arch}/repodata/repomd.xml")
+        return remote.exists(storage, f"{PREFIX}/{directory}/repodata/repomd.xml")
     except remote.RemoteError:
         return False
 
 
-def repo_file(project: Project) -> str:
-    """Return the definition of the copies of the storages, for the architecture of `project`, those they have, which
-    dnf would ignore otherwise, saying so: skipped still when they cannot be reached then. The pins are checked against
-    their SHA-256, and the resolution installs nothing.
+def repo_file(project: Project, directory: str = "") -> str:
+    """Return the definition of the copies of the storages, for the architecture of `project`, or `directory`, like
+    SOURCE, whose repositories are xcraft-upstream-<storage>-source, disabled, those they have, which dnf would ignore
+    otherwise, saying so: skipped still when they cannot be reached then. The pins are checked against their SHA-256,
+    and the resolution installs nothing.
     """
+    directory, source = directory or project.arch, directory == SOURCE
     return "".join(
-        f"[xcraft-upstream-{name}]\nname=xcraft upstream copy of {name}\n"
-        f"baseurl={storage.url.rstrip('/')}/{PREFIX}/{project.arch}/\n"
-        "gpgcheck=0\nskip_if_unavailable=1\nmetadata_expire=0\n"
+        f"[xcraft-upstream-{name}{'-source' if source else ''}]\nname=xcraft upstream copy of {name}\n"
+        f"baseurl={storage.url.rstrip('/')}/{PREFIX}/{directory}/\n"
+        f"gpgcheck=0\nskip_if_unavailable=1\nmetadata_expire=0\n{'enabled=0\n' if source else ''}"
         for name in ("main", "dev")
-        if (storage := project.config.remote.get(name)) and _copied(storage, project.arch)
+        if (storage := project.config.remote.get(name)) and _copied(storage, directory)
     )
 
 

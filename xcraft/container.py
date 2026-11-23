@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from xcraft.lock import Pin
-    from xcraft.project import Project
+    from xcraft.project import Project, Repo
 
 MAX_LOG_SIZE = 256 * 2**20
 """Size of log after which a container is stopped: the largest build logs are under 10 MiB."""
@@ -108,6 +108,19 @@ def _local_repos(project: Project) -> list[str]:
             for path in [url.removeprefix("file://").rstrip("/")]
         }
     )
+
+
+def source_repos(repos: dict[str, Repo]) -> dict[str, str]:
+    """Return the repositories of the upstream source packages of `repos`, by file name, disabled, only for their
+    downloads and queries, not to change the build environment: run_natively() repos.
+    """
+    return {
+        "xcraft-sources.repo": "".join(
+            f"[{name}-source]\nname={name} sources\nbaseurl={repo.source_baseurl}\nenabled=0\ngpgcheck=0\n"
+            for name, repo in repos.items()
+            if repo.source_baseurl
+        )
+    }
 
 
 def _image_pins(project: Project) -> dict[str, Pin]:

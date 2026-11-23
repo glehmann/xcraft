@@ -54,7 +54,11 @@ AlmaLinux's `.alma_altarch` rebuilds for x86_64_v2, see `resolve.canonical()`. S
 architectures.
 
 A source package needed and not locked yet, like for a new BuildRequires, is locked in the latest version all the
-architectures have, or else the latest one of the first having it, see `lock.choose_versions()`.
+architectures have, or else the latest one of the first having it, see `lock.choose_versions()`. Of a repository with
+a `source_baseurl`, only a version whose source package is published, in its source repository or the copy of the
+storage, see `resolution.latest_versions()`: the published repositories need it. A newer one without, like one
+AlmaLinux published without its source package, is held back, and `xcraft lock --update` says so; a version locked
+without goes back to the latest one with.
 A source package no pin uses any more, like that of a package published no more, leaves the lock when it is
 recorded: needed again, it is locked again, in the latest version.
 

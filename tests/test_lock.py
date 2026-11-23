@@ -175,14 +175,30 @@ def should_choose_versions_that_all_the_architectures_have() -> None:
 
 
 def should_keep_sources_locked_meanwhile_by_another_command(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    def versions(platform: Project, _sources: list[str]) -> dict[str, list[str]]:
+    def versions(platform: Project, _sources: list[str]) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
         if platform == project:  # by another command, meanwhile, once: the architectures are looked for together
             save_lock(project, Lock(sources={"foo": "2-1"}))
-        return {"foo": ["1-1"], "bar": ["3-1"]}
+        return {"foo": ["1-1"], "bar": ["3-1"]}, {}
 
     monkeypatch.setattr("xcraft.resolution.available_versions", versions)
     lock_sources(project, ["foo", "bar"])
     assert load_lock(project).sources == {"foo": "2-1", "bar": "3-1"}
+
+
+def should_hold_back_versions_whose_source_packages_are_not_published(
+    project: Project, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    found = {"foo": ["1-1", "2-1"], "bar": ["3-1"], "toy": ["4-1"]}
+    repos = {"foo": ["baseos"], "bar": ["appstream"], "toy": ["toys"]}  # toys has no source repository
+    monkeypatch.setattr("xcraft.resolution.available_versions", lambda _platform, _sources: (found, repos))
+    monkeypatch.setattr("xcraft.resolution.published_sources", lambda _project, _repos: {"foo": {"1-1"}, "bar": set()})
+    # the latest versions published, and those held back
+    assert resolution.latest_versions(project, ["foo", "bar", "toy"]) == (
+        {"foo": "1-1", "toy": "4-1"},
+        {"foo": "2-1", "bar": "3-1"},
+    )
+    with pytest.raises(ResolutionError, match=r"published in no version: bar 3-1$"):
+        lock_sources(project, ["foo", "bar"])
 
 
 def should_keep_pins_locked_meanwhile_by_another_command(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:

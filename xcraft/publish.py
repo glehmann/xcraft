@@ -22,7 +22,7 @@ from xcraft import build as builder
 from xcraft import buildkey, container, localrepo, pinned, remote, repodata, resolution, upstream_copy, upstream_signed
 from xcraft.builds import builds_path, load_builds
 from xcraft.cache import BUILD_FILES, BuildError, build_path, build_signers, cached_build, release_suffix, signed_build
-from xcraft.container import BUILDENV, buildenv_hash, run_natively
+from xcraft.container import BUILDENV, buildenv_hash, run_natively, source_repos
 from xcraft.display import activity, console
 from xcraft.localrepo import extra_rpms, fresh_dir
 from xcraft.lock import load_lock, lock_path
@@ -78,19 +78,6 @@ def trusted_key(project: Project, signer: Signer | None) -> Signer | None:
     return signer or dev_signer(project)
 
 
-def _source_repos(project: Project) -> dict[str, str]:
-    """Return the repositories of the upstream source packages, by file name, only for their downloads, not to change
-    the build environment.
-    """
-    return {
-        "xcraft-sources.repo": "".join(
-            f"[{name}-source]\nname={name} sources\nbaseurl={repo.source_baseurl}\nenabled=0\ngpgcheck=0\n"
-            for name, repo in project.repos.items()
-            if repo.source_baseurl
-        )
-    }
-
-
 def snapshot_tree(project: Project, kind: str, name: str) -> str:
     """Return the path of a snapshot in the storage, of its repositories or its ISOs: `kind` is repos or isos."""
     return f"{kind}/{project.config.publish.release}/{project.config.publish.stage}/{name}"
@@ -138,7 +125,7 @@ def _download(
                 ["dnf", "-q", "download", f"--forcearch={project.arch}", *options, "--destdir", "/work", *left],
                 volumes=[f"{work}:/work"],
                 show=f"downloading {len(left)} upstream {'source ' if source else ''}packages of {project.arch}",
-                repos=_source_repos(project) if source else None,
+                repos=source_repos(project.repos) if source else None,
             )
         found = [f for f in missing if (work / f).exists()]
         locked = pinned.pins(project)

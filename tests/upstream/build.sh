@@ -3,6 +3,9 @@
 dnf -q -y install rpm-build createrepo_c
 toy() { rpmbuild -bb --define "_topdir /tmp/rpmbuild" --define "_rpmdir /out" --define "toyver $1" "${@:2}"; }
 toy 1 /specs/toyrun.spec && toy 2 /specs/toyrun.spec
+# the source packages of the toys, published for toyrun 1 only, like a version whose source is not published yet
+rpmbuild -bs --define "_topdir /tmp/rpmbuild" --define "_srcrpmdir /out/repo/Source" --define "toyver 1" /specs/toyrun.spec
+createrepo_c -q /out/repo/Source
 toy 1 --target x86_64 /specs/toyarch.spec && toy 2 --target x86_64 /specs/toyarch.spec
 toy 1 --target aarch64 /specs/toyarch.spec
 for target in x86_64 i686 aarch64; do
