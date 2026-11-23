@@ -57,7 +57,8 @@ def _build_remotely(
     # --local: on the builder, rather than on a builder of its own, if any
     args = [*(packages or []), *flags, "--dev", ident, "--arch", project.arch, "--local"]
     keys = [] if options.get("--dry-run") else [*names, "--dev", ident, "--arch", project.arch]
-    sign_builds(project, None, final=False)  # the developer's key, made here, for the builder to sign with it
+    if keys:
+        sign_builds(project, None, final=False)  # the developer's key, made here, for the builder to sign with it
     with project.lock():
         code, built = builders.build(project, host, args, keys)
     if code:

@@ -107,6 +107,13 @@ def should_build_on_the_builder_of_the_architecture_with_this_xcraft(
 
 
 @pytest.mark.usefixtures("builder")
+def should_make_the_developer_key_for_the_builds_of_a_builder_only(root: Path) -> None:
+    code, output = xcraft("build", "trivial", "--dry-run")
+    assert code == 0, output
+    assert not (root / ".xcraft/key").exists()
+
+
+@pytest.mark.usefixtures("builder")
 def should_make_the_final_builds_here_only() -> None:
     code, output = xcraft("build", "trivial", "--final")
     assert code == 2, output
