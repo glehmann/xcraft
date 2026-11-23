@@ -10,6 +10,7 @@ import json
 import re
 from typing import TYPE_CHECKING
 
+from pydantic import BaseModel, TypeAdapter
 from rich.markup import escape
 
 from xcraft import resolution
@@ -27,6 +28,21 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from xcraft.project import Project
+
+
+class _Made(BaseModel):
+    """A binary package a build made, as buildenv/made.py writes it."""
+
+    evr: str
+    arch: str
+    provides: list[str]
+    requires: list[str]
+
+
+class _BuildRoot(BaseModel):
+    """The packages installed for a build, as buildenv/record.py writes them."""
+
+    installed: dict[str, Locked]
 
 
 def resolved_root(project: Project, name: str) -> Resolved:
@@ -99,18 +115,23 @@ def check_made(project: Project, name: str, tree: Path, *, suffix: str) -> None:
     where Package.suffixed() puts it, in their names too, which may include their release.
     """
     package = project.parsed[name]
-    made = {n: b for n, b in json.loads((tree / "made.json").read_text()).items() if not is_debug(n)}
+    found = TypeAdapter(dict[str, _Made]).validate_json((tree / "made.json").read_bytes())
+    made = {n: b for n, b in found.items() if not is_debug(n)}
     parsed = {n: b for n, b in zip(package.built_names(suffix), package.binaries, strict=True) if not is_debug(n)}
     problems = changes(set(parsed), set(made))
     for n in sorted(made.keys() & parsed.keys()):
         b, m = parsed[n], made[n]
         evr = package.suffixed(b.evr, b.evr, suffix)
-        if m["arch"] != b.arch or m["evr"] != evr:
-            problems.append(f"{n}-{m['evr']}.{m['arch']} rather than {evr}.{b.arch}")
+        if m.arch != b.arch or m.evr != evr:
+            problems.append(f"{n}-{m.evr}.{m.arch} rather than {evr}.{b.arch}")
         problems += [
             f"{n} without the {field} {', '.join(missing)}"
             for field in ("provides", "requires")
-            if (missing := sorted({package.suffixed(c, b.evr, suffix) for c in getattr(b, field)} - set(m[field])))
+            if (
+                missing := sorted(
+                    {package.suffixed(c, b.evr, suffix) for c in getattr(b, field)} - set(getattr(m, field))
+                )
+            )
         ]
     if problems:
         msg = (
@@ -330,9 +351,9 @@ def record_build(project: Project, name: str, tree: Path, *, suffix: str) -> boo
     release `suffix`, and return whether the lock of the builds changed.
     """
     changed = record_dynamic(project, name, tree)
-    installed = json.loads((tree / "buildroot.json").read_text())["installed"]
+    installed = _BuildRoot.model_validate_json((tree / "buildroot.json").read_bytes()).installed
     try:
-        _check_build_root(project, name, {n: Locked.model_validate(p) for n, p in installed.items()})
+        _check_build_root(project, name, installed)
     except BuildError as e:
         if changed:
             msg = f"{e}, with the dynamic BuildRequires it asked for, now recorded: built again after what they need"
