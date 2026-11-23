@@ -105,7 +105,7 @@ def _turn(project: Project, name: str) -> Generator[None]:
     try:
         yield
     finally:
-        path.unlink()
+        path.unlink(missing_ok=True)
 
 
 def _alive(pid: str) -> bool:
