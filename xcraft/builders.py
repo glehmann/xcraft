@@ -201,6 +201,6 @@ def build(project: Project, name: str, args: list[str], keys: list[str]) -> tupl
             logs = ["--include=[!_]*.log", "--exclude=*"]
             _rsync(host, "--ignore-missing-args", *logs, f"{destination}/.xcraft/logs/", f"{project.state}/logs/")
             _rsync(host, "--ignore-missing-args", f"{destination}/.xcraft/dev-builds.json", f"{project.state}/")
-            _rsync(host, f"{destination}/xcraft.builds", f"{project.root}/")
+            _rsync(host, "--ignore-missing-args", f"{destination}/xcraft.builds", f"{project.root}/")
         built = keys_there(*keys)["keys"] if code.returncode == 0 and keys else {}
     return code.returncode, built
