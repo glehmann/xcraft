@@ -80,10 +80,10 @@ of the JSON, keys sorted, of an array of:
 1. **The format**: `FORMAT`, the version of how xcraft gives the builds what their keys cover, besides their scripts,
    like the build trees: changed with it, to build them all again.
 2. **The image and the scripts of the builds**: `recipe_key()`, the SHA-256 of the concatenation of the template of the
-   repository of our builds, `REPO_FILE`, and of the `Containerfile` of the build environment, `rpmbuild`, `build.sh`,
-   `offline.py`, `record.py`, `made.py` and `rpmdeps.py`, of `xcraft/buildenv/`. A change of them which makes the same
-   packages, like a fix of how a build fails, or of a comment, maps its hash to the earliest one making the same
-   packages, in `_SAME_BUILDS`, to keep the builds.
+   repository of our builds, `REPO_FILE`, and of the `Containerfile` of the build environment, `rpmbuild`,
+   `macros.archives`, `archives.py`, `build.sh`, `offline.py`, `record.py`, `made.py` and `rpmdeps.py`, of
+   `xcraft/buildenv/`. A change of them which makes the same packages, like a fix of how a build fails, or of a comment,
+   maps its hash to the earliest one making the same packages, in `_SAME_BUILDS`, to keep the builds.
 3. `base_image` of `xcraft.toml`: the base image, pinned by digest.
 4. The packages installed in the image: those of `packages` of `xcraft.toml`, and those xcraft needs, sorted.
 5. `macros` of `xcraft.toml`: the RPM macros of the builds, and those they undefine.

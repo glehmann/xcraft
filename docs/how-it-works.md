@@ -30,7 +30,9 @@ without gaining privileges, so that `sudo` cannot change the build root once rec
 over the other repositories, so a package built locally always wins: one of its own, of the builds of its dependencies,
 as the packages independent of each other build at once, see [Builds at once](builds.md#builds-at-once). A build result is cached in
 `.xcraft/cache/builds/<fingerprint>/<arch>/<pkg>/<key>`, by its signer, under its [build key](builds.md#build-keys). A build whose log gets larger than 256 MiB,
-like a test suite looping forever, is stopped.
+like a test suite looping forever, is stopped. After the install, the static archives of the build root are
+made as `ar`'s deterministic mode makes them, without the times and owners of their files, which `strip` writes
+again: the same objects make the same archives.
 
 **Locking.** The commands changing the project (`build`, `repo`, `shell`, `import`, `bump`, `clean`) cannot run at the
 same time; the others, like `log -f` or `status`, can run during a build. `clean`, which removes what the commands

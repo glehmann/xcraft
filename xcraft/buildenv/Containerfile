@@ -3,7 +3,7 @@ FROM ${BASE_IMAGE}
 ARG PACKAGES
 RUN rm -f /etc/yum.repos.d/*.repo
 COPY pinned.repo /etc/yum.repos.d/
-COPY macros.xcraft /etc/rpm/
+COPY macros.xcraft macros.archives /etc/rpm/
 # the macros to undefine, which a macro file cannot: see rpmbuild and parse.py
 COPY undefined.list /etc/xcraft/
 COPY --chmod=755 rpmbuild /usr/local/bin/

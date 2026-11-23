@@ -184,6 +184,7 @@ def _image_files(project: Project) -> dict[str, str]:
     return {
         "Containerfile": (BUILDENV / "Containerfile").read_text(),
         "rpmbuild": (BUILDENV / "rpmbuild").read_text(),
+        "macros.archives": (BUILDENV / "macros.archives").read_text(),
         "pinned.repo": pinned.REPO_FILE,
         # in the image before its packages are installed, and so in its tag: another image for other pins, rather than a
         # layer of the cache of podman

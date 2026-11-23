@@ -245,6 +245,26 @@ def should_parse_and_build_the_specs_without_the_macros_undefined(root: Path) ->
     assert list(root.glob(f".xcraft/cache/builds/*/{ARCH}/unique/*/RPMS/noarch/unique-1.0-1.undefined*.noarch.rpm"))
 
 
+def should_make_the_static_archives_as_ar_does_in_its_deterministic_mode(root: Path) -> None:
+    # with the time and the owner of their objects, stripped by brp-strip-static-archive after their install, then
+    # checked against their members archived again by ar D: a symbol table, a long name and a time of its own
+    (root / "base/archive").mkdir()
+    (root / "base/archive/archive.spec").write_text(
+        "Name: archive\nVersion: 1.0\nRelease: 1%{?dist}\nSummary: test\nLicense: MIT\n%global debug_package %{nil}\n"
+        "%description\ntest\n%install\necho hello > hello.txt\nld -r -b binary -o data.o hello.txt\n"
+        "ld -r -b binary -o a-member-with-a-long-name.o hello.txt\ntouch -d 2001-01-01 data.o\n"
+        "mkdir -p %{buildroot}%{_libdir}\n"
+        "ar rcsU %{buildroot}%{_libdir}/libarchive.a data.o a-member-with-a-long-name.o\n"
+        "%check\nmkdir members && cd members\nar x %{buildroot}%{_libdir}/libarchive.a\n"
+        "ar rcsD ../expected.a $(ar t %{buildroot}%{_libdir}/libarchive.a)\nar tv %{buildroot}%{_libdir}/libarchive.a\n"
+        "cmp ../expected.a %{buildroot}%{_libdir}/libarchive.a\n"
+        "%files\n%{_libdir}/libarchive.a\n"
+    )
+    (root / "lint/archive.rpmlintrc").write_text('addFilter("static-library-without-debuginfo")\n')
+    code, output = xcraft("build", "archive")
+    assert code == 0, output + (root / ".xcraft/logs/archive.log").read_text()
+
+
 def should_build_again_after_dynamic_buildrequires_on_ours(root: Path) -> None:
     spec = root / "base/with-deps/with-deps.spec"
     spec.write_text(spec.read_text().replace("BuildRequires: trivial\n", "").replace(

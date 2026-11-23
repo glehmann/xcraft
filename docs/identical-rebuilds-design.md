@@ -52,9 +52,11 @@ xcraft builds with:
   with its name, size, mtime, owner, group and mode, as `ar` found them when it added the file. So two builds with
   the same object files make different archives, by the mtimes and the owner of the build user. `ar` has a
   deterministic mode, its `D` modifier, which writes 0 for the mtime, owner and group, and 644 for the mode, but the
-  `ar` of EL does not default to it, and most build systems do not ask for it, like OCaml's. So a step added to
-  `%__os_install_post` rewrites the headers of the archives of the build root as the `D` modifier would. It edits the
-  headers itself: `objcopy -D` and `strip -D` fail on the archives of objects that are not ELF, like those of dev86.
+  `ar` of EL does not default to it, and most build systems do not ask for it, like OCaml's. So a step added at the
+  end of `%__spec_install_post` rewrites the headers of the archives of the build root as the `D` modifier would:
+  after `brp-strip-static-archive`, whose `strip -g` writes them again with the time and user of the build, and not
+  in `%__os_install_post`, which specs replace. It edits the headers itself: `objcopy -D` and `strip -D` fail on the
+  archives of objects that are not ELF, like those of dev86.
 
 The build keys cover `[macros]`: all the keys change once, which needs a full rebuild of all the packages.
 

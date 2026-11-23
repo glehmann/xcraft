@@ -220,7 +220,7 @@ def should_hash_the_package_files_as_builds_get_them(tmp_path: Path) -> None:
 
 
 def should_map_earlier_recipes_making_the_same_builds(monkeypatch: pytest.MonkeyPatch) -> None:
-    current = "22da793efe192c632edd8408e87a6f30c58b5a98fef97c20f3bcad86892b3eae"
+    current = "6bec4158f5303f57a1b4996c6901e214bf126dff1755fa651a643659f4221144"
     assert recipe_key() == current, (
         f"the recipe changed, to {buildkey.RECIPE}: map it to {current} in _SAME_BUILDS if it makes the same packages, "
         "or else set it here, which rebuilds everything"
