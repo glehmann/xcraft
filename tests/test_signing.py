@@ -8,6 +8,7 @@ import subprocess
 import threading
 from contextlib import contextmanager
 from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -24,7 +25,6 @@ from xcraft.signing import Signer, SigningError, check_signatures, create_dev_ke
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
-    from pathlib import Path
 
 
 @pytest.fixture
@@ -181,6 +181,19 @@ def should_check_the_pinned_packages_are_signed_by_their_repositories(
 
 
 @needs_gpg
+def _agents(keyring: Path) -> list[str]:
+    """Return the pids of the gpg agents of `keyring`."""
+    agents = []
+    for cmdline in Path("/proc").glob("[0-9]*/cmdline"):
+        try:
+            args = cmdline.read_bytes().decode(errors="replace").split("\0")
+        except OSError:  # ended
+            continue
+        if Path(args[0]).name == "gpg-agent" and args[args.index("--homedir") + 1 :][:1] == [str(keyring)]:
+            agents.append(cmdline.parent.name)
+    return agents
+
+
 def should_sign_development_builds_with_the_developer_key(build_environment: Path, root: Path, tmp_path: Path) -> None:
     # a change on a branch: development builds
     git(root, "symbolic-ref", "HEAD", "refs/heads/master")
@@ -198,6 +211,8 @@ def should_sign_development_builds_with_the_developer_key(build_environment: Pat
     signer = dev_signer(Project.find())
     assert signer
     assert signed
+    # nor its gpg agent, which signing started, left running
+    assert _agents(dev_keyring(Project.find())) == []
     assert xcraft("key", "create")[0] != 0  # there is one
     unsigned = sorted(TOYS.rglob("*.rpm"))[:1]  # the toys are not signed
     check_signatures(

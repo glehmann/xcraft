@@ -108,8 +108,15 @@ app.add_typer(maint.app, name="maint", rich_help_panel="Publishing")
 app.add_typer(vm.app, name="vm", rich_help_panel="Host")
 
 
+def _stop_agents() -> None:
+    """Stop the gpg agents the command started, if it signed anything, see signing.stop_agents()."""
+    if signing := sys.modules.get("xcraft.signing"):
+        signing.stop_agents()
+
+
 @app.callback()
 def options(
+    ctx: typer.Context,
     trace: Annotated[bool, typer.Option("--trace", help="Show stack traces on errors.")] = False,  # noqa: ARG001
     debug: Annotated[bool, typer.Option("--debug", help="Show the commands xcraft runs.")] = False,  # noqa: ARG001
     maintenance: Annotated[
@@ -130,6 +137,7 @@ def options(
     remote.forget()
     resolution.forget()
     buildid.target = maintenance
+    ctx.call_on_close(_stop_agents)
 
 
 def _reflowed(doc: str | None) -> str | None:
@@ -189,7 +197,10 @@ def _interrupt(signum: int, _frame: object) -> None:
 
 
 def _exit_interrupted() -> None:
-    """Exit at once, without waiting for the threads still downloading or uploading, see process.thread_pool()."""
+    """Exit at once, without waiting for the threads still downloading or uploading, see process.thread_pool(), but
+    for stopping the gpg agents the command started.
+    """
+    _stop_agents()
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(130)

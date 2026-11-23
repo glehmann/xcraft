@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import functools
 import hashlib
@@ -10,6 +11,7 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -83,24 +85,38 @@ def pytest_sessionstart(session: pytest.Session) -> None:
         process.run(["podman", "volume", "rm", "--force", *ended], check=False, capture=True)
 
 
+def _ended(run: Path, home: Path) -> bool:
+    """Return whether the session of the temporary directory `run` of pytest ended without stopping the gpg agent of
+    `home`: pytest removed it since, or the session was killed, leaving the lock naming its process.
+    """
+    lock = run / ".lock"
+    with contextlib.suppress(OSError, ValueError):
+        return not home.exists() or not _running(int(lock.read_text()))
+    return not home.exists()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def stop_gpg_agents(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
     """Stop at the end the gpg agents of the keyrings of the tests, in the temporary directory of the session, which gpg
-    starts and leaves running.
+    starts and leaves running, and those of earlier sessions killed before stopping them, see _ended().
     """
     yield
     if not shutil.which("gpgconf"):
         return
     base = tmp_path_factory.getbasetemp()
+    root = next(p for p in base.parents if p.name.startswith("pytest-of-"))
     for cmdline in Path("/proc").glob("[0-9]*/cmdline"):
         try:
             args = cmdline.read_bytes().decode(errors="replace").split("\0")
         except OSError:  # ended
             continue
         if Path(args[0]).name == "gpg-agent" and "--homedir" in args[:-1]:
-            home = args[args.index("--homedir") + 1]
-            if Path(home).is_relative_to(base):
-                process.run(["gpgconf", "--homedir", home, "--kill", "gpg-agent"], check=False, capture=True)
+            home = Path(args[args.index("--homedir") + 1])
+            if home.is_relative_to(base):
+                process.run(["gpgconf", "--homedir", str(home), "--kill", "gpg-agent"], check=False, capture=True)
+            elif home.is_relative_to(root) and _ended(root / home.relative_to(root).parts[0], home):
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(int(cmdline.parent.name), signal.SIGTERM)
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:

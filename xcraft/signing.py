@@ -159,11 +159,27 @@ def dev_keyring(project: Project) -> Path:
     return project.state / "key"
 
 
+_dev_keyrings: set[Path] = set()
+"""The keyrings of the developer's keys of the command, whose gpg agents it stops at its end, see stop_agents()."""
+
+
+def stop_agents() -> None:
+    """Stop the gpg agents of the keyrings of the developer's keys the command used, which gpg starts and leaves
+    running otherwise: one for each checkout, and for each project of the tests. Their keys have no passphrase to
+    keep.
+    """
+    if shutil.which("gpgconf"):
+        for keyring in _dev_keyrings:
+            process.run(["gpgconf", "--homedir", str(keyring), "--kill", "gpg-agent"], check=False, capture=True)
+    _dev_keyrings.clear()
+
+
 def dev_signer(project: Project) -> Signer | None:
     """Return the signer of development builds, with the developer's key, when there is one."""
     keyring = dev_keyring(project)
     if not (keyring / "fingerprint").exists():
         return None
+    _dev_keyrings.add(keyring)
     return Signer(key=(keyring / "fingerprint").read_text().strip(), gnupghome=keyring)
 
 
@@ -213,6 +229,7 @@ def create_dev_key(project: Project, name: str) -> Signer:
         msg = f"there is already a key in {keyring}"
         raise SigningError(msg)
     keyring.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _dev_keyrings.add(keyring)
     signer = Signer(key="", gnupghome=keyring)
     # without passphrase: only for test hosts
     signer.gpg("--passphrase", "", "--quick-generate-key", name, "ed25519", "sign", "never")
