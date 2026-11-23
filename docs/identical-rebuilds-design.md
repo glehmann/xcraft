@@ -1,7 +1,8 @@
 # Design: reusing the builds that a rebuild reproduces
 
-Status: proposed. With the build environment changes, 29 of the 43 packages of xcp-ng-dist rebuild identically
-after a change of kernel-headers, 33 with deterministic static archives too, see [Experiment](#experiment).
+Status: the build environment is done, in xcraft and xcp-ng-dist, whose 43 packages all rebuild identically with
+their specs fixed, see [With the specs fixed](#with-the-specs-fixed). The comparison of the builds and the reuse are
+not done.
 
 ## Problem
 
@@ -142,7 +143,7 @@ The others, with kernel-headers itself, differed by:
 | the member headers of static archives, their time and owner: the 371 differing archives had the same members | dev86, libempserver, ocaml, ocaml-findlib, only by them; xen, xapi, xs-opam-repo | deterministic static archives, see [Build environment](#build-environment) |
 | the time of the build, in `include/generated/compile.h`, `utsversion.h`, `vmlinuz`; the headers tarball of `kheaders.ko`; perf, objtool, resolve_btfids | kernel | `KBUILD_BUILD_TIMESTAMP` from `SOURCE_DATE_EPOCH`, in the spec; the tools not studied |
 | the release, `GRUB_RPM_VERSION`, in `config.h`, `version.mod` and the EFI binaries | grub | the spec |
-| the release in the SBAT section of the EFI binaries, and their CodeView debug entry | xen | none for SBAT, made for the secure boot revocations, which has the release on purpose |
+| the release in the SBAT section of the EFI binaries, and their CodeView debug entry | xen | the spec: the revocations of secure boot use the generation of an SBAT entry, not its version |
 | the time of the build, in the build info of xenopsd-xc and xapi | xapi | the spec, from `SOURCE_DATE_EPOCH` |
 | the times of the installed files, in the `.changes` files of opam | xs-opam-repo | the spec, or opam |
 | the time of the ISO, in its volume descriptor | xcp-ng-pv-tools | the spec, with the dates of `xorriso` from `SOURCE_DATE_EPOCH` |
@@ -152,3 +153,27 @@ The others, with kernel-headers itself, differed by:
 With deterministic static archives, dev86, libempserver, ocaml and ocaml-findlib are identical too: 33 of 43. Each of the
 others keeps a new build ID on each change of its build root, like today, until its spec is fixed. The packages built
 against them are still compared, and reused when identical: qemu, built against xen, was.
+
+### With the specs fixed
+
+All the 43 packages were then built twice with the build environment of xcraft and the specs of xcp-ng-dist fixed,
+as development builds of two identifiers, which make other releases of the same sources, with the caches of ccache
+and dune emptied before the second builds, so that they compiled everything again. All were identical, the last
+fixes checked by building again the packages they changed: the kernel twice, xs-opam-repo three times. The fixes,
+besides those above:
+
+- `%{source_release}`, the release without the number of the build, a macro of xcp-ng-dist, for what the packages
+  embed of their versions: the version of grub and the SBAT entries of grub and xen, the version suffix of the
+  programs of openvswitch, the name of the ISO of xcp-ng-pv-tools. A reused build keeps its release anyway;
+- strip wrote the current time in the PE header of `xen.efi`, which ld leaves at zero with `SOURCE_DATE_EPOCH`:
+  `strip -p` keeps it;
+- the kernel spec undefined `%_find_debuginfo_dwz_opts` to turn dwz off, which only removed the redefinition of
+  `xcraft.toml` and ran EL's multifile mode: it sets it empty. With `CONFIG_CTF`, its type information, which is
+  never packaged, is in the build ID of the modules before being taken out of them, and GCC orders it differently
+  from one build to the next: that of `kheaders.ko` changed. It is off;
+- `rbac_static.csv` of xapi had the time of its generation;
+- the `.changes` files of opam are wrapped by the length of the times they record: the spec joins their lines.
+  camlp-streams, on OCaml 4.14, includes in its Stream and Genlex those of the standard library, which resolve to
+  its own once compiled: its builds depended on the order of the jobs of dune, and it is installed alone, by one;
+- the inner RPMs, debs and tgz of xcp-ng-pv-tools take the date of the changelog, and xorriso makes the ISO;
+- the test results of blktap and sm are no longer packaged.
