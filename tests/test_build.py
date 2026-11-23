@@ -234,6 +234,17 @@ def should_build_without_network_privileges_or_broken_pipes(root: Path) -> None:
     assert '"no new privileges" flag is set' in log
 
 
+def should_parse_and_build_the_specs_without_the_macros_undefined(root: Path) -> None:
+    config = root / "xcraft.toml"
+    config.write_text(config.read_text().replace('xenserver = "9"\n', 'xenserver = "9"\n_unique_build_ids = false\n'))
+    write_spec(root, "unique")
+    spec = root / "base/unique/unique.spec"
+    spec.write_text(spec.read_text().replace("Release: 1", "Release: 1%{!?_unique_build_ids:.undefined}"))
+    code, output = xcraft("build", "unique")
+    assert code == 0, output
+    assert list(root.glob(f".xcraft/cache/builds/*/{ARCH}/unique/*/RPMS/noarch/unique-1.0-1.undefined*.noarch.rpm"))
+
+
 def should_build_again_after_dynamic_buildrequires_on_ours(root: Path) -> None:
     spec = root / "base/with-deps/with-deps.spec"
     spec.write_text(spec.read_text().replace("BuildRequires: trivial\n", "").replace(

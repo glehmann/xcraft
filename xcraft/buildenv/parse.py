@@ -17,9 +17,13 @@ MARKER = "XCRAFTAUTOREV"
 
 
 def _load(spec_file: str, target: str, autorev: str | None = None) -> rpm.spec:
-    """Return the spec parsed for `target`, from the configuration of rpm, with %autorev as `autorev`, if given."""
+    """Return the spec parsed for `target`, from the configuration of rpm without the macros xcraft.toml undefines, with
+    %autorev as `autorev`, if given.
+    """
     pkg_dir = pathlib.Path(spec_file).parent
     rpm.reloadConfig(target)
+    for macro in pathlib.Path("/etc/xcraft/undefined.list").read_text().split():
+        rpm.delMacro(macro)
     rpm.addMacro("_sourcedir", str(pkg_dir))
     rpm.addMacro("_specdir", str(pkg_dir))
     if autorev is not None:

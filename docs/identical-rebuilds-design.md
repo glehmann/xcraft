@@ -42,8 +42,9 @@ xcraft builds with:
 
 - `%_unique_build_ids`, `%_unique_debug_names`, `%_unique_debug_srcs` and `%_package_note_flags` undefined. A macros
   file cannot undefine them: they are tested with `%{?...}`, which defining them to `%{nil}` does not change. So
-  `[macros]` of xcraft.toml gets `false` for a macro to undefine, which the builds pass to rpmbuild and dnf builddep as
-  `--undefine`, and the parser of the specs to `rpm.delMacro()`;
+  `[macros]` of xcraft.toml gets `false` for a macro to undefine, which a wrapper of rpmbuild, before `/usr/bin` in
+  `PATH`, passes as `--undefine`, for the builds and the scripts of `xcraft shell`, and the parser of the specs to
+  `rpm.delMacro()`: dnf builddep has no `--undefine`, and they make no BuildRequires;
 - `%clamp_mtime_to_source_epoch 1`, in `[macros]`;
 - `%_find_debuginfo_dwz_opts` with `--dwz-single-file-mode` added to the options of EL, in `[macros]`: not
   `%_find_debuginfo_opts`, which specs set, like the kernel's;

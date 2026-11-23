@@ -26,12 +26,17 @@ if TYPE_CHECKING:
 FORMAT = 1
 """The version of how xcraft gives the builds what their keys cover, besides the scripts of the builds, like the build
 trees, see rpmbuild.prepare_tree(): changed with it, to build them all again."""
-SCRIPTS = ("Containerfile", "build.sh", "offline.py", "record.py", "made.py", "rpmdeps.py")
+SCRIPTS = ("Containerfile", "rpmbuild", "build.sh", "offline.py", "record.py", "made.py", "rpmdeps.py")
 """The Containerfile of the image and the scripts of the builds, in xcraft/buildenv/: see The recipe."""
 RECIPE = hashlib.sha256("".join([REPO_FILE, *((BUILDENV / s).read_text() for s in SCRIPTS)]).encode()).hexdigest()
 """What makes the builds, besides the settings of the image and the packages: a change to it rebuilds them all, but see
 _SAME_BUILDS."""
-_SAME_BUILDS: dict[str, str] = {}
+_SAME_BUILDS: dict[str, str] = {
+    # the macros undefined by xcraft.toml, none before
+    "789d616e336ba9f1107c9670be93c265201bcde3e70c59156f5e4741a0b00177": (
+        "22da793efe192c632edd8408e87a6f30c58b5a98fef97c20f3bcad86892b3eae"
+    ),
+}
 """Recipes making the same packages as an earlier one, by their hash, with the earliest one: their builds keep its
 keys."""
 

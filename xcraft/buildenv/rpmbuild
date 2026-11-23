@@ -1,0 +1,4 @@
+#!/bin/sh
+# rpmbuild without the macros of rpm's configuration that xcraft.toml undefines, which a macro file cannot: before
+# /usr/bin in PATH, for the builds, and the commands and scripts of xcraft shell
+exec /usr/bin/rpmbuild $(sed 's/^/--undefine /' /etc/xcraft/undefined.list) "$@"

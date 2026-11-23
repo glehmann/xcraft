@@ -180,13 +180,16 @@ def _image_pins(project: Project) -> dict[str, Pin]:
 
 def _image_files(project: Project) -> dict[str, str]:
     """Return the text of the files of the build context of the build environment image, by name."""
+    macros = project.config.macros
     return {
         "Containerfile": (BUILDENV / "Containerfile").read_text(),
+        "rpmbuild": (BUILDENV / "rpmbuild").read_text(),
         "pinned.repo": pinned.REPO_FILE,
         # in the image before its packages are installed, and so in its tag: another image for other pins, rather than a
         # layer of the cache of podman
         "pins.list": "".join(f"{name} {pin.text()}\n" for name, pin in sorted(_image_pins(project).items())),
-        "macros.xcraft": "".join(f"%{name} {value}\n" for name, value in sorted(project.config.macros.items())),
+        "macros.xcraft": "".join(f"%{name} {value}\n" for name, value in sorted(macros.items()) if value is not False),
+        "undefined.list": "".join(f"{name}\n" for name, value in sorted(macros.items()) if value is False),
     }
 
 

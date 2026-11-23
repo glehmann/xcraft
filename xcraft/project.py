@@ -279,8 +279,8 @@ class Config(BaseModel):
     """Platforms of the builds: xcraft works on one at a time, see Project.find()."""
     repos: dict[str, Repo]
     """The only repositories of the build environment, with the local builds."""
-    macros: dict[str, str] = {}
-    """RPM macros of the build environment."""
+    macros: dict[str, str | Literal[False]] = {}
+    """RPM macros of the build environment: false undefines one of rpm's configuration, which a macro file cannot."""
     packages: list[str] = []
     """Packages installed in the build environment, with those xcraft uses."""
     extra_upstream: dict[str, Extra] = {}
