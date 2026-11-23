@@ -19,7 +19,7 @@ from xcraft.cache import BuildError, cached_build, release_suffix
 from xcraft.display import changes, console
 from xcraft.graph import reachable
 from xcraft.lock import Locked, load_lock
-from xcraft.packages import is_debug
+from xcraft.packages import dep_name, is_debug
 from xcraft.process import log
 from xcraft.project import write_atomically
 from xcraft.resolution import Resolved, resolve_rpm_deps, rpm_deps_context
@@ -45,6 +45,18 @@ class _BuildRoot(BaseModel):
     installed: dict[str, Locked]
 
 
+def _unresolved(project: Project, error: str) -> str:
+    """Return `error`, of a build root that cannot be resolved, saying which package of ours provides what nothing
+    does, when its spec excludes the architecture.
+    """
+    if match := re.match(r"nothing provides (.+?): when a package of ours does", error):
+        dep = dep_name(match[1])
+        for package in (p for p in project.parsed.values() if p.excluded):
+            if any(dep in {b.name, *map(dep_name, b.provides)} for b in package.binaries):
+                return f"nothing provides {match[1]}: {package.name} does, whose spec excludes {project.arch}"
+    return error
+
+
 def resolved_root(project: Project, name: str) -> Resolved:
     """Return what is resolved for the build of `name`, but raise when its build root cannot be resolved, or has
     upstream packages with the names of ours.
@@ -55,7 +67,7 @@ def resolved_root(project: Project, name: str) -> Resolved:
     """
     resolved = resolution.resolve(project)
     if error := resolved.errors.get(name):
-        msg = f"its build root cannot be resolved: {error}"
+        msg = f"its build root cannot be resolved: {_unresolved(project, error)}"
         raise BuildError(msg)
     owners = {binary.name: package.name for package in project.packages.values() for binary in package.binaries}
     if shadowed := sorted(

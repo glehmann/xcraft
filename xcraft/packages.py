@@ -45,6 +45,9 @@ class Package(BaseModel):
     """All the sources, expanded, Source0 first: the URLs of their archives, for those the spec gives."""
     error: str = ""
     """Why the spec could not be parsed, if it could not."""
+    excluded: bool = False
+    """Whether its ExclusiveArch or ExcludeArch exclude the architecture it was parsed for, like rpmbuild: it is not
+    built there, see builds.locked_packages()."""
 
     @property
     def requirements(self) -> list[str]:

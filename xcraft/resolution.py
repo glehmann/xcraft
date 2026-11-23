@@ -732,7 +732,7 @@ def _wanted(project: Project) -> list[str]:
     """Return the capabilities our specs require, which the resolution of what rpm generated records the providers
     of.
     """
-    return sorted({dep_name(r) for p in project.parsed.values() for r in p.requirements})
+    return sorted({dep_name(r) for p in project.parsed.values() if not p.excluded for r in p.requirements})
 
 
 def resolve_rpm_deps(project: Project, names: dict[str, str], rpms: list[Path]) -> Resolved:

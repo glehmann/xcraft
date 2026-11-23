@@ -77,6 +77,12 @@ the keys of all the architectures are known on any machine, before building ther
 but not locked yet get locked, at the latest version all the architectures have, and the lock is committed with the
 change of the spec; with `--locked`, for CI, it fails instead. See also [the design](lock-design.md).
 
+**Architectures.** A package whose spec excludes an architecture, with `ExclusiveArch` or `ExcludeArch`, like
+rpmbuild, is not built there: building all the packages skips it, naming it fails, and the build root of a package
+needing it there cannot be resolved, which says so. What differs by architecture goes in the specs, with `%ifarch`,
+like the `BuildRequires` of a package only built on some. It still gets its build IDs, and its release from the specs
+of the architectures it is built for, and `xcraft bump` changes it on any machine.
+
 **Checked builds.** A build only gets the builds of its dependencies. It records what only a build can know: its
 dynamic `BuildRequires`, before installing them, and what rpm generated for its binary packages, which a build fetched
 from the remote storage records too: each binary package as soon as its requirements resolve, those needing packages

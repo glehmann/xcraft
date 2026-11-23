@@ -131,6 +131,23 @@ def should_take_the_image_from_the_lock_given(project: Project, monkeypatch: pyt
     )
 
 
+def should_cover_the_architectures_a_package_is_built_for_only() -> None:
+    pin = Pin(evr="1-1", arch="noarch", sha256="1" * 64, source="zlib")
+    # its spec excludes aarch64
+    platforms = [
+        buildkey.Platform("x86_64_v2", {"b": frozenset()}, {"b": ()}),
+        buildkey.Platform("aarch64", {}, {}),
+    ]
+
+    def inputs(arm: Pin) -> dict[str, list]:
+        lock = Lock(sources={"zlib": "1-1"}, binaries={"x86_64_v2": {"zlib": pin}, "aarch64": {"zlib": arm}})
+        lock.image = {"x86_64_v2": ["zlib"], "aarch64": ["zlib"]}
+        return buildkey.lock_inputs(platforms, lock, Builds(), "b")
+
+    assert list(inputs(pin)) == ["x86_64_v2"]
+    assert inputs(pin.model_copy(update={"evr": "1-2", "sha256": "2" * 64})) == inputs(pin)
+
+
 def should_ignore_dependency_updates_for_reused_builds() -> None:
     pin = Pin(evr="1-1", arch="noarch", sha256="1" * 64, source="zlib")
     platforms = [buildkey.Platform("x86_64_v2", {"b": frozenset()}, {"b": ()})]
@@ -254,7 +271,7 @@ def should_fail_when_the_lock_pins_nothing_for_the_shared_build_roots_of_an_arch
     # shared by the architectures, valid without one pinning their packages
     lock = Lock(sources={"zlib": "1-1"}, roots=Recorded(shared={"foo": ["zlib"]}))
     with pytest.raises(RuntimeError, match=f"the lock has no pinned zlib for {project.arch}"):
-        buildkey.lock_inputs([buildkey.Platform(project.arch, {}, {})], lock, Builds(), "foo")
+        buildkey.lock_inputs([buildkey.Platform(project.arch, {}, {"foo": ()})], lock, Builds(), "foo")
 
 
 def should_give_new_keys_to_builds_against_development_ones(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:

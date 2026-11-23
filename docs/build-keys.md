@@ -30,8 +30,9 @@ inputs, an array of:
 
 1. **The package directory**, `base/<package>/`: its hash, see [The package directory](#the-package-directory).
 2. **The recipe**: its hash, see [The recipe](#the-recipe), the same for all the packages.
-3. **The lock**: an object with, for each architecture of `platforms` in `xcraft.toml`, its RPM architecture, like
-   `x86_64_v2`, and an array of what the locks have for the package there, see [The lock](#the-lock).
+3. **The lock**: an object with, for each architecture of `platforms` in `xcraft.toml` the package is built for, its
+   RPM architecture, like `x86_64_v2`, and an array of what the locks have for the package there, see
+   [The lock](#the-lock): not those its spec excludes, with `ExclusiveArch` or `ExcludeArch`.
 4. **The dependencies**: the packages of ours its build is built against on any architecture, see
    [The dependencies](#the-dependencies), out of its component, sorted by name, each as an array of its name, its build
    number and its build key.

@@ -110,9 +110,9 @@ class Platform:
 def lock_inputs(
     on: list[Platform], lock: Lock, builds: Builds, name: str, ignored: set[str] | None = None
 ) -> dict[str, list]:
-    """Return what `lock` and `builds` have for `name` on the architectures `on`, but the versions and the SHA-256 of
-    the binary packages of the upstream source packages `ignored`, those xcraft reuse ignores the updates of: see The
-    lock.
+    """Return what `lock` and `builds` have for `name` on the architectures `on` it is built for, but the versions and
+    the SHA-256 of the binary packages of the upstream source packages `ignored`, those xcraft reuse ignores the updates
+    of: see The lock.
     """
 
     def pinned(arch: str, names: list[str]) -> dict[str, list[str]]:
@@ -139,6 +139,7 @@ def lock_inputs(
             generated(platform),
         ]
         for platform in on
+        if name in platform.binaries  # those it is built for
     }
 
 

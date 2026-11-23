@@ -145,8 +145,8 @@ def bump(
     if version and len(packages) != 1:
         msg = "--version needs one package"
         raise typer.BadParameter(msg)
-    project = prepared_project(packages)
-    before = project.packages
+    project = prepared_project(packages, excluded=True)
+    before = project.parsed
     name, email = (git("-C", str(project.root), "config", key) for key in ("user.name", "user.email"))
     author = f"{name} <{email}>"
     with project.lock():

@@ -382,6 +382,45 @@ def me(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.usefixtures("me")
+def should_not_build_packages_whose_specs_exclude_the_architecture(root: Path) -> None:
+    # like rpmbuild, for the architecture of the target, x86_64 for x86_64_v2
+    other, here = ("aarch64", "x86_64") if ARCH == "x86_64_v2" else ("x86_64", "aarch64")
+    for name, tag in (("elsewhere", f"ExclusiveArch: {other}"), ("excluded", f"ExcludeArch: {here}")):
+        write_spec(root, name)
+        spec = root / f"base/{name}/{name}.spec"
+        spec.write_text(spec.read_text().replace("BuildArch: noarch\n", f"{tag}\n") + "%changelog\n")
+    # those needing it on its architectures only, and on this one too
+    write_spec(root, "careful")
+    spec = root / "base/careful/careful.spec"
+    spec.write_text(
+        spec.read_text().replace("%description", f"%ifarch {other}\nBuildRequires: elsewhere\n%endif\n%description")
+    )
+    write_spec(root, "user", "elsewhere")
+    code, output = xcraft("build")
+    assert code == 1, output
+    assert sorted(line.split(" built")[0] for line in results(output)[:-1]) == [
+        "✓ careful",
+        "✓ trivial",
+        "✓ with-deps",
+        "✗ user: its build root cannot be resolved: nothing provides elsewhere: elsewhere does, whose spec excludes "
+        + ARCH,
+    ]
+    code, output = xcraft("build", "elsewhere", "excluded")
+    assert code == 2, output
+    assert f"not built for {ARCH}, which their specs exclude:" in output
+    assert "elsewhere, excluded" in output
+    # numbered all the same, with its release, from the specs of the architectures it is built for
+    builds = (root / "xcraft.builds").read_text()
+    assert "elsewhere.build = 1\n" in builds
+    assert 'elsewhere.evr = "1.0-1"\n' in builds
+    assert "excluded.build = 1\n" in builds
+    # and bumped on any of them
+    code, output = xcraft("bump", "elsewhere")
+    assert code == 0, output
+    assert output == "elsewhere: 1.0-1 -> 1.0-2\n"
+
+
+@pytest.mark.usefixtures("me")
 def should_bump_the_release_with_a_changelog_entry(root: Path) -> None:
     code, output = xcraft("bump", "trivial", "-m", "Rebuild")
     assert code == 0, output

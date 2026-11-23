@@ -52,11 +52,11 @@ def _build_remotely(
     if ident is None or options.get("--key"):
         msg = "a builder makes the builds of the developer's key: --final and --key build here, with --local"
         raise typer.BadParameter(msg)
-    names = list(packages or sorted(project.package_dirs))
     flags = [o if v is True else f"{o}={v}" for o, v in options.items() if v]
     # --local: on the builder, rather than on a builder of its own, if any
     args = [*(packages or []), *flags, "--dev", ident, "--arch", project.arch, "--local"]
-    keys = [] if options.get("--dry-run") else [*names, "--dev", ident, "--arch", project.arch]
+    # all those built for the architecture by default
+    keys = [] if options.get("--dry-run") else [*(packages or []), "--dev", ident, "--arch", project.arch]
     if keys:
         sign_builds(project, None, final=False)  # the developer's key, made here, for the builder to sign with it
     with project.lock():

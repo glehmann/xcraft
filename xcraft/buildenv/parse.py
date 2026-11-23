@@ -36,8 +36,17 @@ def _autorev_names(spec_file: str, target: str) -> list[str]:
     return [name.replace(MARKER, "%{autorev}") if MARKER in name else "" for name in names]
 
 
+def _excluded(spec: rpm.spec, target: str) -> bool:
+    """Return whether the ExclusiveArch or ExcludeArch of `spec` exclude the architecture of `target`, like rpmbuild."""
+    arch, header = target.split("-", 1)[0], spec.sourceHeader
+    exclusive = header[rpm.RPMTAG_EXCLUSIVEARCH]
+    return arch in header[rpm.RPMTAG_EXCLUDEARCH] or (bool(exclusive) and arch not in exclusive)
+
+
 def parse(spec_file: str, target: str) -> dict:
-    """Return the binary packages, BuildRequires, %dist and sources of a spec, or why it cannot be parsed."""
+    """Return the binary packages, BuildRequires, %dist and sources of a spec, whether it excludes the architecture, or
+    why it cannot be parsed.
+    """
     pkg_dir = pathlib.Path(spec_file).parent
     try:
         spec = _load(spec_file, target)
@@ -67,6 +76,7 @@ def parse(spec_file: str, target: str) -> dict:
         # sources are of type 1, patches 2
         "source0": next((source for source, n, kind in spec.sources if kind == 1 and n == 0), ""),
         "sources": [source for source, n, kind in sorted(spec.sources, key=lambda s: s[1]) if kind == 1],
+        "excluded": _excluded(spec, target),
     }
     # parsed again, from the start
     for binary, autorev_name in zip(parsed["binaries"], _autorev_names(spec_file, target), strict=True):

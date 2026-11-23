@@ -244,11 +244,12 @@ def recordable(binary: Binary, provides: list[str]) -> list[str]:
 
 
 def locked_packages(parsed: dict[str, Package], builds: Builds, arch: str) -> dict[str, Package]:
-    """Return the `parsed` packages of `arch`, with what their builds found in `builds`: the requirements and
-    capabilities rpm generated for their binary packages, with their versions, and their dynamic BuildRequires.
+    """Return the `parsed` packages of `arch`, but those it excludes, with what their builds found in `builds`: the
+    requirements and capabilities rpm generated for their binary packages, with their versions, and their dynamic
+    BuildRequires.
     """
     requires, provides, buildrequires = (getattr(builds, f).of(arch) for f in ("requires", "provides", "buildrequires"))
-    packages = {name: package.model_copy(deep=True) for name, package in parsed.items()}
+    packages = {name: package.model_copy(deep=True) for name, package in parsed.items() if not package.excluded}
     for name, package in packages.items():
         package.buildrequires.extend(buildrequires.get(name, []))
         for b in package.binaries:
