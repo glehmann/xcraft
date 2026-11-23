@@ -53,6 +53,22 @@ def should_refuse_sole_use_when_other_commands_use_the_project(project: Project)
         pass
 
 
+def should_complete_the_packages_while_cleaning(project: Project) -> None:
+    (project.root / "base/foo").mkdir(parents=True)
+    env = {**os.environ, "XCRAFT_PROJECT": str(project.root), "_XCRAFT_COMPLETE": "complete_bash"}
+    env |= {"COMP_WORDS": "xcraft build f", "COMP_CWORD": "2"}
+    fd = os.open(project.root, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)  # as xcraft clean does
+        # not waiting for it: the timeout only stops a completion that waits
+        completed = subprocess.run(
+            [Path(sys.executable).parent / "xcraft"], env=env, capture_output=True, text=True, timeout=30, check=True
+        )
+    finally:
+        os.close(fd)
+    assert completed.stdout.split() == ["foo"]
+
+
 def should_refuse_a_package_in_two_repositories(project: Project) -> None:
     project.config.repositories = ["base", "xostor"]
     for path in ("base/foo", "base/.foo.import", "xostor/bar", "iso/bar"):

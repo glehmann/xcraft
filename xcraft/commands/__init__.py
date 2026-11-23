@@ -17,7 +17,8 @@ from xcraft.signing import Signer, SigningError, build_signer, dev_signer, key_s
 def complete_package(incomplete: str) -> list[str]:
     """Return the packages starting with `incomplete`, for the shell completion."""
     try:
-        return sorted(name for name in Project.find().package_dirs if name.startswith(incomplete))
+        # without waiting for xcraft clean, which leaves the packages and the lock
+        return sorted(name for name in Project.find(use=False).package_dirs if name.startswith(incomplete))
     except (RuntimeError, OSError):
         return []
 
@@ -27,7 +28,7 @@ def complete_upstream(incomplete: str) -> list[str]:
     completion.
     """
     try:
-        lock = cached_lock(Project.find())
+        lock = cached_lock(Project.find(use=False))
     except (RuntimeError, OSError, ValueError):
         return []
     names = {*lock.sources, *(name for pins in lock.binaries.values() for name in pins)}
@@ -62,7 +63,7 @@ To = Annotated[Destination, typer.Option("--to", help="Bucket to upload to.")]
 def complete_arch(incomplete: str) -> list[str]:
     """Return the architectures of the project starting with `incomplete`, for the shell completion."""
     try:
-        return [p.arch for p in Project.find().all_platforms() if p.arch.startswith(incomplete)]
+        return [p.arch for p in Project.find(use=False).all_platforms() if p.arch.startswith(incomplete)]
     except (RuntimeError, OSError):
         return []
 
