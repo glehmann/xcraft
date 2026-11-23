@@ -9,11 +9,7 @@ import typer
 
 from xcraft import prune as pruner
 from xcraft.commands import To, remote_storage, unprepared_project
-from xcraft.display import activity, console
-
-
-def _size(size: int) -> str:
-    return f"{size / 2**30:.1f} GiB" if size >= 2**30 else f"{size / 2**20:.0f} MiB"
+from xcraft.display import activity, amount, console
 
 
 def prune(
@@ -39,7 +35,7 @@ def prune(
         found = pruner.pruned(storage, keep_days, dt.datetime.now(dt.UTC))
     for tree in found.trees:
         console.print(f"{'would remove' if dry_run else 'removing'} {tree}")
-    summary = f"{len(found.trees)} builds, {len(found.files)} files, {_size(found.size)}"
+    summary = f"{len(found.trees)} builds, {len(found.files)} files, {amount(found.size)}"
     if dry_run:
         console.print(f"would remove {summary}")
         return

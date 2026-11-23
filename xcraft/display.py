@@ -275,6 +275,11 @@ def changes(before: set[str], after: set[str]) -> list[str]:
     return [*(f"+{e}" for e in sorted(after - before)), *(f"-{e}" for e in sorted(before - after))]
 
 
+def amount(size: int) -> str:
+    """Return a size in bytes like 1.5 GiB, or 300 MiB below a GiB."""
+    return f"{size / 2**30:.1f} GiB" if size >= 2**30 else f"{size / 2**20:.0f} MiB"
+
+
 def duration(seconds: float) -> str:
     """Return a duration like 2m30s: hours and minutes, minutes and seconds, or seconds."""
     hours, rest = divmod(round(seconds), 3600)

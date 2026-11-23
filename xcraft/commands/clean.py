@@ -16,15 +16,11 @@ from xcraft.cache import build_keys
 from xcraft.commands import Arch, Packages, prepared_project
 from xcraft.container import checkout_images, checkout_repositories
 from xcraft.devbuilds import built_dev_suffixes
-from xcraft.display import activity, console
+from xcraft.display import activity, amount, console
 from xcraft.iso import checkout_iso_keys
 from xcraft.project import Project
 
 _ALSO, _RETENTION = "Additional cleanup", "Retention"
-
-
-def _size(size: int) -> str:
-    return f"{size / 2**30:.1f} GiB" if size >= 2**30 else f"{size / 2**20:.0f} MiB"
 
 
 def _shared(project: Project, used_since: float, *, dry_run: bool) -> dict[str, list[str]]:
@@ -116,7 +112,7 @@ def clean(
     width = max((len(what) for what in removed), default=0)
     for what, items in removed.items():
         console.print(f"{what:<{width}} {len(items):>6} {'to remove' if dry_run else 'removed'}")
-    console.print(f"{'would free' if dry_run else 'freed'} {_size(size)} in .xcraft/")
+    console.print(f"{'would free' if dry_run else 'freed'} {amount(size)} in .xcraft/")
     # the repositories xcraft repo made, which clean leaves alone, keep the files of builds
     if kept := cleaner.repos_disk_usage(project):
-        console.print(f"{_size(kept)} more would be freed without the repositories of xcraft repo, in repo*/")
+        console.print(f"{amount(kept)} more would be freed without the repositories of xcraft repo, in repo*/")
