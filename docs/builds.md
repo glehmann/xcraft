@@ -315,6 +315,9 @@ stdin and stdout, for the editors speaking LSP, from the directory of the projec
 - the findings of rpmlint as the spec is typed, with the same rules, explained on hover, and a fix filtering them in
   `lint/<package>.rpmlintrc`. rpm parses the spec as it is typed, running its code, without network, with the project
   read-only, but `lint/`;
+- the findings of all the specs of the project, as on disk, for the diagnostics of the workspace, like Helix's
+  `space-D`, linted again when the specs, the rpmlintrc files or `lint/rpmlint.toml` change, when the editor reports
+  it, like Helix;
 - the definitions of the macros, those of the spec, and those of the image, copied to `.xcraft/lsp/macros/` for the
   editor to open them, like the project's, in `/etc/rpm/macros.xcraft`;
 - the outline, folding, completion, links to the sources and patches, rpm's manual on hover, from the host's

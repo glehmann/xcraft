@@ -58,16 +58,20 @@ _FILTERS = 'addFilter(": E: unknown-key ")\n'
 """The filters of all the packages: the signatures of the builds, which xcraft checks, by keys rpmlint does not have."""
 
 
-def config_dir(project: Project, directory: Path) -> None:
+def config_dir(project: Project, directory: Path, *, linked: bool = False) -> None:
     """Write the configuration of all the packages into `directory`, xcraft's and the project's, in one directory, as
     rpmlint takes one -c: its files load in no given order, hence xcraft's ReleaseExtension only.
+
+    The project's is `linked`, rather than copied, to follow its changes, where the project is at its path.
     """
     directory.mkdir(parents=True, exist_ok=True)
     write_atomically(directory / "xcraft.toml", _CONFIG)
+    (directory / "rpmlint.toml").unlink(missing_ok=True)
     if (config := project.root / LINT_DIR / "rpmlint.toml").exists():
-        write_atomically(directory / "rpmlint.toml", config.read_text())
-    else:
-        (directory / "rpmlint.toml").unlink(missing_ok=True)
+        if linked:
+            (directory / "rpmlint.toml").symlink_to(config)
+        else:
+            write_atomically(directory / "rpmlint.toml", config.read_text())
 
 
 def _rpmlintrc(project: Project, name: str) -> str:
@@ -148,7 +152,7 @@ def serve(project: Project) -> int:
     native = project.on_host()
     with contextlib.redirect_stdout(sys.stderr):  # the protocol's: the progress of building the image goes to stderr
         image = side_image(native, "lint")
-    config_dir(project, (lsp := project.state / "lsp") / "config")
+    config_dir(project, (lsp := project.state / "lsp") / "config", linked=True)
     (macros := lsp / "macros").mkdir(parents=True, exist_ok=True)
     (lint := project.root / LINT_DIR).mkdir(exist_ok=True)
     args = ["--linter", "rpmlint", "--rpmlint-config", str(lsp / "config")]
