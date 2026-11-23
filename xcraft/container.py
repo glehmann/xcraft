@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 from xcraft import host, pinned, process
 from xcraft.display import activity, changes, read_tail
 from xcraft.lock import Locked, cached_lock
-from xcraft.project import ProjectLockedError, write_atomically
+from xcraft.project import ProjectLockedError, own_id, write_atomically
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -325,7 +325,7 @@ def run(
             run_container(
                 project,
                 script,
-                container=f"xcraft-{step}-{os.getpid()}",
+                container=f"xcraft-{step}-{own_id()}",
                 volumes=list(volumes),
                 network=network,
                 log=log,
@@ -480,7 +480,7 @@ def run_natively(
     from xcraft import upstream_copy  # noqa: PLC0415, which runs containers
 
     native, log = project.on_host(), project.state / f"logs/_{step}.log"
-    container = f"xcraft-{step}-{os.getpid()}"
+    container = f"xcraft-{step}-{own_id()}"
     with project.tmp_dir(f"{step}-repos") as directory:
         (directory / "upstream.repo").write_text(repo_file(project))
         # for the resolution and the pin downloads, not in the image: the storage is not an input of the builds

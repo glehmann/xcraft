@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import sys
+import threading
 import tomllib
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
@@ -43,6 +44,13 @@ def write_atomically(path: Path, text: str) -> None:
         os.fsync(f.fileno())
     tmp.replace(path)
     _sync(path.parent)
+
+
+def own_id() -> str:
+    """Return the id of this thread of this process, for what it makes at the same time as others: the threads of a
+    command, like the builds running at once, make the same ones.
+    """
+    return f"{os.getpid()}-{threading.get_native_id()}"
 
 
 class ProjectLockedError(RuntimeError):
@@ -508,11 +516,11 @@ class Project:
 
     @contextmanager
     def tmp_dir(self, name: str) -> Generator[Path]:
-        """Return a new temporary directory in .xcraft/tmp/, for `name` in this process.
+        """Return a new temporary directory in .xcraft/tmp/, for `name` in this thread, see own_id().
 
         Removed on success, but kept on errors, to debug them.
         """
-        tmp = self.state / "tmp" / f"{name}-{os.getpid()}"
+        tmp = self.state / "tmp" / f"{name}-{own_id()}"
         shutil.rmtree(tmp, ignore_errors=True)
         tmp.mkdir(parents=True)
         yield tmp
