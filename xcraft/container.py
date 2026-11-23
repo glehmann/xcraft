@@ -498,7 +498,7 @@ def base_image(project: Project) -> str:
         pulled = process.run(["podman", "pull", "-q", "--platform", project.platform, ref], capture=True)
     image = pulled.stdout.split()[-1]
     cache.parent.mkdir(parents=True, exist_ok=True)
-    cache.write_text(image)
+    write_atomically(cache, image)
     return image
 
 
