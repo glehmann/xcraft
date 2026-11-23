@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from xcraft import container, process
 from xcraft.display import activity, download_progress
+from xcraft.project import own_id
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
@@ -79,7 +80,7 @@ def extra_rpms(project: Project) -> list[Path]:
         rpm = project.state / "cache/extra" / extra.sha256 / extra.url.rsplit("/", 1)[-1]
         if not rpm.exists() or sha256_of(rpm) != extra.sha256:
             rpm.parent.mkdir(parents=True, exist_ok=True)
-            tmp = rpm.with_suffix(".part")
+            tmp = rpm.with_name(f"{rpm.name}.{own_id()}.part")  # the platforms resolve at the same time
             with activity(f"downloading {rpm.name}") as on_line:
                 process.download(extra.url, tmp, download_progress(on_line))
             if (digest := sha256_of(tmp)) != extra.sha256:
