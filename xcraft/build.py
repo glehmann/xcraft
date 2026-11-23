@@ -49,6 +49,7 @@ from xcraft.display import (
     for_package,
     in_ci,
     log_step,
+    messages,
     print_log_line,
     print_log_lines,
     read_tail,
@@ -278,15 +279,17 @@ def _lock_state(project: Project) -> bytes:
 def _show_failure(project: Project, name: str, error: Exception, *, verbose: bool, tag: int) -> None:
     """Show why the build of `name` failed, with the end of its log when it failed in the build environment, after
     the whole log in CI, to debug it there: folded on GitHub Actions. The end of its log follows its name, padded to
-    `tag`, like the other lines of its build; the whole log is as xcraft log shows it.
+    `tag`, like the other lines of its build; the whole log is as xcraft log shows it. Both are among the messages: the
+    runner of CI reads stdout and stderr apart, and would put the messages following a whole log on stdout in its
+    middle, written in a pipe while they are read.
     """
     console.print(f"[bold red]✗[/] {name}: {escape(str(error))}")
     if isinstance(error, ContainerError) and not verbose:
         lines = read_tail(project.log(name), 16 * 2**20)
         if in_ci():
             fold = os.environ.get("GITHUB_ACTIONS") == "true"
-            console.file.write(f"::group::full {name} build log\n" if fold else f"full {name} build log:\n")
-            console.file.write("".join(f"{line}\n" for line in lines) + ("::endgroup::\n" if fold else ""))
+            messages.file.write(f"::group::full {name} build log\n" if fold else f"full {name} build log:\n")
+            messages.file.write("".join(f"{line}\n" for line in lines) + ("::endgroup::\n" if fold else ""))
         print_log_lines([*log_step(lines)[-40:], Text(f"full log: xcraft log {name}", style="dim")], name, tag)
 
 

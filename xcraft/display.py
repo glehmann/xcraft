@@ -163,9 +163,9 @@ def _tagged_line(tag: str, width: int, line: str | Text) -> Text:
 
 def print_log_lines(lines: Iterable[str | Text], tag: str = "", width: int = 0) -> None:
     """Print lines of build log with colors, after `tag`, if any, see tagged(), at once: not mixed with those of other
-    builds running meanwhile.
+    builds running meanwhile; among the messages, like the end of the log of a failed build, not to pipe.
     """
-    console.print(Text("\n").join(_tagged_line(tag, width, line) for line in lines))
+    messages.print(Text("\n").join(_tagged_line(tag, width, line) for line in lines))
 
 
 def tagged(tag: str, width: int, out: Console = messages) -> Callable[[str], None]:
