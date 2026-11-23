@@ -119,8 +119,11 @@ end.
   the upstream ones and the sources of the previous snapshot, so a snapshot only costs what changed.
 
 Publication signs the hashes of the locally checked snapshot. Files are reused by server-side S3 copy only when a
-trusted remote manifest has hashes matching the local snapshot. Those copies are not downloaded again during publication;
-downloads still check each payload against its signed manifest.
+trusted remote manifest has hashes matching the local snapshot, or, for the upstream packages, when the metadata of the
+upstream copy, unsigned, has them with their pinned SHA-256, name, version, architecture and file name: forged, it can
+only make the publication copy other contents, which the hosts reject, as they check the packages against the
+published metadata and their signatures. Those copies are not downloaded again during publication; downloads still
+check each payload against its signed manifest.
 The `latest` tree only gets the files that changed: its manifest is removed while they are copied, so that a
 publication failing then leaves it incomplete, and the next one copies all its files.
 

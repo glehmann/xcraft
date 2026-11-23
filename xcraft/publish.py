@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -148,12 +149,13 @@ def _rpm_name(packages: dict[str, Pin], name: str) -> str:
 
 def as_pinned(packages: dict[str, Pin], name: str, entry: Entry) -> bool:
     """Return whether the metadata `entry` is the one of the package `name` as pinned in `packages`: its name,
-    epoch-version-release, architecture and file name, which forged metadata of the upstream copy, unsigned, could
-    change, for a package of the pinned SHA-256.
+    epoch-version-release, architecture and location, which forged metadata of the upstream copy, unsigned, could
+    change, for a package of the pinned SHA-256: its file name, in the directory of the SHA-256 of its original for a
+    signed copy, see xcraft.upstream_signed.path().
     """
     pin = packages[name]
-    return repodata.nevra(entry) == (name, pin.evr, pin.arch) and (
-        Path(repodata.location(entry)).name == _rpm_name(packages, name)
+    return repodata.nevra(entry) == (name, pin.evr, pin.arch) and bool(
+        re.fullmatch(rf"([0-9a-f]{{64}}/)?{re.escape(_rpm_name(packages, name))}", repodata.location(entry))
     )
 
 

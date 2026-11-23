@@ -933,7 +933,9 @@ def should_accept_only_upstream_entries_of_their_pinned_versions() -> None:
     }
     pinned_version = '<version epoch="0" ver="1.07.1" rel="11.el10"/>'
     assert publisher.as_pinned(pins, "bc", entry(pinned_version, "bc-1.07.1-11.el10.x86_64.rpm"))
-    assert publisher.as_pinned(pins, "bc", entry(pinned_version, "0123/bc-1.07.1-11.el10.x86_64.rpm"))  # a signed copy
+    signed = f"{'a' * 64}/bc-1.07.1-11.el10.x86_64.rpm"  # in the directory of the SHA-256 of its original
+    assert publisher.as_pinned(pins, "bc", entry(pinned_version, signed))
+    assert not publisher.as_pinned(pins, "bc", entry(pinned_version, "../other/bc-1.07.1-11.el10.x86_64.rpm"))
     assert not publisher.as_pinned(pins, "bc", entry(pinned_version, "bc-1.06-1.el10.x86_64.rpm"))
     assert not publisher.as_pinned(
         pins, "bc", entry('<version epoch="0" ver="1.06" rel="1.el10"/>', "bc-1.07.1-11.el10.x86_64.rpm")
