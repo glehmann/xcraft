@@ -85,6 +85,20 @@ def _span(root: Path, name: str) -> tuple[float, float]:
     )
 
 
+def should_show_the_log_of_the_build_ready_rather_than_of_the_last_one(root: Path) -> None:
+    code, output = xcraft("build", "trivial")
+    assert code == 0, output
+    # like a build of other inputs interrupted since, the ready build keeps its log
+    (root / ".xcraft/logs/trivial.log").write_text("interrupted\n")
+    code, output = xcraft("log", "trivial")
+    assert code == 0, output
+    assert "Executing(%build)" in output
+    assert "interrupted" not in output
+    # none for other inputs: the last build here
+    edit(root, "changed")
+    assert xcraft("log", "trivial") == (0, "interrupted\n")
+
+
 def should_build_the_packages_independent_of_each_other_at_once(root: Path) -> None:
     _timed(root, "first")
     _timed(root, "second")

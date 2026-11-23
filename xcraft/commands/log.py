@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import glob
 import re
 from collections import deque
 from typing import TYPE_CHECKING, Annotated
@@ -9,7 +10,10 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 
 from xcraft import build as builder
-from xcraft.commands import OnePackage
+from xcraft import buildkey
+from xcraft.cache import cached_build
+from xcraft.commands import Arch, Dev, Final, OnePackage, dev_ident, prepared_project
+from xcraft.devbuilds import dev_keys
 from xcraft.display import follow_log, log_step, log_steps, page_log, print_log_line
 from xcraft.project import Project
 
@@ -33,7 +37,21 @@ def _read_lines(path: Path) -> Iterator[str]:
             yield from (line.rstrip("\n") for line in f)
 
 
+def _ready_log(
+    ctx: typer.Context, project: Project, package: str, dev: str | None, *, final: bool, arch: str | None
+) -> Path | None:
+    """Return the log of the build of `package` ready for its inputs, built here or fetched, if any."""
+    if not any(project.state.glob(f"cache/builds/*/*/{glob.escape(package)}/*/build.log")):
+        return None  # without preparing the project, which may run containers
+    project = prepared_project([package], arch=arch)
+    if project.packages[package].error:
+        return None
+    key = dev_keys(project, dev_ident(ctx, dev, final=final), buildkey.directories(project))[0][package]
+    return log if (log := cached_build(project, package, key) / "build.log").exists() else None
+
+
 def log(
+    ctx: typer.Context,
     package: OnePackage,
     step: Annotated[
         str | None,
@@ -48,10 +66,15 @@ def log(
     follow: Annotated[
         bool, typer.Option("--follow", "-f", help="Show the lines added by a running build, until it ends.")
     ] = False,
+    dev: Dev = None,
+    final: Final = False,
+    arch: Arch = None,
 ) -> None:
-    """Show the log of the last build of a package."""
+    """Show the log of the build of a package ready for its inputs, built here or fetched, or else of its last build
+    here, like one failed, or running, which --follow follows.
+    """
     project = Project.find(use=False)  # following a build, during xcraft clean
-    path = project.log(package)
+    path = (None if follow else _ready_log(ctx, project, package, dev, final=final, arch=arch)) or project.log(package)
     if not path.exists() and not follow:
         msg = f"{package} has no build log"
         raise RuntimeError(msg)
