@@ -326,6 +326,8 @@ def check_signatures(
                 image=image,
             )
         except ContainerError:
+            if not (work / "checks").exists():  # the container did not run
+                raise
             for line in (work / "checks").read_text().splitlines():
                 if not line.endswith(": digests signatures OK"):
                     console.print(f"[red]✗[/] {escape(line.removeprefix('/checked/'))}")

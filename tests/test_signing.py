@@ -17,6 +17,7 @@ from tests import ARCH, PROJECT, TOYS, config, copy_project, git, needs_gpg, xcr
 from xcraft import buildid, pinned, publish
 from xcraft.cache import build_keys, cached_build, signed_build
 from xcraft.commands import choose_signer
+from xcraft.container import ContainerError
 from xcraft.lock import cached_lock, load_lock, save_lock
 from xcraft.project import Config, Project, Remote, Repo, Sign
 from xcraft.signing import Signer, SigningError, check_signatures, create_dev_key, dev_keyring, dev_signer, key_signer
@@ -222,6 +223,9 @@ def should_sign_development_builds_with_the_developer_key(build_environment: Pat
             what="test",
             public_key=signer.public_key(),
         )
+    # a key rpm cannot import: the error of the container, as nothing was checked
+    with pytest.raises(ContainerError, match="import read failed"):
+        check_signatures(Project.find(), moved, [signed[0].name], what="test", public_key="not a key")
 
     _check_with_keys_at_urls(root, tmp_path, signer, signed)
 
