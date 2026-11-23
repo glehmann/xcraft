@@ -607,7 +607,8 @@ def _manifest(
 
 def unverified_manifest(storage: Remote, prefix: str) -> tuple[str, dict[str, str]] | None:
     """Return the directory of the files of the tree `prefix`, and their SHA-256, from its manifest, without checking
-    its signature, or None: for what a forged manifest can only make keep more, like the pruning of the storage.
+    its signature, or None: for the pruning of the storage, which a forged manifest can make remove anything, but only
+    those who can write the storage can forge one, and remove anything themselves.
     """
     with tempfile.TemporaryDirectory(prefix="xcraft-manifest-") as tmp:
         if not download(storage, f"{prefix}/{MANIFEST}", manifest := Path(tmp) / MANIFEST):
