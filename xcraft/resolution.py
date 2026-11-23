@@ -776,6 +776,7 @@ def upstream_sources(project: Project, names: list[str]) -> list[str]:
     platforms = project.all_platforms() if set(names) - lock.sources.keys() else []
     for platform in platforms:
         prepare(platform, roots=False)
+    lock = load_lock(project)  # with the sources prepare() locked
     binaries = {n: p.source for platform in platforms for n, p in resolve_image(platform).packages.items()}
     if unknown := sorted(n for n in names if n not in lock.sources and n not in binaries):
         msg = f"not locked: {', '.join(unknown)}"

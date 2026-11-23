@@ -515,6 +515,13 @@ def should_lock_versions_that_all_the_architectures_have(root: Path) -> None:
     assert load_lock(Project.find()).sources["toyrun"] == "2-1"
 
 
+def should_take_the_source_packages_the_image_locks_meanwhile(root: Path) -> None:
+    # python-six, of the image, has no binary package of its name, but python3-six
+    (root / "xcraft.lock").unlink()
+    code, output = xcraft("lock", "--update", "python-six")
+    assert (code, output.splitlines()[-1]) == (0, "0 updated"), output
+
+
 def should_lock_only_versions_whose_source_packages_are_published(root: Path) -> None:
     # the source packages of the toys, of toyrun 1 only, while the repositories have toyrun 2 too
     toys = f'baseurl = "file://{TOYS}/{{arch}}/"\n'
