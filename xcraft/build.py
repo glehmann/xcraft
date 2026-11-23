@@ -732,6 +732,7 @@ class _Run:
                 self._lint_binaries(name, tree)
                 self._cache(name, keys[name], tree)
                 record_rpm_deps(project, [name], keys, quiet=True)  # see _recorded_again()
+                keep_built(project, self.dev, self.autorev, [name], self.hashes)
         except BuildRootChangedError as e:
             console.print(f"[yellow]↻[/] {name}: {escape(str(e))}")
             return Result(name, "again")
@@ -741,7 +742,6 @@ class _Run:
         finally:
             started.turn.close()
         console.print(f"[bold green]✓[/] {name} [green]built[/] in {duration(time.monotonic() - started.start)}")
-        keep_built(project, self.dev, self.autorev, [name], self.hashes)
         return Result(name, "built")
 
     def _checked(self, name: str, tree: Path, suffix: str) -> dict[str, str]:
