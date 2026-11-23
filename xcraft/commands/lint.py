@@ -19,7 +19,7 @@ Spec = Annotated[
     typer.Option(
         "--spec",
         help="Lint only this spec, of a package, as it is on disk, without the builds, nor resolving the packages: "
-        "for the editors, see docs/builds.md.",
+        "for the scripts, see docs/builds.md.",
         show_default=False,
     ),
 ]

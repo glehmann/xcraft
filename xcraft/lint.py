@@ -9,18 +9,20 @@ filters unused, like those of the binary packages when linting a spec, are not r
 
 from __future__ import annotations
 
+import contextlib
 import re
 import shlex
-import shutil
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rich.text import Text
 
-from xcraft import container
+from xcraft import container, process
 from xcraft.container import side_image
 from xcraft.display import activity, console, messages, tagged
 from xcraft.packages import is_debug
+from xcraft.project import write_atomically
 from xcraft.specs import main_spec
 
 if TYPE_CHECKING:
@@ -56,6 +58,18 @@ _FILTERS = 'addFilter(": E: unknown-key ")\n'
 """The filters of all the packages: the signatures of the builds, which xcraft checks, by keys rpmlint does not have."""
 
 
+def config_dir(project: Project, directory: Path) -> None:
+    """Write the configuration of all the packages into `directory`, xcraft's and the project's, in one directory, as
+    rpmlint takes one -c: its files load in no given order, hence xcraft's ReleaseExtension only.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    write_atomically(directory / "xcraft.toml", _CONFIG)
+    if (config := project.root / LINT_DIR / "rpmlint.toml").exists():
+        write_atomically(directory / "rpmlint.toml", config.read_text())
+    else:
+        (directory / "rpmlint.toml").unlink(missing_ok=True)
+
+
 def _rpmlintrc(project: Project, name: str) -> str:
     """Return the filters of the package `name`: xcraft's, those of its upstream rpmlintrc files, then the project's."""
     files = [*sorted(project.package_dirs[name].glob("*rpmlintrc")), project.root / LINT_DIR / f"{name}.rpmlintrc"]
@@ -81,15 +95,10 @@ def findings(
     """
     native = project.on_host()
     image = side_image(native, "lint")
-    config = project.root / LINT_DIR / "rpmlint.toml"
     mounts = {d: f"/in/{i}" for i, d in enumerate(sorted({f.parent for paths in files.values() for f in paths}))}
     specs = {f.name: _shown(f) for paths in files.values() for f in paths if f.suffix == ".spec"}
     with project.tmp_dir("lint") as work, activity(show) as progress:
-        # one directory, as rpmlint takes one -c: its files load in no given order, hence xcraft's ReleaseExtension only
-        (work / "config").mkdir()
-        (work / "config/xcraft.toml").write_text(_CONFIG)
-        if config.exists():
-            shutil.copy(config, work / "config/rpmlint.toml")
+        config_dir(project, work / "config")
         script = []
         for i, (name, paths) in enumerate(files.items(), 1):
             (work / f"{name}.rpmlintrc").write_text(_rpmlintrc(project, name))
@@ -120,6 +129,44 @@ def findings(
             image=image,
         )
         return {name: _failed(work, name) for name in files}
+
+
+SPEC_DOC = Path("/usr/share/doc/rpm/spec.md")
+"""rpm's manual of the specs, for rpmls's hovers: on the host, as the images are installed without documentation."""
+
+
+def serve(project: Project) -> int:
+    """Run rpmls, the language server of the specs, on stdin and stdout, in the lint image, linting them with rpmlint
+    and the configuration of the project, for the diagnostics of xcraft lint --spec as the specs are typed, and return
+    its exit status.
+
+    The project is mounted read-only at its path, for the paths of the editor to be those of the container, where the
+    spec typed runs without network, as rpm parses it, but lint/, where rpmls adds the filters of the findings
+    suppressed, and the copies of the macro files of the image in .xcraft/lsp/macros/, for the editor to open their
+    definitions. The changelog entries are those of git's user.
+    """
+    native = project.on_host()
+    with contextlib.redirect_stdout(sys.stderr):  # the protocol's: the progress of building the image goes to stderr
+        image = side_image(native, "lint")
+    config_dir(project, (lsp := project.state / "lsp") / "config")
+    (macros := lsp / "macros").mkdir(parents=True, exist_ok=True)
+    (lint := project.root / LINT_DIR).mkdir(exist_ok=True)
+    args = ["--linter", "rpmlint", "--rpmlint-config", str(lsp / "config")]
+    args += ["--rpmlintrc-dir", str(lint), "--macro-cache", str(macros)]
+    args += ["--spec-doc", str(SPEC_DOC)] if SPEC_DOC.exists() else []
+    volumes = [f"{project.root}:{project.root}:ro", f"{lint}:{lint}", f"{macros}:{macros}"]
+    volumes += [f"{SPEC_DOC}:{SPEC_DOC}:ro"] if SPEC_DOC.exists() else []
+    name, email = (
+        process.run(["git", "config", k], check=False, capture=True).stdout.strip() for k in ("user.name", "user.email")
+    )
+    packager = f"%packager {name} <{email}>\n" if name and email else ""
+    script = f"printf %s {shlex.quote(packager)} > ~/.rpmmacros && exec {shlex.join(['rpmls', *args])}"
+    cmd = [
+        "podman", "run", "--rm", "--interactive", "--platform", native.platform, "--userns=keep-id:uid=1000,gid=1000",
+        "--security-opt", "label=disable", "--network", "none", *(a for v in volumes for a in ("--volume", v)),
+        image, "bash", "-c", script,
+    ]  # fmt: skip
+    return process.run(cmd, check=False).returncode
 
 
 def _out() -> Console:

@@ -295,7 +295,7 @@ show. The development builds only show what it finds in their specs, and in thei
 building: the development builds, or the final ones with `--final`.
 
 It runs in the lint image, the build environment image with rpmlint, of the versions pinned in the lock, see
-[lock-design.md](lock-design.md), natively, for all the architectures: what it finds in the binary packages does not
+[lock-design.md](lock-design.md), and the static binary of rpmls, pinned by xcraft, see below, natively, for all the architectures: what it finds in the binary packages does not
 depend on theirs. The specs are parsed for the host's.
 
 Its configuration is in `lint/`, out of the package directories, which stay as imported:
@@ -309,27 +309,30 @@ Its configuration is in `lint/`, out of the package directories, which stay as i
 
 ### In the editors
 
-`xcraft lint --spec <file>` lints one spec, of a package, as it is on disk, with the same rules, and only prints what
-rpmlint finds in it, `<spec>:<line>: <E|W>: <check> <details>`, or without the line for the whole spec: in under a
-second, as it neither resolves the packages, nor lints the builds. It fails on errors. With
-[efm-langserver](https://github.com/mattn/efm-langserver), which turns the output of linters into the diagnostics of
-the editors speaking LSP, at each save:
+`xcraft lsp` runs [rpmls](https://github.com/glehmann/rpmls), the language server of the specs, in the lint image, on
+stdin and stdout, for the editors speaking LSP, from the directory of the project:
 
-```yaml
-version: 2
-tools:
-  xcraft-lint: &xcraft-lint
-    lint-command: "xcraft lint --spec ${INPUT}"
-    lint-stdin: false  # the spec on disk: when opened and saved
-    lint-after-open: true
-    lint-on-save: true
-    lint-ignore-exit-code: true
-    lint-formats:
-      - "%.%#:%l: %t: %m"
-      - "%.%#: %t: %m"
-    root-markers:
-      - xcraft.toml
-languages:
-  spec:  # the language of the spec files in the editor
-    - <<: *xcraft-lint
+- the findings of rpmlint as the spec is typed, with the same rules, explained on hover, and a fix filtering them in
+  `lint/<package>.rpmlintrc`. rpm parses the spec as it is typed, running its code, without network, with the project
+  read-only, but `lint/`;
+- the definitions of the macros, those of the spec, and those of the image, copied to `.xcraft/lsp/macros/` for the
+  editor to open them, like the project's, in `/etc/rpm/macros.xcraft`;
+- the outline, folding, completion, links to the sources and patches, rpm's manual on hover, from the host's
+  `/usr/share/doc/rpm/spec.md`, if any, and a new changelog entry of git's `user.name` and `user.email`.
+
+With Helix, in `.helix/languages.toml`:
+
+```toml
+[language-server.xcraft]
+command = "xcraft"
+args = ["lsp"]
+
+[[language]]
+name = "rpmspec"
+language-servers = ["xcraft"]
 ```
+
+`xcraft lint --spec <file>` lints one spec, of a package, as it is on disk, with the same rules, and only prints what
+rpmlint finds in it, `<spec>:<line>: <E|W>: <check> <details>`, or without the line for the whole spec, for the scripts,
+like the hooks of git: in under a second, as it neither resolves the packages, nor lints the builds. It fails on
+errors.

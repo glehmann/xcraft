@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from pathlib import Path
+from typing import IO
 
 import pytest
 
@@ -105,3 +109,51 @@ def should_fail_final_builds_when_the_packages_have_errors(root: Path) -> None:
     code, output = xcraft("lint", "--final", "trivial")
     assert code == 0, output
     assert "not built, only their specs linted: trivial" in output
+
+
+def _message(out: IO[bytes]) -> dict:
+    """Return the next message of a language server on `out`."""
+    headers = dict(line.decode().strip().split(": ", 1) for line in iter(out.readline, b"\r\n"))
+    return json.loads(out.read(int(headers["Content-Length"])))
+
+
+def should_serve_the_findings_of_the_specs_to_the_editors(root: Path) -> None:
+    spec = _spec_error(root)
+    cmd = [sys.executable, "-m", "xcraft", "lsp"]
+    server = subprocess.Popen(cmd, cwd=root, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    stdin, stdout = server.stdin, server.stdout
+    assert stdin
+    assert stdout
+
+    def send(method: str, params: dict | None, id_: int = 0) -> dict:
+        """Send a notification, or a request of `id_`, and return its response."""
+        body = json.dumps({"jsonrpc": "2.0", "method": method, "params": params} | ({"id": id_} if id_ else {}))
+        stdin.write(f"Content-Length: {len(body)}\r\n\r\n{body}".encode())
+        stdin.flush()
+        while id_ and (message := _message(stdout)).get("id") != id_:
+            pass
+        return message if id_ else {}
+
+    send("initialize", {"capabilities": {}}, 1)
+    send("initialized", {})
+    document = {"uri": spec.as_uri(), "languageId": "spec", "version": 1, "text": spec.read_text()}
+    send("textDocument/didOpen", {"textDocument": document})
+    # the findings of xcraft lint --spec, as the spec is typed
+    while (message := _message(stdout)).get("method") != "textDocument/publishDiagnostics":
+        pass
+    [diagnostic] = [d for d in message["params"]["diagnostics"] if d["severity"] == 1]  # the errors
+    assert (diagnostic["code"], diagnostic["range"]["start"]["line"]) == ("use-of-RPM_SOURCE_DIR", 15), diagnostic
+    # filtered in lint/<package>.rpmlintrc
+    params = {"textDocument": {"uri": spec.as_uri()}, "range": diagnostic["range"]}
+    actions = send("textDocument/codeAction", params | {"context": {"diagnostics": [diagnostic]}}, 2)["result"]
+    fix = next(a for a in actions if a["kind"] == "quickfix")
+    assert fix["title"] == "Suppress use-of-RPM_SOURCE_DIR in trivial.rpmlintrc", fix
+    send("workspace/executeCommand", fix["command"], 3)
+    assert 'addFilter("use-of-RPM_SOURCE_DIR")' in (root / "lint/trivial.rpmlintrc").read_text()
+    # linted again, without it
+    while (message := _message(stdout)).get("method") != "textDocument/publishDiagnostics":
+        pass
+    assert all(d["severity"] != 1 for d in message["params"]["diagnostics"]), message
+    send("shutdown", None, 4)
+    send("exit", None)
+    assert server.wait(timeout=30) == 0

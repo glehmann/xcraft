@@ -18,14 +18,16 @@ import json
 import os
 import re
 import subprocess
+import tarfile
 from contextlib import nullcontext
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from xcraft import host, pinned, process
 from xcraft.display import activity, changes, read_tail
 from xcraft.lock import Locked, cached_lock
 from xcraft.project import ProjectLockedError, own_id, write_atomically
+from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -66,6 +68,53 @@ the indexes of the local repositories, and dnf as root. The base image has dnf a
 SIDE_IMAGES = {"sign": ["rpm-sign", "gnupg2"], "lint": ["rpmlint"]}
 """The packages of the side images, by kind, over the build environment image: the signing image, with rpmsign and
 gpg, and the lint image, with rpmlint and Fedora's configuration of it."""
+
+
+class Tool(NamedTuple):
+    """A static binary, at the top of a .tar.gz archive, pinned by the SHA-256 of the archive."""
+
+    url: str
+    sha256: str
+
+
+SIDE_TOOLS = {
+    "lint": {
+        "rpmls": {
+            "x86_64": Tool(
+                "https://github.com/glehmann/rpmls/releases/download/0.1.0/rpmls-0.1.0-x86_64-unknown-linux-musl.tar.gz",
+                "abe4b2d2fe7e723d0b277478ae8720cfd022c074c0c15703a9f93d566c1c65b5",
+            ),
+            "aarch64": Tool(
+                "https://github.com/glehmann/rpmls/releases/download/0.1.0/rpmls-0.1.0-aarch64-unknown-linux-musl.tar.gz",
+                "412ae4a516e86662501f3f6ce4e1f2499a7bc0176356f5e53ce29e678d6976b5",
+            ),
+        },
+    }
+}
+"""The static binaries of the side images, by kind, name and architecture of the host, which runs them natively: in
+the lint image, rpmls, the language server of the specs for the editors, linting them with rpmlint."""
+
+
+def _tools(kind: str) -> dict[str, Tool]:
+    """Return the static binaries of the side image `kind` for the host, by name."""
+    machine = os.uname().machine
+    tools = SIDE_TOOLS.get(kind, {})
+    if missing := [name for name, arches in tools.items() if machine not in arches]:
+        msg = f"no {', '.join(missing)} for {machine}, for the {kind} image"
+        raise ContainerError(msg)
+    return {name: arches[machine] for name, arches in tools.items()}
+
+
+def _extract_tool(name: str, tool: Tool, directory: Path) -> None:
+    """Download the static binary `name` from `tool` into `directory`, checked against its pin."""
+    archive = directory / f"{name}.tar.gz"
+    process.download(tool.url, archive)
+    if (digest := sha256_of(archive)) != tool.sha256:
+        msg = f"{tool.url} has the SHA-256 {digest}, not {tool.sha256}"
+        raise ContainerError(msg)
+    with tarfile.open(archive) as tar:
+        tar.extract(name, directory, filter="data")
+    archive.unlink()
 
 
 class ContainerError(RuntimeError):
@@ -232,13 +281,16 @@ def _podman_build(
     *,
     show: str,
     pinned: Path,
+    tools: dict[str, Tool] | None = None,
 ) -> None:
-    """Build `show`, the image `tag`, from `files` and the build `args`, logged in .xcraft/logs/_<step>.log, with the
-    repository of the `pinned` packages on /pinned.
+    """Build `show`, the image `tag`, from `files`, the static binaries of `tools` and the build `args`, logged in
+    .xcraft/logs/_<step>.log, with the repository of the `pinned` packages on /pinned.
     """
     with project.tmp_dir(step) as context:
         for name, content in files.items():
             (context / name).write_text(content)
+        for name, tool in (tools or {}).items():
+            _extract_tool(name, tool, context)
         build_args = [arg for name, value in args.items() for arg in ("--build-arg", f"{name}={value}")]
         # the metadata of the dnf cache, which the containers solved, slow to solve again under emulation, in an
         # overlay, in which the build changes nothing
@@ -529,7 +581,10 @@ def _side_pins(project: Project, kind: str) -> dict[str, Pin]:
 def _side_tag(project: Project, kind: str) -> str:
     """Return the tag of the side image `kind` of the platform: of its build environment image, and of its pins."""
     pins = sorted(f"{name} {pin.text()}" for name, pin in _side_pins(project, kind).items())
-    digest = hashlib.sha256(json.dumps([image_tag(project), pins]).encode()).hexdigest()[:16]
+    tools = sorted(f"{name} {tool.sha256}" for name, tool in _tools(kind).items())
+    digest = hashlib.sha256(json.dumps([image_tag(project), pins, *([tools] if tools else [])]).encode()).hexdigest()[
+        :16
+    ]
     return f"{side_name(kind)}:{digest}"
 
 
@@ -539,16 +594,17 @@ def side_image(project: Project, kind: str) -> str:
 
     It is apart from the build environment image, so as not to change it, and the cache keys with it.
     """
-    base, tag = built_image(project), _side_tag(project, kind)
+    base, tag, tools = built_image(project), _side_tag(project, kind), _tools(kind)
     if not _exists(tag):
         containerfile = (
             f"FROM {base}\nUSER root\n"
             f"RUN dnf -y --disablerepo='*' --enablerepo={pinned.REPO_ID} --setopt=install_weak_deps=False install"
             f" {' '.join(SIDE_IMAGES[kind])} && dnf clean all\n"
-            "USER builder\n"
+            + (f"COPY {' '.join(tools)} /usr/local/bin/\n" if tools else "")
+            + "USER builder\n"
         )
         _podman_build(
             project, f"{kind}-image", tag, {"Containerfile": containerfile}, {}, show=f"the {kind} image",
-            pinned=pinned.repository(project, _side_pins(project, kind)),
+            pinned=pinned.repository(project, _side_pins(project, kind)), tools=tools,
         )  # fmt: skip
     return tag
