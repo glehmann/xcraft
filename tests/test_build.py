@@ -438,8 +438,10 @@ def should_not_build_packages_whose_specs_exclude_the_architecture(root: Path) -
     ]
     code, output = xcraft("build", "elsewhere", "excluded")
     assert code == 2, output
-    assert f"not built for {ARCH}, which their specs exclude:" in output
-    assert "elsewhere, excluded" in output
+    # in a box, wrapped at another place on each architecture, by the length of its name
+    assert f"not built for {ARCH}, which their specs exclude: elsewhere, excluded" in " ".join(
+        output.replace("│", " ").split()
+    )
     # numbered all the same, with its release, from the specs of the architectures it is built for
     builds = (root / "xcraft.builds").read_text()
     assert "elsewhere.build = 1\n" in builds
