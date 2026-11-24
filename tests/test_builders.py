@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import re
 import shutil
+import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
 
@@ -74,6 +77,43 @@ def should_open_the_shell_on_the_builder_of_the_architecture(
     assert (builder / "shell").read_text() == f"{copy} shell trivial --arch {ARCH} --local\n"
     assert (copy / "base/trivial/trivial.spec").exists()
     assert not (root / ".xcraft/build/trivial").exists()
+
+
+@pytest.mark.usefixtures("root")
+def should_show_the_builds_running_on_the_builder_of_the_architecture(builder: Path) -> None:
+    # the markers of a build there, held by its process
+    markers = builder / builders.ROOT / Project.find().id / ".xcraft/build"
+    markers.mkdir(parents=True)
+    (markers / ".queue").write_text("with-deps")
+    holders = [
+        subprocess.Popen(["flock", "-o", str(markers / marker), "sleep", "60"]) for marker in ("trivial.turn", ".queue")
+    ]
+    try:
+        for marker in ("trivial.turn", ".queue"):  # once held
+            while subprocess.run(["flock", "-n", str(markers / marker), "true"], check=False).returncode == 0:
+                time.sleep(0.05)
+        code, output = xcraft("status", "--full")
+        assert code == 0, output
+        assert re.search(r"^trivial +\S+ +building *$", output, re.MULTILINE), output
+        assert re.search(r"^with-deps +\S+ +queued 1/1 *$", output, re.MULTILINE), output
+    finally:
+        for holder in holders:
+            holder.kill()
+            holder.wait()
+    # once done, nothing running there, as without a copy there
+    code, output = xcraft("status", "--full")
+    assert code == 0, output
+    assert "building" not in output
+    assert "queued" not in output
+
+
+@pytest.mark.usefixtures("root", "builder")
+def should_show_the_status_here_when_the_builder_cannot_be_reached(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BUILDER_HOME", "/nonexistent")
+    code, output = xcraft("status", "--full")
+    assert code == 0, output
+    assert "warning: the builds running on h are unknown" in output
+    assert "2 missing" in output
 
 
 def should_make_the_developer_key_for_the_builds_of_a_builder_only(root: Path) -> None:

@@ -3,19 +3,21 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from collections import Counter
 from typing import TYPE_CHECKING, Annotated
 
 import typer
+from rich.markup import escape
 from rich.table import Table
 
 from xcraft import build as builder
-from xcraft import buildid, buildkey
+from xcraft import builders, buildid, buildkey
 from xcraft.cache import cached_build, has_normal_build, release_suffix
 from xcraft.commands import Arch, Dev, Final, Packages, dev_ident, prepared_project
 from xcraft.container import image_tag
 from xcraft.devbuilds import dev_keys
-from xcraft.display import console, print_wide
+from xcraft.display import console, messages, print_wide
 
 if TYPE_CHECKING:
     from xcraft.project import Project
@@ -67,6 +69,19 @@ def _show_inputs(project: Project, names: list[str]) -> None:
     )
 
 
+def _on_builder(project: Project) -> tuple[set[str], list[str]]:
+    """Return the packages the builder of the architecture of `project`, if any, is building, and those it is still to
+    build, like here: the builds there, of xcraft build, are not shown here otherwise.
+    """
+    if not (name := builders.builders().get(project.arch)):
+        return set(), []
+    try:
+        return builders.running(project, name)
+    except (OSError, subprocess.CalledProcessError) as e:
+        messages.print(f"[yellow]warning:[/] the builds running on {name} are unknown: {escape(str(e))}")
+        return set(), []
+
+
 def status(
     ctx: typer.Context,
     packages: Packages = None,
@@ -80,8 +95,9 @@ def status(
     is ready; and how many are in each state.
 
     The version has the build number, and the development build suffix of those whose build ID is not the main
-    branch's, unless --final. The states: error (the spec cannot be parsed), building, queued (by a running build),
-    ready (built or fetched, in the cache), outdated (only older versions are), and missing.
+    branch's, unless --final. The states: error (the spec cannot be parsed), building, queued (by a running build,
+    here or on the builder of the architecture), ready (built or fetched, in the cache), outdated (only older versions
+    are), and missing.
     """
     ident = dev_ident(ctx, dev, final=final)
     project = prepared_project(packages, arch=arch)
@@ -89,7 +105,12 @@ def status(
         _show_inputs(project, sorted(set(packages or project.packages)))
         return
     keys = dev_keys(project, ident, buildkey.directories(project))[0]
-    queue = [name for name in builder.queued(project) if not cached_build(project, name, keys[name]).exists()]
+    there, queued_there = _on_builder(project)
+    queue = [
+        name
+        for name in [*builder.queued(project), *queued_there]
+        if not cached_build(project, name, keys[name]).exists()
+    ]
     shown = sorted(set(packages or project.packages))
     table = Table(box=None, pad_edge=False, show_header=False)
     states = Counter[str]()
@@ -102,7 +123,7 @@ def status(
         )
         if package.error:
             state = "error"
-        elif builder.building(project, name):
+        elif builder.building(project, name) or name in there:
             state = "building"
         elif name in queue:
             state = "queued"

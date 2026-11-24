@@ -148,6 +148,7 @@ held during the whole build, keeps from changing meanwhile. With `--locked`, the
 | `xcraft.builds` taken back | `builders.py` | done |
 | The SSH helpers of `xcraft repo --host` shared | `hosts.py`, new | done |
 | The lock of the remote checkout | `builders.py` | done |
+| `xcraft status` showing the builds running on the builder, from their markers there, read by `flock` over SSH: neither a copy, which would change the checkout under the build, nor xcraft, which would wait for the lock the build holds | `builders.py`, `commands/status.py` | done |
 | `xcraft clean --builders` | `commands/clean.py` | to do |
 | `xcraft doctor` checking the builders, and provisioning them with `--fix`, from an SSH account with sudo | `commands/doctor.py`, `builders.py` | done |
 | The final builds, with `--final` or `--key`, refused on a builder for now | `commands/build.py` | to do |

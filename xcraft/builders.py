@@ -237,6 +237,27 @@ def _copied(project: Project, name: str) -> Generator[_Copy]:
         yield copy
 
 
+_RUNNING = """cd {build} 2>/dev/null || exit 0
+for marker in *.turn .queue; do
+    [ -e "$marker" ] && ! flock -n -s "$marker" true 2>/dev/null && printf '%s\\0%s\\0' "$marker" "$(cat "$marker")"
+done
+exit 0
+"""
+"""The markers of the builds running in a copy, see xcraft.build.building() and queued(): those locked, read by
+flock, which builders have, with util-linux."""
+
+
+def running(project: Project, name: str) -> tuple[set[str], list[str]]:
+    """Return the packages being built in the copy of the checkout of `project` on its builder `name`, and those its
+    running build is still to build, in order: from their markers there, without copying the checkout, which would
+    change it under the build, nor running xcraft, which would wait for the build to hold the copy.
+    """
+    build = f"{ROOT}/{project.id}/.xcraft/build"
+    fields = process.run(ssh_host(name).ssh(_RUNNING.format(build=shlex.quote(build))), capture=True).stdout.split("\0")
+    markers = dict(zip(fields[0:-1:2], fields[1::2], strict=True))
+    return {m.removesuffix(".turn") for m in markers if m.endswith(".turn")}, markers.get(".queue", "").split()
+
+
 def build(project: Project, name: str, args: list[str], keys: list[str]) -> tuple[int, dict[str, str]]:
     """Build with xcraft build and its `args` on the builder `name` of the architecture of `project`, from a copy of
     the checkout, see _copied(), and copy back its builds of the architecture, the logs of the builds, the counters
