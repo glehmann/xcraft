@@ -1158,6 +1158,44 @@ def should_copy_the_pinned_upstream_packages_to_the_storage_once(
         clean()
 
 
+def should_add_the_given_rpms_to_the_upstream_copy(root: Path, tmp_path: Path) -> None:
+    (root / "xcraft.toml").write_text(f'{REMOTE}extra = ["bc"]\n')
+    storage = Project.find().config.remote["dev"]
+    prefix = upstream_copy.PREFIX
+
+    def clean() -> None:  # the copy of the bucket, which the other tests share
+        if files := remote.listing(storage, f"{prefix}/"):
+            remote.delete(storage, [f"{prefix}/{f}" for f in files])
+
+    clean()
+    try:
+        assert xcraft("build", "trivial")[0] == 0  # the lock, with bc, and a package of ours
+        bc = pinned.pins(project := Project.find())["bc"]
+        pinned.download(project, {"bc": bc})
+        rpm = pinned.stored("bc", bc)
+        assert rpm
+        # signed with the keys of the repositories only
+        ours = next(root.glob(f".xcraft/cache/builds/*/{ARCH}/trivial/*/RPMS/**/*.rpm"))
+        code, output = xcraft("push", "upstream", str(ours))
+        assert code == 1
+        assert "SIGNATURES NOT OK" in output
+        assert not remote.listing(storage, f"{prefix}/")
+        code, output = xcraft("push", "upstream", str(rpm))
+        assert code == 0, output
+        assert "upstream copy: 1 added, 0 there already" in output
+        assert _copied(storage, ARCH, tmp_path / "1") == {bc.sha256: pinned.file_name("bc", bc)}
+        assert remote.exists(storage, f"{prefix}/{ARCH}/{remote.INDEX}")
+        code, output = xcraft("push", "upstream", str(rpm))
+        assert code == 0, output
+        assert "upstream copy: 0 added, 1 there already" in output
+        # of the architecture of the copy only
+        code, output = xcraft("push", "upstream", str(tmp_path / "bc-1.0-1.s390x.rpm"))
+        assert code == 1
+        assert f"not of {ARCH}: bc-1.0-1.s390x.rpm" in output
+    finally:
+        clean()
+
+
 def should_fetch_the_isos_of_a_publication_but_the_corrupted_ones(root: Path, tmp_path: Path) -> None:
     project = Project.find()
     signer = release_signer(project)

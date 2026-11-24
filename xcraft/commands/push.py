@@ -263,15 +263,29 @@ def resolutions(arch: Arch = None, key: Key = None, to: To = "dev") -> None:
 
 
 @app.command("upstream")
-def upstream_packages(arch: Arch = None, to: To = "dev") -> None:
+def upstream_packages(
+    rpms: Annotated[
+        list[str] | None, typer.Argument(help="RPMs to add instead, by URL or path, like those of a vault.")
+    ] = None,
+    arch: Arch = None,
+    to: To = "dev",
+) -> None:
     """Copy to the upstream copy of the remote storage the pinned upstream packages it misses, and their source
     packages: from the store of the pinned RPMs of this machine, the latest snapshot, or else their repositories.
 
     The builds, the resolution and publishing take them from there once their repositories drop them. The lock is
     read as it is, not prepared: its pins may be resolved from that copy only.
+
+    With RPMs, they are added instead, to the copy of the architecture, or of the source packages: versions their
+    repositories dropped before any copy, which the lock can then pin. They must be signed with the keys of the
+    repositories, like the pinned ones.
     """
     project = Project.find(arch)
-    if problems := _push_upstream(project, remote_storage(project, to)):
+    storage = remote_storage(project, to)
+    if rpms:
+        known = upstream_copy.add(project, storage, rpms)
+        console.print(f"upstream copy: {len(rpms) - len(known)} added, {len(known)} there already")
+    elif problems := _push_upstream(project, storage):
         raise RuntimeError("; ".join(problems))
 
 

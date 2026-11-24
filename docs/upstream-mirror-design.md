@@ -101,6 +101,11 @@ of the lock, from, in order:
 A package found nowhere is reported: the lock must be updated, as today, but it only happens to packages never copied
 nor installed on the machine.
 
+Or added by hand: `xcraft push upstream <rpm>...` adds RPMs, by URL or path, checked against the keys of the
+repositories, to the copy of the architecture, or of the source packages. For a version a repository dropped before any
+copy, like those of the previous AlmaLinux minor release, which its vault keeps: the resolution finds it there, so the
+lock can pin it on an architecture that never had it.
+
 `xcraft push`, without a command, does it too, after the builds: the packages are then in the store of the machine
 already, as the builds installed them, so the copy downloads nothing, and the developers do not need to think about
 it.

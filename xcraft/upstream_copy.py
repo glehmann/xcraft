@@ -10,20 +10,19 @@ downloads, have it as a repository, see container.run_natively(); xcraft publish
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 from xml.etree import ElementTree as ET
 
-from xcraft import container, localrepo, pinned, remote, remote_pages, repodata, signing
+from xcraft import container, localrepo, pinned, process, remote, remote_pages, repodata, signing
 from xcraft.container import ContainerError
-from xcraft.display import activity
+from xcraft.display import activity, download_progress
 from xcraft.lock import load_lock
 from xcraft.process import thread_pool
 from xcraft.project import INTERNAL
 from xcraft.sources import sha256_of
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from xcraft.lock import Pin
     from xcraft.project import Project, Remote
     from xcraft.repodata import Entry
@@ -249,3 +248,50 @@ def push(project: Project, storage: Remote) -> list[str]:
         with activity("making the pages of the directories"):
             remote_pages.update_pages(project, storage, [f"{PREFIX}/"])
     return problems
+
+
+def add(project: Project, storage: Remote, rpms: list[str]) -> list[str]:
+    """Add the RPMs `rpms`, by URL or path, to the copy of `storage`, and return those it has already: the source
+    packages to that of the source packages, the others to that of the architecture of `project`. For the versions
+    their repositories dropped before any copy, which the lock can then pin, like those of a vault. They must be signed
+    with the keys of the repositories, like the pinned ones.
+    """
+    names = {rpm: rpm.rsplit("/", 1)[-1] for rpm in rpms}
+    dirs = {name: SOURCE if name.endswith(".src.rpm") else project.arch for name in names.values()}
+    if wrong := [n for n in names.values() if dirs[n] != SOURCE and not _of(project, n.removesuffix(".rpm"))]:
+        msg = f"not of {project.arch}: {', '.join(wrong)}"
+        raise UpstreamError(msg)
+    known, changed = [], False
+    with project.tmp_dir("upstream-add") as work:
+        (files := work / "rpms").mkdir()
+        for rpm, name in names.items():
+            if "://" in rpm:
+                with activity(f"downloading {name}") as on_line:
+                    process.download(rpm, files / name, download_progress(on_line))
+            else:
+                localrepo.link(Path(rpm), files / name)
+        signing.check_signatures(project, files, sorted(names.values()), what="upstream packages")
+        for directory in sorted(set(dirs.values())):
+            entries, hrefs = read(storage, directory, work / f"metadata-{directory}")
+            located = {repodata.location(e): digest for digest, e in entries.items()}
+            copies: Copies = {}
+            for name in sorted(n for n, d in dirs.items() if d == directory):
+                if (digest := sha256_of(files / name)) in entries:
+                    known.append(name)
+                elif name in located:
+                    msg = f"{name}: in the copy with the SHA-256 {located[name]}, not {digest}"
+                    raise UpstreamError(msg)
+                else:
+                    copies[name] = (files / name, None)
+            changed |= bool(update(project, storage, directory, work, entries, hrefs, copies))
+    if changed:
+        with activity("making the pages of the directories"):
+            remote_pages.update_pages(project, storage, [f"{PREFIX}/"])
+    return known
+
+
+def _of(project: Project, nevra: str) -> bool:
+    """Return whether the binary package `nevra` is of the architecture of `project`: of its own, like x86_64 for
+    x86_64_v2, or noarch.
+    """
+    return (arch := nevra.rsplit(".", 1)[-1]) == "noarch" or project.arch.startswith(arch)

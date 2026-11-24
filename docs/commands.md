@@ -40,6 +40,7 @@
 | `xcraft push sources [<pkg>...] [--check] [--to main\|dev]` | Upload cached sources, or check the selected bucket; defaults to dev |
 | `xcraft push builds [<pkg>...]` | Upload the current builds missing from the remote storage, for CI |
 | `xcraft push isos [--to main\|dev]` | Upload cached full and netinstall ISOs matching the checkout |
+| `xcraft push upstream [<rpm>...] [--to main\|dev]` | Copy the pinned upstream packages the upstream copy misses, or add the given RPMs, by URL or path, like a version a repository dropped |
 | `xcraft push resolutions` | Upload the resolutions of the project as it is, which new checkouts fetch rather than resolving, for CI |
 | `xcraft push index` | Make the `index.html` pages of all the directories of the remote storage |
 | `xcraft push ccache [<pkg>...]` | Update the compiler caches of the remote storage with those of the packages, for CI |
