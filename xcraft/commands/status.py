@@ -30,6 +30,7 @@ _STYLES = {
     "queued": "cyan",
     "ready": "green",
     "built there": "blue",
+    "fetchable": "bright_green",
     "outdated": "magenta",
     "missing": "dim",
 }
@@ -45,6 +46,11 @@ Inputs = Annotated[
 ]
 
 Full = Annotated[bool, typer.Option("--full", help="Show the ready packages too.")]
+
+Local = Annotated[
+    bool,
+    typer.Option("--local", help="Without asking the remote storage which builds it has: shown outdated or missing."),
+]
 
 
 def _show_inputs(project: Project, names: list[str]) -> None:
@@ -86,6 +92,50 @@ def _on_builder(project: Project, missing: dict[str, Path]) -> builders.OnBuilde
         return builders.OnBuilder(set(), [], set())
 
 
+def _stored(
+    project: Project,
+    names: list[str],
+    keys: dict[str, str],
+    builds: dict[str, Path],
+    there: builders.OnBuilder,
+    queue: list[str],
+) -> set[str]:
+    """Return those of the builds of `names` the remote storage has, asked for those neither here nor coming: not the
+    development builds, which it never has. None when it cannot be asked.
+    """
+    asked = [
+        n
+        for n in names
+        if not builds[n].exists()
+        and n not in there.built
+        and n not in there.building
+        and n not in queue
+        and "~" not in release_suffix(keys[n])
+    ]
+    if not asked or not project.config.remote:
+        return set()
+    found = builder.stored(project, asked, keys)
+    return {n for n in asked if found.get(f"{n}/{keys[n]}")}
+
+
+def _state(
+    project: Project, name: str, build: Path, there: builders.OnBuilder, queue: list[str], stored: set[str]
+) -> str:
+    """Return the state of the package `name`, of `build`, see status(): the first which holds, checked in turn."""
+    checks = {
+        "error": lambda: bool(project.packages[name].error),
+        "building": lambda: builder.building(project, name) or name in there.building,
+        "queued": lambda: name in queue,
+        "ready": build.exists,
+        "built there": lambda: name in there.built,
+        "fetchable": lambda: name in stored,
+    }
+    return next(
+        (state for state, check in checks.items() if check()),
+        "outdated" if has_normal_build(project, name) else "missing",
+    )
+
+
 def status(
     ctx: typer.Context,
     packages: Packages = None,
@@ -94,6 +144,7 @@ def status(
     arch: Arch = None,
     with_inputs: Inputs = False,
     full: Full = False,
+    local: Local = False,
 ) -> None:
     """Show the version of the given packages, or of all those not ready, or of all with --full, and whether its build
     is ready; and how many are in each state.
@@ -101,7 +152,8 @@ def status(
     The version has the build number, and the development build suffix of those whose build ID is not the main
     branch's, unless --final. The states: error (the spec cannot be parsed), building, queued (by a running build,
     here or on the builder of the architecture), ready (built or fetched, in the cache), built there (on the builder,
-    not back yet), outdated (only older versions are), and missing.
+    not back yet), fetchable (in the remote storage, which xcraft build fetches, unless --local), outdated (only older
+    versions are), and missing.
     """
     ident = dev_ident(ctx, dev, final=final)
     project = prepared_project(packages, arch=arch)
@@ -117,6 +169,7 @@ def status(
         for name in [*builder.queued(project), *there.queued]
         if not cached_build(project, name, keys[name]).exists()
     ]
+    stored = _stored(project, shown, keys, builds, there, queue) if not local else set()
     table = Table(box=None, pad_edge=False, show_header=False)
     states = Counter[str]()
     for name in shown:
@@ -126,18 +179,7 @@ def status(
             if (e := package.binaries[0].evr if package.binaries else "")
             else ""
         )
-        if package.error:
-            state = "error"
-        elif builder.building(project, name) or name in there.building:
-            state = "building"
-        elif name in queue:
-            state = "queued"
-        elif builds[name].exists():
-            state = "ready"
-        elif name in there.built:
-            state = "built there"
-        else:
-            state = "outdated" if has_normal_build(project, name) else "missing"
+        state = _state(project, name, builds[name], there, queue, stored)
         states[state] += 1
         if state == "ready" and not (full or packages):
             continue

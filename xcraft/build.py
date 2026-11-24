@@ -283,7 +283,7 @@ def _record_cached(project: Project, dev: str | None) -> tuple[dict[str, str], d
     raise BuildError(msg)
 
 
-def _stored(project: Project, names: list[str], keys: dict[str, str]) -> dict[str, bool]:
+def stored(project: Project, names: list[str], keys: dict[str, str]) -> dict[str, bool]:
     """Return whether the remote storage has the builds of `names` with `keys`, by `<name>/<key>`, asked
     concurrently: nothing when it cannot be asked, as each one is asked again then.
     """
@@ -426,7 +426,7 @@ class _Run:
         reused = {name for name, i in buildid.read(project).items() if i.accepts}
         if self.use_remote and self.fetch == "needed":  # asked at once, with the keys of the start
             missing = [name for name in plan if not cached_build(project, name, self.keys[name]).exists()]
-            self.stored = _stored(project, missing, self.keys)
+            self.stored = stored(project, missing, self.keys)
         self.recorded = _lock_state(project)
         self.step = 0
         self.steps = sum(self._to_build(name) for name in plan)

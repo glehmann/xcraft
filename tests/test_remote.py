@@ -648,6 +648,14 @@ def should_fetch_pushed_builds_rather_than_building_them(root: Path, monkeypatch
     shutil.rmtree(root / ".xcraft/cache/builds")
     assert xcraft("fetch", "builds") == (0, "↓ trivial\n1 fetched, 0 already cached, 1 not in the remote storage\n")
     shutil.rmtree(root / ".xcraft/cache/builds")
+    # shown so, unless --local
+    for args, state in (((), "fetchable"), (("--local",), "missing")):
+        code, output = xcraft("status", *args)
+        assert code == 0, output
+        assert {line.split()[0]: line.split()[2] for line in output.splitlines()[:-1]} == {
+            "trivial": state,
+            "with-deps": "missing",
+        }
     assert xcraft("build", "with-deps", "--dry-run")[1].splitlines()[:2] == ["fetch    trivial", "build    with-deps"]
     assert xcraft("build", "with-deps", "--dry-run", "--fetch=none")[1].splitlines()[:2] == [
         "build    trivial",
