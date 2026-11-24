@@ -7,8 +7,8 @@ from typing import Annotated
 
 import typer
 
-from xcraft import rpmbuild
-from xcraft.commands import Arch, complete_package, prepared_project
+from xcraft import builders, rpmbuild
+from xcraft.commands import Arch, complete_package, prepared_project, unprepared_project
 from xcraft.project import Project
 
 
@@ -33,14 +33,25 @@ def shell(
         ),
     ],
     arch: Arch = None,
+    local: Annotated[
+        bool,
+        typer.Option("--local", help="On this machine, rather than on the builder of the architecture, if any."),
+    ] = False,
 ) -> None:
     """Open a shell in the build tree of a package, where rpmbuild -ba SPECS/<spec> builds it, without the network.
 
     Its build dependencies are installed, and its sources prepared. The build tree is .xcraft/build/<package>/ on the
     host, where its files can be edited, and its packages are. sudo dnf install installs the other pinned upstream
     packages, and ours.
+
+    On the builder of the architecture, if any, see $XCRAFT_BUILDERS, unless --local: in a copy of the checkout there,
+    whose build tree it keeps, like xcraft build.
     """
     name = package_of(Project.find(arch), package)
+    if not local and (host := builders.builders().get((project := unprepared_project([name], arch=arch)).arch)):
+        if code := builders.shell(project, host, name):
+            raise typer.Exit(code)
+        return
     project = prepared_project([name], arch=arch)
     with project.lock():
         rpmbuild.shell(project, name)

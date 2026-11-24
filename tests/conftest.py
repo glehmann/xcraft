@@ -351,7 +351,11 @@ cd "$BUILDER_HOME" && PATH="${BUILDER_PATH:-$PATH}" exec /bin/sh -c "$*"
 RSYNC = """#!/bin/sh
 for arg in "$@"; do
     shift
-    case "$arg" in h:/*) set -- "$@" "${arg#h:}";; h:*) set -- "$@" "$BUILDER_HOME/${arg#h:}";; *) set -- "$@" "$arg";; esac
+    case "$arg" in
+        h:/*) set -- "$@" "${arg#h:}";;
+        h:*) set -- "$@" "$BUILDER_HOME/${arg#h:}";;
+        *) set -- "$@" "$arg";;
+    esac
 done
 exec {rsync} "$@"
 """

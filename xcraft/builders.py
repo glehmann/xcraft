@@ -12,8 +12,9 @@ import shlex
 import sys
 import tempfile
 import tomllib
+from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from pydantic import BaseModel, ConfigDict
 
@@ -23,6 +24,8 @@ from xcraft.display import activity
 from xcraft.hosts import Host, connected, ssh_host
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+
     from xcraft.project import Project
 
 ROOT = ".cache/xcraft/builders"
@@ -164,28 +167,61 @@ def _copy_trees(project: Project, host: Host, remote: str) -> None:
         _rsync(host, f"{tmp}/develop.json", f"{host.destination}:{there}/.xcraft/develop.json")
 
 
-def build(project: Project, name: str, args: list[str], keys: list[str]) -> tuple[int, dict[str, str]]:
-    """Build with xcraft build and its `args` on the builder `name` of the architecture of `project`, from a copy of
-    the checkout, with the counters of its development builds and the developer's key, and copy back its builds of the
-    architecture, the logs of the builds, the counters and xcraft.builds, as they are then: return its exit code, and
-    once built, the cache keys of the builds of the packages `keys` there, the `args` of xcraft keys.
+class _Copy(NamedTuple):
+    """A copy of a checkout on a builder, see _copied()."""
 
-    The builder must run the same xcraft, the one of the same recipe of the builds, see xcraft.buildkey.recipe(),
-    checked before building: another one would make builds of other keys.
+    host: Host
+    remote: str
+    """Where the copy is, relative to the home of the user of the builder."""
+    prefix: list[str]
+    """The command of the xcraft of the builder, with the options of the checkout."""
+
+    @property
+    def destination(self) -> str:
+        """Return the copy, for rsync."""
+        return f"{self.host.destination}:{self.remote}"
+
+    def script(self, *command: str) -> str:
+        """Return the shell script running the xcraft `command` in the copy, one command at a time, held with flock,
+        which builders have, with util-linux.
+        """
+        lock = f"../{Path(self.remote).name}.lock"
+        locked = f"cd {self.remote} && PATH=$HOME/.local/bin:$PATH XCRAFT_PROJECT=$PWD flock {lock} "
+        return locked + shlex.join([*self.prefix, *command])
+
+    def keys(self, *options: str) -> dict:
+        """Return what xcraft keys with `options` says in the copy."""
+        return json.loads(process.run(self.host.ssh(self.script("keys", *options)), capture=True).stdout)
+
+    def run(self, *command: str) -> int:
+        """Run the xcraft `command` in the copy, with a terminal when this process has one, and return its exit
+        code.
+        """
+        tty = ["-t", "-q"] if sys.stdout.isatty() else []
+        return process.run(
+            ["ssh", *tty, *self.host.options, self.host.destination, self.script(*command)], check=False
+        ).returncode
+
+
+@contextmanager
+def _copied(project: Project, name: str) -> Generator[_Copy]:
+    """Yield a copy of the checkout of `project` on its builder `name`, with the counters of its development builds
+    and the developer's key, once checked that it runs the same xcraft, the one of the same recipe of the builds, see
+    xcraft.buildkey.recipe(): another one would make builds of other keys.
 
     The copy is the working tree, the files git has and those it does not ignore, with .git, for the build IDs, but not
     .xcraft/, which the builder keeps, with its caches, and the trees the packages are developed from, see
-    _copy_trees(). The builds are numbered against the branch of this checkout, when one is named, see
+    _copy_trees(). Its builds are numbered against the branch of this checkout, when one is named, see
     xcraft.buildid.named(), which the copy may not tell, like a bookmark of jj.
     """
     remote = f"{ROOT}/{project.id}"
     with tempfile.TemporaryDirectory(prefix="xcraft-builder-") as tmp, connected(ssh_host(name)) as host:
         with activity(f"checking {name}"):
             check(host)
-        destination = f"{host.destination}:{remote}"
         with activity(f"copying the checkout to {name}"):
             # what the builds are copied back from, even before the first one
             process.run(host.ssh(f"mkdir -p {remote}/.xcraft/cache/builds {remote}/.xcraft/logs"), capture=True)
+            destination = f"{host.destination}:{remote}"
             filters = ["--delete", "--exclude=/.xcraft/", "--exclude=/.jj/", "--filter=:- .gitignore"]
             _rsync(host, *filters, f"{project.root}/", f"{destination}/")
             if state := [p for p in ("dev-builds.json", "key") if (project.state / p).exists()]:
@@ -193,25 +229,26 @@ def build(project: Project, name: str, args: list[str], keys: list[str]) -> tupl
             _copy_trees(project, host, remote)
             xcraft_command = _xcraft(host, Path(tmp))
         branch = buildid.named(project)
-        prefix = [*xcraft_command, *(["--maintenance", branch] if branch else [])]
-
-        def script(*command: str) -> str:
-            # one command at a time in the copy, held with flock, which builders have, with util-linux
-            locked = f"cd {remote} && PATH=$HOME/.local/bin:$PATH XCRAFT_PROJECT=$PWD flock ../{project.id}.lock "
-            return locked + shlex.join([*prefix, *command])
-
-        def keys_there(*options: str) -> dict:
-            return json.loads(process.run(host.ssh(script("keys", *options)), capture=True).stdout)
-
+        copy = _Copy(host, remote, [*xcraft_command, *(["--maintenance", branch] if branch else [])])
         with activity(f"checking the xcraft of {name}"):
-            if (there := keys_there("--recipe")["recipe"]) != (here := buildkey.recipe(project)):
+            if (there := copy.keys("--recipe")["recipe"]) != (here := buildkey.recipe(project)):
                 msg = f"{name} runs another xcraft, of the recipe {there[:12]}, rather than {here[:12]}: the same one"
                 raise BuilderError(msg)
-        tty = ["-t", "-q"] if sys.stdout.isatty() else []
-        code = process.run(["ssh", *tty, *host.options, host.destination, script("build", *args)], check=False)
+        yield copy
+
+
+def build(project: Project, name: str, args: list[str], keys: list[str]) -> tuple[int, dict[str, str]]:
+    """Build with xcraft build and its `args` on the builder `name` of the architecture of `project`, from a copy of
+    the checkout, see _copied(), and copy back its builds of the architecture, the logs of the builds, the counters
+    and xcraft.builds, as they are then: return its exit code, and once built, the cache keys of the builds of the
+    packages `keys` there, the `args` of xcraft keys.
+    """
+    with _copied(project, name) as copy:
+        code = copy.run("build", *args)
         with activity(f"copying the builds back from {name}"):
             (project.state / "cache/builds").mkdir(parents=True, exist_ok=True)
             arch = ["--include=/*/", f"--include=/*/{project.arch}/***", "--exclude=*"]
+            host, destination = copy.host, copy.destination
             _rsync(
                 host,
                 "--ignore-missing-args",
@@ -223,5 +260,13 @@ def build(project: Project, name: str, args: list[str], keys: list[str]) -> tupl
             _rsync(host, "--ignore-missing-args", *logs, f"{destination}/.xcraft/logs/", f"{project.state}/logs/")
             _rsync(host, "--ignore-missing-args", f"{destination}/.xcraft/dev-builds.json", f"{project.state}/")
             _rsync(host, "--ignore-missing-args", f"{destination}/xcraft.builds", f"{project.root}/")
-        built = keys_there(*keys)["keys"] if code.returncode == 0 and keys else {}
-    return code.returncode, built
+        built = copy.keys(*keys)["keys"] if code == 0 and keys else {}
+    return code, built
+
+
+def shell(project: Project, name: str, package: str) -> int:
+    """Open xcraft shell for `package` on the builder `name` of the architecture of `project`, in a copy of the
+    checkout, see _copied(), and return its exit code: its build tree is the one of the builder, which keeps it.
+    """
+    with _copied(project, name) as copy:
+        return copy.run("shell", package, "--arch", project.arch, "--local")

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import shutil
+import sys
 import zipfile
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
@@ -12,9 +13,6 @@ from tests import ARCH, copy_project, xcraft
 from xcraft import builders
 from xcraft.cache import build_keys, cached_build
 from xcraft.project import Project
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def should_take_the_builders_of_the_config_overridden_by_the_environment(
@@ -58,6 +56,26 @@ def should_build_on_the_builder_of_the_architecture_with_this_xcraft(
 
 
 @pytest.mark.usefixtures("builder")
+def should_open_the_shell_on_the_builder_of_the_architecture(
+    root: Path, builder: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the xcraft of the builder recording its shell, interactive, rather than opening it
+    fake = tmp_path / "xcraft-there"
+    fake.write_text(
+        f'#!/bin/sh\n[ "$1" = shell ] && {{ echo "$PWD $*" > {builder}/shell; exit 0; }}\n'
+        f'exec {sys.executable} -m xcraft "$@"\n'
+    )
+    fake.chmod(0o755)
+    monkeypatch.setenv("XCRAFT_BUILDER_XCRAFT", str(fake))
+    code, output = xcraft("shell", "trivial")
+    assert code == 0, output
+    # in the copy of the checkout there, for its build tree, which it keeps, not here
+    copy = builder / builders.ROOT / Project.find().id
+    assert (builder / "shell").read_text() == f"{copy} shell trivial --arch {ARCH} --local\n"
+    assert (copy / "base/trivial/trivial.spec").exists()
+    assert not (root / ".xcraft/build/trivial").exists()
+
+
 def should_make_the_developer_key_for_the_builds_of_a_builder_only(root: Path) -> None:
     code, output = xcraft("build", "trivial", "--dry-run")
     assert code == 0, output

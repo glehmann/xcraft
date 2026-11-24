@@ -254,7 +254,8 @@ builder keeps its caches, and needs podman, rootless, gpg, git, uv, rsync and fl
 xcraft checks first, and `xcraft doctor` too. `xcraft doctor --fix` provisions the builders that lack them, from an
 SSH account with sudo only: it installs uv for the account, with the installer of uv, then runs the same xcraft there,
 `xcraft doctor --fix --builder`, which installs the rest with the package manager of the builder, asking for the
-password of sudo, and configures rootless podman. `--local` builds locally still. A builder makes development builds, signed by the developer's
+password of sudo, and configures rootless podman. `--local` builds locally still. `xcraft shell` opens its shell on
+the builder too, in the same copy, whose build tree the builder keeps, unless `--local`. A builder makes development builds, signed by the developer's
 key: `--final` and `--key` build locally. See [the design](remote-builders-design.md).
 
 ## Builds at once
