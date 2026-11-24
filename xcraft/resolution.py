@@ -228,7 +228,7 @@ def _cached(project: Project, data: dict, *, show: str, quiet: bool = False, key
     cache.parent.mkdir(parents=True, exist_ok=True)
     # read again from the file, but when what this process read does not hold, like after a change of a version
     found = resolved is None and (cache.exists() or _fetched(project, cache))
-    if not found or not _holds(Resolved.model_validate_json(cache.read_text()), data):
+    if not found or _stale(read := Resolved.model_validate_json(cache.read_text())) or not _holds(read, data):
         write_atomically(cache, _run(project, data, show=show, quiet=quiet).model_dump_json())  # for the commands too
     _resolved[cache], _keys[cache] = Resolved.model_validate_json(cache.read_text()), (project, key or data)
     os.utime(cache)  # used, see xcraft clean --keep-days
@@ -250,7 +250,13 @@ def _holding(cache: Path, data: dict) -> bool:
     """Return whether the resolution `cache` is here, and holds for `data`: one not here may be in the remote
     storage, see _cached().
     """
-    return cache.exists() and _holds(Resolved.model_validate_json(cache.read_text()), data)
+    if (
+        (resolved := _resolved.get(cache)) is None
+        and cache.exists()
+        and not _stale(read := Resolved.model_validate_json(cache.read_text()))
+    ):
+        resolved = read
+    return resolved is not None and _holds(resolved, data)
 
 
 def _holds(resolved: Resolved, data: dict) -> bool:
@@ -260,6 +266,16 @@ def _holds(resolved: Resolved, data: dict) -> bool:
     """
     evrs = {b["name"]: b["evr"].removeprefix("0:") for b in data.get("ours", [])}
     return all(evrs.get(name) == evr.removeprefix("0:") for name, evr in resolved.versioned.items())
+
+
+def _stale(resolved: Resolved) -> bool:
+    """Return whether the resolution `resolved`, read from a cache, failed: the repositories, or the upstream copies,
+    which its key does not cover, may have what it missed since, like a version added by xcraft push upstream. Not one
+    this process resolved, from the same repositories.
+    """
+    return bool(
+        resolved.errors or resolved.runtime_errors or resolved.tools_error or resolved.sign_error or resolved.lint_error
+    )
 
 
 def _image_data(project: Project) -> dict:

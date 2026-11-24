@@ -1007,6 +1007,22 @@ def should_resolve_build_roots_again_when_a_required_version_changes(
     ]
 
 
+def should_resolve_failed_resolutions_again_in_new_processes(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # the repositories, or the upstream copies, which the key does not cover, may have what it missed since: but not
+    # while the process runs
+    (root / "xcraft.toml").write_text(f'{TOML}\n[publish]\nextra = ["{VERSIONED}"]\n')
+    assert resolved_again(monkeypatch).runtime_errors
+    cached = resolutions()
+    run = resolution._run
+    monkeypatch.setattr(resolution, "_run", lambda *_, **__: pytest.fail("resolved again"))
+    assert resolved_again(monkeypatch, new_process=False).runtime_errors
+    runs: list[str] = []
+    monkeypatch.setattr(resolution, "_run", lambda project, *a, **k: runs.append(project.arch) or run(project, *a, **k))
+    assert resolved_again(monkeypatch).runtime_errors
+    assert runs
+    assert resolutions() == cached
+
+
 def should_keep_build_roots_when_subpackages_require_their_release(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # pair requires pair-libs of its own version-release, as subpackages do: another release resolves nothing again
     write_spec(root, "pair")
