@@ -763,9 +763,10 @@ def run_by_xtool(root: Path) -> None:
 
 
 def should_record_requirements_once_what_they_need_is_built(root: Path) -> None:
-    # built together: recorded once xtool is built, without warning
+    # built together, trivial first, one at a time: its requirement on xtool recorded once xtool is built after it,
+    # without warning; at once, xtool could be built first
     run_by_xtool(root)
-    code, output = xcraft("build", "trivial", "xtool")
+    code, output = xcraft("build", "trivial", "xtool", "--jobs", "1")
     assert code == 0, output
     assert [line.split(" in ")[0] for line in results(output)] == ["✓ trivial built", "✓ xtool built", "2 built"]
     assert "cannot record" not in output
