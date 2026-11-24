@@ -23,7 +23,6 @@ _TOOLS = {
     "gpg": ("to sign the packages", False),
     "rsync": ("by xcraft repo --host", False),
     "ssh": ("by xcraft repo --host", False),
-    "qemu-system-x86_64": ("by xcraft boot, to run installer VMs", False),
     "qemu-img": ("by xcraft boot, to create virtual disks", False),
 }
 
@@ -71,21 +70,32 @@ def _storage(project: Project) -> list[tuple[str, str]]:
     return checks
 
 
-def _vm() -> tuple[list[tuple[str, str]], list[str]]:
-    """Check UEFI firmware and acceleration for the x86 installer VMs."""
-    missing = []
-    try:
-        code, _ = vm.firmware(None, None)
-        checks = [("ok", f"UEFI firmware: {code}")]
-    except RuntimeError as exc:
-        checks = [("warning", f"UEFI firmware: {exc}")]
-        missing.append("ovmf")
-    if os.uname().machine != "x86_64":
-        checks.append(("warning", "KVM: x86 installer VMs need an x86 host; use xcraft boot --accel tcg"))
-    elif os.access("/dev/kvm", os.R_OK | os.W_OK):
-        checks.append(("ok", "KVM: /dev/kvm is accessible"))
-    else:
-        checks.append(("warning", "KVM: enable it and grant access to /dev/kvm, or use xcraft boot --accel tcg"))
+def _vm(project: Project | None) -> tuple[list[tuple[str, str]], list[str]]:
+    """Check QEMU, the UEFI firmware and the acceleration of the installer VMs of xcraft boot: of x86, and of the
+    other architectures of `project`.
+    """
+    checks, missing = [], []
+    arches = dict.fromkeys(
+        ["x86_64", *(vm.qemu_arch(p.arch) for p in project.all_platforms())] if project else ["x86_64"]
+    )
+    for arch in arches:
+        if path := shutil.which(tool := f"qemu-system-{arch}"):
+            checks.append(("ok", f"{tool}: {path}"))
+        else:
+            checks.append(("warning", f"{tool}: not found, needed by xcraft boot, to run the installer VMs of {arch}"))
+            missing.append(tool)
+        try:
+            code, _ = vm.firmware(None, None, arch)
+            checks.append(("ok", f"UEFI firmware of {arch}: {code}"))
+        except RuntimeError as exc:
+            checks.append(("warning", f"UEFI firmware of {arch}: {exc}"))
+            missing.append("aavmf" if arch == "aarch64" else "ovmf")
+        if vm.default_accel(arch) == "tcg":
+            checks.append(("warning", f"KVM: the {arch} installer VMs need an {arch} host, emulated with TCG here"))
+        elif os.access("/dev/kvm", os.R_OK | os.W_OK):
+            checks.append(("ok", f"KVM: /dev/kvm is accessible, for the {arch} installer VMs"))
+        else:
+            checks.append(("warning", "KVM: enable it and grant access to /dev/kvm, or use xcraft boot --accel tcg"))
     return checks, missing
 
 
@@ -119,7 +129,7 @@ def _checks(project: Project | None, *, builder: bool = False) -> tuple[list[tup
             checks.append(("error" if required else "warning", f"{tool}: not found, needed {needed}"))
             missing.append(tool)
     if not builder:
-        vm_checks, vm_missing = _vm()
+        vm_checks, vm_missing = _vm(project)
         checks += vm_checks
         missing += vm_missing
     if project and not builder:

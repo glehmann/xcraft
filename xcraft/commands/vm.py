@@ -98,7 +98,7 @@ def start(
         msg = f"no virtual disk at {session.disk}"
         raise RuntimeError(msg)
     vm.check_stopped(root)
-    vm.check_tools(session.launch.accel, new_disk=False)
+    vm.check_tools(session.launch.accel, new_disk=False, arch=session.launch.arch)
     launch = session.launch.model_copy(
         update={"memory": memory or session.launch.memory, "cpus": cpus or session.launch.cpus}
     )

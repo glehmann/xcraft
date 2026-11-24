@@ -32,7 +32,10 @@ class Launch(BaseModel):
     cpus: int
     accel: str
     ovmf: tuple[Path, Path] | None
+    """The UEFI firmware, its code and the template of its variables, or None for the BIOS, on x86 only."""
     qemu_args: list[str]
+    arch: str = "x86_64_v2"
+    """The RPM architecture of the VM, x86_64_v2 for the sessions of the versions of xcraft before aarch64."""
 
 
 class Reply(BaseModel):
@@ -228,8 +231,39 @@ def ssh_port(directory: Path) -> int:
     return port
 
 
-def firmware(code: Path | None, template: Path | None) -> tuple[Path, Path]:
-    """Return the OVMF code and template of its variables: those given, or else those installed."""
+_FIRMWARES = {
+    "x86_64": [
+        ("/usr/share/edk2/ovmf", "OVMF_CODE.fd", "OVMF_VARS.fd"),
+        ("/usr/share/OVMF", "OVMF_CODE_4M.fd", "OVMF_VARS_4M.fd"),
+        ("/usr/share/OVMF", "OVMF_CODE.fd", "OVMF_VARS.fd"),
+        ("/usr/share/edk2/x64", "OVMF_CODE.4m.fd", "OVMF_VARS.4m.fd"),
+    ],
+    # the images of the flash of the virt machine, of 64 MiB: Fedora's edk2-aarch64, Debian's qemu-efi-aarch64
+    "aarch64": [
+        ("/usr/share/edk2/aarch64", "QEMU_EFI-pflash.raw", "vars-template-pflash.raw"),
+        ("/usr/share/AAVMF", "AAVMF_CODE.fd", "AAVMF_VARS.fd"),
+    ],
+}
+"""The UEFI firmwares of QEMU the distributions install, by QEMU architecture: the code, and the template of its
+variables, in their directory."""
+
+
+def qemu_arch(arch: str) -> str:
+    """Return the QEMU architecture of the RPM architecture `arch`, like x86_64 for x86_64_v2."""
+    return arch.removesuffix("_v2")
+
+
+def default_accel(arch: str) -> str:
+    """Return the accelerator of the VMs of `arch` by default: KVM for the architecture of the host, which it only
+    runs, software emulation otherwise.
+    """
+    return "kvm" if qemu_arch(arch) == os.uname().machine else "tcg"
+
+
+def firmware(code: Path | None, template: Path | None, arch: str = "x86_64_v2") -> tuple[Path, Path]:
+    """Return the UEFI firmware of the VMs of `arch`, its code and the template of its variables: those given, or else
+    those installed, OVMF on x86, AAVMF on aarch64.
+    """
     if bool(code) != bool(template):
         msg = "--firmware-code and --firmware-vars must be supplied together"
         raise RuntimeError(msg)
@@ -238,22 +272,23 @@ def firmware(code: Path | None, template: Path | None) -> tuple[Path, Path]:
             msg = "OVMF firmware code and variables template must both be files"
             raise RuntimeError(msg)
         return code.absolute(), template.absolute()
-    for directory, code_name, vars_name in [
-        ("/usr/share/edk2/ovmf", "OVMF_CODE.fd", "OVMF_VARS.fd"),
-        ("/usr/share/OVMF", "OVMF_CODE_4M.fd", "OVMF_VARS_4M.fd"),
-        ("/usr/share/OVMF", "OVMF_CODE.fd", "OVMF_VARS.fd"),
-        ("/usr/share/edk2/x64", "OVMF_CODE.4m.fd", "OVMF_VARS.4m.fd"),
-    ]:
+    for directory, code_name, vars_name in _FIRMWARES.get(qemu_arch(arch), []):
         code, template = Path(directory) / code_name, Path(directory) / vars_name
         if code.is_file() and template.is_file():
             return code, template
-    msg = "OVMF is not installed: install it or supply --firmware-code and --firmware-vars"
+    name = "AAVMF (edk2-aarch64)" if qemu_arch(arch) == "aarch64" else "OVMF"
+    msg = f"{name} is not installed: install it or supply --firmware-code and --firmware-vars"
     raise RuntimeError(msg)
 
 
-def check_tools(accel: str, *, new_disk: bool) -> None:
-    """Raise when QEMU, or qemu-img for a `new_disk`, is not installed, or KVM not accessible for the `accel` kvm."""
-    for tool in ["qemu-system-x86_64", *(["qemu-img"] if new_disk else [])]:
+def check_tools(accel: str, *, new_disk: bool, arch: str = "x86_64_v2") -> None:
+    """Raise when the QEMU of `arch`, or qemu-img for a `new_disk`, is not installed, or KVM cannot run the VM, for
+    the `accel` kvm: of another architecture than the host's, or not accessible.
+    """
+    if accel == "kvm" and qemu_arch(arch) != (host := os.uname().machine):
+        msg = f"KVM only runs the VMs of the architecture of the host, {host}: use --accel tcg"
+        raise RuntimeError(msg)
+    for tool in [f"qemu-system-{qemu_arch(arch)}", *(["qemu-img"] if new_disk else [])]:
         if not shutil.which(tool):
             msg = f"{tool} is not installed: install QEMU to run the VM"
             raise RuntimeError(msg)
@@ -319,23 +354,40 @@ def qemu_command(
     monitor of the events with `events`, which launch() connects to, and the HTTP response `answer` given at
     ANSWER_URL, by QEMU itself: for as long as the VM runs, even after xcraft boot --background returned.
     """
-    accel, ovmf = launch.accel, launch.ovmf
-    network = "user,model=e1000" + (f",hostfwd=tcp:127.0.0.1:{ssh_port}-:22" if ssh_port else "")
+    accel, ovmf, arm = launch.accel, launch.ovmf, qemu_arch(launch.arch) == "aarch64"
+    network = f"user,model={'virtio-net-pci' if arm else 'e1000'}"
+    network += f",hostfwd=tcp:127.0.0.1:{ssh_port}-:22" if ssh_port else ""
     if answer:
         # commas doubled, which QEMU reads as part of the value
         network += ",guestfwd=tcp:10.0.2.100:80-cmd:cat " + shlex.quote(str(answer)).replace(",", ",,")
-    # OVMF exposes modes that fit in VRAM; limit it so the installer cannot select a huge framebuffer.
+    if arm:
+        # Xen runs at EL2, which the virtualization of the virt machine gives the guest; virtio, the machine having
+        # no IDE, the display of the firmware, which Linux keeps with efifb, and USB for the keyboard
+        machine = [
+            "-machine", "virt,virtualization=on,gic-version=3",
+            "-device", "virtio-gpu-pci,xres=1024,yres=768",
+            "-device", "qemu-xhci", "-device", "usb-kbd", "-device", "usb-tablet",
+        ]  # fmt: skip
+        hd, panic = "virtio-blk-pci,drive=disk", "pvpanic-pci"
+    else:
+        # OVMF exposes modes that fit in VRAM; limit it so the installer cannot select a huge framebuffer.
+        machine = [
+            "-machine", "q35", "-vga", "std", "-global", "VGA.xres=1024", "-global", "VGA.yres=768",
+            "-global", "VGA.vgamem_mb=4",
+        ]  # fmt: skip
+        hd, panic = "ide-hd,drive=disk,bus=ide.0", "pvpanic"
     cmd = [
-        "qemu-system-x86_64", "-name", f"xcraft-{launch.name}", "-accel", accel, "-machine", "q35",
-        "-cpu", "host" if accel == "kvm" else "max", "-smp", str(launch.cpus), "-m", str(launch.memory),
-        "-vga", "std", "-global", "VGA.xres=1024", "-global", "VGA.yres=768",
-        "-global", "VGA.vgamem_mb=4",
+        f"qemu-system-{qemu_arch(launch.arch)}", "-name", f"xcraft-{launch.name}", "-accel", accel, *machine,
+        # emulated, aarch64's like the Neoverse N1 of the Ampere Altra: Xen traps the registers of the PMU of later
+        # cores, like PMMIR_EL1, without emulating them, which panics dom0
+        "-cpu", "host" if accel == "kvm" else "neoverse-n1" if launch.arch == "aarch64" else "max",
+        "-smp", str(launch.cpus), "-m", str(launch.memory),
         "-drive", f"file={str(disk).replace(',', ',,')},format=qcow2,if=none,id=disk",
-        "-device", f"ide-hd,drive=disk,bus=ide.0,bootindex={1 if iso else 0}", "-nic", network,
+        "-device", f"{hd},bootindex={1 if iso else 0}", "-nic", network,
         # QEMU's monitors take one connection at a time: the events have their own, see launch()
         *(["-qmp", _EVENTS] if events else []), "-qmp", "unix:qmp.sock,server=on,wait=off", "-monitor", "none",
         # a panic of a guest kernel with the driver of pvpanic stops it, rather than leaving it hung
-        "-device", "pvpanic", "-action", "panic=shutdown",
+        "-device", panic, "-action", "panic=shutdown",
         "-chardev", "stdio,id=serial,signal=off",
         "-serial", "chardev:serial", *(["-display", "none"] if headless else []),
     ]  # fmt: skip
@@ -352,10 +404,14 @@ def qemu_command(
     if iso:
         # first in the boot order, which UEFI follows too, rather than the boot entry an installation adds to the
         # firmware variables, where -boot order=d is only for the BIOS
+        cd = ["-device", "virtio-scsi-pci,id=scsi", "-device", "scsi-cd,drive=cdrom,bus=scsi.0"] if arm else [
+            "-device", "ide-cd,drive=cdrom,bus=ide.2",
+        ]  # fmt: skip
+        cd[-1] += ",bootindex=0"
         cmd += [
             "-drive",
             f"file={str(iso.absolute()).replace(',', ',,')},format=raw,media=cdrom,readonly=on,if=none,id=cdrom",
-            "-device", "ide-cd,drive=cdrom,bus=ide.2,bootindex=0", "-no-reboot",
+            *cd, "-no-reboot",
         ]  # fmt: skip
     cmd += ["-boot", "menu=on"]
     return [*cmd, *launch.qemu_args]

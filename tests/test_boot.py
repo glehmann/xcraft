@@ -134,7 +134,7 @@ def should_start_again_from_the_disk_it_created(unprepared_root: Path, tmp_path:
     ("args", "message"),
     [
         (["--accel", "unknown"], "--accel must be kvm or tcg"),
-        (["--arch", "aarch64"], "boot currently supports x86_64 and x86_64_v2 only"),
+        (["--arch", "aarch64", "--bios"], "--bios is for x86 only, not aarch64, which boots with UEFI"),
         (["--memory", "0"], "'--memory': 0 is not in the range x>=512"),
         (["--cpus", "0"], "'--cpus': 0 is not in the range x>=1"),
     ],
@@ -269,6 +269,61 @@ def should_fail_when_qemu_is_not_installed(
     assert code == 1, output
     assert "qemu-system-x86_64 is not installed" in output
     assert not (unprepared_root / ".xcraft").exists()
+    code, output = xcraft("boot", "--iso", str(iso), "--arch", "aarch64")
+    assert code == 1, output
+    assert "qemu-system-aarch64 is not installed" in output
+
+
+def should_boot_aarch64_vms_on_the_virt_machine_with_uefi(tmp_path: Path) -> None:
+    firmware = (tmp_path / "code.fd", tmp_path / "vars.fd")
+    for path in firmware:
+        path.touch()
+    launch = vm.Launch(name="test", memory=512, cpus=1, accel="tcg", ovmf=firmware, qemu_args=[], arch="aarch64")
+    cmd = vm.qemu_command(tmp_path, launch, disk=tmp_path / "disk", iso=tmp_path / "iso", ssh_port=2222, headless=True)
+    # EL2 for Xen, the core of the Ampere Altra, virtio, the machine having no IDE, the ISO first
+    assert cmd[:2] == ["qemu-system-aarch64", "-name"]
+    assert cmd[cmd.index("-machine") + 1] == "virt,virtualization=on,gic-version=3"
+    assert cmd[cmd.index("-cpu") + 1] == "neoverse-n1"
+    assert "virtio-blk-pci,drive=disk,bootindex=1" in cmd
+    assert "scsi-cd,drive=cdrom,bus=scsi.0,bootindex=0" in cmd
+    assert cmd[cmd.index("-nic") + 1].startswith("user,model=virtio-net-pci,hostfwd=")
+    assert "pvpanic-pci" in cmd
+    assert "-vga" not in cmd
+    assert (tmp_path / "OVMF_VARS.fd").exists()
+    # an x86 VM as before, like those of the sessions of earlier versions, without their architecture
+    old = vm.Launch.model_validate({k: v for k, v in launch.model_dump().items() if k != "arch"})
+    cmd = vm.qemu_command(tmp_path, old, disk=tmp_path / "disk", iso=None, ssh_port=0, headless=True)
+    assert cmd[0] == "qemu-system-x86_64"
+    assert cmd[cmd.index("-machine") + 1] == "q35"
+    assert cmd[cmd.index("-cpu") + 1] == "max"
+    assert "ide-hd,drive=disk,bus=ide.0,bootindex=0" in cmd
+
+
+def should_find_the_uefi_firmware_of_the_architecture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    for arch, directory, names in (
+        ("x86_64", "x64", ("OVMF_CODE.4m.fd", "OVMF_VARS.4m.fd")),
+        ("aarch64", "aarch64", ("QEMU_EFI-pflash.raw", "vars-template-pflash.raw")),
+    ):
+        (tmp_path / directory).mkdir()
+        for name in names:
+            (tmp_path / directory / name).touch()
+        monkeypatch.setitem(vm._FIRMWARES, arch, [(str(tmp_path / directory), *names)])
+    assert vm.firmware(None, None, "x86_64_v2")[0].name == "OVMF_CODE.4m.fd"
+    assert vm.firmware(None, None, "aarch64")[0].name == "QEMU_EFI-pflash.raw"
+    monkeypatch.setitem(vm._FIRMWARES, "aarch64", [])
+    with pytest.raises(RuntimeError, match=r"AAVMF \(edk2-aarch64\) is not installed"):
+        vm.firmware(None, None, "aarch64")
+
+
+@pytest.mark.usefixtures("unprepared_root")
+def should_accelerate_the_vms_of_the_architecture_of_the_host_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(os, "uname", lambda: os.uname_result(("Linux", "h", "6", "1", "x86_64")))
+    assert (vm.default_accel("x86_64_v2"), vm.default_accel("aarch64")) == ("kvm", "tcg")
+    code, output = xcraft("boot", "--arch", "aarch64", "--accel", "kvm")
+    assert code == 1, output
+    assert "KVM only runs the VMs of the architecture of the host, x86_64: use --accel tcg" in output
+    monkeypatch.setattr(os, "uname", lambda: os.uname_result(("Linux", "h", "6", "1", "aarch64")))
+    assert (vm.default_accel("x86_64_v2"), vm.default_accel("aarch64")) == ("tcg", "kvm")
 
 
 @pytest.fixture

@@ -116,7 +116,7 @@ def should_check_the_host_tools_outside_projects(tmp_path: Path, monkeypatch: py
     assert "no xcraft.toml" not in output
     assert "qemu-system-x86_64: not found" in output
     assert "qemu-img: not found" in output
-    assert "UEFI firmware:" in output
+    assert "UEFI firmware of x86_64:" in output
     assert "KVM:" in output
     assert "remote storage" not in output
 

@@ -21,14 +21,17 @@ if TYPE_CHECKING:
     import subprocess
 
 
-def _check_host(arch: str, accel: str, *, new_disk: bool) -> None:
+def _check_host(arch: str, accel: str, *, new_disk: bool, bios: bool) -> None:
     if accel not in {"kvm", "tcg"}:
         msg = "--accel must be kvm or tcg"
         raise typer.BadParameter(msg)
-    if arch not in {"x86_64", "x86_64_v2"}:
-        msg = "boot currently supports x86_64 and x86_64_v2 only"
+    if arch not in {"x86_64", "x86_64_v2", "aarch64"}:
+        msg = "boot currently supports x86_64, x86_64_v2 and aarch64 only"
         raise typer.BadParameter(msg)
-    vm.check_tools(accel, new_disk=new_disk)
+    if bios and vm.qemu_arch(arch) != "x86_64":
+        msg = f"--bios is for x86 only, not {arch}, which boots with UEFI"
+        raise typer.BadParameter(msg)
+    vm.check_tools(accel, new_disk=new_disk, arch=arch)
 
 
 def answered(text: str, answers: list[str]) -> str:
@@ -139,12 +142,21 @@ def boot(
         bool, typer.Option("--background", help="Launch without a window and return when ready.")
     ] = False,
     vm_dir: Annotated[Path | None, typer.Option(help="Session directory. .xcraft/vm/<arch> by default.")] = None,
-    bios: Annotated[bool, typer.Option("--bios", help="Use legacy BIOS instead of UEFI.")] = False,
-    firmware_code: Annotated[Path | None, typer.Option(help="OVMF CODE image; pair with --firmware-vars.")] = None,
-    firmware_vars: Annotated[
-        Path | None, typer.Option(help="OVMF VARS template, copied only for a new session.")
+    bios: Annotated[bool, typer.Option("--bios", help="Use legacy BIOS instead of UEFI, on x86 only.")] = False,
+    firmware_code: Annotated[
+        Path | None, typer.Option(help="UEFI firmware CODE image, OVMF or AAVMF; pair with --firmware-vars.")
     ] = None,
-    accel: Annotated[str, typer.Option(help="QEMU accelerator: kvm, or tcg for software emulation.")] = "kvm",
+    firmware_vars: Annotated[
+        Path | None, typer.Option(help="UEFI firmware VARS template, copied only for a new session.")
+    ] = None,
+    accel: Annotated[
+        str | None,
+        typer.Option(
+            help="QEMU accelerator: kvm, or tcg for software emulation; kvm for the architecture of the host, tcg "
+            "for the others, by default.",
+            show_default=False,
+        ),
+    ] = None,
     qemu_arg: Annotated[
         list[str] | None, typer.Option("--qemu-arg", help="Extra QEMU argument, repeatable. Use --qemu-arg=-option.")
     ] = None,
@@ -202,11 +214,12 @@ def boot(
     if not ours and vm_dir.is_dir() and any(path != disk for path in vm_dir.iterdir()):
         msg = f"{vm_dir} has content xcraft did not make, which xcraft vm destroy would delete"
         raise typer.BadParameter(msg, param_hint="--vm-dir")
-    _check_host(project.arch, accel, new_disk=not disk.exists())
+    accel = accel or vm.default_accel(project.arch)
+    _check_host(project.arch, accel, new_disk=not disk.exists(), bios=bios)
     if bios and (firmware_code or firmware_vars):
         msg = "--bios cannot be used with --firmware-code or --firmware-vars"
         raise typer.BadParameter(msg)
-    ovmf = None if bios else vm.firmware(firmware_code, firmware_vars)
+    ovmf = None if bios else vm.firmware(firmware_code, firmware_vars, project.arch)
     vm.check_stopped(vm_dir)
     if not iso:
         project.frozen = locked
@@ -221,7 +234,15 @@ def boot(
         if not disk.exists():
             disk.parent.mkdir(parents=True, exist_ok=True)
             process.run(["qemu-img", "create", "-f", "qcow2", str(disk), disk_size])
-        launch = vm.Launch(name=project.id, memory=memory, cpus=cpus, accel=accel, ovmf=ovmf, qemu_args=qemu_arg or [])
+        launch = vm.Launch(
+            name=project.id,
+            memory=memory,
+            cpus=cpus,
+            accel=accel,
+            ovmf=ovmf,
+            qemu_args=qemu_arg or [],
+            arch=project.arch,
+        )
         cmd = vm.qemu_command(
             vm_dir,
             launch,
