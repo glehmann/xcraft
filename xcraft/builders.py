@@ -167,6 +167,27 @@ def _copy_trees(project: Project, host: Host, remote: str) -> None:
         _rsync(host, f"{tmp}/develop.json", f"{host.destination}:{there}/.xcraft/develop.json")
 
 
+def _copy_git(project: Project, host: Host, remote: str) -> list[str]:
+    """Copy the repository of git of the checkout of `project` to its copy `remote` on `host`, when it is a worktree,
+    like a workspace of jj, and return the filters of the copy of the checkout: its .git is then a file naming the
+    directory of the worktree, in the repository, which the copy would not have, nor the history the build IDs are
+    numbered against. The copy gets the repository, but its worktrees, as its .git, with the HEAD and the index of the
+    worktree.
+    """
+    found = process.run(
+        ["git", "-C", str(project.root), "rev-parse", "--absolute-git-dir", "--git-common-dir"],
+        check=False,
+        capture=True,
+    )
+    if found.returncode or not (project.root / ".git").is_file():
+        return []
+    git_dir, common = (Path(project.root, line) for line in found.stdout.splitlines())
+    process.run(host.ssh(f"cd {remote} && if [ -f .git ]; then rm .git; fi"), capture=True)
+    _rsync(host, "--delete", "--exclude=/worktrees/", f"{common}/", f"{host.destination}:{remote}/.git/")
+    _rsync(host, f"{git_dir}/HEAD", f"{git_dir}/index", f"{host.destination}:{remote}/.git/")
+    return ["--exclude=/.git"]
+
+
 class _Copy(NamedTuple):
     """A copy of a checkout on a builder, see _copied()."""
 
@@ -209,10 +230,10 @@ def _copied(project: Project, name: str) -> Generator[_Copy]:
     and the developer's key, once checked that it runs the same xcraft, the one of the same recipe of the builds, see
     xcraft.buildkey.recipe(): another one would make builds of other keys.
 
-    The copy is the working tree, the files git has and those it does not ignore, with .git, for the build IDs, but not
-    .xcraft/, which the builder keeps, with its caches, and the trees the packages are developed from, see
-    _copy_trees(). Its builds are numbered against the branch of this checkout, when one is named, see
-    xcraft.buildid.named(), which the copy may not tell, like a bookmark of jj.
+    The copy is the working tree, the files git has and those it does not ignore, with .git, for the build IDs, its
+    repository for a worktree, see _copy_git(), but not .xcraft/, which the builder keeps, with its caches, and the
+    trees the packages are developed from, see _copy_trees(). Its builds are numbered against the branch of this
+    checkout, when one is named, see xcraft.buildid.named(), which the copy may not tell, like a bookmark of jj.
     """
     remote = f"{ROOT}/{project.id}"
     with tempfile.TemporaryDirectory(prefix="xcraft-builder-") as tmp, connected(ssh_host(name)) as host:
@@ -223,6 +244,7 @@ def _copied(project: Project, name: str) -> Generator[_Copy]:
             process.run(host.ssh(f"mkdir -p {remote}/.xcraft/cache/builds {remote}/.xcraft/logs"), capture=True)
             destination = f"{host.destination}:{remote}"
             filters = ["--delete", "--exclude=/.xcraft/", "--exclude=/.jj/", "--filter=:- .gitignore"]
+            filters += _copy_git(project, host, remote)
             _rsync(host, *filters, f"{project.root}/", f"{destination}/")
             if state := [p for p in ("dev-builds.json", "key") if (project.state / p).exists()]:
                 _rsync(host, "--relative", *(f"{project.root}/./.xcraft/{p}" for p in state), f"{destination}/")

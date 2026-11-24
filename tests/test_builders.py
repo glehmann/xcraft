@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -12,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from tests import ARCH, copy_project, xcraft
-from xcraft import builders
+from tests import ARCH, commit_base, copy_project, edit, git, xcraft
+from xcraft import builders, buildid
 from xcraft.cache import build_keys, cached_build
 from xcraft.project import Project
 
@@ -56,6 +57,28 @@ def should_build_on_the_builder_of_the_architecture_with_this_xcraft(
     code, output = xcraft("status", "--full", "trivial")
     assert code == 0, output
     assert " ready" in output
+
+
+def should_number_the_builds_of_a_worktree_on_the_builder_against_the_main_branch(
+    root: Path, builder: Path, build_environment: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # a worktree, like a workspace of jj, whose .git is a file naming its directory in the repository
+    commit_base(root)
+    worktree = tmp_path / "worktree"
+    git(root, "worktree", "add", "-q", "-b", "feature", str(worktree))
+    # relative, like jj's: which the copy on the builder does not resolve
+    gitdir = Path((worktree / ".git").read_text().removeprefix("gitdir: ").strip())
+    (worktree / ".git").write_text(f"gitdir: {os.path.relpath(gitdir, worktree)}\n")
+    shutil.copytree(root / ".xcraft", worktree / ".xcraft", dirs_exist_ok=True)  # its caches
+    monkeypatch.setenv("XCRAFT_PROJECT", str(worktree))
+    edit(worktree, "changed")
+    copy = builder / builders.ROOT / Project.find().id
+    copy_project(copy, build_environment)
+    code, output = xcraft("build", "trivial")
+    assert code == 0, output
+    # the next number of the main branch's, rather than the first, as without its history
+    assert buildid.read(Project.find())["trivial"].number == 2
+    assert (copy / ".git").is_dir()
 
 
 @pytest.mark.usefixtures("builder")
