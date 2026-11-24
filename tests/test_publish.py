@@ -35,6 +35,7 @@ from tests import (
     page,
     pushed_iso,
     unsigned,
+    write_spec,
     xcraft,
 )  # fmt: skip
 from xcraft import (
@@ -189,6 +190,20 @@ def should_refuse_upstream_packages_not_signed_by_their_repositories(root: Path)
     assert code == 1
     assert f"✗ base/Source/{srpm.name}: digests SIGNATURES NOT OK" in output
     assert "some upstream packages are not signed with the keys of the repositories" in output
+
+
+def should_publish_without_the_packages_the_specs_exclude(root: Path) -> None:
+    # of the other architecture of the project, keyed like all, and built there only
+    other, foreign = ("aarch64", "linux/arm64") if ARCH == "x86_64_v2" else ("x86_64", "linux/amd64/v2")
+    toml = root / "xcraft.toml"
+    toml.write_text(toml.read_text().replace(f'["{PLATFORM}"]', f'["{PLATFORM}", "{foreign}"]'))
+    write_spec(root, "elsewhere")
+    spec = root / "base/elsewhere/elsewhere.spec"
+    spec.write_text(spec.read_text().replace("BuildArch: noarch\n", f"ExclusiveArch: {other}\n"))
+    commit_base(root)
+    code, output = xcraft("publish", "--local")
+    assert code == 0, output
+    assert not list((root / ".xcraft/publish").rglob("elsewhere-*"))
 
 
 @needs_gpg

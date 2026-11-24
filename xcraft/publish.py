@@ -269,7 +269,8 @@ def _check_installable(project: Project, repos: list[Path]) -> None:
 
 def _built(project: Project, *, fetch: Fetch, dev: str | None, nocheck: bool) -> dict[str, str]:
     """Build or fetch our packages, but only fetch them on the platforms the host emulates, and return their keys: with
-    the development builds of the identifier `dev`, if any, without the tests of their specs with `nocheck`.
+    the development builds of the identifier `dev`, if any, without the tests of their specs with `nocheck`. Those
+    whose specs exclude the platform are not built there, though keyed like on the others.
     """
     resolution.prepare(project)
     results, keys, _ = builder.build(
@@ -278,7 +279,7 @@ def _built(project: Project, *, fetch: Fetch, dev: str | None, nocheck: bool) ->
     if failed := [r.name for r in results if r.failed]:
         msg = f"not built for {project.arch}: {', '.join(failed)}"
         raise RuntimeError(msg)
-    return keys
+    return {name: keys[name] for name in project.packages}
 
 
 def _built_all(platforms: list[Project], *, fetch: Fetch, dev: str | None, nocheck: bool) -> list[dict[str, str]]:
