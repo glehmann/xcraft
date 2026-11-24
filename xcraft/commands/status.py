@@ -154,9 +154,12 @@ def status(
     here or on the builder of the architecture), ready (built or fetched, in the cache), built there (on the builder,
     not back yet), fetchable (in the remote storage, which xcraft build fetches, unless --local), outdated (only older
     versions are), and missing.
+
+    It changes nothing of the project: the locks are updated in memory only, for the right build keys, and saved by the
+    next command changing the project, which may run meanwhile.
     """
     ident = dev_ident(ctx, dev, final=final)
-    project = prepared_project(packages, arch=arch)
+    project = prepared_project(packages, arch=arch, readonly=True)
     if with_inputs:
         _show_inputs(project, sorted(set(packages or project.packages)))
         return

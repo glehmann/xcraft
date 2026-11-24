@@ -91,16 +91,22 @@ def unprepared_project(names: list[str] | None = None, *, arch: str | None = Non
 
 
 def prepared_project(
-    names: list[str] | None = None, *, locked: bool = False, arch: str | None = None, excluded: bool = False
+    names: list[str] | None = None,
+    *,
+    locked: bool = False,
+    arch: str | None = None,
+    excluded: bool = False,
+    readonly: bool = False,
 ) -> Project:
     """Return the project, with its packages and their build dependencies, checking `names` are packages built for its
     architecture, or not with `excluded`, once the lock has the upstream packages the builds need, which it may lock
     (see resolution.prepare()).
 
-    With `locked`, the lock cannot change: it fails instead.
+    With `locked`, the lock cannot change: it fails instead. With `readonly`, it changes in memory only, see
+    Project.readonly.
     """
     project = unprepared_project(names, arch=arch)  # before preparing, which may run containers
-    project.frozen = locked
+    project.frozen, project.readonly = locked, readonly
     resolution.prepare(project)
     if not excluded and (others := sorted(set(names or []) - project.packages.keys())):
         msg = f"not built for {project.arch}, which their specs exclude: {', '.join(others)}"

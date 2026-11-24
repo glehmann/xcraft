@@ -17,7 +17,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from xcraft.display import changes
 from xcraft.lock import Recorded
-from xcraft.project import write_atomically
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -147,8 +146,7 @@ def parse_builds(text: str) -> Builds:
 
 def load_builds(project: Project) -> Builds:
     """Return the lock of the builds of the project, empty when there is none yet."""
-    path = builds_path(project)
-    return parse_builds(path.read_text()) if path.exists() else Builds()
+    return parse_builds(text) if (text := project.read(builds_path(project))) is not None else Builds()
 
 
 def _parsed(project: Project) -> dict[str, dict[str, Package]]:
@@ -203,22 +201,21 @@ def render(project: Project, builds: Builds) -> str:
 def save_builds(project: Project, builds: Builds) -> None:
     """Write the lock of the builds of the project, when it changes. When the project is `frozen`, fail instead."""
     path = builds_path(project)
-    current = path.read_text() if path.exists() else ""
+    current = project.read(path) or ""
     if (text := render(project, builds)) == (current or _HEADER):
         return
     if project.frozen:
         differences = changes(*({line for line in t.splitlines() if line and line[0] != "#"} for t in (current, text)))
         msg = f"the lock of the builds would change, which --locked forbids: {', '.join(differences)}"
         raise RuntimeError(msg)
-    write_atomically(path, text)
+    project.write(path, text)
 
 
 def drop_gone(project: Project) -> None:
     """Drop from the lock of the builds what the builds of packages and binary packages gone recorded, holding the lock
     of the project only then, for the commands only reading the project, like xcraft status during a build.
     """
-    path = builds_path(project)
-    current = path.read_text() if path.exists() else ""
+    current = project.read(builds_path(project)) or ""
     if render(project, parse_builds(current)) != (current or _HEADER):
         with project.lock():
             save_builds(project, load_builds(project))

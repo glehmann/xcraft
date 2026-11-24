@@ -355,6 +355,11 @@ class Project:
     """The platform xcraft works on, one of the configuration's: see find()."""
     frozen: bool = False
     """Whether the lock cannot change, with --locked."""
+    readonly: bool = False
+    """Whether the command only reads the project, like xcraft status: the locks it updates are changed in memory only,
+    see write(), and it holds no lock of the project, which another command may hold meanwhile."""
+    written: dict[Path, str] = field(default_factory=dict, repr=False, compare=False)
+    """The files changed in memory when `readonly`, by path: shared by the project on all its platforms."""
     signer: Signer | None = None
     """The key signing the builds of the command, see xcraft.signing.build_signer()."""
     specs: dict[str, dict[str, Package]] = field(default_factory=dict, repr=False, compare=False)
@@ -554,13 +559,27 @@ class Project:
             finally:
                 fcntl.flock(_users[self.root], fcntl.LOCK_SH)
 
+    def read(self, path: Path) -> str | None:
+        """Return the text of the file `path` of the project, as changed in memory, if it was, or None without it."""
+        if (text := self.written.get(path)) is not None:
+            return text
+        return path.read_text() if path.exists() else None
+
+    def write(self, path: Path, text: str) -> None:
+        """Write the file `path` of the project, or change it in memory only when `readonly`."""
+        if self.readonly:
+            self.written[path] = text
+        else:
+            write_atomically(path, text)
+
     @contextmanager
     def lock(self) -> Generator[None]:
         """Hold the lock of the project, for the commands changing its packages or what xcraft generates.
 
-        It can be taken again while held, also through the project on another platform.
+        It can be taken again while held, also through the project on another platform. Not when `readonly`: it
+        changes nothing.
         """
-        if self.root in _held:
+        if self.root in _held or self.readonly:
             yield
             return
         self.state.mkdir(exist_ok=True)

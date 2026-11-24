@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -112,6 +113,23 @@ def should_number_the_builds_until_locked(root: Path) -> None:
     project.frozen = True
     with pytest.raises(buildid.BuildIdError, match="--locked forbids: trivial, with-deps"):
         checkout_iso(project)
+
+
+def should_change_nothing_with_xcraft_status(root: Path) -> None:
+    assert xcraft("build", "trivial")[0] == 0
+    # bc, needed but not locked, which the lock gets by the next command changing the project
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(spec.read_text().replace("%description", "BuildRequires: bc\n%description", 1))
+    files = {path: path.read_text() for path in (root / "xcraft.lock", root / "xcraft.builds")}
+    with (root / ".xcraft/lock").open("w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)  # held by another command, like a build
+        code, shown = xcraft("status", "--full")
+    assert code == 0, shown
+    assert {path: path.read_text() for path in files} == files
+    # with the keys it gets then
+    assert xcraft("build", "--dry-run")[0] == 0
+    assert "bc" in load_lock(Project.find()).binaries[ARCH]
+    assert xcraft("status", "--full") == (0, shown)
 
 
 def should_show_the_inputs_of_the_build_keys(root: Path) -> None:

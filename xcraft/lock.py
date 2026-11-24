@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from xcraft.display import changes
-from xcraft.project import write_atomically
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -234,9 +233,8 @@ def cached_lock(project: Project) -> Lock:
     """Return the lock of the project, empty when there is none yet, shared by the callers: not to change, see
     load_lock().
     """
-    if not (path := lock_path(project)).exists():
+    if (text := project.read(path := lock_path(project))) is None:
         return Lock()
-    text = path.read_text()
     if (cached := _parsed.get(path)) is None or cached[0] != text:
         _parsed[path] = cached = text, parse_lock(text)
     return cached[1]
@@ -304,4 +302,4 @@ def save_lock(project: Project, lock: Lock) -> None:
     lines += _tables("sign", lock.sign, "the upstream binary packages of the signing image, but the image's")
     lines += _tables("lint", lock.lint, "the upstream binary packages of the lint image, but the image's")
     lines += _tables("unsigned", lock.unsigned, "the pinned packages of the repositories of gpgcheck = false")
-    write_atomically(lock_path(project), "\n".join(lines) + "\n")
+    project.write(lock_path(project), "\n".join(lines) + "\n")
