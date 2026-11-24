@@ -7,8 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from tests import commit_base, git, xcraft
+from tests import commit_base, copy_project, git, xcraft
+from xcraft import builders
 from xcraft.develop import ARCHIVE, DevelopError, spec_text
+from xcraft.project import Project
 
 SPEC = """\
 Name: trivial
@@ -134,6 +136,29 @@ def should_build_from_the_tree_as_it_is(root: Path, tree: Path) -> None:
     assert not (sources / "new.in").exists()
     # never in the build IDs, which are of git
     assert (root / "xcraft.builds").read_text() == builds
+
+
+def should_build_from_the_tree_on_a_builder(root: Path, tree: Path, builder: Path, build_environment: Path) -> None:
+    # the builder having the caches of the build environment already, like after its first build
+    copy = builder / builders.ROOT / Project.find().id
+    copy_project(copy, build_environment)
+    sources = copy / ".xcraft/build/trivial/BUILD/trivial-1.0"
+    assert xcraft("develop", str(tree))[0] == 0
+    code, output = xcraft("build", "trivial")
+    assert code == 0, output
+    assert (sources / "hello.txt").read_text() == "hello from the tree\n"
+    # built there under the key it has here: the tree the same commit there
+    assert " ready" in xcraft("status", "--full", "trivial")[1]
+    # its files as they are, committed or not
+    (tree / "hello.in").write_text("hello, edited\n")
+    code, output = xcraft("build", "trivial")
+    assert code == 0, output
+    assert (sources / "hello.txt").read_text() == "hello, edited\n"
+    assert " ready" in xcraft("status", "--full", "trivial")[1]
+    # developing nothing anymore there either
+    assert xcraft("develop", "--stop")[0] == 0
+    xcraft("build", "trivial")  # from the sources of the spec, which the project lacks
+    assert not (copy / ".xcraft/develop.json").exists()
 
 
 def should_refuse_final_builds_until_developing_stops(root: Path, tree: Path) -> None:

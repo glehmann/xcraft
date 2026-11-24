@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict
 
 import xcraft
-from xcraft import buildid, buildkey, process
+from xcraft import buildid, buildkey, develop, process
 from xcraft.display import activity
 from xcraft.hosts import Host, connected, ssh_host
 
@@ -145,6 +145,25 @@ def provision(name: str) -> None:
         )
 
 
+def _copy_trees(project: Project, host: Host, remote: str) -> None:
+    """Copy the trees the packages of `project` are developed from, see xcraft.develop, to `host`, in the state of its
+    copy of the checkout, `remote`, which it keeps, and point its develop.json to them, or remove it without any: with
+    the same files and HEAD, the trees are the same commits there, and their builds have the same keys.
+    """
+    if not (developed := develop.trees(project)):
+        process.run(host.ssh(f"rm -f {remote}/.xcraft/develop.json"), capture=True)
+        return
+    there = process.run(host.ssh(f"cd {remote} && pwd"), capture=True).stdout.strip()
+    paths = {name: f"{there}/.xcraft/trees/{name}" for name in developed}
+    process.run(host.ssh(shlex.join(["mkdir", "-p", *paths.values()])), capture=True)
+    for name, tree in developed.items():
+        filters = ["--delete", "--exclude=/.jj/", "--filter=:- .gitignore"]
+        _rsync(host, *filters, f"{tree}/", f"{host.destination}:{paths[name]}/")
+    with tempfile.TemporaryDirectory(prefix="xcraft-develop-") as tmp:
+        (Path(tmp) / "develop.json").write_text(json.dumps(paths, indent=1, sort_keys=True))
+        _rsync(host, f"{tmp}/develop.json", f"{host.destination}:{there}/.xcraft/develop.json")
+
+
 def build(project: Project, name: str, args: list[str], keys: list[str]) -> tuple[int, dict[str, str]]:
     """Build with xcraft build and its `args` on the builder `name` of the architecture of `project`, from a copy of
     the checkout, with the counters of its development builds and the developer's key, and copy back its builds of the
@@ -155,8 +174,9 @@ def build(project: Project, name: str, args: list[str], keys: list[str]) -> tupl
     checked before building: another one would make builds of other keys.
 
     The copy is the working tree, the files git has and those it does not ignore, with .git, for the build IDs, but not
-    .xcraft/, which the builder keeps, with its caches. The builds are numbered against the branch of this checkout,
-    when one is named, see xcraft.buildid.named(), which the copy may not tell, like a bookmark of jj.
+    .xcraft/, which the builder keeps, with its caches, and the trees the packages are developed from, see
+    _copy_trees(). The builds are numbered against the branch of this checkout, when one is named, see
+    xcraft.buildid.named(), which the copy may not tell, like a bookmark of jj.
     """
     remote = f"{ROOT}/{project.id}"
     with tempfile.TemporaryDirectory(prefix="xcraft-builder-") as tmp, connected(ssh_host(name)) as host:
@@ -170,6 +190,7 @@ def build(project: Project, name: str, args: list[str], keys: list[str]) -> tupl
             _rsync(host, *filters, f"{project.root}/", f"{destination}/")
             if state := [p for p in ("dev-builds.json", "key") if (project.state / p).exists()]:
                 _rsync(host, "--relative", *(f"{project.root}/./.xcraft/{p}" for p in state), f"{destination}/")
+            _copy_trees(project, host, remote)
             xcraft_command = _xcraft(host, Path(tmp))
         branch = buildid.named(project)
         prefix = [*xcraft_command, *(["--maintenance", branch] if branch else [])]

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 import shutil
-import sys
 import zipfile
 from typing import TYPE_CHECKING
 
@@ -17,53 +15,6 @@ from xcraft.project import Project
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-# ssh, rsync and uv reaching the builder h, a directory of this machine standing for its home: no remote host in the
-# tests
-SSH = """#!/bin/sh
-while [ $# -gt 0 ]; do case "$1" in -o|-p|-O) shift 2;; -*) shift;; *) break;; esac; done
-shift
-[ $# -eq 0 ] && exit 0
-cd "$BUILDER_HOME" && PATH="${BUILDER_PATH:-$PATH}" exec /bin/sh -c "$*"
-"""
-RSYNC = """#!/bin/sh
-for arg in "$@"; do
-    shift
-    case "$arg" in h:*) set -- "$@" "$BUILDER_HOME/${arg#h:}";; *) set -- "$@" "$arg";; esac
-done
-exec {rsync} "$@"
-"""
-# uv tool run --from <wheel> xcraft on the builder: the xcraft of this process, once the wheel there, without installing
-# it; uv otherwise
-UV = """#!/bin/sh
-[ "$1 $2 $3 $4" = "--quiet tool run --from" ] || exec {uv} "$@"
-[ "$6" = xcraft ] && [ -f "$5" ] || { echo "unexpected: uv $*" >&2; exit 1; }
-shift 6
-exec {python} -m xcraft "$@"
-"""
-
-
-@pytest.fixture
-def builder(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Return the home of h, the builder of the architecture of the tests, for the project `root`."""
-    tools, home = tmp_path / "tools", tmp_path / "builder"
-    tools.mkdir()
-    home.mkdir()
-    rsync, uv = shutil.which("rsync"), shutil.which("uv")
-    assert rsync, "the builders need rsync"
-    assert uv, "the development versions of xcraft need uv"
-    for name, script in (
-        ("ssh", SSH),
-        ("rsync", RSYNC.replace("{rsync}", rsync)),
-        ("uv", UV.replace("{uv}", uv).replace("{python}", sys.executable)),
-    ):
-        (tools / name).write_text(script)
-        (tools / name).chmod(0o755)
-    monkeypatch.setenv("PATH", f"{tools}:{os.environ['PATH']}")
-    monkeypatch.setenv("BUILDER_HOME", str(home))
-    monkeypatch.setenv("XCRAFT_BUILDERS", f"{ARCH}=h")
-    monkeypatch.delenv("XCRAFT_BUILDER_XCRAFT", raising=False)
-    return home
 
 
 def should_take_the_builders_of_the_config_overridden_by_the_environment(
