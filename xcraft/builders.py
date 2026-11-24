@@ -267,25 +267,50 @@ def _copied(project: Project, name: str) -> Generator[_Copy]:
         yield copy
 
 
-_RUNNING = """cd {build} 2>/dev/null || exit 0
-for marker in *.turn .queue; do
-    [ -e "$marker" ] && ! flock -n -s "$marker" true 2>/dev/null && printf '%s\\0%s\\0' "$marker" "$(cat "$marker")"
+_THERE = """cd {copy} 2>/dev/null || exit 0
+for marker in .xcraft/build/*.turn .xcraft/build/.queue; do
+    [ -e "$marker" ] && ! flock -n -s "$marker" true 2>/dev/null &&
+        printf '%s\\0%s\\0' "${{marker##*/}}" "$(cat "$marker")"
+done
+while IFS= read -r build; do
+    [ -d "$build" ] && printf 'built\\0%s\\0' "$build"
 done
 exit 0
 """
-"""The markers of the builds running in a copy, see xcraft.build.building() and queued(): those locked, read by
-flock, which builders have, with util-linux."""
+"""What a copy has of the builds: the markers of those running, see xcraft.build.building() and queued(), those locked,
+read by flock, which builders have, with util-linux, and the builds given on its input, one path by line, which it has,
+named built."""
 
 
-def running(project: Project, name: str) -> tuple[set[str], list[str]]:
-    """Return the packages being built in the copy of the checkout of `project` on its builder `name`, and those its
-    running build is still to build, in order: from their markers there, without copying the checkout, which would
-    change it under the build, nor running xcraft, which would wait for the build to hold the copy.
+class OnBuilder(NamedTuple):
+    """The builds of a copy of the checkout on a builder, see on_builder()."""
+
+    building: set[str]
+    """The packages being built."""
+    queued: list[str]
+    """The packages its running build is still to build, in order."""
+    built: set[str]
+    """The packages built there, of those asked about."""
+
+
+def on_builder(project: Project, name: str, builds: dict[str, Path]) -> OnBuilder:
+    """Return the builds of the copy of the checkout of `project` on its builder `name`: those running, and those of
+    `builds`, the cached builds of packages, which it has, like those of its running build, which come back once all
+    are done. From their markers and directories there, without copying the checkout, which would change it under the
+    build, nor running xcraft, which would wait for the build to hold the copy.
     """
-    build = f"{ROOT}/{project.id}/.xcraft/build"
-    fields = process.run(ssh_host(name).ssh(_RUNNING.format(build=shlex.quote(build))), capture=True).stdout.split("\0")
-    markers = dict(zip(fields[0:-1:2], fields[1::2], strict=True))
-    return {m.removesuffix(".turn") for m in markers if m.endswith(".turn")}, markers.get(".queue", "").split()
+    copy = f"{ROOT}/{project.id}"
+    paths = {str(path.relative_to(project.root)): package for package, path in builds.items()}
+    found = process.run(
+        ssh_host(name).ssh(_THERE.format(copy=shlex.quote(copy))), capture=True, input="".join(f"{p}\n" for p in paths)
+    ).stdout.split("\0")
+    pairs = list(zip(found[0:-1:2], found[1::2], strict=True))
+    markers = dict(pairs)
+    return OnBuilder(
+        {m.removesuffix(".turn") for m in markers if m.endswith(".turn")},
+        markers.get(".queue", "").split(),
+        {paths[path] for key, path in pairs if key == "built" and path in paths},
+    )
 
 
 def _copy_back(project: Project, name: str, copy: _Copy, logs_there: str) -> None:

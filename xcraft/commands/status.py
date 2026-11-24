@@ -20,6 +20,8 @@ from xcraft.devbuilds import dev_keys
 from xcraft.display import console, messages, print_wide
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from xcraft.project import Project
 
 _STYLES = {
@@ -27,6 +29,7 @@ _STYLES = {
     "building": "yellow",
     "queued": "cyan",
     "ready": "green",
+    "built there": "blue",
     "outdated": "magenta",
     "missing": "dim",
 }
@@ -69,17 +72,18 @@ def _show_inputs(project: Project, names: list[str]) -> None:
     )
 
 
-def _on_builder(project: Project) -> tuple[set[str], list[str]]:
-    """Return the packages the builder of the architecture of `project`, if any, is building, and those it is still to
-    build, like here: the builds there, of xcraft build, are not shown here otherwise.
+def _on_builder(project: Project, missing: dict[str, Path]) -> builders.OnBuilder:
+    """Return the builds of the builder of the architecture of `project`, if any: those running, and those of the
+    builds `missing` here which it made, see builders.on_builder(): the builds there, of xcraft build, are not shown
+    here otherwise, until they come back.
     """
     if not (name := builders.builders().get(project.arch)):
-        return set(), []
+        return builders.OnBuilder(set(), [], set())
     try:
-        return builders.running(project, name)
+        return builders.on_builder(project, name, missing)
     except (OSError, subprocess.CalledProcessError) as e:
-        messages.print(f"[yellow]warning:[/] the builds running on {name} are unknown: {escape(str(e))}")
-        return set(), []
+        messages.print(f"[yellow]warning:[/] the builds of {name} are unknown: {escape(str(e))}")
+        return builders.OnBuilder(set(), [], set())
 
 
 def status(
@@ -96,8 +100,8 @@ def status(
 
     The version has the build number, and the development build suffix of those whose build ID is not the main
     branch's, unless --final. The states: error (the spec cannot be parsed), building, queued (by a running build,
-    here or on the builder of the architecture), ready (built or fetched, in the cache), outdated (only older versions
-    are), and missing.
+    here or on the builder of the architecture), ready (built or fetched, in the cache), built there (on the builder,
+    not back yet), outdated (only older versions are), and missing.
     """
     ident = dev_ident(ctx, dev, final=final)
     project = prepared_project(packages, arch=arch)
@@ -105,13 +109,14 @@ def status(
         _show_inputs(project, sorted(set(packages or project.packages)))
         return
     keys = dev_keys(project, ident, buildkey.directories(project))[0]
-    there, queued_there = _on_builder(project)
+    shown = sorted(set(packages or project.packages))
+    builds = {name: cached_build(project, name, keys[name]) for name in shown}
+    there = _on_builder(project, {name: build for name, build in builds.items() if not build.exists()})
     queue = [
         name
-        for name in [*builder.queued(project), *queued_there]
+        for name in [*builder.queued(project), *there.queued]
         if not cached_build(project, name, keys[name]).exists()
     ]
-    shown = sorted(set(packages or project.packages))
     table = Table(box=None, pad_edge=False, show_header=False)
     states = Counter[str]()
     for name in shown:
@@ -123,12 +128,14 @@ def status(
         )
         if package.error:
             state = "error"
-        elif builder.building(project, name) or name in there:
+        elif builder.building(project, name) or name in there.building:
             state = "building"
         elif name in queue:
             state = "queued"
-        elif cached_build(project, name, keys[name]).exists():
+        elif builds[name].exists():
             state = "ready"
+        elif name in there.built:
+            state = "built there"
         else:
             state = "outdated" if has_normal_build(project, name) else "missing"
         states[state] += 1

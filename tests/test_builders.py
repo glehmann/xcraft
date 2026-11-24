@@ -164,8 +164,7 @@ def should_open_the_shell_on_the_builder_of_the_architecture(
     assert not (root / ".xcraft/build/trivial").exists()
 
 
-@pytest.mark.usefixtures("root")
-def should_show_the_builds_running_on_the_builder_of_the_architecture(builder: Path) -> None:
+def should_show_the_builds_running_on_the_builder_of_the_architecture(root: Path, builder: Path) -> None:
     # the markers of a build there, held by its process
     markers = builder / builders.ROOT / Project.find().id / ".xcraft/build"
     markers.mkdir(parents=True)
@@ -190,6 +189,14 @@ def should_show_the_builds_running_on_the_builder_of_the_architecture(builder: P
     assert code == 0, output
     assert "building" not in output
     assert "queued" not in output
+    # what its build made, which comes back once all are done, by the keys here
+    project = Project.find()
+    key = json.loads(xcraft("keys", "trivial")[1])["keys"]["trivial"]
+    (builder / builders.ROOT / project.id / cached_build(project, "trivial", key).relative_to(root)).mkdir(parents=True)
+    code, output = xcraft("status", "--full")
+    assert code == 0, output
+    assert re.search(r"^trivial +\S+ +built there *$", output, re.MULTILINE), output
+    assert output.splitlines()[-1] == "1 built there, 1 missing"
 
 
 @pytest.mark.usefixtures("root", "builder")
@@ -197,7 +204,7 @@ def should_show_the_status_here_when_the_builder_cannot_be_reached(monkeypatch: 
     monkeypatch.setenv("BUILDER_HOME", "/nonexistent")
     code, output = xcraft("status", "--full")
     assert code == 0, output
-    assert "warning: the builds running on h are unknown" in output
+    assert "warning: the builds of h are unknown" in output
     assert "2 missing" in output
 
 
