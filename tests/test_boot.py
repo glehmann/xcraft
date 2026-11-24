@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field, TypeAdapter
 
 from tests import xcraft
 from xcraft import vm
+from xcraft.commands import boot
 from xcraft.commands.boot import answered
 
 
@@ -500,3 +501,32 @@ def should_show_why_qemu_failed(tmp_path: Path) -> None:
     session = vm.Session(pid=0, arch="x86_64_v2", disk=tmp_path / "disk", iso=None, ssh_port=0, command=command)
     with pytest.raises(RuntimeError, match=f"^QEMU exited with 1: {error}$"):
         vm.launch(tmp_path, session)
+
+
+def should_tell_the_outcome_of_an_unattended_installation_from_its_log() -> None:
+    log = (
+        "INFO     [2026-11-24 19:09:20] ran ['chroot', '/tmp/root', 'dracut', '-f']; rc 0\n"
+        "INFO     [2026-11-24 19:09:21] INSTALL FAILED.\n"
+        "INFO     [2026-11-24 19:09:21] A fatal exception occurred:\n"
+        "INFO     [2026-11-24 19:09:21] Traceback (most recent call last):\n"
+        '  File "/opt/xensource/installer/backend.py", line 1011, in prepFallback\n'
+        "    shutil.copyfile(src, dst)\n"
+        "FileNotFoundError: [Errno 2] No such file or directory: '/tmp/root/boot/xen-4.21.2-3.gz'\n"
+        "\n"
+        "During handling of the above exception, another exception occurred:\n"
+        "INFO     [2026-11-24 19:09:42] An unrecoverable error has occurred.\n"
+    )
+    failed = boot._unattended_outcome(log)
+    assert failed is not None
+    assert failed.startswith("the installation failed:\nINFO     [2026-11-24 19:09:21] INSTALL FAILED.")
+    assert failed.endswith("No such file or directory: '/tmp/root/boot/xen-4.21.2-3.gz'")
+    assert boot._unattended_outcome("INFO     The installation completed successfully.\n") is None
+    # to the first exception, without a module, like the installer's own
+    log = (
+        "INFO     INSTALL FAILED.\nTraceback (most recent call last):\nException: The disk appears to be in use\nmore\n"
+    )
+    assert (boot._unattended_outcome(log) or "").endswith("\nException: The disk appears to be in use")
+    # an installer stopped before either, like by a crash
+    assert boot._unattended_outcome("INFO     Starting actual installation\n") == (
+        "the installer told neither its success nor its failure"
+    )

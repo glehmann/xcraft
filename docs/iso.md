@@ -95,7 +95,8 @@ unattended = "unattended.xml"
 
 QEMU itself serves it to the installer, at `http://10.0.2.100/unattended.xml` on its user network, which
 `rt_answerfile` on the kernel command line gives: for as long as the VM runs, even after `xcraft boot --background`
-returned. `--answer`, repeatable, changes it first: `NAME=VALUE` sets the text of the element `NAME` of the
+returned. `log_console=hvc0` writes the installer's log to the serial console too, except on aarch64, where the
+installer runs: xcraft boot fails unless it says the installation succeeded. `--answer`, repeatable, changes it first: `NAME=VALUE` sets the text of the element `NAME` of the
 installation, `NAME.ATTR=VALUE` an attribute of it, each added when missing. The names are those of the answer files
 of the installer:
 

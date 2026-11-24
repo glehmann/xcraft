@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
 import typer
+from rich.markup import escape
 
 from xcraft import process, vm
 from xcraft.commands import Arch, Dev, Final, Key, NoCheck, Packages, dev_ident
@@ -90,11 +91,35 @@ _STOPS = {
 """What stopped the VM, by the reason of the SHUTDOWN event of QEMU, but the installer asking to reboot."""
 
 
-def _show_end(reason: str | None, vm_dir: Path) -> None:
+INSTALLED = "The installation completed successfully"
+FAILED = "INSTALL FAILED"
+"""What the log of the installer says at its end, on the serial console, see _unattended_outcome()."""
+
+
+def _unattended_outcome(log: str) -> str | None:
+    """Return why the unattended installation of the serial console `log` failed, as the installer's log says, or
+    None when it says it succeeded.
+    """
+    if FAILED in log:
+        lines = log[log.rfind("\n", 0, log.index(FAILED)) + 1 :].splitlines()  # from the start of its line
+        # the traceback, until the exception
+        end = next((i for i, line in enumerate(lines) if re.match(r"(\w+\.)*\w*(Error|Exception)\b", line)), 12)
+        return "the installation failed:\n" + "\n".join(lines[: end + 1])
+    if INSTALLED not in log:
+        return "the installer told neither its success nor its failure"
+    return None
+
+
+def _show_end(reason: str | None, vm_dir: Path, *, unattended: bool = False) -> None:
     """Show how the VM ended, by the `reason` QEMU gave, and fail unless the installer asked to reboot, which it does
-    once it has installed the system.
+    once it has installed the system. With `unattended`, its log on the serial console must say it succeeded too: it
+    asks to reboot after a failure as well.
     """
     if reason == "guest-reset":
+        log = (vm_dir / "serial.log").read_text(errors="replace") if unattended else ""
+        if unattended and (failed := _unattended_outcome(re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]|\r", "", log))):
+            console.print(f"[bold red]✗[/] {escape(failed)}\nsee {vm_dir / 'serial.log'}")
+            raise typer.Exit(1)
         console.print(
             "[bold green]✓[/] the installer finished and asked to reboot: xcraft vm start boots the installed system"
         )
@@ -202,14 +227,18 @@ def boot(
 
     The disk persists between runs. The installer VM exits when it requests a reboot, which tells it finished: xcraft
     vm start then boots the installed disk, without the ISO. Use xcraft vm to inspect or stop it. In the foreground,
-    it fails when the VM stops otherwise, like powered off, or by a kernel panic with the guest's pvpanic driver.
+    it fails when the VM stops otherwise, like powered off, or by a kernel panic with the guest's pvpanic driver; with
+    --unattended, unless the installer's log, on the serial console, says it succeeded, as it asks to reboot after a
+    failure too.
     """
     _check_edits(bios=bios, kernel_args=kernel_args, unattended=unattended, answer=answer)
     check_port(ssh_port)
     ident = dev_ident(ctx, dev, final=final, nocheck=nocheck)
     project = Project.find(arch)
     answers = _unattended(project, answer or []) if unattended else None
-    kernel_args = " ".join(filter(None, [f"rt_answerfile={vm.ANSWER_URL}" if unattended else "", kernel_args])) or None
+    # its log on the serial console, where the installer runs on aarch64 only
+    unattended_args = f"rt_answerfile={vm.ANSWER_URL}" + (" log_console=hvc0" if project.arch != "aarch64" else "")
+    kernel_args = " ".join(filter(None, [unattended_args if unattended else "", kernel_args])) or None
     vm_dir = (vm_dir or project.state / "vm" / project.arch).absolute()
     disk = (disk or vm_dir / "disk.qcow2").absolute()
     if disk.exists() and not disk.is_file():
@@ -268,4 +297,4 @@ def boot(
         if kernel_args:
             _boot_with(proc, vm_dir, kernel_args)
         if events:
-            _show_end(vm.wait(proc, vm_dir, events), vm_dir)
+            _show_end(vm.wait(proc, vm_dir, events), vm_dir, unattended=unattended)
