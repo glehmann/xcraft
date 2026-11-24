@@ -165,7 +165,9 @@ held during the whole build, keeps from changing meanwhile. With `--locked`, the
   ISO. Made on the builder, with `xcraft iso --local` there, it comes back with the lock, which it may pin the ISO's
   packages in, and the builds it made; its key is computed here then, and the ISO of that key in the builder's cache
   copied back. Of the developer's key only, like the builds.
-- **xcraft under development:** a wheel of the local one, built and copied to the host when it changed.
+- **xcraft under development:** a wheel of the local one, built and copied to the host when it changed; also for
+  one installed from a commit of a local git repository, like `uv tool run --from git+file://...`, which the host
+  cannot reach: a wheel of that commit, from `git archive`.
 - **The small packages:** all the packages of the builder's architecture are built on it, without a threshold
   keeping the small ones local: once measured, a native build on an arm64 builder is much faster than the same one
   under emulation, even with the copies to the host and back.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -91,6 +92,33 @@ def should_make_the_iso_on_the_builder_of_the_architecture(
     code, output = xcraft("iso", "--final")
     assert code == 2, output
     assert "--final and --key make it here, with --local" in " ".join(output.replace("│", " ").split())
+
+
+def should_run_a_wheel_of_an_xcraft_installed_from_a_local_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # like by uv tool run --from git+file://..., which the builder cannot reach: a wheel of that commit
+    repo = Path(builders.__file__).resolve().parents[1]
+    commit = git(repo, "rev-parse", "HEAD").strip()
+
+    class Installed:
+        version = "0.1.0"
+
+        @staticmethod
+        def read_text(name: str) -> str:
+            assert name == "direct_url.json"
+            return json.dumps({"url": f"file://{repo}", "vcs_info": {"vcs": "git", "commit_id": commit}})
+
+    monkeypatch.setattr(builders.importlib.metadata, "distribution", lambda _: Installed)
+    wheel = builders._source(tmp_path)
+    assert isinstance(wheel, Path)
+    assert "xcraft/builders.py" in zipfile.ZipFile(wheel).namelist()
+    # but the repositories the builder reaches, by their URL
+    remote = "https://github.com/glehmann/xcraft"
+    monkeypatch.setattr(
+        Installed, "read_text", staticmethod(lambda _: json.dumps({"url": remote, "vcs_info": {"commit_id": commit}}))
+    )
+    assert builders._source(tmp_path / "other") == f"git+{remote}@{commit}"
 
 
 def should_number_the_builds_of_a_worktree_on_the_builder_against_the_main_branch(

@@ -67,13 +67,19 @@ def builders() -> dict[str, str]:
 
 def _source(work: Path) -> Path | str:
     """Return what uv tool run installs the xcraft of this process from: the commit of its git repository, a wheel of
-    it, built in `work`, for a version under development, or else its version.
+    it, built in `work`, for a version under development, or of a commit of a local repository, which the builder
+    cannot reach, or else its version.
     """
     dist = importlib.metadata.distribution("xcraft")
     direct = json.loads(dist.read_text("direct_url.json") or "{}")
-    if vcs := direct.get("vcs_info"):
+    if (vcs := direct.get("vcs_info")) and not direct["url"].startswith("file:"):
         return f"git+{direct['url']}@{vcs['commit_id']}"
     tree = Path(xcraft.__file__).resolve().parents[1]
+    if vcs:  # its commit, from the repository
+        repo, tree = Path(direct["url"].removeprefix("file://")), work / "tree"
+        tree.mkdir()
+        archive = process.run_bytes(["git", "-C", str(repo), "archive", vcs["commit_id"]])
+        process.run_bytes(["tar", "-x", "-C", str(tree)], archive)
     if not direct.get("dir_info") and not (tree / "pyproject.toml").exists():
         return f"xcraft=={dist.version}"
     process.run(["uv", "build", "--wheel", "--quiet", "--out-dir", str(work), str(tree)], capture=True)
