@@ -120,7 +120,9 @@ same scriptlets, see `buildenv/same.py`: a build environment and specs making th
 like xcp-ng-dist's, see [identical-rebuilds-design.md](identical-rebuilds-design.md). The architecture of the build
 decides for all of them, as the build ID is the same on all: the others then take the build of the main branch, without
 comparing. With `--locked`, like in CI, the builds never reuse, as it would change the build IDs: the developer's builds
-do, to commit.
+do, to commit. With `--no-reuse`, they do not either: the rebuilds keep their own build IDs, like
+when the main branch lacks the builds of an architecture, being added, which would otherwise have nothing to take. That
+is not the norm, where all the packages build on all the architectures: a missing build is then a failure to fix.
 
 ## Maintenance branches
 

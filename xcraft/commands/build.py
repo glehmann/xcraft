@@ -120,6 +120,14 @@ def build(
     locked: Annotated[
         bool, typer.Option("--locked", help="Fail the builds that would change the lock, for CI.")
     ] = False,
+    no_reuse: Annotated[
+        bool,
+        typer.Option(
+            "--no-reuse",
+            help="Give their own build IDs to the rebuilds the same as the builds of the main branch, rather than "
+            "reusing those: when another architecture lacks them, like one being added.",
+        ),
+    ] = False,
     dev: Dev = None,
     final: Final = False,
     nocheck: NoCheck = False,
@@ -152,6 +160,7 @@ def build(
         options |= {
             "--verbose": verbose,
             "--locked": locked,
+            "--no-reuse": no_reuse,
             "--nocheck": nocheck,
             "--fetch": fetch,
             "--key": key or "",
@@ -177,6 +186,7 @@ def build(
             nocheck=nocheck,
             fetch=fetch,
             lint_dev=lint_dev,
+            reuse=not no_reuse,
             jobs=jobs,
         )
     if dev_built := [r.name for r in results if r.name in autorev and r.status == "built"]:

@@ -716,6 +716,19 @@ def should_reuse_the_main_branch_build_a_rebuild_makes_the_same(root: Path) -> N
     assert xcraft("build") == (0, "2 cached\n")
 
 
+def should_not_reuse_the_main_branch_build_with_no_reuse(root: Path) -> None:
+    assert xcraft("build")[0] == 0  # the builds of the main branch
+    commit_base(root)
+    git(root, "checkout", "-qb", "feature")
+    edit(root, "changed")
+    # with-deps, made the same, keeps its own build ID: as when another architecture lacks the build of master
+    code, output = xcraft("build", "--no-reuse")
+    assert code == 0, output
+    assert output.splitlines()[-1] == "2 built"
+    ids = buildid.read(Project.find())
+    assert (ids["with-deps"].number, ids["with-deps"].accepts) == (2, None)
+
+
 def should_not_reuse_builds_of_packages_with_ignored_files(root: Path) -> None:
     # in the key, which hashes all the files: not reused, or only this machine would accept its key
     commit_base(root)

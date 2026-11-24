@@ -383,6 +383,8 @@ class _Run:
     fetch: Fetch = "all"
     build_missing: bool = True
     lint_dev: bool = False
+    reuse: bool = True
+    """Whether the rebuilds the same as the builds of the main branch reuse those, see _reproduced()."""
     jobs: int = 1
     """How many packages build at once, see build()."""
     results: dict[str, Result] = field(default_factory=dict)
@@ -779,10 +781,15 @@ class _Run:
     def _forked(self, name: str) -> str | None:
         """Return the key of the build of `name` of the main branch, where the current one forks from it, when it has
         another build ID now, cached, or fetched from the remote storage: one it may reuse, see _reproduced(). Not with
-        --locked, which forbids changing the build IDs.
+        --locked, which forbids changing the build IDs, nor without `reuse`.
         """
         project = self.project
-        if project.frozen or not (fork := buildid.base(project)) or not (forked := fork.ids.get(name)):
+        if (
+            project.frozen
+            or not self.reuse
+            or not (fork := buildid.base(project))
+            or not (forked := fork.ids.get(name))
+        ):
             return None
         if (current := buildid.read(project).get(name)) is None or current.matches(forked.key):
             return None
@@ -893,6 +900,7 @@ def build(
     fetch: Fetch = "all",
     build_missing: bool = True,
     lint_dev: bool = False,
+    reuse: bool = True,
     jobs: int | None = None,
 ) -> tuple[list[Result], dict[str, str], dict[str, str]]:
     """Build `targets` and, unless `with_deps` is false, what they need, skipping what is cached, and return how
@@ -913,6 +921,8 @@ def build(
 
     rpmlint lints the specs of the packages to build first, and the binary packages of the final builds, or of all
     with `lint_dev`, see xcraft.lint: its errors fail the final builds, and only show for the development builds.
+
+    A rebuild the same as the build of the main branch reuses it, unless not `reuse`, see _Run._reproduced().
 
     `jobs` packages build at once, default_jobs() by default, those independent of each other, see _Run.build().
     """
@@ -938,6 +948,7 @@ def build(
             fetch=fetch,
             build_missing=build_missing,
             lint_dev=lint_dev,
+            reuse=reuse,
             jobs=jobs or default_jobs(),
         )
         with _marking(_queue_file(project)):
