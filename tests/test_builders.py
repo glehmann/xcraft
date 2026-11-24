@@ -43,8 +43,14 @@ def should_build_on_the_builder_of_the_architecture_with_this_xcraft(
     copy = builder / builders.ROOT / Project.find().id
     copy_project(copy, build_environment)
     (copy / "base/trivial/trivial.spec").unlink()  # the copy brings it, as the rest of the checkout
+    # the log of an earlier build there, older than the one here, like of another architecture
+    (root / ".xcraft/logs").mkdir(parents=True, exist_ok=True)
+    (root / ".xcraft/logs/with-deps.log").write_text("here")
+    (copy / ".xcraft/logs").mkdir(parents=True, exist_ok=True)
+    (copy / ".xcraft/logs/with-deps.log").write_text("there, before")
     code, output = xcraft("build", "trivial")
     assert code == 0, output
+    assert (root / ".xcraft/logs/with-deps.log").read_text() == "here"
     assert (copy / "base/trivial/trivial.spec").read_text() == (root / "base/trivial/trivial.spec").read_text()
     # run from a wheel of this xcraft, a development version, with the files of the build environment
     wheels = list(builder.glob(f"{builders.ROOT}/wheels/*/*.whl"))

@@ -282,11 +282,16 @@ def running(project: Project, name: str) -> tuple[set[str], list[str]]:
 
 def build(project: Project, name: str, args: list[str], keys: list[str]) -> tuple[int, dict[str, str]]:
     """Build with xcraft build and its `args` on the builder `name` of the architecture of `project`, from a copy of
-    the checkout, see _copied(), and copy back its builds of the architecture, the logs of the builds, the counters
-    and xcraft.builds, as they are then: return its exit code, and once built, the cache keys of the builds of the
-    packages `keys` there, the `args` of xcraft keys.
+    the checkout, see _copied(), and copy back its builds of the architecture, the logs of the builds it made, the
+    counters and xcraft.builds, as they are then: return its exit code, and once built, the cache keys of the builds of
+    the packages `keys` there, the `args` of xcraft keys.
+
+    The logs are those written since the start of the build, by their times there: not those of earlier builds there,
+    which would replace newer ones here, like those of another architecture.
     """
     with _copied(project, name) as copy:
+        logs_there = f"{copy.remote}/.xcraft/logs"
+        process.run(copy.host.ssh(f"touch {logs_there}/.run"), capture=True)
         code = copy.run("build", *args)
         with activity(f"copying the builds back from {name}"):
             (project.state / "cache/builds").mkdir(parents=True, exist_ok=True)
@@ -299,8 +304,9 @@ def build(project: Project, name: str, args: list[str], keys: list[str]) -> tupl
                 f"{destination}/.xcraft/cache/builds/",
                 f"{project.state}/cache/builds/",
             )
-            logs = ["--include=[!_]*.log", "--exclude=*"]
-            _rsync(host, "--ignore-missing-args", *logs, f"{destination}/.xcraft/logs/", f"{project.state}/logs/")
+            written = f"cd {logs_there} && find . -maxdepth 1 -name '[!_.]*.log' -newer .run -printf '%f\\n'"
+            logs = [f"--include=/{log}" for log in process.run(host.ssh(written), capture=True).stdout.split()]
+            _rsync(host, *logs, "--exclude=*", f"{destination}/.xcraft/logs/", f"{project.state}/logs/")
             _rsync(host, "--ignore-missing-args", f"{destination}/.xcraft/dev-builds.json", f"{project.state}/")
             _rsync(host, "--ignore-missing-args", f"{destination}/xcraft.builds", f"{project.root}/")
         built = copy.keys(*keys)["keys"] if code == 0 and keys else {}
