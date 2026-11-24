@@ -25,8 +25,8 @@
 | `xcraft unpublish --stage s [--to main\|dev]` | Remove a stage of the remote storage, all its snapshots, like that of a closed pull request |
 | `xcraft mirror DIR --stage s [--check] [--from main\|dev]` | Copy the latest snapshots of a stage to DIR, for the mirrors to sync from by rsync, or check the copy against its manifests |
 | `xcraft prune [--keep-days DAYS] [-n] [--to main\|dev]` | Remove the builds of the remote storage no publication has, pushed more than DAYS days ago, 15 by default, like a weekly job of CI |
-| `xcraft iso [--netinstall] [--output f] [-V id] [--locked] [--dev ID \| --final] [--nocheck]` | Make the installation ISO, from a local snapshot (see [Installation ISO](iso.md)) |
-| `xcraft boot [--iso f] [--disk f] [--headless] [--dev ID \| --final] [--nocheck]` | Build the ISO and boot its installer in a local QEMU VM, creating a virtual disk if missing |
+| `xcraft iso [--netinstall] [--output f] [-V id] [--locked] [--dev ID \| --final] [--nocheck] [--local]` | Make the installation ISO, from a local snapshot (see [Installation ISO](iso.md)), on the builder of the architecture, if any, unless `--local` |
+| `xcraft boot [--iso f] [--disk f] [--headless] [--dev ID \| --final] [--nocheck] [--local]` | Build the ISO, on the builder of the architecture unless `--local`, and boot its installer in a local QEMU VM, creating a virtual disk if missing |
 | `xcraft vm start [--background]` | Start the VM again from its installed disk, without the ISO, with the options of `xcraft boot` |
 | `xcraft vm <command>` | Inspect a VM, read its console, send input, save diagnostics, or stop it |
 | `xcraft vm destroy [--yes]` | Stop the VM and delete its session, with its disk, for a new installation |

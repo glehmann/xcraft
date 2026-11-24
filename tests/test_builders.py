@@ -13,10 +13,12 @@ from pathlib import Path
 
 import pytest
 
-from tests import ARCH, commit_base, copy_project, edit, git, xcraft
+from tests import ARCH, cache_image, commit_base, copy_project, edit, git, needs_gpg, xcraft
 from xcraft import builders, buildid
 from xcraft.cache import build_keys, cached_build
+from xcraft.iso import iso_name
 from xcraft.project import Project
+from xcraft.signing import create_dev_key
 
 
 def should_take_the_builders_of_the_config_overridden_by_the_environment(
@@ -63,6 +65,32 @@ def should_build_on_the_builder_of_the_architecture_with_this_xcraft(
     code, output = xcraft("status", "--full", "trivial")
     assert code == 0, output
     assert " ready" in output
+
+
+@needs_gpg
+def should_make_the_iso_on_the_builder_of_the_architecture(
+    root: Path, builder: Path, build_environment: Path, tmp_path: Path
+) -> None:
+    project = Project.find()
+    signer = create_dev_key(project, "Developer")
+    image = tmp_path / "test.iso"
+    image.write_bytes(b"ISO made on the builder")
+    # cached there, as its xcraft iso made it
+    tree = cache_image(project, image, signer=signer, keep=True)
+    copy = builder / builders.ROOT / project.id
+    copy_project(copy, build_environment)
+    (there := copy / ".xcraft/cache/isos" / project.arch).mkdir(parents=True)
+    shutil.move(tree, there / tree.name)
+    code, output = xcraft("iso")
+    assert code == 0, output
+    assert (tree / "image.iso").read_bytes() == image.read_bytes()
+    assert (
+        root / ".xcraft/iso" / iso_name(project, netinstall=False, signer=signer)
+    ).read_bytes() == image.read_bytes()
+    # of the developer's key only, like the builds there
+    code, output = xcraft("iso", "--final")
+    assert code == 2, output
+    assert "--final and --key make it here, with --local" in " ".join(output.replace("│", " ").split())
 
 
 def should_number_the_builds_of_a_worktree_on_the_builder_against_the_main_branch(

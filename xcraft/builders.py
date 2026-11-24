@@ -9,6 +9,7 @@ import importlib.metadata
 import json
 import os
 import shlex
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -22,9 +23,10 @@ import xcraft
 from xcraft import buildid, buildkey, develop, process
 from xcraft.display import activity
 from xcraft.hosts import Host, connected, ssh_host
+from xcraft.iso import cached_iso
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
 
     from xcraft.project import Project
 
@@ -280,37 +282,72 @@ def running(project: Project, name: str) -> tuple[set[str], list[str]]:
     return {m.removesuffix(".turn") for m in markers if m.endswith(".turn")}, markers.get(".queue", "").split()
 
 
+def _copy_back(project: Project, name: str, copy: _Copy, logs_there: str) -> None:
+    """Copy back from the copy of the checkout on the builder `name` its builds of the architecture, the logs of the
+    builds it made, the counters and xcraft.builds, as they are then.
+
+    The logs are those written since the start of the command, by their times there: not those of earlier builds
+    there, which would replace newer ones here, like those of another architecture.
+    """
+    with activity(f"copying the builds back from {name}"):
+        (project.state / "cache/builds").mkdir(parents=True, exist_ok=True)
+        arch = ["--include=/*/", f"--include=/*/{project.arch}/***", "--exclude=*"]
+        host, destination = copy.host, copy.destination
+        _rsync(
+            host,
+            "--ignore-missing-args",
+            *arch,
+            f"{destination}/.xcraft/cache/builds/",
+            f"{project.state}/cache/builds/",
+        )
+        written = f"cd {logs_there} && find . -maxdepth 1 -name '[!_.]*.log' -newer .run -printf '%f\\n'"
+        logs = [f"--include=/{log}" for log in process.run(host.ssh(written), capture=True).stdout.split()]
+        _rsync(host, *logs, "--exclude=*", f"{destination}/.xcraft/logs/", f"{project.state}/logs/")
+        _rsync(host, "--ignore-missing-args", f"{destination}/.xcraft/dev-builds.json", f"{project.state}/")
+        _rsync(host, "--ignore-missing-args", f"{destination}/xcraft.builds", f"{project.root}/")
+
+
+def _started(copy: _Copy) -> str:
+    """Mark the start of a command in the copy `copy`, for _copy_back(), and return the directory of its logs."""
+    logs_there = f"{copy.remote}/.xcraft/logs"
+    process.run(copy.host.ssh(f"touch {logs_there}/.run"), capture=True)
+    return logs_there
+
+
 def build(project: Project, name: str, args: list[str], keys: list[str]) -> tuple[int, dict[str, str]]:
     """Build with xcraft build and its `args` on the builder `name` of the architecture of `project`, from a copy of
-    the checkout, see _copied(), and copy back its builds of the architecture, the logs of the builds it made, the
-    counters and xcraft.builds, as they are then: return its exit code, and once built, the cache keys of the builds of
-    the packages `keys` there, the `args` of xcraft keys.
-
-    The logs are those written since the start of the build, by their times there: not those of earlier builds there,
-    which would replace newer ones here, like those of another architecture.
+    the checkout, see _copied(), and copy back what it made, see _copy_back(): return its exit code, and once built,
+    the cache keys of the builds of the packages `keys` there, the `args` of xcraft keys.
     """
     with _copied(project, name) as copy:
-        logs_there = f"{copy.remote}/.xcraft/logs"
-        process.run(copy.host.ssh(f"touch {logs_there}/.run"), capture=True)
+        logs_there = _started(copy)
         code = copy.run("build", *args)
-        with activity(f"copying the builds back from {name}"):
-            (project.state / "cache/builds").mkdir(parents=True, exist_ok=True)
-            arch = ["--include=/*/", f"--include=/*/{project.arch}/***", "--exclude=*"]
-            host, destination = copy.host, copy.destination
-            _rsync(
-                host,
-                "--ignore-missing-args",
-                *arch,
-                f"{destination}/.xcraft/cache/builds/",
-                f"{project.state}/cache/builds/",
-            )
-            written = f"cd {logs_there} && find . -maxdepth 1 -name '[!_.]*.log' -newer .run -printf '%f\\n'"
-            logs = [f"--include=/{log}" for log in process.run(host.ssh(written), capture=True).stdout.split()]
-            _rsync(host, *logs, "--exclude=*", f"{destination}/.xcraft/logs/", f"{project.state}/logs/")
-            _rsync(host, "--ignore-missing-args", f"{destination}/.xcraft/dev-builds.json", f"{project.state}/")
-            _rsync(host, "--ignore-missing-args", f"{destination}/xcraft.builds", f"{project.root}/")
+        _copy_back(project, name, copy, logs_there)
         built = copy.keys(*keys)["keys"] if code == 0 and keys else {}
     return code, built
+
+
+def iso(project: Project, name: str, args: list[str], key: Callable[[], str]) -> int:
+    """Make the ISO with xcraft iso and its `args` on the builder `name` of the architecture of `project`, from a copy
+    of the checkout, see _copied(), natively, rather than with the programs of its packages emulated here, and return
+    its exit code: copy back the builds it made, see _copy_back(), and its lock, which it may pin the ISO's packages
+    in, then the cached ISO of the `key` of the ISO of the checkout here, computed with them.
+    """
+    with _copied(project, name) as copy:
+        logs_there = _started(copy)
+        code = copy.run("iso", *args)
+        _copy_back(project, name, copy, logs_there)
+        _rsync(copy.host, f"{copy.destination}/xcraft.lock", f"{project.root}/")
+        if code == 0:
+            tree = cached_iso(project, made := key())
+            tree.parent.mkdir(parents=True, exist_ok=True)
+            with activity(f"copying the ISO back from {name}"):
+                try:
+                    _rsync(copy.host, f"{copy.destination}/.xcraft/cache/isos/{project.arch}/{made}/", f"{tree}/")
+                except subprocess.CalledProcessError as e:
+                    msg = f"the ISO did not come back from {name}, of another key there: {made}"
+                    raise BuilderError(msg) from e
+    return code
 
 
 def shell(project: Project, name: str, package: str) -> int:

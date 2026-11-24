@@ -11,10 +11,10 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 
 from xcraft import process, vm
-from xcraft.commands import Arch, Dev, Final, Key, NoCheck, dev_ident, iso_signer, sign_builds
+from xcraft.commands import Arch, Dev, Final, Key, NoCheck, dev_ident
+from xcraft.commands.iso import made_iso
 from xcraft.commands.vm import check_port, show
 from xcraft.display import console
-from xcraft.iso import checkout_iso
 from xcraft.project import Project
 
 if TYPE_CHECKING:
@@ -190,9 +190,14 @@ def boot(
     dev: Dev = None,
     final: Final = False,
     nocheck: NoCheck = False,
+    local: Annotated[
+        bool,
+        typer.Option("--local", help="Make the ISO on this machine, rather than on the builder of the architecture."),
+    ] = False,
 ) -> None:
     """Build the installation ISO, create a virtual disk if missing, and boot it with QEMU: with the development builds
-    of the packages whose build ID is not the main branch's, like xcraft build, unless --final.
+    of the packages whose build ID is not the main branch's, like xcraft build, unless --final. The ISO is made on the
+    builder of the architecture, if any, unless --local, see xcraft iso.
 
     The disk persists between runs. The installer VM exits when it requests a reboot, which tells it finished: xcraft
     vm start then boots the installed disk, without the ISO. Use xcraft vm to inspect or stop it. In the foreground,
@@ -223,9 +228,7 @@ def boot(
     vm.check_stopped(vm_dir)
     if not iso:
         project.frozen = locked
-        signer = iso_signer(project, key)
-        sign_builds(project, key, final=ident is None, signer=signer)
-        iso = checkout_iso(project, signer=signer, dev=ident, nocheck=nocheck, published=not key)
+        iso = made_iso(project, ident, key, local=local, nocheck=nocheck)
         console.print(f"[bold green]✓[/] {iso}")
     with project.lock():
         vm.check_stopped(vm_dir)

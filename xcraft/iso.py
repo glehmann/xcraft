@@ -473,6 +473,23 @@ def checkout_iso_keys(project: Project, dev: str) -> set[str]:
     }
 
 
+def _modes(project: Project, dev: str | None, *, nocheck: bool) -> tuple[str | None, bool, bool]:
+    """Return the development builds of the ISO of the checkout with `dev`, whether without the tests of their specs
+    with `nocheck`, and whether our packages keep the signatures of their builds, see checkout_iso().
+    """
+    keep = dev is not None
+    dev = dev if dev_suffixes(project, dev) else None  # of final builds only otherwise, like the remote storage's
+    return dev, nocheck and dev is not None, keep  # without the tests: of the development builds only
+
+
+def checkout_iso_key(
+    project: Project, *, netinstall: bool, volid: str | None, signer: Signer | None, dev: str | None, nocheck: bool
+) -> str:
+    """Return the key of the ISO checkout_iso() gives with the same arguments, see iso_key()."""
+    dev, nocheck, keep = _modes(project, dev, nocheck=nocheck)
+    return iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck, keep=keep)
+
+
 def checkout_iso(
     project: Project,
     output: Path | None = None,
@@ -492,9 +509,7 @@ def checkout_iso(
     remote storage, the one CI published, signed with a key of the builds of the storage, is taken rather than made.
     """
     with project.lock():
-        keep = dev is not None
-        dev = dev if dev_suffixes(project, dev) else None  # of final builds only otherwise, like the remote storage's
-        nocheck = nocheck and dev is not None  # which the final builds ignore
+        dev, nocheck, keep = _modes(project, dev, nocheck=nocheck)
         key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck, keep=keep)
         if found := _existing_iso(project, key, output, netinstall=netinstall, signer=signer, dev=dev):
             return found

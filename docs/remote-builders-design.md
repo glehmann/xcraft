@@ -152,14 +152,19 @@ held during the whole build, keeps from changing meanwhile. With `--locked`, the
 | `xcraft clean --builders` | `commands/clean.py` | to do |
 | `xcraft doctor` checking the builders, and provisioning them with `--fix`, from an SSH account with sudo | `commands/doctor.py`, `builders.py` | done |
 | The final builds, with `--final` or `--key`, refused on a builder for now | `commands/build.py` | to do |
+| `xcraft iso` and `xcraft boot` making the ISO on the builder, unless `--local` | `builders.py`, `commands/iso.py` | done |
 
 ## Decisions
 
 - **Signing:** the developer's key is copied to the host, see [Signing](#signing); the builds signed again once back
   are for later, if hosts get shared more widely.
-- **The commands:** `xcraft build` only. `xcraft repo`, `iso`, `boot` and `publish` build first, and could use the
-  builders the same way, through the same code of the builds, but may not need to: a developer builds, then uses the
-  builds, which are in the cache. To see once used.
+- **The commands:** `xcraft build`, and `xcraft iso` and `xcraft boot` for their ISO. `xcraft repo` and `publish`
+  build first, and could use the builders the same way, but may not need to: a developer builds, then uses the
+  builds, which are in the cache. The ISO is different: making it runs the scriptlets of its packages, which run
+  emulated on another architecture, like the SELinux policy rebuilt by `semodule`, minutes on x86_64 for an aarch64
+  ISO. Made on the builder, with `xcraft iso --local` there, it comes back with the lock, which it may pin the ISO's
+  packages in, and the builds it made; its key is computed here then, and the ISO of that key in the builder's cache
+  copied back. Of the developer's key only, like the builds.
 - **xcraft under development:** a wheel of the local one, built and copied to the host when it changed.
 - **The small packages:** all the packages of the builder's architecture are built on it, without a threshold
   keeping the small ones local: once measured, a native build on an arm64 builder is much faster than the same one
