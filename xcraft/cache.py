@@ -128,6 +128,20 @@ def untested(project: Project, name: str, key: str) -> bool:
     return (cached_build(project, name, key) / NOCHECK).exists()
 
 
+def latest_build(project: Project, name: str, evr: str) -> str | None:
+    """Return the key of the latest cached build of `name` of the architecture of the epoch-version-release `evr`,
+    whatever its release suffix, if any: not one in progress, nor of another version, like of another branch.
+    """
+    prefix = f"{name}-{evr.rsplit(':', maxsplit=1)[-1]}"
+    builds = [
+        build
+        for build in _cached_builds(project, name)
+        if not build.name.startswith(".")
+        and any(p.name.startswith((f"{prefix}+", f"{prefix}.")) for p in build.glob("SRPMS/*.src.rpm"))
+    ]
+    return max(builds, key=lambda build: build.stat().st_mtime).name if builds else None
+
+
 def has_normal_build(project: Project, name: str) -> bool:
     """Return whether `name` has a cached build, of any version, besides the development builds."""
     # not a build in progress, nor a development one

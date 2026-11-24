@@ -113,3 +113,29 @@ def should_have_the_development_builds_of_changed_packages(root: Path) -> None:
         assert code == 0, output
         assert re.findall(r"^✓ (\S+) built", output, re.MULTILINE) == built, output
         assert packages(root / "toy.iso") == [f"{p}.xcpng8.99.noarch.rpm" for p in expected]
+
+
+def should_make_partial_isos_of_the_given_packages_built_only(root: Path) -> None:
+    # trivial changed, which with-deps is built against: with-deps kept as it was built, against the previous trivial
+    (root / "xcraft.toml").write_text(
+        f'{TOML}{INSTALLER}packages = ["with-deps", "trivial"]\n\n[publish]\nextra = [{GRUB}]\n'
+    )
+    commit_base(root)
+    made_iso(root)
+    git(root, "checkout", "-qb", "feature")
+    spec = root / "base/trivial/trivial.spec"
+    spec.write_text(spec.read_text().replace("%install\n", "%install\necho changed\n"))
+    code, output = xcraft("iso", "trivial")
+    assert code == 0, output
+    assert re.findall(r"^✓ (\S+) built", output, re.MULTILINE) == ["trivial"], output
+    assert "partial: the latest builds of with-deps, rather than new ones" in output
+    partial = next((root / ".xcraft/iso").glob("*-partial.iso"))
+    assert packages(partial) == [
+        "trivial-1.0-1+b2~1.dev.xcpng8.99.noarch.rpm", "with-deps-1.0-1+b1.xcpng8.99.noarch.rpm",
+    ]  # fmt: skip
+    # but the ISO of the checkout, with all its packages built: with-deps the same as the main branch's build, which it
+    # reuses, see xcraft.build._Run._reproduced()
+    code, output = xcraft("iso", "--output", str(root / "toy.iso"))
+    assert code == 0, output
+    assert re.findall(r"^✓ (\S+) built", output, re.MULTILINE) == ["with-deps"], output
+    assert not (root / "toy.iso").samefile(partial)

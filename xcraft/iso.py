@@ -97,10 +97,12 @@ def iso_key(
     dev: str | None = None,
     nocheck: bool = False,
     keep: bool = False,
+    partial: dict[str, str] | None = None,
 ) -> str:
     """Return the key of the ISO of the checkout, with the development builds `dev`, if any, and with the builds
     without the tests of their specs with `nocheck`, and keeping the signatures of our builds with `keep`: what it is
-    made of.
+    made of. Of a partial one with the keys of the builds of our packages it has, `partial`, if given, see
+    publish.partial_keys().
 
     Read without the secret key of `signer`, and without containers but for the development builds, whose suffixes
     need the lock prepared, see dev_suffixes().
@@ -134,6 +136,8 @@ def iso_key(
         data.append("nocheck")
     if keep:  # but the keys of the ISOs of final mode
         data.append("as built")
+    if partial is not None:  # but the keys of the ISOs of the checkout
+        data.append({"partial": partial})
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
 
@@ -155,12 +159,15 @@ def iso_id(project: Project, *, signer: Signer | None) -> str:
     return hashlib.sha256(json.dumps(keys).encode()).hexdigest()[:6]
 
 
-def iso_name(project: Project, *, netinstall: bool, signer: Signer | None, dev: str | None = None) -> str:
+def iso_name(
+    project: Project, *, netinstall: bool, signer: Signer | None, dev: str | None = None, partial: bool = False
+) -> str:
     """Return the file name of an ISO of the checkout: the name and version of the distribution, with its
-    identifier, the one of its development builds `dev`, if any, and its architecture.
+    identifier, the one of its development builds `dev`, if any, and its architecture, of a `partial` one too.
     """
     iso, ident = project.config.iso, f"{iso_id(project, signer=signer)}{f'.{dev}' if dev else ''}"
-    return f"{iso.name}-{iso.version}-{ident}-{project.arch}{'-netinstall' if netinstall else ''}.iso"
+    variant = f"{'-netinstall' if netinstall else ''}{'-partial' if partial else ''}"
+    return f"{iso.name}-{iso.version}-{ident}-{project.arch}{variant}.iso"
 
 
 def cached_iso(project: Project, key: str) -> Path:
@@ -183,14 +190,22 @@ def _verified_image(tree: Path) -> Image:
 
 
 def _copy_iso(
-    project: Project, tree: Path, output: Path | None, *, netinstall: bool, signer: Signer | None, dev: str | None
+    project: Project,
+    tree: Path,
+    output: Path | None,
+    *,
+    netinstall: bool,
+    signer: Signer | None,
+    dev: str | None,
+    partial: bool = False,
 ) -> Path:
     """Give the cached ISO in `tree` as `output`, or with its name in .xcraft/iso/ by default, and return it: a hard
     link to it, not a copy, on the same file system, like in .xcraft/: read-only, not to change the cache through it.
     """
     image = _verified_image(tree)
     output = (
-        output or project.state / "iso" / iso_name(project, netinstall=netinstall, signer=signer, dev=dev)
+        output
+        or project.state / "iso" / iso_name(project, netinstall=netinstall, signer=signer, dev=dev, partial=partial)
     ).absolute()
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.exists() and (output.samefile(tree / "image.iso") or sha256_of(output) == image.sha256):
@@ -207,7 +222,14 @@ def _copy_iso(
 
 
 def _existing_iso(
-    project: Project, key: str, output: Path | None, *, netinstall: bool, signer: Signer | None, dev: str | None
+    project: Project,
+    key: str,
+    output: Path | None,
+    *,
+    netinstall: bool,
+    signer: Signer | None,
+    dev: str | None,
+    partial: bool = False,
 ) -> Path | None:
     """Return the ISO of `key`, copied to `output`, when cached or in the remote storage, which has none of
     development builds `dev`.
@@ -215,8 +237,8 @@ def _existing_iso(
     tree = cached_iso(project, key)
     if tree.exists():
         os.utime(tree)  # used, see xcraft clean --keep-days
-        return _copy_iso(project, tree, output, netinstall=netinstall, signer=signer, dev=dev)
-    if not project.config.remote or dev:
+        return _copy_iso(project, tree, output, netinstall=netinstall, signer=signer, dev=dev, partial=partial)
+    if not project.config.remote or dev or partial:
         return None
     try:
         with activity("looking for the ISO in the remote storage") as on_line:
@@ -382,23 +404,24 @@ def _snapshot_iso(
     dev: str | None = None,
     nocheck: bool = False,
     keep: bool = False,
+    partial: dict[str, str] | None = None,
 ) -> Path:
     """Return the ISO of `snapshot`, made of `checkout`, with the development builds `dev`, if any, and those without
     the tests of their specs with `nocheck`, keeping the signatures of our builds with `keep`: cached, fetched, or
-    assembled and cached by the key of the checkout.
+    assembled and cached by the key of the checkout, or of a partial one, with the keys of its builds, `partial`.
 
     Raise when the checkout is not the snapshot's anymore, or when the key changed while assembling it, like the lock
     by a git checkout: the ISO would be of the one before.
     """
     with project.lock():
         publish.check_checkout(project, checkout)
-        key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck, keep=keep)
-        if found := _existing_iso(project, key, output, netinstall=netinstall, signer=signer, dev=dev):
+        modes = {"netinstall": netinstall, "volid": volid, "signer": signer, "dev": dev, "nocheck": nocheck}
+        key = iso_key(project, **modes, keep=keep, partial=partial)
+        named = {"netinstall": netinstall, "signer": signer, "dev": dev, "partial": partial is not None}
+        if found := _existing_iso(project, key, output, **named):
             return found
         made = _assemble_iso(project, snapshot, netinstall=netinstall, volid=volid, signer=signer, keep=keep)
-        if key != iso_key(
-            project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck, keep=keep
-        ):
+        if key != iso_key(project, **modes, keep=keep, partial=partial):
             made.unlink()
             msg = "ISO inputs changed while making the image: run again"
             raise RuntimeError(msg)
@@ -411,7 +434,7 @@ def _snapshot_iso(
             tree.parent.mkdir(parents=True, exist_ok=True)
             if not tree.exists():
                 staged.rename(tree)
-        return _copy_iso(project, tree, output, netinstall=netinstall, signer=signer, dev=dev)
+        return _copy_iso(project, tree, output, **named)
 
 
 def snapshot_isos(
@@ -483,11 +506,23 @@ def _modes(project: Project, dev: str | None, *, nocheck: bool) -> tuple[str | N
 
 
 def checkout_iso_key(
-    project: Project, *, netinstall: bool, volid: str | None, signer: Signer | None, dev: str | None, nocheck: bool
+    project: Project,
+    *,
+    netinstall: bool,
+    volid: str | None,
+    signer: Signer | None,
+    dev: str | None,
+    nocheck: bool,
+    only: list[str] | None = None,
 ) -> str:
-    """Return the key of the ISO checkout_iso() gives with the same arguments, see iso_key()."""
+    """Return the key of the ISO checkout_iso() gives with the same arguments, see iso_key(): once its packages are
+    built, for a partial one, of `only`.
+    """
     dev, nocheck, keep = _modes(project, dev, nocheck=nocheck)
-    return iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck, keep=keep)
+    partial = None if only is None else publish.partial_keys(project, only, dev)[0]
+    return iso_key(
+        project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck, keep=keep, partial=partial
+    )
 
 
 def checkout_iso(
@@ -500,6 +535,7 @@ def checkout_iso(
     dev: str | None = None,
     nocheck: bool = False,
     published: bool = False,
+    only: list[str] | None = None,
 ) -> Path:
     """Return the ISO of the checkout: build or fetch its packages, assemble a local snapshot, and make its ISO.
 
@@ -507,13 +543,29 @@ def checkout_iso(
     tests of the specs with `nocheck`. With `dev`, in dev mode, our packages keep the signatures of their builds, and
     the ISO imports all their keys. With `published`, when the ISO signed by `signer` is neither cached nor in the
     remote storage, the one CI published, signed with a key of the builds of the storage, is taken rather than made.
+
+    With `only`, a partial ISO, to iterate quickly: only these packages are built, and the others are their latest
+    builds, see publish.partial_keys(), with a key and a name of its own, which tell it apart from the checkout's.
     """
     with project.lock():
         dev, nocheck, keep = _modes(project, dev, nocheck=nocheck)
         key = iso_key(project, netinstall=netinstall, volid=volid, signer=signer, dev=dev, nocheck=nocheck, keep=keep)
-        if found := _existing_iso(project, key, output, netinstall=netinstall, signer=signer, dev=dev):
+        if only is not None:  # by the keys of the builds it would have, like once made on a builder
+            partial = publish.partial_keys(project, only, dev)[0]
+            key = iso_key(
+                project,
+                netinstall=netinstall,
+                volid=volid,
+                signer=signer,
+                dev=dev,
+                nocheck=nocheck,
+                keep=keep,
+                partial=partial,
+            )
+        named = {"netinstall": netinstall, "signer": signer, "dev": dev, "partial": only is not None}
+        if found := _existing_iso(project, key, output, **named):
             return found
-        for ci in [] if dev or not published else _build_signers(project):
+        for ci in [] if dev or not published or only is not None else _build_signers(project):
             ci_key = iso_key(project, netinstall=netinstall, volid=volid, signer=ci)
             if ci.key != (signer and signer.key) and (
                 found := _existing_iso(project, ci_key, output, netinstall=netinstall, signer=ci, dev=None)
@@ -522,8 +574,8 @@ def checkout_iso(
         check_iso_config(project)  # before the snapshot
         resolution.prepare(project)
         dest = (project.state / "publish").absolute()
-        _, _, checkout = publish.snapshot(
-            [project], dest, signer=signer, storage=None, build=False, dev=dev, nocheck=nocheck, keep=keep
+        built, _, checkout = publish.snapshot(
+            [project], dest, signer=signer, storage=None, build=False, dev=dev, nocheck=nocheck, keep=keep, only=only
         )
         return _snapshot_iso(
             project,
@@ -536,4 +588,5 @@ def checkout_iso(
             dev=dev,
             nocheck=nocheck,
             keep=keep,
+            partial=None if only is None else built[0][1],
         )

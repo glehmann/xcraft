@@ -21,9 +21,30 @@ from typing import TYPE_CHECKING, NamedTuple
 from rich.markup import escape
 
 from xcraft import build as builder
-from xcraft import buildkey, container, localrepo, pinned, remote, repodata, resolution, upstream_copy, upstream_signed
+from xcraft import (
+    buildid,
+    buildkey,
+    container,
+    devbuilds,
+    localrepo,
+    pinned,
+    remote,
+    repodata,
+    resolution,
+    upstream_copy,
+    upstream_signed,
+)
 from xcraft.builds import builds_path, load_builds
-from xcraft.cache import BUILD_FILES, BuildError, build_path, build_signers, cached_build, release_suffix, signed_build
+from xcraft.cache import (
+    BUILD_FILES,
+    BuildError,
+    build_path,
+    build_signers,
+    cached_build,
+    latest_build,
+    release_suffix,
+    signed_build,
+)
 from xcraft.container import BUILDENV, buildenv_hash, run_natively, source_repos
 from xcraft.display import activity, console
 from xcraft.localrepo import extra_rpms, fresh_dir
@@ -267,28 +288,64 @@ def _check_installable(project: Project, repos: list[Path]) -> None:
     checked.touch()
 
 
-def _built(project: Project, *, fetch: Fetch, dev: str | None, nocheck: bool) -> dict[str, str]:
+def partial_keys(project: Project, only: list[str], dev: str | None) -> tuple[dict[str, str], list[str]]:
+    """Return the keys of the builds of our packages of a partial snapshot, with those to build: those of `only` at
+    their keys, and the others at theirs when built, or else at their latest builds of the version of their specs,
+    whatever they are built against, or at their keys still, to build, or fetch, without any. With the development
+    builds `dev`, if any.
+    """
+    keys, _ = devbuilds.dev_keys(project, dev)
+    ids = buildid.read(project)
+    latest = {
+        name: found
+        for name in project.packages
+        if name not in only
+        and not cached_build(project, name, keys[name]).exists()
+        and (evr := ids[name].evr if name in ids else None)
+        and (found := latest_build(project, name, evr))
+    }
+    return {**{n: keys[n] for n in project.packages}, **latest}, sorted(n for n in project.packages if n not in latest)
+
+
+def _built(
+    project: Project, *, fetch: Fetch, dev: str | None, nocheck: bool, only: list[str] | None = None
+) -> dict[str, str]:
     """Build or fetch our packages, but only fetch them on the platforms the host emulates, and return their keys: with
     the development builds of the identifier `dev`, if any, without the tests of their specs with `nocheck`. Those
-    whose specs exclude the platform are not built there, though keyed like on the others.
+    whose specs exclude the platform are not built there, though keyed like on the others. With `only`, those packages
+    only, but those without any build, without what they are built against: the others are their latest builds, see
+    partial_keys().
     """
     resolution.prepare(project)
+    names = sorted(project.packages) if only is None else partial_keys(project, only, dev)[1]
     results, keys, _ = builder.build(
-        project, sorted(project.packages), build_missing=project.native, fetch=fetch, dev=dev, nocheck=nocheck
+        project,
+        names,
+        with_deps=only is None,
+        build_missing=project.native,
+        fetch=fetch,
+        dev=dev,
+        nocheck=nocheck,
     )
     if failed := [r.name for r in results if r.failed]:
         msg = f"not built for {project.arch}: {', '.join(failed)}"
         raise RuntimeError(msg)
+    if only is not None:  # once built
+        keys, current = partial_keys(project, only, dev)[0], devbuilds.dev_keys(project, dev)[0]
+        if outdated := sorted(n for n in project.packages if keys[n] != current[n]):
+            console.print(f"[yellow]partial[/]: the latest builds of {', '.join(outdated)}, rather than new ones")
     return {name: keys[name] for name in project.packages}
 
 
-def _built_all(platforms: list[Project], *, fetch: Fetch, dev: str | None, nocheck: bool) -> list[dict[str, str]]:
+def _built_all(
+    platforms: list[Project], *, fetch: Fetch, dev: str | None, nocheck: bool, only: list[str] | None = None
+) -> list[dict[str, str]]:
     """Return the keys of our packages of all the `platforms`, built or fetched like _built(), again until the lock of
     the builds stops changing: what the builds of a platform record changes the keys of the others.
     """
     for _ in range(3):
         recorded = load_builds(platforms[0])
-        keys = [_built(platform, fetch=fetch, dev=dev, nocheck=nocheck) for platform in platforms]
+        keys = [_built(platform, fetch=fetch, dev=dev, nocheck=nocheck, only=only) for platform in platforms]
         if load_builds(platforms[0]) == recorded:
             return keys
     msg = "the lock of the builds keeps changing, with the builds of each architecture"
@@ -706,6 +763,7 @@ def snapshot(
     dev: str | None = None,
     nocheck: bool = False,
     keep: bool = False,
+    only: list[str] | None = None,
 ) -> tuple[list[tuple[Project, dict[str, str]]], dict[str, Stored], Checkout]:
     """Make the snapshot of the `platforms` in `dest`, and return them with the keys of their packages, the
     packages of `storage`, by path in the snapshot, with their paths there and SHA-256: they are not in `dest`, see
@@ -722,7 +780,8 @@ def snapshot(
     packages keep the signatures of their builds instead, whose keys are in `dest`, see signer_key_file(). With `dev`,
     the identifier of the
     development builds, those of the packages whose build ID is not the main branch's are, for local snapshots, without
-    `storage`, and with `nocheck`, those built skip the tests of their specs, unlike the final builds.
+    `storage`, and with `nocheck`, those built skip the tests of their specs, unlike the final builds. With `only`, a
+    partial snapshot: of those packages built only, and of the latest builds of the others, see partial_keys().
     """
     project = platforms[0]
     start = current_checkout(project)
@@ -738,7 +797,7 @@ def snapshot(
         main=main,
     )
     fetch: Fetch = "needed" if storage else "all"
-    built = list(zip(platforms, _built_all(platforms, fetch=fetch, dev=dev, nocheck=nocheck), strict=True))
+    built = list(zip(platforms, _built_all(platforms, fetch=fetch, dev=dev, nocheck=nocheck, only=only), strict=True))
     checkout = start._replace(locks=_locks(project))
     for platform, keys in built:
         arch = f"{REPO}/{platform.arch}"
