@@ -35,6 +35,7 @@ from tests import (
     WEB_PORT,
     cache_image,
     commit_base,
+    free_port,
     garage,
     git,
     page,
@@ -935,10 +936,11 @@ def should_not_ask_developers_for_the_credentials_of_ci_storage(root: Path, monk
 
 
 def should_build_locally_when_the_storage_is_unavailable(root: Path) -> None:
-    (root / "xcraft.toml").write_text(REMOTE.replace(str(WEB_PORT), "13899"))  # of no worker
+    port = free_port()  # of no server
+    (root / "xcraft.toml").write_text(REMOTE.replace(str(WEB_PORT), str(port)))
     code, output = xcraft("build", "trivial")
     assert code == 0, output
-    assert "remote storage unavailable, building locally: http://xcraft-dev.web.garage.localhost:13899/" in output
+    assert f"remote storage unavailable, building locally: http://xcraft-dev.web.garage.localhost:{port}/" in output
     assert output.splitlines()[-1] == "1 built"
 
 

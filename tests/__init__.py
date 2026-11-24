@@ -7,6 +7,7 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import tomllib
 import urllib.request
@@ -40,10 +41,19 @@ PLATFORM, ARCH = {"x86_64": ("linux/amd64/v2", "x86_64_v2"), "aarch64": ("linux/
 needs_gpg = pytest.mark.skipif(not shutil.which("gpg"), reason="needs gpg")
 needs_git_lfs = pytest.mark.skipif(not shutil.which("git-lfs"), reason="needs git-lfs")
 
-# the Garage server of the remote storage, see conftest.py: one for each worker of pytest-xdist, with its name and ports
-WORKER = int(os.environ.get("PYTEST_XDIST_WORKER", "gw0").removeprefix("gw"))
-GARAGE = f"xcraft-test-garage-{WORKER}"
-S3_PORT, WEB_PORT = 13900 + 10 * WORKER, 13902 + 10 * WORKER
+
+def free_port() -> int:
+    """Return a port no process listens on now, of the local addresses."""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+# the Garage server of the remote storage, see conftest.py: one for each worker of pytest-xdist, of each session, with
+# its name and ports: those of another session running meanwhile, which replaced the server of the same name, made its
+# tests fail, the key they write with gone
+GARAGE = f"xcraft-test-garage-{os.getpid()}"
+S3_PORT, WEB_PORT = free_port(), free_port()
 WEB = f"http://xcraft.web.garage.localhost:{WEB_PORT}"
 REMOTE = (
     # only the host's: publish fetches the builds of the others
