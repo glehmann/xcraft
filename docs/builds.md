@@ -241,6 +241,11 @@ the tree. The rest of `%prep` runs as usual. The version and the release are tho
 upgrade the hosts, like those of any change, see above. `git archive` leaves out the submodules of the tree, and the
 files of its `export-ignore` attributes: the builds do not have them, unlike a build in the tree.
 
+`xcraft shell` of such a package prepares its build tree the same way, and its `rpmbuild` archives the tree again, as
+it is then, before running: the edits of the tree during the shell are unpacked by the next `rpmbuild -ba`, or
+`-bp`, which overwrite those made in `BUILD/` meanwhile. On a builder, xcraft copies the tree there again whenever it
+changes, while the shell runs.
+
 The tree is an input of the cache key of the builds of the package, but not of its build ID, which never changes
 `xcraft.builds`: they are development builds, and so are those of the packages built against it. The trees are a
 setting of the checkout, in `.xcraft/develop.json`, which every command shows; the final builds, `publish` and `push`

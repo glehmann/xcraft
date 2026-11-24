@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
+import os
 import re
+import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -159,6 +164,90 @@ def should_build_from_the_tree_on_a_builder(root: Path, tree: Path, builder: Pat
     assert xcraft("develop", "--stop")[0] == 0
     xcraft("build", "trivial")  # from the sources of the spec, which the project lacks
     assert not (copy / ".xcraft/develop.json").exists()
+
+
+def _wait_for(path: Path) -> None:
+    """Wait until `path` exists, made by the other side of a test."""
+    deadline = time.monotonic() + 300
+    while not path.exists():
+        assert time.monotonic() < deadline, f"no {path}"
+        time.sleep(0.1)
+
+
+def _edited_once(opened: Path, tree: Path) -> threading.Thread:
+    """Start editing hello.in of `tree` once `opened` exists, the shell open."""
+
+    def edit() -> None:
+        _wait_for(opened)
+        (tree / "hello.in").write_text("hello, edited in the shell\n")
+        opened.with_name("edited").touch()
+
+    thread = threading.Thread(target=edit)
+    thread.start()
+    return thread
+
+
+def _shell(typed: str) -> tuple[int, str]:
+    """Run xcraft shell trivial in a terminal, typing `typed` once it shows how to build."""
+    terminal, shell_side = os.openpty()
+
+    def type_once_shown() -> None:
+        shown = b""
+        with contextlib.suppress(OSError):  # the terminal closed
+            while b"to build" not in shown:
+                shown += os.read(terminal, 4096)
+            os.write(terminal, typed.encode())
+            while os.read(terminal, 4096):
+                pass
+
+    typing = threading.Thread(target=type_once_shown, daemon=True)
+    typing.start()
+    saved = os.dup(0), os.dup(1)
+    os.dup2(shell_side, 0)
+    os.dup2(shell_side, 1)
+    try:
+        return xcraft("shell", "trivial")
+    finally:
+        os.dup2(saved[0], 0)
+        os.dup2(saved[1], 1)
+        for fd in (*saved, shell_side, terminal):
+            os.close(fd)
+
+
+def should_unpack_the_tree_as_it_is_for_each_rpmbuild_of_the_shell(root: Path, tree: Path) -> None:
+    assert xcraft("develop", str(tree))[0] == 0
+    build = root / ".xcraft/build/trivial"
+    edit = _edited_once(build / "opened", tree)
+    # edited once the shell is open, then unpacked by its rpmbuild, on one line
+    code, output = _shell(
+        "touch /build/opened; while [ ! -e /build/edited ]; do sleep 0.1; done;"
+        " rpmbuild -bp SPECS/trivial.spec </dev/null >/dev/null 2>&1; cp BUILD/trivial-1.0/hello.in /build/unpacked;"
+        " exit\n"
+    )
+    edit.join()
+    assert code == 0, output
+    assert (build / "unpacked").read_text() == "hello, edited in the shell\n"
+
+
+def should_copy_the_tree_to_the_builder_as_it_changes_during_its_shell(
+    root: Path, tree: Path, builder: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert xcraft("develop", str(tree))[0] == 0
+    copy = builder / builders.ROOT / Project.find().id / ".xcraft/trees/trivial"
+    # the xcraft of the builder waiting, in its shell, for the copy of the tree edited here meanwhile
+    fake = tmp_path / "xcraft-there"
+    fake.write_text(
+        f'#!/bin/sh\n[ "$1" = shell ] && {{ touch {builder}/opened\n'
+        f"for _ in $(seq 3000); do grep -qs edited {copy}/hello.in && exit 0; sleep 0.1; done; exit 1; }}\n"
+        f'exec {sys.executable} -m xcraft "$@"\n'
+    )
+    fake.chmod(0o755)
+    monkeypatch.setenv("XCRAFT_BUILDER_XCRAFT", str(fake))
+    edit = _edited_once(builder / "opened", tree)
+    code, output = xcraft("shell", "trivial")
+    edit.join()
+    assert code == 0, output
+    assert (copy / "hello.in").read_text() == "hello, edited in the shell\n"
 
 
 def should_refuse_final_builds_until_developing_stops(root: Path, tree: Path) -> None:

@@ -15,18 +15,20 @@ import tempfile
 import tomllib
 from contextlib import contextmanager
 from pathlib import Path
+from threading import Event, Thread
 from typing import TYPE_CHECKING, NamedTuple
 
+import watchfiles
 from pydantic import BaseModel, ConfigDict
 
 import xcraft
 from xcraft import buildid, buildkey, develop, process
-from xcraft.display import activity
+from xcraft.display import activity, console
 from xcraft.hosts import Host, connected, ssh_host
 from xcraft.iso import cached_iso
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator
+    from collections.abc import Callable, Generator, Iterator
 
     from xcraft.project import Project
 
@@ -156,23 +158,79 @@ def provision(name: str) -> None:
         )
 
 
-def _copy_trees(project: Project, host: Host, remote: str) -> None:
+def _copy_tree(host: Host, tree: Path, path: str) -> None:
+    """Copy the tree `tree` to `path` on `host`, like the checkout: its files git has and those it does not ignore,
+    with .git, for the commit of its files, see xcraft.develop.tree().
+    """
+    _rsync(host, "--delete", "--exclude=/.jj/", "--filter=:- .gitignore", f"{tree}/", f"{host.destination}:{path}/")
+
+
+def _copy_trees(project: Project, host: Host, remote: str) -> dict[str, str]:
     """Copy the trees the packages of `project` are developed from, see xcraft.develop, to `host`, in the state of its
-    copy of the checkout, `remote`, which it keeps, and point its develop.json to them, or remove it without any: with
-    the same files and HEAD, the trees are the same commits there, and their builds have the same keys.
+    copy of the checkout, `remote`, which it keeps, and point its develop.json to them, or remove it without any, and
+    return where they are there, by package: with the same files and HEAD, the trees are the same commits there, and
+    their builds have the same keys.
     """
     if not (developed := develop.trees(project)):
         process.run(host.ssh(f"rm -f {remote}/.xcraft/develop.json"), capture=True)
-        return
+        return {}
     there = process.run(host.ssh(f"cd {remote} && pwd"), capture=True).stdout.strip()
     paths = {name: f"{there}/.xcraft/trees/{name}" for name in developed}
     process.run(host.ssh(shlex.join(["mkdir", "-p", *paths.values()])), capture=True)
     for name, tree in developed.items():
-        filters = ["--delete", "--exclude=/.jj/", "--filter=:- .gitignore"]
-        _rsync(host, *filters, f"{tree}/", f"{host.destination}:{paths[name]}/")
+        _copy_tree(host, tree, paths[name])
     with tempfile.TemporaryDirectory(prefix="xcraft-develop-") as tmp:
         (Path(tmp) / "develop.json").write_text(json.dumps(paths, indent=1, sort_keys=True))
         _rsync(host, f"{tmp}/develop.json", f"{host.destination}:{there}/.xcraft/develop.json")
+    return paths
+
+
+def _changes(trees: list[Path], stop: Event, *, polling: bool | None) -> Iterator[set[tuple[watchfiles.Change, str]]]:
+    """Return the changes of the files of `trees` until `stop`, by batches, polled, or else watched with inotify, unless
+    `polling` says: .git too, which the default filter of watchfiles ignores, as a commit changes the archive.
+    """
+    return watchfiles.watch(
+        *trees, watch_filter=None, debounce=300, stop_event=stop, raise_interrupt=False, force_polling=polling
+    )
+
+
+def _copy_changed(
+    host: Host, trees: dict[Path, str], paths: dict[str, str], changes: set[tuple[watchfiles.Change, str]]
+) -> None:
+    """Copy the trees of `changes` to `host`, see _syncing(), warning about those that cannot be."""
+    for tree in {t for _, path in changes for t in trees if Path(path).is_relative_to(t)}:
+        try:
+            _copy_tree(host, tree, paths[trees[tree]])
+        except (OSError, subprocess.CalledProcessError) as e:
+            console.print(f"[yellow]warning[/]: {tree} not copied to the builder: {e}")
+
+
+@contextmanager
+def _syncing(project: Project, host: Host, paths: dict[str, str]) -> Generator[None]:
+    """Copy each tree a package is developed from to its copy on `host`, at `paths`, see _copy_tree(), whenever its
+    files change, meanwhile: for the shell of the builder, which archives it again for each rpmbuild, see
+    xcraft.rpmbuild.REFRESH. The changes are polled when inotify cannot watch them, like with too many of its
+    instances.
+    """
+    trees, stop = {Path(t).resolve(): name for name, t in develop.trees(project).items() if name in paths}, Event()
+
+    def sync() -> None:
+        try:
+            for changes in _changes([*trees], stop, polling=None):
+                _copy_changed(host, trees, paths, changes)
+        except (OSError, RuntimeError):  # RuntimeError: what watchfiles raises without inotify instances left
+            for changes in _changes([*trees], stop, polling=True):
+                _copy_changed(host, trees, paths, changes)
+
+    thread = Thread(target=sync, daemon=True)
+    if trees:
+        thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        if trees:
+            thread.join()
 
 
 def _copy_git(project: Project, host: Host, remote: str) -> list[str]:
@@ -204,6 +262,8 @@ class _Copy(NamedTuple):
     """Where the copy is, relative to the home of the user of the builder."""
     prefix: list[str]
     """The command of the xcraft of the builder, with the options of the checkout."""
+    trees: dict[str, str]
+    """Where the trees the packages are developed from are copied there, by package, see _copy_trees()."""
 
     @property
     def destination(self) -> str:
@@ -256,10 +316,10 @@ def _copied(project: Project, name: str) -> Generator[_Copy]:
             _rsync(host, *filters, f"{project.root}/", f"{destination}/")
             if state := [p for p in ("dev-builds.json", "key") if (project.state / p).exists()]:
                 _rsync(host, "--relative", *(f"{project.root}/./.xcraft/{p}" for p in state), f"{destination}/")
-            _copy_trees(project, host, remote)
+            trees = _copy_trees(project, host, remote)
             xcraft_command = _xcraft(host, Path(tmp))
         branch = buildid.named(project)
-        copy = _Copy(host, remote, [*xcraft_command, *(["--maintenance", branch] if branch else [])])
+        copy = _Copy(host, remote, [*xcraft_command, *(["--maintenance", branch] if branch else [])], trees)
         with activity(f"checking the xcraft of {name}"):
             if (there := copy.keys("--recipe")["recipe"]) != (here := buildkey.recipe(project)):
                 msg = f"{name} runs another xcraft, of the recipe {there[:12]}, rather than {here[:12]}: the same one"
@@ -395,7 +455,8 @@ def reproduce(project: Project, name: str, args: list[str]) -> int:
 
 def shell(project: Project, name: str, package: str) -> int:
     """Open xcraft shell for `package` on the builder `name` of the architecture of `project`, in a copy of the
-    checkout, see _copied(), and return its exit code: its build tree is the one of the builder, which keeps it.
+    checkout, see _copied(), and return its exit code: its build tree is the one of the builder, which keeps it. The
+    trees the packages are developed from are copied there again whenever they change, see _syncing().
     """
-    with _copied(project, name) as copy:
+    with _copied(project, name) as copy, _syncing(project, copy.host, copy.trees):
         return copy.run("shell", package, "--arch", project.arch, "--local")

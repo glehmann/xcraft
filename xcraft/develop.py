@@ -196,9 +196,14 @@ def spec_text(text: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def archive(developed: Tree, sources: Path) -> None:
+    """Write the archive of the tree `developed`, ARCHIVE, in `sources`, of a build tree."""
+    _git(developed.path, "archive", "--format=tar", "-o", str(sources / ARCHIVE), developed.commit)
+
+
 def stage(developed: Tree, spec: Path, sources: Path) -> None:
     """Stage the tree `developed` in a build tree: its `spec` rewritten, see spec_text(), and its archive in
-    `sources`.
+    `sources`, see archive().
     """
     spec.write_text(spec_text(spec.read_text()))
-    _git(developed.path, "archive", "--format=tar", "-o", str(sources / ARCHIVE), developed.commit)
+    archive(developed, sources)

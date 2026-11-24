@@ -6,6 +6,7 @@ import contextlib
 import os
 import shlex
 import shutil
+import threading
 from typing import TYPE_CHECKING
 
 from xcraft import ccache, develop, localrepo, resolution
@@ -15,7 +16,7 @@ from xcraft.sources import fetch_sources, parse_manifest
 from xcraft.specs import STAGED_TIME, hash_dir, main_spec
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Generator, Sequence
     from pathlib import Path
 
     from xcraft.localrepo import LocalRepo
@@ -182,13 +183,64 @@ def image_replacements(resolved: Resolved, name: str) -> list[str]:
     return sorted(set(resolved.ours.get(name, [])) & set(resolved.image))
 
 
+REFRESH = ".xcraft-refresh"
+"""The file of the build tree of a package developed from a tree, see xcraft.develop, by which its shell asks for its
+archive again, see _refreshing(), and the host tells its error, in REFRESH.error, if any."""
+REFRESHED_RPMBUILD = f"""
+rpmbuild() {{
+    : > /build/{REFRESH}
+    for _ in $(seq 600); do [ -e /build/{REFRESH} ] || break; sleep 0.1; done
+    if [ -e /build/{REFRESH} ]; then
+        echo "the archive of the tree was not made again: xcraft shell no longer running?" >&2
+        return 1
+    fi
+    if [ -e /build/{REFRESH}.error ]; then
+        cat /build/{REFRESH}.error >&2
+        rm -f /build/{REFRESH}.error
+        return 1
+    fi
+    command rpmbuild "$@"
+}}
+"""
+"""The rpmbuild of the shell of a package developed from a tree: with the archive of the tree as it is then."""
+
+
+@contextlib.contextmanager
+def _refreshing(project: Project, name: str, tree: Path) -> Generator[None]:
+    """Make the archive of the tree `name` is developed from in its build tree `tree` again, whenever its shell asks,
+    meanwhile, see REFRESH: with the files of the tree as they are then, like a build, rather than as they were when
+    the shell opened.
+    """
+    request, stop = tree / REFRESH, threading.Event()
+
+    def refresh() -> None:
+        while not stop.wait(0.1):
+            if not request.exists():
+                continue
+            try:
+                if developed := develop.tree(project, name):
+                    develop.archive(developed, tree / "SOURCES")
+            except develop.DevelopError as e:
+                request.with_name(f"{REFRESH}.error").write_text(f"{e}\n")
+            request.unlink(missing_ok=True)
+
+    thread = threading.Thread(target=refresh, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join()
+
+
 def shell(project: Project, name: str) -> None:
     """Open a shell in the build tree of `name`, with its build dependencies installed and sources prepared.
 
     rpmbuild works on the build tree there, like in the builds: rpmbuild -ba SPECS/<spec> builds it again, shown before
     the prompt. The build tree is the one of the host, in .xcraft/build/, where its files can be edited, and its
     packages are. Its dependencies are their development builds, as last built, if any. dnf has the upstream
-    repositories too, disabled, to try the packages not pinned yet: sudo dnf --enablerepo='*' install <package>.
+    repositories too, disabled, to try the packages not pinned yet: sudo dnf --enablerepo='*' install <package>. For a
+    package developed from a tree, rpmbuild unpacks the tree as it is when it runs, see _refreshing().
     """
     from xcraft.devbuilds import built_dev_suffixes  # noqa: PLC0415, which imports the builds
 
@@ -203,12 +255,14 @@ def shell(project: Project, name: str) -> None:
         ("not pinned", "sudo dnf --enablerepo='*' install <package>", "cyan"),
     ]
     upstream = repo_file(project, enabled=False)
+    developed = name in develop.trees(project)
     after = (
         # the repositories of the project only, rather than those of the distribution in the image, enabled
         "sudo find /etc/yum.repos.d -name '*.repo' ! -name pinned.repo ! -name xcraft.repo -delete"
         f" && printf %s {shlex.quote(upstream)} | sudo tee /etc/yum.repos.d/upstream.repo >/dev/null"
         " && echo '%_topdir /build' > ~/.rpmmacros"
-        " && cd /build"
+        + (f" && printf %s {shlex.quote(REFRESHED_RPMBUILD)} >> ~/.bashrc" if developed else "")
+        + " && cd /build"
         ' && dim= bold= cyan= off= && if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then'
         " dim=$'\\e[2m' bold=$'\\e[0;1m' cyan=$'\\e[0;1;36m' off=$'\\e[0m'; fi"
         + "".join(
@@ -217,4 +271,5 @@ def shell(project: Project, name: str) -> None:
         )
         + " && exec bash -l"
     )
-    run_build(project, name, repo, "p", replace=replace, after=after, network=True, volumes=local_repos(project))
+    with _refreshing(project, name, tree) if developed else contextlib.nullcontext():
+        run_build(project, name, repo, "p", replace=replace, after=after, network=True, volumes=local_repos(project))
