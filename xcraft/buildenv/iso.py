@@ -12,6 +12,12 @@ The hook, ``hook <stage> <dir> <hook.json>``, makes what is particular to the di
 of install.img, before its modules are indexed and it is archived, then ``tree``, on the tree of the ISO, before
 efiboot.img is made of its EFI/BOOT/, with EFI/BOOT/efiboot.cfg for grub.cfg, if any. hook.json is the config, with
 ``rpms``, the files of the latest packages of the snapshot by name.
+
+The ISO is of the architecture ``arch`` of the config, x86_64 or aarch64, see EFI: grub's image for CDs and its
+modules, of the snapshot, and on x86 only, isolinux and memtest86+ of the build environment, for the BIOS. It may be
+another than the build environment's, ``forcearch`` then, like aarch64 on x86_64: only the scriptlets of the packages
+installed in the installer's root filesystem run its programs, emulated, by binfmt_misc and qemu-user, like the builds
+of other architectures; the rest handles its files natively.
 """
 
 from __future__ import annotations
@@ -36,6 +42,9 @@ with contextlib.suppress(ImportError):
 
 SYSLINUX = Path("/usr/share/syslinux")
 MEMTEST = Path("/usr/lib64/memtest86+")
+EFI = {"x86_64": ("x64", "x86_64-efi"), "aarch64": ("aa64", "arm64-efi")}
+"""The names of grub's packages, images and modules of the UEFI of each architecture: its EFI architecture, like in
+grub2-efi-x64-cdboot, gcdx64.efi and BOOTX64.EFI, and the directory of its modules."""
 
 
 def sh(
@@ -49,6 +58,9 @@ def resolver(packages: list[str] | None = None) -> dnf.Base:
     """Return a dnf base of the snapshot alone, on an empty system, with `packages` to install resolved."""
     base = dnf.Base()
     base.conf.read()
+    if forcearch := config.get("forcearch"):  # like dnf --forcearch
+        base.conf.substitutions["arch"] = forcearch
+        base.conf.substitutions["basearch"] = dnf.rpm.basearch(forcearch)
     base.conf.installroot = tempfile.mkdtemp()
     base.conf.cachedir = tempfile.mkdtemp()  # see installable.py
     base.conf.install_weak_deps = False
@@ -158,6 +170,7 @@ def installed_root(root: Path) -> None:
         # the packages are checked when the snapshot is made
         "--setopt=snapshot.gpgcheck=0", "--setopt=install_weak_deps=False", "--setopt=tsflags=nodocs",
         f"--setopt=cachedir={cache}", f"--setopt=system_cachedir={cache}",
+        *([f"--forcearch={config['forcearch']}"] if config.get("forcearch") else []),
         "install", *config["installer"],
     )  # fmt: skip
     for path in ("var/lib/dnf", "var/cache/dnf"):
@@ -191,13 +204,16 @@ def install_img(dest: Path) -> None:
     shutil.rmtree(root)
 
 
-def efiboot(efi: Path) -> None:
-    """Make the FAT image the UEFI firmwares boot from, with grub, its modules, and efiboot.cfg or grub.cfg."""
+def efiboot(efi: Path, arch: str) -> None:
+    """Make the FAT image the UEFI firmwares of `arch` boot from, with grub, its modules, and efiboot.cfg or
+    grub.cfg.
+    """
+    name, modules = EFI[arch]
     image = tree / "boot/efiboot.img"
     size = sum(f.stat().st_size + 4096 for f in efi.rglob("*") if f.is_file()) // 1024 + 1024
     sh("mkfs.fat", "-C", "-n", "EFIBOOT", image, str(size), stdout=subprocess.DEVNULL)
     sh("mmd", "-i", image, "::/EFI", "::/EFI/BOOT")
-    sh("mcopy", "-s", "-i", image, efi / "BOOTX64.EFI", efi / "x86_64-efi", "::/EFI/BOOT/")
+    sh("mcopy", "-s", "-i", image, efi / f"BOOT{name.upper()}.EFI", efi / modules, "::/EFI/BOOT/")
     cfg = efi / "efiboot.cfg"
     sh("mcopy", "-i", image, cfg if cfg.exists() else efi / "grub.cfg", "::/EFI/BOOT/grub.cfg")
     cfg.unlink(missing_ok=True)
@@ -222,20 +238,22 @@ if __name__ == "__main__":
     boot = tree / "boot"
     boot.mkdir(exist_ok=True)
     install_img(tree / "install.img")
-    shutil.copy2(MEMTEST / "memtest86+x64.bin", boot / "memtest.bin")
-    shutil.copy2(MEMTEST / "memtest86+x64.efi", boot)
-    (boot / "isolinux").mkdir(exist_ok=True)
-    for name in ("isolinux.bin", "ldlinux.c32", "libcom32.c32", "libutil.c32", "menu.c32"):
-        shutil.copy2(SYSLINUX / name, boot / "isolinux")
+    arch = config["arch"].removesuffix("_v2")
+    if arch == "x86_64":
+        shutil.copy2(MEMTEST / "memtest86+x64.bin", boot / "memtest.bin")
+        shutil.copy2(MEMTEST / "memtest86+x64.efi", boot)
+        (boot / "isolinux").mkdir(exist_ok=True)
+        for name in ("isolinux.bin", "ldlinux.c32", "libcom32.c32", "libutil.c32", "menu.c32"):
+            shutil.copy2(SYSLINUX / name, boot / "isolinux")
     # grub's image for CDs, which reads its configuration, grub.cfg of the templates or the hook, and its modules in
     # /EFI/BOOT
+    efi_arch, modules = EFI[arch]
     efi = tree / "EFI/BOOT"
     efi.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(
-        one(extract("grub2-efi-x64-cdboot", "*/gcdx64.efi") / "boot/efi/EFI", "*/gcdx64.efi"), efi / "BOOTX64.EFI"
-    )
+    cdboot = extract(f"grub2-efi-{efi_arch}-cdboot", f"*/gcd{efi_arch}.efi") / "boot/efi/EFI"
+    shutil.copy2(one(cdboot, f"*/gcd{efi_arch}.efi"), efi / f"BOOT{efi_arch.upper()}.EFI")
     shutil.copytree(
-        extract("grub2-efi-x64-modules", "./usr/lib/grub/*") / "usr/lib/grub/x86_64-efi", efi / "x86_64-efi"
+        extract(f"grub2-efi-{efi_arch}-modules", "./usr/lib/grub/*") / "usr/lib/grub" / modules, efi / modules
     )
     if not config["netinstall"]:
         packages = tree / "Packages"
@@ -245,4 +263,4 @@ if __name__ == "__main__":
         # with gzip, which older installers read, rather than the zstd of newer createrepo_c
         sh("createrepo_c", "-q", "--compatibility", tree)
     hook("tree", tree)
-    efiboot(efi)
+    efiboot(efi, arch)

@@ -31,11 +31,15 @@ from xcraft.sources import sha256_of
 if TYPE_CHECKING:
     from xcraft.project import Project, Remote
 
-_INSTALL_TOOLS = (
-    f"{container.DNF_LOCK} dnf -q -y --disablerepo='*' --enablerepo={REPO_ID} --setopt=install_weak_deps=False install "
-    + " ".join(resolution.ISO_TOOLS)
-)
-"""Installs the tools making the ISO, which the image does not have, from the pinned packages only."""
+
+def install_tools(arch: str) -> str:
+    """Return the command installing the tools making the ISO of `arch`, which the image does not have, from the
+    pinned packages only.
+    """
+    return (
+        f"{container.DNF_LOCK} dnf -q -y --disablerepo='*' --enablerepo={REPO_ID} --setopt=install_weak_deps=False "
+        "install " + " ".join(resolution.iso_tools(arch))
+    )
 
 
 class Image(BaseModel):
@@ -283,14 +287,14 @@ def _check_installed_tools(project: Project, recorded: Path) -> None:
 
 
 def check_iso_config(project: Project) -> None:
-    """Raise when the ISO of the platform cannot be made: on x86_64 only, for its boot loaders, with the installer's
-    packages, and the hook of the project, an executable iso/hook.
+    """Raise when the ISO of the platform cannot be made: on x86_64 and aarch64 only, for its boot loaders, with the
+    installer's packages, and the hook of the project, an executable iso/hook.
     """
     if not project.config.iso.installer:
         msg = "the ISO needs the installer's packages: see [iso] in xcraft.toml"
         raise RuntimeError(msg)
-    if not project.arch.startswith("x86_64"):
-        msg = f"the ISOs are for x86_64, for their boot loaders, not {project.arch}"
+    if project.arch not in resolution.ISO_ARCHES:
+        msg = f"the ISOs are for {', '.join(resolution.ISO_ARCHES)}, for their boot loaders, not {project.arch}"
         raise RuntimeError(msg)
     if not os.access(project.root / "iso/hook", os.X_OK):
         msg = "the ISO needs the hook of the project, an executable iso/hook: see xcraft/buildenv/iso.py"
@@ -306,6 +310,9 @@ def _assemble_iso(
     """
     iso = project.config.iso
     check_iso_config(project)
+    # aarch64's by the tools of the host, natively but for the scriptlets of the installer's packages, see
+    # buildenv/iso.py; x86's by their own, which have the boot loaders of the BIOS
+    maker = project if project.arch.startswith("x86_64") else project.on_host()
     if error := resolution.resolve(project).tools_error:
         msg = f"the tools making the ISO cannot be installed: {error}"
         raise RuntimeError(msg)
@@ -324,36 +331,40 @@ def _assemble_iso(
                     "/work/key.asc", *(f"/work/signer-{i}.asc" for i in range(len(signers))),
                     *(key_paths(project, work) if keep else []),
                 ] if signer else [],
-                "name": iso.name, "version": iso.version, "roots": "/roots",
+                "name": iso.name, "version": iso.version, "roots": "/roots", "arch": project.arch,
+                "forcearch": project.arch if maker.arch != project.arch else None,
             })
         )  # fmt: skip
         roots = project.state / "cache/installroots" / project.arch
         roots.mkdir(parents=True, exist_ok=True)
         volumes = [f"{snapshot}:/snapshot:ro", f"{project.root / 'iso'}:/templates:ro", f"{work}:/work"]
         container.run(
-            project,
+            maker,
             "iso",
-            f"{_INSTALL_TOOLS} && {container.DNF_LOCK} python3 /xcraft/record.py /work/tools.json"
+            f"{install_tools(maker.arch)} && {container.DNF_LOCK} python3 /xcraft/record.py /work/tools.json"
             " && sudo python3 /xcraft/iso.py /work/config.json",
             volumes=[*volumes, f"{roots}:/roots"],
             show="making the tree of the ISO",
             install=True,
         )
-        _check_installed_tools(project, work / "tools.json")
+        _check_installed_tools(maker, work / "tools.json")
         tree = work / "tree"
         if signer and not netinstall:
             signer.sign_file(tree / "repodata/repomd.xml")
-        # hybrid, for BIOS and UEFI, from a CD or a USB stick
-        xorriso = (
-            f"xorriso -as mkisofs -quiet -o /work/image.iso -V {shlex.quote(volid or iso.default_volid)}"
-            " -R -J -joliet-long"
+        xorriso = f"xorriso -as mkisofs -quiet -o /work/image.iso -V {shlex.quote(volid or iso.default_volid)}"
+        xorriso += " -R -J -joliet-long" + (
+            # hybrid, for BIOS and UEFI, from a CD or a USB stick
             " -b boot/isolinux/isolinux.bin -c boot/isolinux/boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table"
             " -isohybrid-mbr /usr/share/syslinux/isohdpfx.bin"
             " -eltorito-alt-boot -e boot/efiboot.img -no-emul-boot -isohybrid-gpt-basdat /work/tree"
+            if project.arch.startswith("x86_64")
+            # UEFI only, from a CD, or a USB stick by the EFI system partition appended, like Debian's
+            else " -e boot/efiboot.img -no-emul-boot -append_partition 2 0xef /work/tree/boot/efiboot.img /work/tree"
         )
         container.run(
-            project, "iso", f"{_INSTALL_TOOLS} && {xorriso}", volumes=volumes, show="making the ISO", install=True
-        )
+            maker, "iso", f"{install_tools(maker.arch)} && {xorriso}", volumes=volumes, show="making the ISO",
+            install=True,
+        )  # fmt: skip
         made = project.state / "tmp" / f"{work.name}.iso"
         shutil.move(work / "image.iso", made)
     return made

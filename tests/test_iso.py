@@ -144,13 +144,11 @@ def should_check_the_configuration_before_the_snapshot(project: Project) -> None
     assert code == 1, output
     assert "the ISO needs the installer's packages" in output
     (project.root / "xcraft.toml").write_text(f'{TOML}installer = ["bash"]\n')
-    code, output = xcraft("iso", "--arch", "aarch64")
-    assert code == 1, output
-    assert "the ISOs are for x86_64, for their boot loaders, not aarch64" in output
     (project.root / "iso/hook").chmod(0o644)
-    code, output = xcraft("iso", "--arch", "x86_64_v2")
-    assert code == 1, output
-    assert "the ISO needs the hook of the project" in output
+    for arch in ("x86_64_v2", "aarch64"):  # both architectures of their boot loaders
+        code, output = xcraft("iso", "--arch", arch)
+        assert code == 1, output
+        assert "the ISO needs the hook of the project" in output
     # neither prepared nor snapshot
     assert not (project.root / "xcraft.lock").exists()
     assert not (project.state / "publish").exists()

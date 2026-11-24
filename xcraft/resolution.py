@@ -47,8 +47,18 @@ if TYPE_CHECKING:
     from xcraft.project import Project
 
 _SCRIPT = BUILDENV / "resolve.py"
-ISO_TOOLS = ["dosfstools", "memtest86+", "mtools", "syslinux-nonlinux", "xorriso"]
-"""The packages of the tools making the ISO, which the image does not have."""
+ISO_TOOLS = ["dosfstools", "kmod", "mtools", "xorriso"]
+"""The packages of the tools making the ISO, which the image does not have, on all the architectures: kmod for the
+firmware of the modules of the installer, by modinfo, see buildenv/iso.py."""
+BIOS_TOOLS = ["memtest86+", "syslinux-nonlinux"]
+"""The packages of the tools of the BIOS, on x86 only."""
+ISO_ARCHES = ("x86_64", "x86_64_v2", "aarch64")
+"""The architectures of the ISOs, those of their boot loaders, see buildenv/iso.py."""
+
+
+def iso_tools(arch: str) -> list[str]:
+    """Return the packages of the tools making the ISO of `arch`."""
+    return sorted([*ISO_TOOLS, *(BIOS_TOOLS if arch.startswith("x86_64") else [])])
 
 
 class ResolutionError(RuntimeError):
@@ -438,13 +448,13 @@ def _roots_data(project: Project) -> dict:
         for name, package in sorted(packages.items())
     }
     config = project.config
-    # the ISOs are made for x86_64 only, for their boot loaders
-    iso = config.iso.installer and project.arch.startswith("x86_64")
+    # the ISOs are made for some architectures only, those of their boot loaders
+    iso = config.iso.installer and project.arch in ISO_ARCHES
     runtime = {
         "extra": config.publish.extra,
         "installer": config.iso.installer,
         "iso": config.iso.packages if iso else [],
-        "tools": ISO_TOOLS if iso else [],
+        "tools": iso_tools(project.arch) if iso else [],
     }
     return {**_image_data(project), "ours": _ours(project), "builds": builds, "runtime": runtime}
 

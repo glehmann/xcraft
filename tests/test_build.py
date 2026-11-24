@@ -27,12 +27,12 @@ from xcraft import buildid, clean, container, localrepo, pinned, process, publis
 from xcraft.__main__ import app
 from xcraft.builds import builds_path, load_builds, save_builds
 from xcraft.cache import BuildError
-from xcraft.iso import _INSTALL_TOOLS, _check_installed_tools
+from xcraft.iso import _check_installed_tools, install_tools
 from xcraft.localrepo import LocalRepo
 from xcraft.lock import Recorded, load_lock, lock_path, save_lock
 from xcraft.project import Project
 from xcraft.publish import _check_installable
-from xcraft.resolution import ISO_TOOLS, ResolutionError
+from xcraft.resolution import ISO_TOOLS, ResolutionError, iso_tools
 from xcraft.sources import write_manifest
 
 
@@ -647,11 +647,14 @@ def should_pin_and_install_the_tools_making_the_iso(root: Path, monkeypatch: pyt
     project = Project.find()
     lock = load_lock(project)
     # pinned when preparing, with what the installer needs
-    assert set(ISO_TOOLS) <= set(lock.iso[project.arch]) <= lock.binaries[project.arch].keys()
+    assert set(iso_tools(project.arch)) <= set(lock.iso[project.arch]) <= lock.binaries[project.arch].keys()
     assert {"bash", "glibc", "bc"} <= set(lock.runtime[project.arch]) <= lock.binaries[project.arch].keys()
-    assert "bc" not in lock.runtime["aarch64"]
+    assert "bc" in lock.runtime["aarch64"]  # with its ISO too
     assert {"dosfstools", "libisoburn", "memtest86+", "mtools", "syslinux"} <= lock.sources.keys()  # by source
-    assert lock.iso.keys() == {project.arch}
+    # and those of aarch64, without the BIOS's
+    assert lock.iso.keys() == {project.arch, "aarch64"}
+    assert set(ISO_TOOLS) <= set(lock.iso["aarch64"]) <= lock.binaries["aarch64"].keys()
+    assert not {"memtest86+", "syslinux-nonlinux"} & set(lock.iso["aarch64"])
     # the tools, which cannot be installed, kept as the lock has them, but not what is published
     with monkeypatch.context() as patch:
         patch.setattr(resolution, "ISO_TOOLS", [*ISO_TOOLS, "no-such-package"])
@@ -664,7 +667,9 @@ def should_pin_and_install_the_tools_making_the_iso(root: Path, monkeypatch: pyt
     # installed from the pinned packages
     with project.tmp_dir("tools") as work:
         record = f"{container.DNF_LOCK} python3 /xcraft/record.py /work/tools.json"
-        container.run(project, "tools", f"{_INSTALL_TOOLS} && {record}", volumes=[f"{work}:/work"], install=True)
+        container.run(
+            project, "tools", f"{install_tools(project.arch)} && {record}", volumes=[f"{work}:/work"], install=True
+        )
         _check_installed_tools(project, work / "tools.json")
         del lock.iso[project.arch][0]
         save_lock(project, lock)
