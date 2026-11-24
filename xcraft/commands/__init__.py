@@ -182,11 +182,12 @@ def dev_ident(ctx: typer.Context, dev: str | None, *, final: bool, nocheck: bool
     return ident
 
 
-Dep = Annotated[
+BuiltAgainst = Annotated[
     list[str] | None,
     typer.Option(
-        "--dep",
-        help="Upstream package, binary or source name: select the packages whose only changes are updates of it.",
+        "--built-against",
+        help="Upstream package, or package of ours, binary or source name: select the packages built against it whose "
+        "only changes are its updates.",
         show_default=False,
     ),
 ]

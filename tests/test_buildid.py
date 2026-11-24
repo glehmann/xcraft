@@ -695,6 +695,29 @@ def should_reuse_the_main_branch_build_until_its_inputs_change(root: Path) -> No
     ) in " ".join(output.split())
 
 
+def should_reuse_the_builds_built_against_a_changed_package_of_ours(root: Path) -> None:
+    assert xcraft("build")[0] == 0  # the builds of the main branch
+    commit_base(root)
+    base = buildid.read(Project.find())
+    git(root, "checkout", "-qb", "feature")
+    edit(root, "changed")  # trivial, which with-deps is built against, like xen and xapi
+    assert update() == {"trivial": 2, "with-deps": 2}
+    code, output = xcraft("reuse", "--built-against", "trivial")
+    assert code == 0, output
+    assert output.splitlines()[-1] == "with-deps: reuses its build 1"
+    deps = buildid.read(Project.find())["with-deps"]
+    assert (deps.number, deps.key) == (1, base["with-deps"].key)
+    assert deps.accepts
+    # trivial itself is built again
+    assert update() == {"trivial": 2, "with-deps": 1}
+    # not a package changed otherwise
+    edit(root, "changed too", name="with-deps")
+    assert update() == {"trivial": 2, "with-deps": 2}
+    code, output = xcraft("reuse", "--built-against", "trivial")
+    assert code == 0, output
+    assert "reuses" not in output
+
+
 def should_reuse_the_main_branch_build_a_rebuild_makes_the_same(root: Path) -> None:
     assert xcraft("build")[0] == 0  # the builds of the main branch
     commit_base(root)
@@ -775,20 +798,20 @@ def should_reuse_builds_across_upstream_updates(root: Path, monkeypatch: pytest.
     assert "toyrun" in load_lock(Project.find()).unsigned[ARCH]
     assert update() == {"trivial": 1, "with-deps": 2}
     # not for other updates
-    code, output = xcraft("reuse", "--dep", "trivial-upstream")
+    code, output = xcraft("reuse", "--built-against", "trivial-upstream")
     assert code == 1
     assert "not locked: trivial-upstream" in output
-    code, output = xcraft("reuse", "--dep", "glibc")
+    code, output = xcraft("reuse", "--built-against", "glibc")
     assert code == 0, output
     assert update() == {"trivial": 1, "with-deps": 2}
     # not with other scripts of the builds, like those of a newer xcraft, which the keys cover too
     with monkeypatch.context() as patch:
         patch.setattr(buildkey, "RECIPE", "the recipe of another xcraft")
-        code, output = xcraft("reuse", "--dep", "toyrun")
+        code, output = xcraft("reuse", "--built-against", "toyrun")
         assert code == 0, output
         assert "reuses" not in output
     update()
-    code, output = xcraft("reuse", "--dep", "toyrun")
+    code, output = xcraft("reuse", "--built-against", "toyrun")
     assert code == 0, output
     assert output.splitlines()[-1] == "with-deps: reuses its build 1"
     assert update() == {"trivial": 1, "with-deps": 1}

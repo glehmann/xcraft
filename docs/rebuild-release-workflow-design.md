@@ -145,11 +145,11 @@ despite changes, like after an ABI-compatible security update:
 
 ```sh
 xcraft reuse some-dependent              # despite any change but to its own directory
-xcraft reuse --dep openssl               # the packages whose only changes are updates of openssl
+xcraft reuse --built-against openssl               # the packages whose only changes are updates of openssl
 ```
 
 `xcraft reuse <package>` reuses the build of the named packages, whatever changed but their own directories, like the
-packages of ours they are built against. `xcraft reuse --dep <upstream>` selects the packages whose only changes since
+packages of ours they are built against. `xcraft reuse --built-against <upstream>` selects the packages whose only changes since
 the fork point are updates of the given upstream packages, binary or source names, found by comparing the lock there
 with the current one: those with other changes still get new numbers.
 

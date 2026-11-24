@@ -162,7 +162,7 @@ def should_ignore_dependency_updates_for_reused_builds() -> None:
         return buildkey.lock_inputs(platforms, lock, Builds(), "b", {"zlib"})
 
     before = inputs(("zlib", pin))
-    # an update of zlib, which xcraft reuse --dep ignores: other versions and contents of the same packages
+    # an update of zlib, which xcraft reuse --built-against ignores: other versions and contents of the same packages
     assert inputs(("zlib", pin.model_copy(update={"evr": "1-2", "sha256": "2" * 64}))) == before
     # but not other packages, nor packages of another source
     assert inputs(("zlib", pin), ("zlib-ng", pin)) != before

@@ -103,7 +103,7 @@ build root has an updated package, and the packages built against them.
 
 Rebuilt packages get new build numbers, which `xcraft lock --update` writes, see [Build IDs](builds.md#build-ids), so the
 hosts get them. When an update does not need shipping rebuilds, like most ABI compatible updates, unlike static
-linking, OCaml module hashes or soname changes, `xcraft reuse --dep` keeps the builds, see
+linking, OCaml module hashes or soname changes, `xcraft reuse --built-against` keeps the builds, see
 [Reusing builds](builds.md#reusing-builds).
 
 **Limits.** What rpm generates for a package of ours, and its dynamic `BuildRequires`, are only known after its first

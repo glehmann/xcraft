@@ -340,10 +340,10 @@ def update(project: Project, reuse: Callable[[str, dict[str, BuildId]], bool] | 
     return changed
 
 
-def reuse(project: Project, names: list[str], sources: list[str]) -> list[str]:
+def reuse(project: Project, names: list[str], sources: list[str], ours: list[str] | None = None) -> list[str]:
     """Reuse the builds of the main branch where the current one forks from it, despite changes, of the packages
     `names`, but those whose directories changed, and of those whose only changes are updates of the upstream source
-    packages `sources`, and return those changed.
+    packages `sources`, or of the packages of ours `ours` they are built against, and return those changed.
 
     The packages built against them keep their builds too, unless they changed otherwise.
     """
@@ -353,7 +353,7 @@ def reuse(project: Project, names: list[str], sources: list[str]) -> list[str]:
     fork = found.commit
     forked, forked_builds = _at(project, fork), _builds_at(project, fork)
     forked_lock = parse_lock(_git(project, "show", f"{fork}:./{lock_path(project).name}") or "")
-    lock, builds, updated = load_lock(project), load_builds(project), set(sources)
+    lock, builds, updated, dependencies = load_lock(project), load_builds(project), set(sources), set(ours or [])
     # the inputs of the keys with the locks of the fork, the rest as it is now
     forked_inputs = buildkey.Inputs(project, lock=forked_lock, builds=forked_builds)
     component_of = {name: component for component in components(forked_inputs.deps) for name in component}
@@ -384,10 +384,14 @@ def reuse(project: Project, names: list[str], sources: list[str]) -> list[str]:
         if name in names:
             return True
         return (
-            bool(updated)
+            bool(updated or dependencies)
             and built_alike(name)
-            # the packages it is built against reuse their builds too
-            and all(ids[d].same(forked[d]) for d in forked_inputs.deps[name] if d in ids and d in forked)
+            # the packages it is built against reuse their builds too, or are those it ignores the changes of
+            and all(
+                d in dependencies or ids[d].same(forked[d])
+                for d in forked_inputs.deps[name]
+                if d in ids and d in forked
+            )
             and buildkey.lock_inputs(forked_inputs.platforms, lock, builds, name, updated)
             == buildkey.lock_inputs(forked_inputs.platforms, forked_lock, forked_builds, name, updated)
         )  # fmt: skip

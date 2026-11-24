@@ -151,7 +151,7 @@ the lock of the project: changed again from the new one otherwise, see `resoluti
 - **The build keys** cover, for each architecture, the pins of the image and of the build root, and from the lock of
   the builds, the dynamic BuildRequires and the records of the binary packages of ours it is built against, see
   `buildkey.lock_inputs()`. So
-  an update changes the keys of the packages it reaches, and their build IDs, see buildid.py; `xcraft reuse --dep`
+  an update changes the keys of the packages it reaches, and their build IDs, see buildid.py; `xcraft reuse --built-against`
   keeps their builds instead, for an update like an ABI compatible fix.
 - **Publishing and the ISOs** take `[runtime]` and `[iso]`, pinned, and check them installable.
 - **Our copy of the upstream packages** copies the pins, and their source packages.

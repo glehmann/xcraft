@@ -115,7 +115,7 @@ array of:
    the spec, which the package directory covers.
 
 The pin of a binary package is an array of its epoch-version-release, its architecture, the SHA-256 of its RPM, and
-the name of its source package: the RPM the builds get, whatever the repositories have now. For `xcraft reuse --dep`,
+the name of its source package: the RPM the builds get, whatever the repositories have now. For `xcraft reuse --built-against`,
 the pins of the binary packages of the source packages it ignores the updates of are only their architectures and
 their source packages: their names stay in the image and the build root, so an update adding or removing a binary
 package is not reused.
@@ -172,7 +172,7 @@ key is the accepted one keeps the build ID, and its build: the build of the main
 stands for the current ones, by a human decision recorded in the commit. The packages built against it have the build
 ID, with the key of the build, in their inputs, so they keep their builds too, unless they changed otherwise.
 
-`xcraft reuse --dep <upstream package>` selects the packages whose only changes are updates of that package: it
+`xcraft reuse --built-against <upstream package>` selects the packages whose only changes are updates of that package: it
 compares what the lock has for them, [as in their keys](#the-lock), with the versions of that package left out, in the
 current lock and in the one of the main branch.
 

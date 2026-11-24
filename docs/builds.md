@@ -28,7 +28,7 @@ other, a cycle, share the hash of them all, from which each one gets its own key
 
 **What it does not cover.** The architecture, which is the directory of the builds; the path of the checkout, the
 machine, the user and the time; `origin`, and the files out of `<repo>/<pkg>/`, but those above; the upstream
-packages of the source packages `xcraft reuse --dep` ignores the updates of, but their names and architectures. So the
+packages of the source packages `xcraft reuse --built-against` ignores the updates of, but their names and architectures. So the
 same commit gives the same keys everywhere, on all the architectures: a build pushed by CI, or by a colleague, is
 fetched by any checkout instead of being built again.
 The local repository of the builds gets its own name in each checkout, `xcraft-<project id>`, for its own metadata in
@@ -97,10 +97,13 @@ current branch forks from it, despite changes, with the reason in the commit:
 
 - `xcraft reuse <package>...` reuses the builds of the given packages, whatever changed but their own directories,
   like the packages of ours they are built against;
-- `xcraft reuse --dep <upstream>...` reuses the builds of the packages whose only changes since the main branch are
-  updates of the given upstream packages, binary or source names, like an ABI compatible security fix: their
+- `xcraft reuse --built-against <upstream>...` reuses the builds of the packages whose only changes since the main branch
+  are updates of the given upstream packages, binary or source names, like an ABI compatible security fix: their
   directories, `xcraft.toml` and the build IDs of our packages they are built against are those of the main branch, and
-  so is what the lock has for them, but the versions of these packages.
+  so is what the lock has for them, but the versions of these packages;
+- `xcraft reuse --built-against <package>...` does the same for packages of ours, by package or binary name: it reuses the
+  builds of the packages whose only changes are that they are built against these, changed, like a fix of xen leaving
+  its interfaces as they are, which would rebuild blktap, qemu or xapi otherwise. The given packages are built again.
 
 The build ID then has the number and the key of the reused build, and the key it accepts, an equivalence chosen by
 the maintainer, in its `accepts` line. It holds while the key is the accepted one: another change
