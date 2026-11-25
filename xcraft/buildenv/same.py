@@ -6,8 +6,9 @@ same with:
 
 - the same packages, by name and architecture;
 - the same files: path, SHA-256, mode, owner, group, flags, link target, device and capabilities, not their times;
-- the same dependencies, with the release suffix of the build replaced in those on the packages of the build only:
-  a requirement on another build of a dependency is a difference. Not those rpm adds for the ~ or ^ of a release;
+- the same dependencies, with the release suffix of the build replaced in those on the packages of the build only,
+  by name, or by epoch-version-release, like config(<name>) or the python3.12-<name> of python3-<name>: a requirement
+  on another build of a dependency is a difference. Not those rpm adds for the ~ or ^ of a release;
 - the same scriptlets and triggers, with the release suffix of the build replaced.
 
 The rest is ignored: the release, the build time and host, and the signatures and digests of the headers and payloads.
@@ -62,13 +63,14 @@ def _replaced(suffix: str, values: list) -> list:
     return [pattern.sub("%{autorev}", v) if isinstance(v, str) else v for v in values]
 
 
-def _deps(h: rpm.hdr, suffix: str, own: set[str], kind: str) -> list[tuple]:
-    """Return the dependencies `kind` of `h`, with the release `suffix` replaced in those on the packages `own`, but
-    those rpm adds for the characters of a release, like the ~ of a development build, see RELEASED.
+def _deps(h: rpm.hdr, suffix: str, own: set[str], evrs: set[str], kind: str) -> list[tuple]:
+    """Return the dependencies `kind` of `h`, with the release `suffix` replaced in those on the packages `own`, or of
+    the epoch-version-release of one of them, in `evrs`, but those rpm adds for the characters of a release, like the ~
+    of a development build, see RELEASED.
     """
     names, flags, versions = (_tag(h, f"{kind}{t}") for t in ("NAME", "FLAGS", "VERSION"))
     return [
-        (n, f, _replaced(suffix, [v])[0] if re.sub(r"\(.*\)$", "", n) in own else v)
+        (n, f, _replaced(suffix, [v])[0] if re.sub(r"\(.*\)$", "", n) in own or v in evrs else v)
         for n, f, v in zip(names, flags, versions, strict=True)
         if n not in RELEASED
     ]
@@ -80,7 +82,9 @@ def _files(h: rpm.hdr) -> dict[str, tuple]:
     return dict(zip(paths, zip(*(_tag(h, n) or [None] * len(paths) for n in FILES), strict=True), strict=True))
 
 
-def _differences(a: rpm.hdr, b: rpm.hdr, suffixes: tuple[str, str], own: set[str]) -> list[str]:
+def _differences(
+    a: rpm.hdr, b: rpm.hdr, suffixes: tuple[str, str], own: set[str], evrs: tuple[set[str], set[str]]
+) -> list[str]:
     files = _files(a), _files(b)
     differences = [
         f"{path}: only in one"
@@ -90,7 +94,7 @@ def _differences(a: rpm.hdr, b: rpm.hdr, suffixes: tuple[str, str], own: set[str
         if (fa := files[0].get(path)) != (fb := files[1].get(path))
     ]
     for kind in DEPS:
-        deps = set(_deps(a, suffixes[0], own, kind)), set(_deps(b, suffixes[1], own, kind))
+        deps = set(_deps(a, suffixes[0], own, evrs[0], kind)), set(_deps(b, suffixes[1], own, evrs[1], kind))
         differences += [f"{kind.lower()}: {' '.join(map(str, d))} only in one" for d in sorted(deps[0] ^ deps[1])]
     differences += [
         n.lower()
@@ -105,11 +109,12 @@ def main() -> None:
     output, a, suffix_a, b, suffix_b = sys.argv[1:]
     headers = _headers(Path(a)), _headers(Path(b))
     own = {key.rsplit(".", 1)[0] for key in headers[0]}
+    evrs = ({h[rpm.RPMTAG_EVR] for h in headers[0].values()}, {h[rpm.RPMTAG_EVR] for h in headers[1].values()})
     differences = [f"{key}: not in both" for key in sorted(headers[0].keys() ^ headers[1].keys())]
     differences += [
         f"{key}: {d}"
         for key in sorted(headers[0].keys() & headers[1].keys())
-        for d in _differences(headers[0][key], headers[1][key], (suffix_a, suffix_b), own)
+        for d in _differences(headers[0][key], headers[1][key], (suffix_a, suffix_b), own, evrs)
     ]
     Path(output).write_text(json.dumps(differences))
 

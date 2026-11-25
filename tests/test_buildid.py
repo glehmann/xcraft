@@ -763,6 +763,11 @@ def should_reuse_the_builds_built_against_a_changed_package_of_ours(root: Path) 
 
 
 def should_reuse_the_main_branch_build_a_rebuild_makes_the_same(root: Path) -> None:
+    # with its own release in a dependency of another name, like the config() ones, or those of python3 packages
+    spec = root / "base/with-deps/with-deps.spec"
+    spec.write_text(
+        spec.read_text().replace("BuildArch:", "Provides: with-deps-alias = %{version}-%{release}\nBuildArch:")
+    )
     assert xcraft("build")[0] == 0  # the builds of the main branch
     commit_base(root)
     base = buildid.read(Project.find())
