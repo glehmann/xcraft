@@ -79,7 +79,7 @@ reuse, and [lock design](lock-design.md) for preparation and findings. For stora
 repositories](publishing-layout-design.md). For CI, read [pull request CI](pr-ci-design.md),
 [CI secrets](ci-secret-management-design.md), [rebuild releases](rebuild-release-workflow-design.md) and
 [security fixes under embargo](embargo-design.md). Preserve
-`--locked`, checksum/signature checks, and existing lock boundaries. The `Containerfile`, `build.sh`, `offline.py`,
+`--locked`, checksum/signature checks, and existing lock boundaries. The `Containerfile`, `build.sh`,
 `record.py`, `made.py` and `rpmdeps.py` of `buildenv/` are in [the recipe](build-keys.md#the-recipe) of every build
 key. Changes to these files normally invalidate every build key. For equivalent changes to the hashed build
 scripts, `buildkey._SAME_BUILDS` can explicitly preserve the earlier script hash. This exception does not cover

@@ -32,7 +32,6 @@ SCRIPTS = (
     "macros.archives",
     "archives.py",
     "build.sh",
-    "offline.py",
     "record.py",
     "made.py",
     "rpmdeps.py",
@@ -45,6 +44,11 @@ _SAME_BUILDS: dict[str, str] = {
     # the macros undefined by xcraft.toml, none before
     "789d616e336ba9f1107c9670be93c265201bcde3e70c59156f5e4741a0b00177": (
         "22da793efe192c632edd8408e87a6f30c58b5a98fef97c20f3bcad86892b3eae"
+    ),
+    # rpmbuild without gaining privileges by setpriv rather than offline.py, whose network namespace the container
+    # without the network made useless
+    "237cf1c277ddacde33ac98ea4bc6d5590549287df6e26c8b140491ec0c45da38": (
+        "6bec4158f5303f57a1b4996c6901e214bf126dff1755fa651a643659f4221144"
     ),
 }
 """Recipes making the same packages as an earlier one, by their hash, with the earliest one: their builds keep its

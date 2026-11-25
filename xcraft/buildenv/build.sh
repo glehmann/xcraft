@@ -8,16 +8,14 @@
 #   nocheck: --nocheck, for rpmbuild to skip %check, or nothing
 # It installs the build dependencies, including the dynamic ones, from the repository of the pinned upstream packages
 # on /pinned and the one of our builds only, then runs rpmbuild, with stdin from /dev/null like
-# koji and mock, so that interactive steps of a build don't wait forever, and without the network, like them too: the
-# build only uses what it is given.
+# koji and mock, so that interactive steps of a build don't wait forever, and without gaining privileges, so that sudo
+# cannot change the build root once recorded. The container has no network, but its loopback interface, like the
+# builds of koji and mock: the build only uses what it is given.
 # shellcheck shell=bash disable=SC2086 # $lock, $replace and $nocheck are lists of words
 : "${spec:?}" "${stage:?}" "${repo:?}" "${lock:?}" "${autorev?}" "${replace?}" "${nocheck?}"
 set -euo pipefail
 export CCACHE_DIR=/ccache PATH=/usr/lib64/ccache:$PATH
 spec=/build/SPECS/$spec
-offline() {
-    python3 /xcraft/offline.py "$@"
-}
 defines=(-D "_topdir /build")
 # a dynamic BuildRequires not pinned yet is not installed: xcraft pins it, and builds again
 installed=(--disablerepo='*' --enablerepo=xcraft-pinned --enablerepo="$repo")
@@ -35,7 +33,7 @@ time {
     $lock dnf -y "${installed[@]}" builddep "${defines[@]}" "$spec"
     if grep -q '^%generate_buildrequires' "$spec"; then
         # rpmbuild -br exits with 11 while some dynamic BuildRequires are missing
-        while rc=0; offline rpmbuild -br "${defines[@]}" "$spec" </dev/null || rc=$?; [ $rc -eq 11 ]; do
+        while rc=0; setpriv --no-new-privs rpmbuild -br "${defines[@]}" "$spec" </dev/null || rc=$?; [ $rc -eq 11 ]; do
             # all the BuildRequires, the dynamic ones included, which xcraft records, even when they cannot be installed
             rpm -qp --requires /build/SRPMS/*.buildreqs.nosrc.rpm >/build/buildrequires.txt
             $lock dnf -y "${installed[@]}" builddep /build/SRPMS/*.buildreqs.nosrc.rpm
@@ -59,7 +57,7 @@ time {
         . "$profile"
     done
     set -eu -o pipefail
-    offline rpmbuild -b"$stage" $nocheck "${defines[@]}" "$spec" </dev/null
+    setpriv --no-new-privs rpmbuild -b"$stage" $nocheck "${defines[@]}" "$spec" </dev/null
     if [ "$stage" = a ]; then
         python3 /xcraft/made.py /build/made.json /build/RPMS
     fi

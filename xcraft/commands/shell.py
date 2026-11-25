@@ -38,7 +38,7 @@ def shell(
         typer.Option("--local", help="On this machine, rather than on the builder of the architecture, if any."),
     ] = False,
 ) -> None:
-    """Open a shell in the build tree of a package, where rpmbuild -ba SPECS/<spec> builds it, without the network.
+    """Open a shell in the build tree of a package, where rpmbuild -ba SPECS/<spec> builds it, with the network.
 
     Its build dependencies are installed, and its sources prepared. The build tree is .xcraft/build/<package>/ on the
     host, where its files can be edited, and its packages are. sudo dnf install installs the other pinned upstream

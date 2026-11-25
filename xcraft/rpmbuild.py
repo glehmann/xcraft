@@ -131,8 +131,8 @@ def run_build(
     of the build, %autorev: its number, and its development build suffix, if any. With `nocheck`, rpmbuild skips
     %check. With `fast`, for the development builds, the binary packages are compressed with zstd at level 3 rather
     than 19: their packaging takes a third of the time, for packages a third bigger, and dune has its cache, see
-    DUNE_CACHE. The container has no network, but with `network`, for the shell, whose rpmbuild has none still, see
-    offline.py, but under emulation. The output goes to `log`, or to an interactive terminal without log.
+    DUNE_CACHE. The container has no network but its loopback interface, but with `network`, for the shell, whose
+    rpmbuild has it too. The output goes to `log`, or to an interactive terminal without log.
     """
     parameters = {
         "spec": main_spec(project.package_dirs[name]).name,
@@ -197,7 +197,7 @@ def shell(project: Project, name: str) -> None:
     rows = [("build tree", f"{tree}, on the host", "bold"), ("to build", f"rpmbuild -ba SPECS/{spec}", "cyan")]
     after = (
         "echo '%_topdir /build' > ~/.rpmmacros"
-        """ && echo 'alias rpmbuild="python3 /xcraft/offline.py rpmbuild"' >> ~/.bashrc && cd /build"""
+        " && cd /build"
         ' && dim= bold= cyan= off= && if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then'
         " dim=$'\\e[2m' bold=$'\\e[0;1m' cyan=$'\\e[0;1;36m' off=$'\\e[0m'; fi"
         + "".join(

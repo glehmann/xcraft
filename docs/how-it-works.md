@@ -24,9 +24,8 @@ and the packages builds expect, with those xcraft uses, in their locked versions
 built again when the configuration or the locked versions of its packages change.
 
 **Builds.** Each build runs in a fresh container: `dnf builddep`, then the dynamic `BuildRequires` if any, then
-`rpmbuild`, with stdin from `/dev/null`, and without the network, like koji and mock: only the loopback interface,
-in a container without the network either, as the build dependencies come from the repository of the pins, and
-without gaining privileges, so that `sudo` cannot change the build root once recorded. It runs against a local repository of what was built here, with a priority
+`rpmbuild`, with stdin from `/dev/null`, and without the network, like koji and mock: in a container with only the
+loopback interface, as the build dependencies come from the repository of the pins, and without gaining privileges, so that `sudo` cannot change the build root once recorded. It runs against a local repository of what was built here, with a priority
 over the other repositories, so a package built locally always wins: one of its own, of the builds of its dependencies,
 as the packages independent of each other build at once, see [Builds at once](builds.md#builds-at-once). A build result is cached in
 `.xcraft/cache/builds/<fingerprint>/<arch>/<pkg>/<key>`, by its signer, under its [build key](builds.md#build-keys). A build whose log gets larger than 256 MiB,
