@@ -216,15 +216,15 @@ def should_publish_the_isos_of_emulated_architectures_made_natively_only(project
     assert not emulated.native
     for dev in (None, "dev"):
         with pytest.raises(RuntimeError, match=f"the ISOs of {emulated.arch} are made natively, not here"):
-            publish_command._check_emulated_isos([emulated], signer=None, dev=dev)
+            publish_command._check_emulated_isos([emulated], None, signer=None, dev=dev)
     # cached, like pushed and fetched, or, in dev mode, copied from the cache of the host which made them
     image = tmp_path / "test.iso"
     image.write_bytes(b"made natively")
     for netinstall, keep in itertools.product((False, True), (False, True)):
         cache_image(emulated, image, netinstall=netinstall, keep=keep)
     for dev in (None, "dev"):
-        publish_command._check_emulated_isos([emulated], signer=None, dev=dev)
+        publish_command._check_emulated_isos([emulated], None, signer=None, dev=dev)
         assert iso.fetch_isos(emulated, signer=None, dev=dev)
     # those of the host's architecture are made here, when missing
-    publish_command._check_emulated_isos([project], signer=None, dev=None)
+    publish_command._check_emulated_isos([project], None, signer=None, dev=None)
     assert not iso.fetch_isos(project, signer=None)

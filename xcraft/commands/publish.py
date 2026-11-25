@@ -17,7 +17,7 @@ from xcraft.build import update_build_ids
 from xcraft.cache import build_keys, cached_build, release_suffix
 from xcraft.commands import Key, To, choose_signer, complete_arch, prepared_project, remote_storage, sign_builds
 from xcraft.display import console
-from xcraft.iso import check_iso_config, fetch_isos, push_isos, snapshot_isos
+from xcraft.iso import check_iso_config, fetch_isos, push_isos, pushed_isos, snapshot_isos
 from xcraft.project import Destination, Project, Publish, Remote
 from xcraft.publish import ISO_DIR, REPO, snapshot, snapshot_tree
 from xcraft.resolution import ISO_ARCHES
@@ -168,12 +168,18 @@ def _write_summary(
     path.write_text("\n".join(lines) + "\n")
 
 
-def _check_emulated_isos(platforms: list[Project], *, signer: Signer | None, dev: str | None) -> None:
-    """Raise unless the ISOs of the `platforms` the host emulates are cached or in the remote storage: they are made
-    natively only, as the programs of their packages run to make them, like their builds.
+def _check_emulated_isos(
+    platforms: list[Project], storage: Remote | None, *, signer: Signer | None, dev: str | None
+) -> None:
+    """Raise unless the ISOs of the `platforms` the host emulates are in `storage`, if any, cached, or in the remote
+    storage: they are made natively only, as the programs of their packages run to make them, like their builds.
     """
     for platform in platforms:
-        if not platform.native and not fetch_isos(platform, signer=signer, dev=dev):
+        if (
+            not platform.native
+            and not (storage and dev is None and pushed_isos(platform, storage, signer=signer))
+            and not fetch_isos(platform, signer=signer, dev=dev)
+        ):
             msg = (
                 f"the ISOs of {platform.arch} are made natively, not here: xcraft iso --arch {platform.arch}, with and "
                 f"without --netinstall, on a host of the architecture, then xcraft push isos, or its "
@@ -255,7 +261,9 @@ def _publish(  # noqa: C901, PLR0912, PLR0915
     with_isos = _iso_platforms(project, platforms, only)
     with project.lock():
         update_build_ids(project)  # the final builds are numbered by them
-        _check_emulated_isos(with_isos, signer=signer, dev=dev)  # before the snapshot, long to make for nothing
+        _check_emulated_isos(
+            with_isos, storage, signer=signer, dev=dev
+        )  # before the snapshot, long to make for nothing
         # of ctx.params, which typer does not convert
         dest = (Path(output) if output else project.state / "publish").absolute()
         build = only != "isos" and project.config.publish.build
@@ -271,7 +279,14 @@ def _publish(  # noqa: C901, PLR0912, PLR0915
         if storage and output is not None:  # all of it, in the directory asked
             for repo in sorted({path.rsplit("/", 1)[0] for path in stored}):
                 publisher.materialize(storage, dest, stored, repo)
+        # those pushed, signed, copied in the storage rather than downloaded, by their keys, once the snapshot is made
+        pushed = {p.arch: pushed_isos(p, storage, signer=signer) for p in with_isos} if storage and dev is None else {}
         for platform in with_isos:
+            if pushed.get(platform.arch):
+                console.print(
+                    f"[bold green]✓[/] the ISOs of {platform.arch}, pushed: {', '.join(sorted(pushed[platform.arch]))}"
+                )
+                continue
             console.print(f"getting the ISOs for {platform.arch}")
             # made from its packages, unless made already
             if storage and stored and not fetch_isos(platform, signer=signer, dev=dev):
@@ -285,7 +300,9 @@ def _publish(  # noqa: C901, PLR0912, PLR0915
                 file: source
                 for platform in with_isos
                 if dev is None  # those of the checkout: of final builds
-                for file, source in push_isos(platform, uploader.storage, signer=signer).items()
+                for file, source in (
+                    pushed.get(platform.arch) or push_isos(platform, uploader.storage, signer=signer)
+                ).items()
             }
             name = uploader.snapshot_name()
             if only != "isos":
@@ -298,7 +315,9 @@ def _publish(  # noqa: C901, PLR0912, PLR0915
                     Path(summary),
                     project,
                     [] if only == "isos" else built,
-                    [f.name for f in (dest / ISO_DIR).glob("*.iso")] if with_isos else [],
+                    sorted({f.name for f in (dest / ISO_DIR).glob("*.iso")} | {f for f in isos if f.endswith(".iso")})
+                    if with_isos
+                    else [],
                     uploader.storage,
                     name,
                 )

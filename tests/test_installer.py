@@ -14,6 +14,8 @@ from pathlib import Path
 import pytest
 
 from tests import ARCH, TOML, commit_base, git, xcraft
+from xcraft.project import Project
+from xcraft.signing import dev_signer, signed_by
 
 pytestmark = [
     pytest.mark.skipif(ARCH != "x86_64_v2", reason="the ISOs are for x86_64"),
@@ -35,6 +37,10 @@ def made_iso(root: Path) -> Path:
     """Make the ISO of the checkout, signed by the developer's key, and return it."""
     code, output = xcraft("iso", "--output", str(root / "toy.iso"))
     assert code == 0, output
+    # signed once made, with its detached signature next to it
+    signer = dev_signer(Project.find())
+    assert signer
+    assert signed_by(signer.public_key(), signer.key, root / "toy.iso", root / "toy.iso.asc")
     return root / "toy.iso"
 
 

@@ -116,9 +116,11 @@ end.
   isos`, are taken rather than made from the snapshot. Those of the architectures the host emulates are only taken,
   never made, as the programs of their packages run to make them: CI makes them on the host of each architecture,
   once built, and pushes them, or, in dev mode, hands their cache over, `.xcraft/cache/isos/<arch>/`, to the host
-  publishing. They are signed like the snapshot: their repository,
-  and their files, with a detached signature. Their checksums are in `SHA256SUMS`, as `sha256sum` writes them, with
-  its detached signature, so that `sha256sum -c SHA256SUMS` checks a download.
+  publishing. They are signed like the snapshot: their repository, and their files, with a detached signature made
+  once with them, by the key their key covers, cached and pushed with them, the same in all the publications, like
+  the signatures of the builds. Those pushed are copied in the storage with their signatures, without downloading
+  them. Their checksums are in `SHA256SUMS`, as `sha256sum` writes them, with its detached signature, so that
+  `sha256sum -c SHA256SUMS` checks a download.
 - All snapshots are kept. The storage stores identical files once: our packages are copies of the pushed builds, and
   the upstream ones and the sources of the previous snapshot, so a snapshot only costs what changed.
 

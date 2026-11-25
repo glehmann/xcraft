@@ -538,15 +538,19 @@ class Uploader:
         return stored
 
     def upload_isos(self, src: Path, name: str, *, stored: dict[str, Stored] | None = None) -> None:
-        """Upload the ISOs of the snapshot in `src`, in ISO_DIR, of all the architectures, as `name`, with their
-        checksums, in SHA256SUMS, signed by `signer`, if any, and make them the latest ones.
+        """Upload the ISOs of the snapshot in `src`, in ISO_DIR, of all the architectures, as `name`, and those of
+        `stored`, copied in the storage, with their checksums, in SHA256SUMS, signed by `signer`, if any, and make them
+        the latest ones.
         """
         isos = src / ISO_DIR
+        isos.mkdir(parents=True, exist_ok=True)
+        digests = {f: s.digest for f, s in (stored or {}).items() if f.endswith(".iso")}
+        digests |= {iso.name: sha256_of(iso) for iso in isos.glob("*.iso")}
         sums = isos / SUMS
-        sums.write_text("".join(f"{sha256_of(iso)}  {iso.name}\n" for iso in sorted(isos.glob("*.iso"))))
+        sums.write_text("".join(f"{digest}  {iso}\n" for iso, digest in sorted(digests.items())))
         if self.signer:
             self.signer.sign_file(sums)
-        made = [iso.name for iso in isos.glob("*.iso")]
+        made = list(digests)
         inputs = {
             name: key
             for p in self.project.all_platforms()

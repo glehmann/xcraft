@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import time
 import urllib.request
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
@@ -27,6 +28,7 @@ from tests import (
     TOYS,
     WEB,
     WEB_PORT,
+    cache_image,
     commit_base,
     edit,
     garage,
@@ -52,11 +54,19 @@ from xcraft import (
 )
 from xcraft import publish as publisher
 from xcraft.cache import BuildError
-from xcraft.iso import iso_name, push_isos
+from xcraft.iso import iso_name, push_isos, pushed_isos
 from xcraft.lock import Pin, load_lock
 from xcraft.project import Project, Remote, Retention
 from xcraft.resolution import resolve_image
-from xcraft.signing import KEY_FILE, check_signatures, create_dev_key, dev_signer, key_signer, release_signer
+from xcraft.signing import (
+    KEY_FILE,
+    check_signatures,
+    create_dev_key,
+    dev_signer,
+    key_signer,
+    release_signer,
+    signed_by,
+)
 from xcraft.sources import sha256_of
 
 ARCHES = {"x86_64_v2": {PLATFORM: ARCH, "linux/amd64": "x86_64"}}.get(ARCH, {PLATFORM: ARCH})
@@ -761,6 +771,48 @@ def should_mirror_the_latest_snapshot_of_a_stage(root: Path, tmp_path: Path, mon
     with pytest.raises(BuildError, match="was published again while it was copied"):
         mirror.mirrored(project, storage, tmp_path / "raced", key_signer(project))
     assert not list((tmp_path / "raced" / latest).parent.iterdir())
+
+
+def should_publish_pushed_isos_and_their_signatures_by_copy_without_downloading_them(
+    root: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # signed once made, like by the build jobs of CI, which push them for the publication
+    project = Project.find()
+    signer = release_signer(project)
+    assert signer
+    images = {}
+    for netinstall in (False, True):
+        images[netinstall] = tmp_path / f"test-{netinstall}.iso"
+        images[netinstall].write_bytes(secrets.token_bytes(2048))
+        signer.sign_file(cache_image(project, images[netinstall], signer=signer, netinstall=netinstall) / "image.iso")
+    code, output = xcraft("push", "isos")
+    assert code == 0, output
+    assert "2 ISOs pushed" in output
+    storage = project.config.remote["dev"]
+    pushed = pushed_isos(project, storage, signer=signer)
+    names = {netinstall: iso_name(project, netinstall=netinstall, signer=signer) for netinstall in (False, True)}
+    assert pushed.keys() == {*names.values(), *(f"{name}.asc" for name in names.values())}
+    # none of them in the snapshot, copied in the storage, and listed in its checksums
+    snapshot = tmp_path / "snapshot"
+    project.config.publish.stage = f"pushed-{secrets.token_hex(4)}"
+    with caplog.at_level(logging.DEBUG, logger="xcraft"):
+        upload.Uploader(project, storage, signer, build=False).upload_isos(snapshot, "pushed", stored=pushed)
+    assert not any(m.startswith("uploading ") and ".iso" in m for m in caplog.messages)
+    tree = f"isos/9.0/{project.config.publish.stage}/pushed"
+    manifest = remote.read_manifest(storage, tree, trusted=signer)
+    assert {*pushed, upload.SUMS, f"{upload.SUMS}.asc"} <= manifest.keys()
+    sums = tmp_path / upload.SUMS
+    assert remote.download(storage, f"{tree}/{upload.SUMS}", sums)
+    # by file name
+    expected = [f"{sha256_of(images[n])}  {names[n]}" for n in sorted((False, True), key=lambda n: names[n])]
+    assert sums.read_text().splitlines() == expected
+    for netinstall in (False, True):
+        iso, signature = tmp_path / names[netinstall], tmp_path / f"{names[netinstall]}.asc"
+        assert remote.download(storage, f"{tree}/{iso.name}", iso)
+        assert remote.download(storage, f"{tree}/{signature.name}", signature)
+        assert signed_by(signer.public_key(), signer.key, iso, signature)
+    # not when one of them is missing
+    assert not pushed_isos(replace(project, platform="linux/amd64"), storage, signer=signer)
 
 
 def should_publish_the_inputs_of_netinstall_isos_without_the_others(root: Path, tmp_path: Path) -> None:

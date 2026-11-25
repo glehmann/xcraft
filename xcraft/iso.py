@@ -42,6 +42,10 @@ def install_tools(arch: str) -> str:
     )
 
 
+SIGNATURE = "image.iso.asc"
+"""The detached signature of a cached ISO, by the key of its snapshot, made with it."""
+
+
 class Image(BaseModel):
     """A cached ISO: its SHA-256."""
 
@@ -208,6 +212,10 @@ def _copy_iso(
         or project.state / "iso" / iso_name(project, netinstall=netinstall, signer=signer, dev=dev, partial=partial)
     ).absolute()
     output.parent.mkdir(parents=True, exist_ok=True)
+    signature = output.with_name(f"{output.name}.asc")
+    signature.unlink(missing_ok=True)
+    if (tree / SIGNATURE).exists():
+        shutil.copy2(tree / SIGNATURE, signature)
     if output.exists() and (output.samefile(tree / "image.iso") or sha256_of(output) == image.sha256):
         return output
     with tempfile.TemporaryDirectory(dir=output.parent, prefix=".iso-") as tmp:
@@ -294,17 +302,54 @@ def push_isos(project: Project, storage: Remote, *, signer: Signer | None) -> di
         if remote.tree_exists(storage, path, trusted=trusted):
             present += 1
         else:
+            files = ["image.iso", "image.json", *([SIGNATURE] if (tree / SIGNATURE).exists() else [])]
             with activity("uploading the ISO", log=True):
-                remote.upload_tree(storage, path, tree, ["image.iso", "image.json"], signer=trusted)
+                remote.upload_tree(storage, path, tree, files, signer=trusted)
             remote_pages.update_pages(project, storage, [f"{path}/"])
             count += 1
         # as the manifest found or written has it, which may be of another machine's image
-        root, files = remote.read_tree(storage, path, trusted=trusted)
-        stored[iso_name(project, netinstall=netinstall, signer=signer)] = publish.Stored(
-            f"{root}/image.iso", files["image.iso"]
-        )
+        stored |= _stored(project, storage, path, netinstall=netinstall, signer=signer, trusted=trusted)
     console.print(f"{count} ISOs pushed, {present} already in the remote storage")
     return stored
+
+
+def _stored(
+    project: Project, storage: Remote, path: str, *, netinstall: bool, signer: Signer | None, trusted: Signer | None
+) -> dict[str, publish.Stored]:
+    """Return the ISO of the tree `path` of `storage` and its signature, if any, as the manifest found has them, which
+    may be of another machine's image, by their file names in a snapshot.
+    """
+    root, files = remote.read_tree(storage, path, trusted=trusted)
+    name = iso_name(project, netinstall=netinstall, signer=signer)
+    stored = {name: publish.Stored(f"{root}/image.iso", files["image.iso"])}
+    if SIGNATURE in files:
+        stored[f"{name}.asc"] = publish.Stored(f"{root}/{SIGNATURE}", files[SIGNATURE])
+    return stored
+
+
+def pushed_isos(project: Project, storage: Remote, *, signer: Signer | None) -> dict[str, publish.Stored]:
+    """Return the full and netinstall ISOs of a snapshot of the checkout in final mode, see snapshot_iso_keys(), with
+    their signatures, if `storage` has them all, pushed by xcraft push isos, for a publication to copy them there
+    rather than download them, by file name; none otherwise.
+    """
+    trusted = signer or key_signer(project)
+    paths = {
+        n: iso_path(project, key)
+        for n, key in zip((False, True), snapshot_iso_keys(project, signer=signer, dev=None), strict=True)
+    }
+    try:
+        with activity("looking for the ISOs in the remote storage"):
+            if not all(remote.tree_exists(storage, path, trusted=trusted) for path in paths.values()):
+                return {}
+            return {
+                f: stored
+                for netinstall, path in paths.items()
+                for f, stored in _stored(
+                    project, storage, path, netinstall=netinstall, signer=signer, trusted=trusted
+                ).items()
+            }
+    except remote.RemoteError:
+        return {}
 
 
 def _check_installed_tools(project: Project, recorded: Path) -> None:
@@ -446,6 +491,8 @@ def _snapshot_iso(
             staged.mkdir()
             shutil.move(made, staged / "image.iso")
             (staged / "image.json").write_text(Image(sha256=sha256_of(staged / "image.iso")).model_dump_json())
+            if signer:  # once, like the builds, as a signature has a date: the same one in all the publications
+                signer.sign_file(staged / "image.iso")
             tree.parent.mkdir(parents=True, exist_ok=True)
             if not tree.exists():
                 staged.rename(tree)
@@ -462,8 +509,8 @@ def snapshot_isos(
     dev: str | None = None,
 ) -> list[Path]:
     """Make the full and netinstall ISOs of `snapshot`, its binaries for the architecture, made of `checkout`, in
-    `dest`, with their detached signatures by `signer`, if any, and return them: of dev mode with the development
-    builds `dev`, keeping the signatures of our builds.
+    `dest`, with their detached signatures by `signer`, if any, made with them, and return them: of dev mode with the
+    development builds `dev`, keeping the signatures of our builds.
 
     `dest` is the directory of the ISOs of all the architectures.
     """
@@ -482,8 +529,8 @@ def snapshot_isos(
             keep=dev is not None,
         )
         isos.append(Path(shutil.move(iso, dest / iso.name)))
-        if signer:
-            signer.sign_file(isos[-1])
+        if (signature := iso.with_name(f"{iso.name}.asc")).exists():
+            shutil.move(signature, dest / signature.name)
     return isos
 
 
