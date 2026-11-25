@@ -187,17 +187,23 @@ def fetch_build(project: Project, name: str, key: str) -> bool:
 
 
 def differences(project: Project, name: str, key: str, other: str) -> list[str]:
-    """Return how the cached builds of `name` with the keys `key` and `other` differ, see buildenv/same.py, nothing
-    when they are the same: compared in the image of the host, as they do not depend on the architecture.
-    """
+    """Return how the cached builds of `name` with the keys `key` and `other` differ, see compare()."""
     builds = cached_build(project, name, key), cached_build(project, name, other)
+    return compare(project, name, (builds[0], release_suffix(key)), (builds[1], release_suffix(other)))
+
+
+def compare(project: Project, name: str, build: tuple[Path, str], other: tuple[Path, str]) -> list[str]:
+    """Return how the builds of `name` in the directories of `build` and `other`, each with its release suffix, differ,
+    see buildenv/same.py, nothing when they are the same: compared in the image of the host, as they do not depend on
+    the architecture.
+    """
     with project.tmp_dir("same") as work:
         container.run(
             project.on_host(),
             "same",
-            f"python3 /xcraft/same.py /work/same.json /a {release_suffix(key)} /b {release_suffix(other)}",
-            volumes=[f"{builds[0]}:/a:ro", f"{builds[1]}:/b:ro", f"{work}:/work"],
-            show=f"comparing {name} to its build {release_suffix(other)}",
+            f"python3 /xcraft/same.py /work/same.json /a {build[1]} /b {other[1]}",
+            volumes=[f"{build[0]}:/a:ro", f"{other[0]}:/b:ro", f"{work}:/work"],
+            show=f"comparing {name} to its build {other[1]}",
         )
         return json.loads((work / "same.json").read_text())
 

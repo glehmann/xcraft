@@ -128,6 +128,18 @@ do, to commit. With `--no-reuse`, they do not either: the rebuilds keep their ow
 when the main branch lacks the builds of an architecture, being added, which would otherwise have nothing to take. That
 is not the norm, where all the packages build on all the architectures: a missing build is then a failure to fix.
 
+## Reproducible builds
+
+`xcraft reproduce` builds packages again, all by default, and checks that they are the same as their builds: made
+or fetched first, like `xcraft build` makes them. Each one is built again alone, with the same key and release,
+against the same builds of the packages it is built against, without its compiler caches, ccache's and dune's, nor
+anything fetched, then compared with its build as the reuses of the rebuilds compare them, see `buildenv/same.py`.
+`--with-caches` keeps the compiler caches, for a quick check of the rest, like the links and the packaging: what
+they cache is the same by construction, copied from them, the compilations whose determinism a cache relies on.
+Its build stays; the rebuild is dropped, or kept in `.xcraft/reproduce/<package>/again` when it differs, which fails.
+On the builder of the architecture, if any, unless `--local`, like `xcraft build`. What makes builds differ, and
+how xcp-ng-dist's are made the same, is in [identical-rebuilds-design.md](identical-rebuilds-design.md).
+
 ## Maintenance branches
 
 A fix of a release, like a security fix under embargo, is made on a maintenance branch, of the patterns of

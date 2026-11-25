@@ -84,7 +84,7 @@ def signed_build_dir(project: Project, fingerprint: str, name: str, key: str) ->
     return project.state / "cache/builds" / fingerprint / project.arch / name / key
 
 
-def _cached_builds(project: Project, name: str, key: str = "*") -> list[Path]:
+def cached_builds(project: Project, name: str, key: str = "*") -> list[Path]:
     """Return the cached builds of `name` with `key`, or all of them, whatever their signers, in progress included."""
     return sorted(project.state.glob(f"cache/builds/*/{project.arch}/{glob.escape(name)}/{key}"))
 
@@ -94,7 +94,7 @@ def cached_build(project: Project, name: str, key: str) -> Path:
     which the builds use as well, or where the command caches it, when none is.
     """
     own = signed_build_dir(project, project.signer.key if project.signer else "none", name, key)
-    return own if own.exists() else next(iter(_cached_builds(project, name, key)), own)
+    return own if own.exists() else next(iter(cached_builds(project, name, key)), own)
 
 
 def signed_build(project: Project, name: str, key: str, signer: Signer) -> Path:
@@ -135,7 +135,7 @@ def latest_build(project: Project, name: str, evr: str) -> str | None:
     prefix = f"{name}-{evr.rsplit(':', maxsplit=1)[-1]}"
     builds = [
         build
-        for build in _cached_builds(project, name)
+        for build in cached_builds(project, name)
         if not build.name.startswith(".")
         and any(p.name.startswith((f"{prefix}+", f"{prefix}.")) for p in build.glob("SRPMS/*.src.rpm"))
     ]
@@ -146,7 +146,7 @@ def has_normal_build(project: Project, name: str) -> bool:
     """Return whether `name` has a cached build, of any version, besides the development builds."""
     # not a build in progress, nor a development one
     return any(
-        not build.name.startswith(".") and not (build / "autorev").exists() for build in _cached_builds(project, name)
+        not build.name.startswith(".") and not (build / "autorev").exists() for build in cached_builds(project, name)
     )
 
 
@@ -195,7 +195,7 @@ before it was have none."""
 def previous_duration(project: Project, name: str) -> float | None:
     """Return how long the last cached build of `name` took, if any."""
     builds = sorted(
-        (b / "build.log" for b in _cached_builds(project, name) if (b / "build.log").exists()),
+        (b / "build.log" for b in cached_builds(project, name) if (b / "build.log").exists()),
         key=lambda log: log.stat().st_mtime,
     )
     for log in reversed(builds):

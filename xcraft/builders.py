@@ -381,6 +381,18 @@ def iso(project: Project, name: str, args: list[str], key: Callable[[], str]) ->
     return code
 
 
+def reproduce(project: Project, name: str, args: list[str]) -> int:
+    """Build packages again with xcraft reproduce and its `args` on the builder `name` of the architecture of
+    `project`, from a copy of the checkout, see _copied(), and return its exit code: copy back the builds it made
+    first, see _copy_back(), not the rebuilds, which stay there.
+    """
+    with _copied(project, name) as copy:
+        logs_there = _started(copy)
+        code = copy.run("reproduce", *args)
+        _copy_back(project, name, copy, logs_there)
+    return code
+
+
 def shell(project: Project, name: str, package: str) -> int:
     """Open xcraft shell for `package` on the builder `name` of the architecture of `project`, in a copy of the
     checkout, see _copied(), and return its exit code: its build tree is the one of the builder, which keeps it.
