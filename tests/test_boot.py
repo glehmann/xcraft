@@ -282,11 +282,11 @@ def should_boot_aarch64_vms_on_the_virt_machine_with_uefi(tmp_path: Path) -> Non
         path.touch()
     launch = vm.Launch(name="test", memory=512, cpus=1, accel="tcg", ovmf=firmware, qemu_args=[], arch="aarch64")
     cmd = vm.qemu_command(tmp_path, launch, disk=tmp_path / "disk", iso=tmp_path / "iso", ssh_port=2222, headless=True)
-    # EL2 for Xen, the core of the Ampere Altra, virtio, the machine having no IDE, the ISO first
+    # EL2 for Xen, the core of the Ampere Altra, virtio, the machine having no IDE, the disk sda, the ISO first
     assert cmd[:2] == ["qemu-system-aarch64", "-name"]
     assert cmd[cmd.index("-machine") + 1] == "virt,virtualization=on,gic-version=3"
     assert cmd[cmd.index("-cpu") + 1] == "neoverse-n1"
-    assert "virtio-blk-pci,drive=disk,bootindex=1" in cmd
+    assert "scsi-hd,drive=disk,bus=scsi.0,bootindex=1" in cmd
     assert "scsi-cd,drive=cdrom,bus=scsi.0,bootindex=0" in cmd
     assert cmd[cmd.index("-nic") + 1].startswith("user,model=virtio-net-pci,hostfwd=")
     assert "pvpanic-pci" in cmd

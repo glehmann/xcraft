@@ -364,13 +364,14 @@ def qemu_command(
         network += ",guestfwd=tcp:10.0.2.100:80-cmd:cat " + shlex.quote(str(answer)).replace(",", ",,")
     if arm:
         # Xen runs at EL2, which the virtualization of the virt machine gives the guest; virtio, the machine having
-        # no IDE, the display of the firmware, which Linux keeps with efifb, and USB for the keyboard
+        # no IDE, the disks on SCSI, sda like on x86 for the answer files, the display of the firmware, which Linux
+        # keeps with efifb, and USB for the keyboard
         machine = [
-            "-machine", "virt,virtualization=on,gic-version=3",
+            "-machine", "virt,virtualization=on,gic-version=3", "-device", "virtio-scsi-pci,id=scsi",
             "-device", "virtio-gpu-pci,xres=1024,yres=768",
             "-device", "qemu-xhci", "-device", "usb-kbd", "-device", "usb-tablet",
         ]  # fmt: skip
-        hd, panic = "virtio-blk-pci,drive=disk", "pvpanic-pci"
+        hd, panic = "scsi-hd,drive=disk,bus=scsi.0", "pvpanic-pci"
     else:
         # OVMF exposes modes that fit in VRAM; limit it so the installer cannot select a huge framebuffer.
         machine = [
@@ -406,7 +407,7 @@ def qemu_command(
     if iso:
         # first in the boot order, which UEFI follows too, rather than the boot entry an installation adds to the
         # firmware variables, where -boot order=d is only for the BIOS
-        cd = ["-device", "virtio-scsi-pci,id=scsi", "-device", "scsi-cd,drive=cdrom,bus=scsi.0"] if arm else [
+        cd = ["-device", "scsi-cd,drive=cdrom,bus=scsi.0"] if arm else [
             "-device", "ide-cd,drive=cdrom,bus=ide.2",
         ]  # fmt: skip
         cd[-1] += ",bootindex=0"
