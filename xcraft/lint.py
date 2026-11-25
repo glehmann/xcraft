@@ -48,10 +48,11 @@ def binaries(rpms: Path) -> list[Path]:
 
 
 _CONFIG = r"""ReleaseExtension = '\+b\d.*$'
+Checks = ["BuildDirectoryCheck"]
 """
 """The configuration of all the projects: the latest changelog entry compared with the version-release of the packages
 without what %{autorev}, the release suffix of their builds, starts: the changelogs do not have it, nor the dist tag
-after it.
+after it; and xcraft's checks, in the lint image, see container.RPMLINT_CHECKS, added to rpmlint's.
 """
 
 _FILTERS = 'addFilter(": E: unknown-key ")\n'

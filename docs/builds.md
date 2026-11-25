@@ -320,6 +320,13 @@ It runs in the lint image, the build environment image with rpmlint, of the vers
 [lock-design.md](lock-design.md), and the static binary of rpmls, pinned by xcraft, see below, natively, for all the architectures: what it finds in the binary packages does not
 depend on theirs. The specs are parsed for the host's.
 
+xcraft adds its own checks to rpmlint's, in `xcraft/rpmlint/`, installed in the lint image:
+
+- `versioned-build-directory`, an error: the sources unpacked in a directory named after their version, at the
+  `%setup` or `%autosetup` setting it. The compiler cache hashes the working directory of the compilers, with `-g`,
+  and the paths of their command lines: a new version compiles everything again. `-n %{name} -C` unpacks them in a
+  directory without the version, whatever the top directory of their archive.
+
 Its configuration is in `lint/`, out of the package directories, which stay as imported:
 
 - `lint/rpmlint.toml`, for all the packages, over Fedora's, like the checks to disable, or other filters, but

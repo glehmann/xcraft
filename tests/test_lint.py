@@ -51,6 +51,19 @@ def should_report_the_errors_of_the_specs(root: Path) -> None:
     assert "not in the directory of a package" in output
 
 
+def should_report_the_build_directories_named_after_the_version(root: Path) -> None:
+    # which the compiler cache does not find again with the next version, at the %setup setting it
+    spec = root / "base/trivial/trivial.spec"
+    replace(spec, "rm -rf %{name}-%{version}\nmkdir %{name}-%{version}", "%setup -q -c -T")
+    code, output = xcraft("lint", "--spec", str(spec))
+    assert code == 1, output
+    assert f"{spec}:12: E: versioned-build-directory trivial-1.0" in output
+    replace(spec, "%setup -q -c -T", "%setup -q -c -T -n %{name}")
+    code, output = xcraft("lint", "--spec", str(spec))
+    assert code == 0, output
+    assert "versioned-build-directory" not in output
+
+
 def should_fail_final_builds_when_the_spec_has_errors(root: Path) -> None:
     _spec_error(root)
     # shown before the development builds, which go on

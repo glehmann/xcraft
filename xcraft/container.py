@@ -69,6 +69,10 @@ SIDE_IMAGES = {"sign": ["rpm-sign", "gnupg2"], "lint": ["rpmlint"]}
 """The packages of the side images, by kind, over the build environment image: the signing image, with rpmsign and
 gpg, and the lint image, with rpmlint and Fedora's configuration of it."""
 
+RPMLINT_CHECKS = Path(__file__).parent / "rpmlint"
+"""xcraft's checks of rpmlint, a module and its descriptions each, installed in the lint image among rpmlint's own, as
+it imports them from its package; out of BUILDENV, not to change the build environment image, nor the cache keys."""
+
 
 class Tool(NamedTuple):
     """A static binary, at the top of a .tar.gz archive, pinned by the SHA-256 of the archive."""
@@ -586,10 +590,15 @@ def _side_tag(project: Project, kind: str) -> str:
     """Return the tag of the side image `kind` of the platform: of its build environment image, and of its pins."""
     pins = sorted(f"{name} {pin.text()}" for name, pin in _side_pins(project, kind).items())
     tools = sorted(f"{name} {tool.sha256}" for name, tool in _tools(kind).items())
-    digest = hashlib.sha256(json.dumps([image_tag(project), pins, *([tools] if tools else [])]).encode()).hexdigest()[
-        :16
-    ]
+    checks = sorted(f"{path.name} {sha256_of(path)}" for path in _side_files(kind))
+    extra = [*([tools] if tools else []), *([checks] if checks else [])]
+    digest = hashlib.sha256(json.dumps([image_tag(project), pins, *extra]).encode()).hexdigest()[:16]
     return f"{side_name(kind)}:{digest}"
+
+
+def _side_files(kind: str) -> list[Path]:
+    """Return the files of xcraft installed in the side image `kind`: the checks of rpmlint in the lint image."""
+    return sorted(p for p in RPMLINT_CHECKS.iterdir() if p.suffix in (".py", ".toml")) if kind == "lint" else []
 
 
 def side_image(project: Project, kind: str) -> str:
@@ -598,17 +607,24 @@ def side_image(project: Project, kind: str) -> str:
 
     It is apart from the build environment image, so as not to change it, and the cache keys with it.
     """
-    base, tag, tools = built_image(project), _side_tag(project, kind), _tools(kind)
+    base, tag, tools, files = built_image(project), _side_tag(project, kind), _tools(kind), _side_files(kind)
     if not _exists(tag):
+        # rpmlint's checks in its package, their descriptions in its descriptions
+        install = (
+            "RUN d=$(python3 -c 'import os, rpmlint; print(os.path.dirname(rpmlint.__file__))')"
+            ' && mv /tmp/xcraft/*.py "$d/checks/" && mv /tmp/xcraft/*.toml "$d/descriptions/"\n'
+        )
         containerfile = (
             f"FROM {base}\nUSER root\n"
             f"RUN dnf -y --disablerepo='*' --enablerepo={pinned.REPO_ID} --setopt=install_weak_deps=False install"
             f" {' '.join(SIDE_IMAGES[kind])} && dnf clean all\n"
             + (f"COPY {' '.join(tools)} /usr/local/bin/\n" if tools else "")
+            + (f"COPY {' '.join(p.name for p in files)} /tmp/xcraft/\n{install}" if files else "")
             + "USER builder\n"
         )
         _podman_build(
-            project, f"{kind}-image", tag, {"Containerfile": containerfile}, {}, show=f"the {kind} image",
+            project, f"{kind}-image", tag,
+            {"Containerfile": containerfile} | {p.name: p.read_text() for p in files}, {}, show=f"the {kind} image",
             pinned=pinned.repository(project, _side_pins(project, kind)), tools=tools,
         )  # fmt: skip
     return tag

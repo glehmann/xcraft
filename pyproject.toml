@@ -37,7 +37,7 @@ package = true
 include = ["xcraft*"]
 
 [tool.setuptools.package-data]
-xcraft = ["buildenv/*"]
+xcraft = ["buildenv/*", "rpmlint/*"]
 
 [tool.typos.files]
 # the specs of the test project
@@ -90,6 +90,10 @@ ignore = [
 ]
 # a script run in the build environment, not a module
 "xcraft/buildenv/*" = [
+    "INP001",  # implicit-namespace-package
+]
+# a check of rpmlint, installed among its own in the lint image, not a module of xcraft
+"xcraft/rpmlint/*" = [
     "INP001",  # implicit-namespace-package
 ]
 "tests/**" = [

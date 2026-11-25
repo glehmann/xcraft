@@ -1,0 +1,7 @@
+versioned-build-directory="""
+The sources are unpacked in a directory named after their version: a new version
+compiles everything again, as the compiler cache hashes the working directory of
+the compilers and the paths of their command lines. Unpack them in a directory
+without the version, whatever the top directory of their archive, with
+%setup -n %{name} -C, or %autosetup -n %{name} -C.
+"""
