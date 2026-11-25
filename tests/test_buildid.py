@@ -126,10 +126,12 @@ def should_change_nothing_with_xcraft_status(root: Path) -> None:
         code, shown = xcraft("status", "--full")
     assert code == 0, shown
     assert {path: path.read_text() for path in files} == files
-    # with the keys it gets then
-    assert xcraft("build", "--dry-run")[0] == 0
+    # but tells how to save them, with the keys it gets then
+    hinted = "hint: xcraft build --ids saves the changes of xcraft.lock\n"
+    assert shown.endswith(hinted)
+    assert xcraft("build", "--ids")[0] == 0
     assert "bc" in load_lock(Project.find()).binaries[ARCH]
-    assert xcraft("status", "--full") == (0, shown)
+    assert xcraft("status", "--full") == (0, shown.removesuffix(hinted))
 
 
 def should_show_the_inputs_of_the_build_keys(root: Path) -> None:

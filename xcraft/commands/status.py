@@ -17,7 +17,7 @@ from xcraft.cache import cached_build, has_normal_build, release_suffix
 from xcraft.commands import Arch, Dev, Final, Packages, dev_ident, prepared_project
 from xcraft.container import image_tag
 from xcraft.devbuilds import dev_keys
-from xcraft.display import console, messages, print_wide
+from xcraft.display import console, hint, messages, print_wide
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -156,7 +156,7 @@ def status(
     versions are), and missing.
 
     It changes nothing of the project: the locks are updated in memory only, for the right build keys, and saved by the
-    next command changing the project, which may run meanwhile.
+    next command changing the project, which may run meanwhile, like xcraft build --ids, which a hint gives then.
     """
     ident = dev_ident(ctx, dev, final=final)
     project = prepared_project(packages, arch=arch, readonly=True)
@@ -191,3 +191,11 @@ def status(
     if table.row_count:
         print_wide(table)
     console.print(", ".join(f"[{_STYLES[state]}]{states[state]} {state}[/]" for state in _STYLES if states[state]))
+    if changed := sorted(
+        path.name for path, text in project.written.items() if not path.exists() or text != path.read_text()
+    ):
+        hint(
+            "",
+            f"xcraft build --ids{f' --arch {arch}' if arch else ''}",
+            f" saves the changes of {' and '.join(changed)}",
+        )
