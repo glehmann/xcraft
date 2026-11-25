@@ -234,6 +234,22 @@ def should_build_without_network_privileges_or_broken_pipes(root: Path) -> None:
     assert '"no new privileges" flag is set' in log
 
 
+def should_install_the_upstream_packages_not_pinned_from_the_shell(root: Path) -> None:
+    # typed in the shell: toyarch, of the upstream repository of the toys, is in no build root, so not pinned
+    typed = root / "typed"
+    typed.write_text("sudo dnf -q -y --enablerepo='*' install toyarch && rpm -q toyarch > /build/installed\nexit\n")
+    stdin = os.dup(0)
+    with typed.open() as commands:
+        os.dup2(commands.fileno(), 0)
+        try:
+            code, output = xcraft("shell", "trivial", "--local")
+        finally:
+            os.dup2(stdin, 0)
+            os.close(stdin)
+    assert code == 0, output
+    assert (root / ".xcraft/build/trivial/installed").read_text().startswith("toyarch-")
+
+
 def should_parse_and_build_the_specs_without_the_macros_undefined(root: Path) -> None:
     config = root / "xcraft.toml"
     config.write_text(config.read_text().replace('xenserver = "9"\n', 'xenserver = "9"\n_unique_build_ids = false\n'))

@@ -149,7 +149,7 @@ def _shared_resolutions(kept: Path, session: Path) -> Callable[..., Resolved]:
 
     @functools.wraps(run)
     def shared(project: Project, data: dict, *, show: str, rpms: Sequence[Path] = (), quiet: bool = False) -> Resolved:
-        local = [Path(volume.split(":")[0]) / "repodata/repomd.xml" for volume in container._local_repos(project)]
+        local = [Path(volume.split(":")[0]) / "repodata/repomd.xml" for volume in container.local_repos(project)]
         inputs = [
             (BUILDENV / "resolve.py").read_text(), repo_file(project), upstream_copy.repo_file(project), project.arch,
             project.config.base_image, data, sorted(sha256_of(f) for f in [*rpms, *extra_rpms(project)]),

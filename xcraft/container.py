@@ -18,6 +18,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tarfile
 from contextlib import nullcontext
 from pathlib import Path
@@ -130,10 +131,11 @@ def _tail(log: Path) -> str:
     return ", which ends with:" + "".join(f"\n  {line}" for line in read_tail(log, 2**14)[-15:]) if log.exists() else ""
 
 
-def repo_file(project: Project) -> str:
-    """Return the definition of the repositories of the build environment of the platform."""
+def repo_file(project: Project, *, enabled: bool = True) -> str:
+    """Return the definition of the repositories of the build environment of the platform, disabled unless `enabled`."""
     return "".join(
         f"[{name}]\nname={name}\nbaseurl={repo.baseurl.format(arch=project.arch)}\n"
+        + ("" if enabled else "enabled=0\n")
         + (f"gpgcheck=1\ngpgkey={repo.gpgkey}\n" if repo.gpgcheck else "gpgcheck=0\n")
         + (f"includepkgs={' '.join(sorted(repo.includepkgs))}\n" if repo.includepkgs else "")
         # read again each time, when local, like those changed between two commands
@@ -147,7 +149,7 @@ def _with_host(project: Project) -> list[Project]:
     return [*project.all_platforms(), project.on_host()]
 
 
-def _local_repos(project: Project) -> list[str]:
+def local_repos(project: Project) -> list[str]:
     """Return the volumes of the repositories on this machine, and of their sources, of file:// URLs, at their paths
     in the containers, of all the platforms, and of the host's, whose image parses the specs.
     """
@@ -336,8 +338,8 @@ def run_container(
     The volumes are mounted with the scripts of the build environment, in
     /xcraft, the repository of the pinned packages with `install`, for the
     scripts installing packages, all of them downloaded first, and a volume keeping the dnf cache
-    between containers. The output goes to `log`, or to an interactive terminal
-    when there is no log, and `on_line` is called with each line written to the
+    between containers. The output goes to `log`, or else to the output of xcraft, with its input, through a terminal
+    when it is one, and `on_line` is called with each line written to the
     log. The container is stopped when interrupted, or when its log gets larger
     than MAX_LOG_SIZE.
     """
@@ -347,7 +349,9 @@ def run_container(
         # replacing a container of a killed xcraft
         "podman", "run", "--rm", "--replace", "--name", container, "--platform", project.platform,
         "--userns=keep-id:uid=1000,gid=1000", "--security-opt", "label=disable",
-        *([] if network else ["--network", "none"]), *(["--interactive", "--tty"] if log is None else []),
+        *([] if network else ["--network", "none"]),
+        # a terminal for a terminal only: the end of commands given otherwise ends the shell
+        *(["--interactive", *(["--tty"] if sys.stdin.isatty() else [])] if log is None else []),
         *(arg for volume in [f"{_dnf_cache(project)}:/var/cache/dnf", *volumes] for arg in ("--volume", volume)),
         image, "bash", "-c", script,
     ]  # fmt: skip
@@ -555,7 +559,7 @@ def run_natively(
         mounts = [
             f"{_dnf_cache(project)}:/var/cache/dnf", f"{BUILDENV}:/xcraft:ro", f"{directory}:/etc/yum.repos.d:ro"
         ]  # fmt: skip
-        mounts += _local_repos(project)
+        mounts += local_repos(project)
         cmd = [
             "podman", "run", "--rm", "--replace", "--name", container, "--platform", native.platform,
             "--security-opt", "label=disable", *(a for v in [*mounts, *volumes] for a in ("--volume", v)),

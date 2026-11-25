@@ -42,7 +42,8 @@ def shell(
 
     Its build dependencies are installed, and its sources prepared. The build tree is .xcraft/build/<package>/ on the
     host, where its files can be edited, and its packages are. sudo dnf install installs the other pinned upstream
-    packages, and ours.
+    packages, and ours, and sudo dnf --enablerepo='*' install those of the upstream repositories not pinned yet, to try
+    them: a BuildRequires on them pins them.
 
     On the builder of the architecture, if any, see $XCRAFT_BUILDERS, unless --local: in a copy of the checkout there,
     whose build tree it keeps, like xcraft build.

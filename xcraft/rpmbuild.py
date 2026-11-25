@@ -10,12 +10,12 @@ from typing import TYPE_CHECKING
 
 from xcraft import ccache, develop, localrepo, resolution
 from xcraft.cache import BuildError, build_keys, deps_repo
-from xcraft.container import DNF_LOCK, run_container
+from xcraft.container import DNF_LOCK, local_repos, repo_file, run_container
 from xcraft.sources import fetch_sources, parse_manifest
 from xcraft.specs import STAGED_TIME, hash_dir, main_spec
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from xcraft.localrepo import LocalRepo
@@ -122,6 +122,7 @@ def run_build(
     fast: bool = False,
     after: str = "",
     network: bool = False,
+    volumes: Sequence[str] = (),
     log: Path | None = None,
     on_line: Callable[[str], None] | None = None,
 ) -> None:
@@ -132,7 +133,8 @@ def run_build(
     %check. With `fast`, for the development builds, the binary packages are compressed with zstd at level 3 rather
     than 19: their packaging takes a third of the time, for packages a third bigger, and dune has its cache, see
     DUNE_CACHE. The container has no network but its loopback interface, but with `network`, for the shell, whose
-    rpmbuild has it too. The output goes to `log`, or to an interactive terminal without log.
+    rpmbuild has it too. It has the other `volumes`. The output goes to `log`, or to an interactive terminal without
+    log.
     """
     parameters = {
         "spec": main_spec(project.package_dirs[name]).name,
@@ -158,7 +160,7 @@ def run_build(
     cache.mkdir(parents=True, exist_ok=True)
     dune.mkdir(parents=True, exist_ok=True)
     tree = project.state / "build" / name
-    volumes = [f"{tree}:/build", f"{cache}:/ccache", f"{dune}:/dune-cache", *repo.volumes()]
+    volumes = [f"{tree}:/build", f"{cache}:/ccache", f"{dune}:/dune-cache", *repo.volumes(), *volumes]
     try:
         run_container(
             project,
@@ -185,7 +187,8 @@ def shell(project: Project, name: str) -> None:
 
     rpmbuild works on the build tree there, like in the builds: rpmbuild -ba SPECS/<spec> builds it again, shown before
     the prompt. The build tree is the one of the host, in .xcraft/build/, where its files can be edited, and its
-    packages are. Its dependencies are their development builds, as last built, if any.
+    packages are. Its dependencies are their development builds, as last built, if any. dnf has the upstream
+    repositories too, disabled, to try the packages not pinned yet: sudo dnf --enablerepo='*' install <package>.
     """
     from xcraft.devbuilds import built_dev_suffixes  # noqa: PLC0415, which imports the builds
 
@@ -194,9 +197,17 @@ def shell(project: Project, name: str) -> None:
     replace = image_replacements(resolution.resolve(project), name)
     spec = main_spec(project.package_dirs[name]).name
     # the labels dim, the path bold, the command bold cyan: on a terminal, without NO_COLOR, like xcraft's console
-    rows = [("build tree", f"{tree}, on the host", "bold"), ("to build", f"rpmbuild -ba SPECS/{spec}", "cyan")]
+    rows = [
+        ("build tree", f"{tree}, on the host", "bold"),
+        ("to build", f"rpmbuild -ba SPECS/{spec}", "cyan"),
+        ("not pinned", "sudo dnf --enablerepo='*' install <package>", "cyan"),
+    ]
+    upstream = repo_file(project, enabled=False)
     after = (
-        "echo '%_topdir /build' > ~/.rpmmacros"
+        # the repositories of the project only, rather than those of the distribution in the image, enabled
+        "sudo find /etc/yum.repos.d -name '*.repo' ! -name pinned.repo ! -name xcraft.repo -delete"
+        f" && printf %s {shlex.quote(upstream)} | sudo tee /etc/yum.repos.d/upstream.repo >/dev/null"
+        " && echo '%_topdir /build' > ~/.rpmmacros"
         " && cd /build"
         ' && dim= bold= cyan= off= && if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then'
         " dim=$'\\e[2m' bold=$'\\e[0;1m' cyan=$'\\e[0;1;36m' off=$'\\e[0m'; fi"
@@ -206,4 +217,4 @@ def shell(project: Project, name: str) -> None:
         )
         + " && exec bash -l"
     )
-    run_build(project, name, repo, "p", replace=replace, after=after, network=True)
+    run_build(project, name, repo, "p", replace=replace, after=after, network=True, volumes=local_repos(project))
