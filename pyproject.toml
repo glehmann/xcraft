@@ -30,14 +30,12 @@ dev = [
     "zizmor>=1.31.1",
 ]
 
-[tool.uv]
-package = true
+[build-system]
+requires = ["uv_build>=0.13.5,<0.14"]
+build-backend = "uv_build"
 
-[tool.setuptools.packages.find]
-include = ["xcraft*"]
-
-[tool.setuptools.package-data]
-xcraft = ["buildenv/*", "rpmlint/*"]
+[tool.uv.build-backend]
+module-root = ""
 
 [tool.typos.files]
 # the specs of the test project
