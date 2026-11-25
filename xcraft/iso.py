@@ -249,15 +249,30 @@ def _existing_iso(
     return None
 
 
-def fetch_isos(project: Project, *, signer: Signer | None) -> bool:
-    """Put the full and netinstall ISOs of the checkout in the cache, fetched from the remote storage when missing,
-    and return whether they are all there.
+def snapshot_iso_keys(project: Project, *, signer: Signer | None, dev: str | None) -> list[str]:
+    """Return the keys of the full and netinstall ISOs of a snapshot of the checkout signed by `signer`, see
+    snapshot_isos(), the same as xcraft iso makes: of dev mode with the development builds `dev`, keeping the
+    signatures of our builds.
     """
+    keep, dev = dev is not None, dev if dev_suffixes(project, dev) else None
+    return [iso_key(project, netinstall=n, volid=None, signer=signer, dev=dev, keep=keep) for n in (False, True)]
+
+
+def fetch_isos(project: Project, *, signer: Signer | None, dev: str | None = None) -> bool:
+    """Put the full and netinstall ISOs of a snapshot of the checkout in the cache, see snapshot_iso_keys(), fetched
+    from the remote storage when missing, which has none of dev mode, and return whether they are all there: made
+    by xcraft iso, like on a host of their architecture, which pushes them, or hands its cache over, in dev mode.
+    """
+    keys = snapshot_iso_keys(project, signer=signer, dev=dev)
+    if all(cached_iso(project, key).exists() for key in keys):
+        return True
+    if dev is not None or not project.config.remote:
+        return False
     try:
         with activity("looking for the ISOs in the remote storage"):
             return all(
                 (tree := cached_iso(project, key)).exists() or remote.fetch_tree(project, iso_path(project, key), tree)
-                for key in iso_inputs(project, signer=signer).values()
+                for key in keys
             )
     except remote.RemoteError:
         return False

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import itertools
+import os
 import re
 import shutil
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -12,6 +15,7 @@ from tests import TOML, cache_image, needs_gpg, xcraft
 from xcraft import buildkey, container, iso, publish
 from xcraft.builds import BuildId, load_builds, save_builds
 from xcraft.cache import BuildError
+from xcraft.commands import publish as publish_command
 from xcraft.iso import cached_iso, checkout_iso, iso_id, iso_key, iso_name, snapshot_isos
 from xcraft.lock import Pin, load_lock, save_lock
 from xcraft.project import Iso, Project, Remote
@@ -204,3 +208,23 @@ def should_name_isos_by_their_contents_and_architecture(project: Project) -> Non
     # another one for other contents
     (project.root / "base/trivial/trivial.spec").write_text("changed")
     assert iso_id(project, signer=None) != ident
+
+
+def should_publish_the_isos_of_emulated_architectures_made_natively_only(project: Project, tmp_path: Path) -> None:
+    # by xcraft iso on a host of their architecture, as the programs of their packages run to make them: never here
+    emulated = replace(project, platform="linux/arm64" if os.uname().machine == "x86_64" else "linux/amd64/v2")
+    assert not emulated.native
+    for dev in (None, "dev"):
+        with pytest.raises(RuntimeError, match=f"the ISOs of {emulated.arch} are made natively, not here"):
+            publish_command._check_emulated_isos([emulated], signer=None, dev=dev)
+    # cached, like pushed and fetched, or, in dev mode, copied from the cache of the host which made them
+    image = tmp_path / "test.iso"
+    image.write_bytes(b"made natively")
+    for netinstall, keep in itertools.product((False, True), (False, True)):
+        cache_image(emulated, image, netinstall=netinstall, keep=keep)
+    for dev in (None, "dev"):
+        publish_command._check_emulated_isos([emulated], signer=None, dev=dev)
+        assert iso.fetch_isos(emulated, signer=None, dev=dev)
+    # those of the host's architecture are made here, when missing
+    publish_command._check_emulated_isos([project], signer=None, dev=None)
+    assert not iso.fetch_isos(project, signer=None)

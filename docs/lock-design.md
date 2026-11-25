@@ -86,10 +86,9 @@ What is installed, by name, each pinned:
   but the image's and ours, with what our packages it gets require;
 - `[runtime]`: what the published repositories need for our packages, the extra ones of `[publish]`, and those of the
   installer of `[iso]`, each resolved alone, the installer's together;
-- `[iso]`: the tools making the ISO, for x86_64 only: the ISO boots with isolinux, on BIOS, and GRUB's x86-64 CD
-  image, on UEFI, and has memtest86+, of x86 only. An arm64 ISO would boot GRUB's arm64 one, on UEFI only, with
-  xorriso, mtools and dosfstools pinned for aarch64. What the installer installs is in `[runtime]`, on every
-  architecture;
+- `[iso]`: the tools making the ISO, by architecture: on x86_64, it boots with isolinux, on BIOS, and GRUB's x86-64
+  CD image, on UEFI, and has memtest86+, of x86 only; on aarch64, GRUB's arm64 one, on UEFI only, with xorriso,
+  mtools, dosfstools and kmod. What the installer installs is in `[runtime]`, on every architecture;
 - `[sign]`: rpmsign and gpg, over the image, for the signing image, apart from it so as not to change the build keys:
   rpm-sign of the version of the locked rpm;
 - `[lint]`: rpmlint, with Fedora's configuration, over the image, for the lint image, likewise: its rules change with

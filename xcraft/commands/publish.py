@@ -20,7 +20,8 @@ from xcraft.display import console
 from xcraft.iso import check_iso_config, fetch_isos, push_isos, snapshot_isos
 from xcraft.project import Destination, Project, Publish, Remote
 from xcraft.publish import ISO_DIR, REPO, snapshot, snapshot_tree
-from xcraft.signing import KEY_FILE, dev_signer, new_dev_key, repo_keys
+from xcraft.resolution import ISO_ARCHES
+from xcraft.signing import KEY_FILE, Signer, dev_signer, new_dev_key, repo_keys
 from xcraft.upload import Uploader
 
 app = typer.Typer()
@@ -66,16 +67,16 @@ Arch = Annotated[
 
 
 def _iso_platforms(project: Project, platforms: list[Project], only: str | None) -> list[Project]:
-    """Return the `platforms` of the ISOs to publish, unless `only` the repos: those of x86_64, for their boot loaders,
-    when [iso] has the installer's packages.
+    """Return the `platforms` of the ISOs to publish, unless `only` the repos: those of the architectures with ISOs,
+    for their boot loaders, when [iso] has the installer's packages.
     """
     if only == "isos" and not project.config.iso.installer:
         msg = "no ISO to publish: see [iso] in xcraft.toml"
         raise typer.BadParameter(msg)
     if only == "repos" or not project.config.iso.installer:
         return []
-    if not (found := [p for p in platforms if p.arch.startswith("x86_64")]) and only == "isos":
-        msg = f"the ISOs are for x86_64, not {', '.join(p.arch for p in platforms)}"
+    if not (found := [p for p in platforms if p.arch in ISO_ARCHES]) and only == "isos":
+        msg = f"the ISOs are for {', '.join(ISO_ARCHES)}, not {', '.join(p.arch for p in platforms)}"
         raise typer.BadParameter(msg)
     for platform in found:  # before the snapshot
         check_iso_config(platform)
@@ -167,6 +168,20 @@ def _write_summary(
     path.write_text("\n".join(lines) + "\n")
 
 
+def _check_emulated_isos(platforms: list[Project], *, signer: Signer | None, dev: str | None) -> None:
+    """Raise unless the ISOs of the `platforms` the host emulates are cached or in the remote storage: they are made
+    natively only, as the programs of their packages run to make them, like their builds.
+    """
+    for platform in platforms:
+        if not platform.native and not fetch_isos(platform, signer=signer, dev=dev):
+            msg = (
+                f"the ISOs of {platform.arch} are made natively, not here: xcraft iso --arch {platform.arch}, with and "
+                f"without --netinstall, on a host of the architecture, then xcraft push isos, or its "
+                f".xcraft/cache/isos/{platform.arch}/ copied here, in dev mode"
+            )
+            raise RuntimeError(msg)
+
+
 def _reused(
     uploader: Uploader, platforms: list[Project], only: str | None, isos: list[Project], summary: Path | None
 ) -> bool:
@@ -240,6 +255,7 @@ def _publish(  # noqa: C901, PLR0912, PLR0915
     with_isos = _iso_platforms(project, platforms, only)
     with project.lock():
         update_build_ids(project)  # the final builds are numbered by them
+        _check_emulated_isos(with_isos, signer=signer, dev=dev)  # before the snapshot, long to make for nothing
         # of ctx.params, which typer does not convert
         dest = (Path(output) if output else project.state / "publish").absolute()
         build = only != "isos" and project.config.publish.build
@@ -257,8 +273,8 @@ def _publish(  # noqa: C901, PLR0912, PLR0915
                 publisher.materialize(storage, dest, stored, repo)
         for platform in with_isos:
             console.print(f"getting the ISOs for {platform.arch}")
-            # made from its packages
-            if storage and stored and (dev is not None or not fetch_isos(platform, signer=signer)):
+            # made from its packages, unless made already
+            if storage and stored and not fetch_isos(platform, signer=signer, dev=dev):
                 publisher.materialize(storage, dest, stored, f"{REPO}/{platform.arch}")
             repo = dest / REPO / platform.arch
             for iso in snapshot_isos(platform, repo, checkout, dest / ISO_DIR, signer=signer, dev=dev):
@@ -351,6 +367,7 @@ def isos(
 ) -> None:
     """Publish signed packages and netinstall ISOs as isos/<release>/<stage>/<date>/, and as the stage's latest ones.
 
-    They are made for the x86_64 architectures, like xcraft iso, in the ISO directory of the snapshot.
+    They are made for the architectures with ISOs, like xcraft iso, in the ISO directory of the snapshot, or taken when
+    xcraft iso made them, cached or pushed: those of the architectures the host emulates are only taken.
     """
     _publish("isos", **ctx.params)

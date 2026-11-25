@@ -111,8 +111,12 @@ end.
   `xcraft iso`, which does not need it.
 - Our source RPMs are those of the first architecture: built from the same sources, those of the others differ by
   their build times only.
-- The ISOs are made like `xcraft iso` makes them, from the snapshot, for its x86_64 architectures, when `[iso]
-  installer` is configured: their boot loaders are for x86_64. They are signed like the snapshot: their repository,
+- The ISOs are made like `xcraft iso` makes them, for the architectures with ISOs, x86_64 and aarch64, when `[iso]
+  installer` is configured: those cached, by `xcraft iso` with the same key, or in the remote storage, by `xcraft push
+  isos`, are taken rather than made from the snapshot. Those of the architectures the host emulates are only taken,
+  never made, as the programs of their packages run to make them: CI makes them on the host of each architecture,
+  once built, and pushes them, or, in dev mode, hands their cache over, `.xcraft/cache/isos/<arch>/`, to the host
+  publishing. They are signed like the snapshot: their repository,
   and their files, with a detached signature. Their checksums are in `SHA256SUMS`, as `sha256sum` writes them, with
   its detached signature, so that `sha256sum -c SHA256SUMS` checks a download.
 - All snapshots are kept. The storage stores identical files once: our packages are copies of the pushed builds, and
