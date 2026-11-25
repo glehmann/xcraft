@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import json
 import os
@@ -11,6 +12,7 @@ import shlex
 import shutil
 import socket
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Self
@@ -437,9 +439,11 @@ def free_port(start: int = 2222) -> int:
 
 def wait(proc: subprocess.Popen[bytes], directory: Path, events: Monitor | None = None) -> str | None:
     """Wait for a foreground VM, stopping it on Ctrl-C, and return why it stopped, from the `events` of QEMU, if given:
-    see stop_reason().
+    see stop_reason(); guest-panic too when its serial console shows a panic, see _stop_on_panic().
     """
     reason = None
+    panicked, done = threading.Event(), threading.Event()
+    threading.Thread(target=_stop_on_panic, args=(directory, panicked, done), daemon=True).start()
     try:
         if events:
             reason = stop_reason(events)
@@ -451,7 +455,31 @@ def wait(proc: subprocess.Popen[bytes], directory: Path, events: Monitor | None 
                 monitor.execute("quit")
         proc.wait(timeout=10)
         raise
-    return reason
+    finally:
+        done.set()
+    return "guest-panic" if panicked.is_set() else reason
+
+
+PANIC = re.compile(rb"Kernel panic - not syncing|Panic on CPU \d+")
+"""A panic of Linux or Xen on the serial console."""
+
+
+def _stop_on_panic(directory: Path, panicked: threading.Event, done: threading.Event) -> None:
+    """Stop the VM of `directory` once its serial console shows a panic, setting `panicked`, until `done`: pvpanic
+    does not tell QEMU those of dom0, which hangs on aarch64, or of Xen, which reboots like the installer.
+    """
+    seen = 0
+    while not done.wait(1):
+        with contextlib.suppress(OSError), (directory / "serial.log").open("rb") as log:
+            log.seek(max(seen - 64, 0))  # a message cut in two by the reads
+            data = log.read()
+            if PANIC.search(data):
+                panicked.set()
+                time.sleep(2)  # the rest of its message
+                with contextlib.suppress(OSError), Monitor(directory) as monitor:
+                    monitor.execute("quit")
+                return
+            seen = log.tell()
 
 
 def stop_reason(events: Monitor) -> str | None:

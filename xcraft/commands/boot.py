@@ -84,7 +84,7 @@ def _unattended(project: Project, answers: list[str]) -> str:
 
 _STOPS = {
     "guest-shutdown": "the guest powered off",
-    "guest-panic": "the guest kernel panicked",
+    "guest-panic": "the guest kernel, or Xen, panicked",
     "host-qmp-quit": "QEMU was told to quit, like by xcraft vm stop",
     "host-signal": "QEMU was stopped by a signal",
 }
@@ -227,9 +227,9 @@ def boot(
 
     The disk persists between runs. The installer VM exits when it requests a reboot, which tells it finished: xcraft
     vm start then boots the installed disk, without the ISO. Use xcraft vm to inspect or stop it. In the foreground,
-    it fails when the VM stops otherwise, like powered off, or by a kernel panic with the guest's pvpanic driver; with
-    --unattended, unless the installer's log, on the serial console, says it succeeded, as it asks to reboot after a
-    failure too.
+    it fails when the VM stops otherwise, like powered off, or by a panic of the kernel or of Xen, on the serial
+    console or by the pvpanic driver; with --unattended, unless the installer's log, on the serial console, says it
+    succeeded, as it asks to reboot after a failure too.
     """
     _check_edits(bios=bios, kernel_args=kernel_args, unattended=unattended, answer=answer)
     check_port(ssh_port)

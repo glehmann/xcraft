@@ -10,6 +10,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -530,3 +531,30 @@ def should_tell_the_outcome_of_an_unattended_installation_from_its_log() -> None
     assert boot._unattended_outcome("INFO     Starting actual installation\n") == (
         "the installer told neither its success nor its failure"
     )
+
+
+@pytest.mark.parametrize(
+    "panic", [b"[    1.55] Kernel panic - not syncing: Attempted to kill init!", b"(XEN) Panic on CPU 0:"]
+)
+def should_stop_a_vm_whose_serial_console_shows_a_panic(tmp_path: Path, panic: bytes) -> None:
+    # pvpanic does not tell those of dom0, which hangs, nor of Xen, which reboots like the installer
+    log = tmp_path / "serial.log"
+    log.write_bytes(b"booting\n" + panic[:10])
+    panicked, done = threading.Event(), threading.Event()
+    watch = threading.Thread(target=vm._stop_on_panic, args=(tmp_path, panicked, done))
+    watch.start()
+    time.sleep(1.5)
+    assert not panicked.is_set()
+    with log.open("ab") as output:
+        output.write(panic[10:] + b"\n")  # its message cut in two by the reads
+    watch.join(timeout=10)
+    assert panicked.is_set()
+    # until done only
+    panicked.clear()
+    log.write_bytes(b"booting\n")
+    watch = threading.Thread(target=vm._stop_on_panic, args=(tmp_path, panicked, done))
+    watch.start()
+    done.set()
+    watch.join(timeout=10)
+    assert not watch.is_alive()
+    assert not panicked.is_set()
