@@ -20,12 +20,16 @@ in a build. The result is cached until a package directory or the image changes.
 
 **Build environment.** xcraft builds a container image from a base image pinned by digest, AlmaLinux 10 for XCP-ng,
 with only the configured repositories, AlmaLinux 10 and its EPEL for XCP-ng, the configured RPM macros (`%dist`...)
-and the packages builds expect, with those xcraft uses, in their locked versions. The image is tagged with a hash of its definition, so it is only
-built again when the configuration or the locked versions of its packages change.
+and the packages builds expect, with those xcraft uses, in their locked versions, and in `/buildroot`, its root, the
+packages builds expect only, the `packages` of `xcraft.toml`, where the builds run: not the tools of xcraft, like dnf or
+Python, which the build roots only have when the specs require them. The image is tagged with a hash of its
+definition, so it is only built again when the configuration or the locked versions of its packages change.
 
-**Builds.** Each build runs in a fresh container: `dnf builddep`, then the dynamic `BuildRequires` if any, then
-`rpmbuild`, with stdin from `/dev/null`, and without the network, like koji and mock: in a container with only the
-loopback interface, as the build dependencies come from the repository of the pins, and without gaining privileges, so that `sudo` cannot change the build root once recorded. It runs against a local repository of what was built here, with a priority
+**Builds.** Each build runs in a fresh container, in its root: the dnf of the image installs there the `BuildRequires`
+of the spec, as the root reads it, then the dynamic ones if any, then `rpmbuild` runs in the root, a chroot, see
+`buildenv/chroot.py`, with stdin from `/dev/null`, and without the network, like koji and mock: in a container with
+only the loopback interface, as the build dependencies come from the repository of the pins, and without gaining
+privileges, so that `sudo` cannot change the build root once recorded. It runs against a local repository of what was built here, with a priority
 over the other repositories, so a package built locally always wins: one of its own, of the builds of its dependencies,
 as the packages independent of each other build at once, see [Builds at once](builds.md#builds-at-once). A build result is cached in
 `.xcraft/cache/builds/<fingerprint>/<arch>/<pkg>/<key>`, by its signer, under its [build key](builds.md#build-keys). A build whose log gets larger than 256 MiB,
@@ -51,7 +55,7 @@ replaces the old one in `sources`. The packages of the same archive, listed toge
 ```toml
 base_image = "ghcr.io/almalinux/10-base:10.2@sha256:..."   # image the build environment is made from
 platforms = ["linux/amd64/v2", "linux/arm64"]   # the platforms of the builds, one at a time
-packages = ["rpm-build", "redhat-rpm-config", ...]   # in the image, with what xcraft uses: what specs may assume
+packages = ["rpm-build", "redhat-rpm-config", ...]   # the root of the builds: what specs may assume
 same_version = [["kernel", "kernel-headers"]]   # updated together by xcraft bump --version
 main_branch = "master"                 # the branch the build IDs are numbered against, master by default
 [ccache_size]                          # the maximum size of the compiler cache of packages, 5G by default
@@ -75,8 +79,9 @@ the project they copy.
 
 **Architectures.** xcraft works on one platform at a time: the one of the RPM architecture given with `--arch`, like
 `aarch64`, or in `$XCRAFT_ARCH`, or else the host's, `x86_64_v2` on an x86_64 host. So `xcraft build foo` builds `foo`
-for one architecture only. Another architecture is built under emulation, with podman and qemu-user-static, whose
-registration needs the `C` flag for `sudo` in the containers, which Fedora's has not: `xcraft doctor` checks it, and
+for one architecture only. Another architecture is built under emulation, with podman and qemu-user-static: its root
+only, on the tools of the host, natively, which install its packages with `dnf --forcearch`, the qemu registration
+needing the `F` flag to run the binaries of the root, a chroot: `xcraft doctor` checks it, and
 `xcraft doctor --fix` installs the emulator and registers it in `/etc/binfmt.d/`, with systemd-binfmt, or else directly. The emulation is fine for the small packages, but slow for
 the large ones, which are for native builders, which share their builds through the [remote storage](remote-storage.md). xcraft solves the metadata of the repositories of an emulated
 architecture natively, in its dnf cache: under emulation, that takes most of the time of dnf. Each architecture has its

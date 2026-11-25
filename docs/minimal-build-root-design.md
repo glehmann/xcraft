@@ -1,6 +1,8 @@
 # Design: a minimal build root
 
-Status: proposed. mock and the package sets below were tried by hand on 2026-11-25; nothing is implemented in xcraft.
+Status: implemented, but the parsing of the specs with the macros of the root, see [Spec parsing](#spec-parsing). mock
+and the package sets below were tried by hand on 2026-11-25. The image is now two: the image of the tools, of the
+host, and the root of each platform on it, see `buildenv/Containerfile.root`.
 
 ## Context and goals
 
@@ -158,10 +160,12 @@ dnf, Python and the scripts of xcraft never enter the root.
 The container has no network but its loopback interface, up, as today: the root needs nothing more for that. To
 mount in the root what it needs, a helper makes a user namespace mapping the ids of the container, as root in it,
 and a mount namespace, mounts in the root `/proc`, `/sys`, `/dev`, `/dev/pts`, a `tmpfs` on `/dev/shm`,
-and `/build`, `/ccache` and the dune cache at the same paths, then `chroot`s, drops to the user and to no new
-privileges, and runs the command. These are the mounts mock made in the same namespace, with no capability added to
-the container; a mount of a new `/proc` in a pid namespace is refused there, as podman masks some of its files, so
-`/proc` is bound from the container's.
+and `/build`, `/ccache` and the dune cache at the same paths, then makes the root the root of the mount namespace,
+drops to the user and to no new privileges, and runs the command. These are the mounts mock made in the same
+namespace, with no capability added to the container; a mount of a new `/proc` in a pid namespace is refused there, as
+podman masks some of its files, so `/proc` is bound from the container's. The root is made with `pivot_root`, not
+`chroot`: the kernel refuses to create a user namespace in a chroot, which the sandboxes of bwrap need, like those of
+`opam init`, which then disables them, and writes another `config` in xs-opam-repo.
 
 ### Python in the builds
 
@@ -174,9 +178,10 @@ the container; a mount of a new `/proc` in a pid namespace is refused there, as 
 ### Spec parsing
 
 `parse.py` parses the specs with the rpm Python API, so in the tools, with their macros: those of
-`systemd-rpm-macros` then expand there, but not in the builds. It must use the macro files of the root instead: an
-rpmrc whose `macrofiles` are those of `/buildroot`, which rpm's API loads with `rpm.reloadConfig()`. The `%(...)`
-and Lua of the macros run in the tools then, with the same rpm and coreutils as the root, both pinned.
+`systemd-rpm-macros` then expand there, but not in the builds. Not done yet: the `macrofiles` of an rpmrc, tried, do
+not change the macro files rpm 4.19 reads; `parse.py` would rather chroot into the root once the rpm module loaded,
+with the specs bound there. A spec using a macro of the tools without requiring its package fails its build, in the
+root, which finds it all the same.
 
 ### Lock and keys
 
@@ -236,7 +241,7 @@ with the options of xcraft's, `--userns=keep-id`, `--network none` and no new pr
   and `/build` in the root, ran `rpmbuild -bb` there: gcc compiled an aarch64 program, which ran, as uid 1000, without
   capabilities, without new privileges, with the loopback interface only, and neither `python3` nor `dnf` in the root.
 
-The helper must import what it needs before `chroot`: Python found no more of its modules after it. rpm warned that it
+The helper must import what it needs before `pivot_root`: Python found no more of its modules after it. rpm warned that it
 could not canonicalize the host name: `/etc/hosts` of the root needs the name of the container too.
 
 ### Tests

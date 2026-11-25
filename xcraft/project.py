@@ -488,13 +488,13 @@ class Project:
 
     @cached_property
     def spec_deps(self) -> dict[str, set[str]]:
-        """The build dependencies of each package from the specs and the image, which the build roots are resolved
-        with: not those of the packages of ours replacing upstream ones of the build roots, see deps.
+        """The build dependencies of each package from the specs and the root of the image, which the build roots are
+        resolved with: not those of the packages of ours replacing upstream ones of the build roots, see deps.
         """
         from xcraft.graph import build_deps  # noqa: PLC0415, which needs the project
         from xcraft.resolution import resolve_image  # noqa: PLC0415
 
-        return build_deps(self.packages, resolve_image(self).image)
+        return build_deps(self.packages, resolve_image(self).root)
 
     @cached_property
     def deps(self) -> dict[str, set[str]]:
@@ -505,7 +505,7 @@ class Project:
         from xcraft.lock import cached_lock  # noqa: PLC0415
         from xcraft.resolution import resolve_image  # noqa: PLC0415
 
-        return build_deps(self.packages, resolve_image(self).image, cached_lock(self).roots.of(self.arch))
+        return build_deps(self.packages, resolve_image(self).root, cached_lock(self).roots.of(self.arch))
 
     def refresh(self) -> None:
         """Forget the packages and their dependencies, after a change of the locks."""

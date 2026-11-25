@@ -57,7 +57,8 @@ def should_change_the_keys_of_the_packages_whose_inputs_changed(
     lock = Lock(
         sources={"glibc": "1-1", "zlib": "1-1", "bash": "1-1"},
         binaries={arch: pins},
-        image={arch: ["glibc"]},
+        image={arch: ["glibc", "bash"]},
+        root={arch: ["glibc"]},
         roots=Recorded(shared={"b": ["zlib"]}),
     )
 
@@ -75,11 +76,12 @@ def should_change_the_keys_of_the_packages_whose_inputs_changed(
 
     before = keys()
     for description, change, changed in (
-        ("other contents of a package of the image", lambda: repin("glibc", sha256="2" * 64), {"a", "b"}),
-        ("another version of a package of the image", lambda: repin("glibc", evr="1-2"), {"a", "b"}),
+        ("other contents of a package of the root", lambda: repin("glibc", sha256="2" * 64), {"a", "b"}),
+        ("another version of a package of the root", lambda: repin("glibc", evr="1-2"), {"a", "b"}),
         ("other contents of a package of the build root of b", lambda: repin("zlib", sha256="2" * 64), {"b"}),
-        ("other contents of a package of no image nor build root", lambda: repin("bash", sha256="2" * 64), set()),
-        ("another package in the image", lambda: lock.image[arch].append("bash"), {"a", "b"}),
+        ("other contents of a package of the image, not of the root", lambda: repin("bash", sha256="2" * 64), set()),
+        ("another package in the image, around the root", lambda: lock.image[arch].append("zlib"), set()),
+        ("another package in the root", lambda: lock.root[arch].append("bash"), {"a", "b"}),
         ("another version of a source, which its binaries have", lambda: lock.sources.update(zlib="1-2"), set()),
         ("a dynamic BuildRequires of b", lambda: builds.buildrequires.shared.update(b=["foo"]), {"b"}),
         ("a requirement generated for a, which b gets", lambda: builds.requires.shared.update(a=["bar"]), {"b"}),
@@ -117,13 +119,13 @@ def should_compute_the_keys_from_the_inputs_read_once(project: Project, monkeypa
     assert buildkey.key(other.of({"c"}, ids), "c") == key
 
 
-def should_take_the_image_from_the_lock_given(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+def should_take_the_root_from_the_lock_given(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     ours(project, monkeypatch, {"a": set(), "b": set()})
     save_lock(project, Lock())
-    # a lock of another commit, whose image has a binary package that a of ours replaces, like kernel-headers: b is
+    # a lock of another commit, whose root has a binary package that a of ours replaces, like kernel-headers: b is
     # built against a there, not with the current lock
     pin = Pin(evr="1-1", arch="noarch", sha256="1" * 64, source="a-upstream")
-    other = Lock(sources={"a-upstream": "1-1"}, binaries={project.arch: {"a": pin}}, image={project.arch: ["a"]})
+    other = Lock(sources={"a-upstream": "1-1"}, binaries={project.arch: {"a": pin}}, root={project.arch: ["a"]})
     hashes = {"a": "1" * 64, "b": "2" * 64}
     assert (buildkey.Inputs(project, hashes, other).deps["b"], buildkey.Inputs(project, hashes).deps["b"]) == (
         {"a"},
@@ -141,7 +143,7 @@ def should_cover_the_architectures_a_package_is_built_for_only() -> None:
 
     def inputs(arm: Pin) -> dict[str, list]:
         lock = Lock(sources={"zlib": "1-1"}, binaries={"x86_64_v2": {"zlib": pin}, "aarch64": {"zlib": arm}})
-        lock.image = {"x86_64_v2": ["zlib"], "aarch64": ["zlib"]}
+        lock.root = {"x86_64_v2": ["zlib"], "aarch64": ["zlib"]}
         return buildkey.lock_inputs(platforms, lock, Builds(), "b")
 
     assert list(inputs(pin)) == ["x86_64_v2"]
@@ -220,7 +222,7 @@ def should_hash_the_package_files_as_builds_get_them(tmp_path: Path) -> None:
 
 
 def should_map_earlier_recipes_making_the_same_builds(monkeypatch: pytest.MonkeyPatch) -> None:
-    current = "6bec4158f5303f57a1b4996c6901e214bf126dff1755fa651a643659f4221144"
+    current = "1da9998b4f1e8a3386c949cb6d8dae7bf85e38dc8e1c0d82c149b14904f9ff8f"
     assert recipe_key() == current, (
         f"the recipe changed, to {buildkey.RECIPE}: map it to {current} in _SAME_BUILDS if it makes the same packages, "
         "or else set it here, which rebuilds everything"
@@ -238,6 +240,9 @@ def should_change_the_recipe_only_for_what_builds_get(project: Project, monkeypa
     # not what the builds do not get: where the source packages are published from, the order of the configuration
     config.repos["baseos"].source_baseurl = "https://example.com/elsewhere/"
     assert buildkey.recipe(project) == before
+    # nor the image around the root of the builds, its tools: its base image
+    config.base_image = config.base_image.replace("@sha256:", "@sha256:0")[:-1]
+    assert buildkey.recipe(project) == before
     config.macros = {**config.macros, "a": "1", "b": "2"}
     after = buildkey.recipe(project)
     config.macros, config.repos = dict(reversed(config.macros.items())), dict(reversed(config.repos.items()))
@@ -248,13 +253,9 @@ def should_change_the_recipe_only_for_what_builds_get(project: Project, monkeypa
         ("a macro", lambda: setattr(config, "macros", {**config.macros, "a": "changed"})),
         ("the URL of a repository", lambda: setattr(config.repos["baseos"], "baseurl", "https://example.com/other/")),
         ("the packages of a repository", lambda: setattr(config.repos["baseos"], "includepkgs", ["bash"])),
-        ("the packages of the image", lambda: setattr(config, "packages", [*config.packages, "vim"])),
+        ("the packages of the root", lambda: setattr(config, "packages", [*config.packages, "vim"])),
         ("the release suffixes", lambda: setattr(config, "release_suffixes", [".alt"])),
         ("the extra upstream RPMs", lambda: setattr(config, "extra_upstream", extra)),
-        (
-            "the base image",
-            lambda: setattr(config, "base_image", config.base_image.replace("@sha256:", "@sha256:0")[:-1]),
-        ),
         (
             "how xcraft gives the builds their inputs",
             lambda: monkeypatch.setattr(buildkey, "FORMAT", buildkey.FORMAT + 1),
@@ -301,12 +302,12 @@ def should_change_the_keys_with_the_image_of_any_architecture(root: Path) -> Non
     projects = [Project.find(arch) for arch in ("x86_64_v2", "aarch64")]
     assert projects[0].repos.keys() != projects[1].repos.keys()
     assert buildkey.recipe(projects[0]) == buildkey.recipe(projects[1])
-    # which the pinned binary packages of the image of each architecture change
+    # which the pinned binary packages of the root of each architecture change
     inputs = buildkey.Inputs(projects[0])
     before = buildkey.key(inputs.of({"trivial"}, {}), "trivial")
     assert before == buildid.compute(projects[0], None)["trivial"].key
     for arch in ("x86_64_v2", "aarch64"):
-        name = inputs.lock.image[arch][0]
+        name = inputs.lock.root[arch][0]
         pin = inputs.lock.binaries[arch][name]
         inputs.lock.binaries[arch][name] = pin.model_copy(update={"sha256": "0" * 64})
         assert buildkey.key(inputs.of({"trivial"}, {}), "trivial") != before

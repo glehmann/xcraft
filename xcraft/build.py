@@ -61,7 +61,7 @@ from xcraft.localrepo import REPO_FILE, LocalRepo, repo_id
 from xcraft.lock import lock_path
 from xcraft.packages import is_debug
 from xcraft.process import thread_pool
-from xcraft.rpmbuild import build_container, image_replacements, prepare_tree, remove_tree, run_build
+from xcraft.rpmbuild import build_container, prepare_tree, remove_tree, root_replacements, run_build
 from xcraft.signing import KEY_FILE, run_signer
 
 if TYPE_CHECKING:
@@ -570,7 +570,7 @@ class _Run:
             if error := project.packages[name].error:
                 raise BuildError(error)
             with for_package(name, self.tag):
-                replace = image_replacements(resolved_root(project, name), name)
+                replace = root_replacements(resolved_root(project, name), name)
                 tree = prepare_tree(project, name, self.hashes[name])
                 repo = deps_repo(project, name, self.keys)
                 repo.index()  # here: indexing runs a container of its own

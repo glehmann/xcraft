@@ -61,6 +61,9 @@ def buildenv_hash() -> str:
 
 DNF_LOCK = "sudo flock /var/cache/dnf/.xcraft.lock"
 """Prefix of the dnf commands: the containers share the dnf cache volume, which dnf does not lock across them."""
+ROOT = "/buildroot"
+"""The root of the image the builds run in, its chroot, of the packages of `packages` of xcraft.toml only, which dnf
+installs from the image, see buildenv/chroot.py."""
 
 
 PACKAGES = ["dnf-plugins-core", "createrepo_c", "sudo"]
@@ -178,37 +181,79 @@ def source_repos(repos: dict[str, Repo]) -> dict[str, str]:
     }
 
 
+def _tools_project(project: Project) -> Project:
+    """Return the project on the platform of the tools of the image of `project`, which run its root: its own, when the
+    host runs it, or else the host's, the root of `project` running through qemu, see buildenv/chroot.py.
+    """
+    return project if project.native else project.on_host()
+
+
 def _image_pins(project: Project) -> dict[str, Pin]:
-    """Return the pinned binary packages of the image of the platform."""
+    """Return the pinned binary packages of the image of the platform, around its root: its tools."""
     pins = pinned.pins(project)
     return {name: pins[name] for name in cached_lock(project).image.get(project.arch, [])}
 
 
-def _image_files(project: Project) -> dict[str, str]:
-    """Return the text of the files of the build context of the build environment image, by name."""
+def _root_pins(project: Project) -> dict[str, Pin]:
+    """Return the pinned binary packages of the root of the image of the platform, where its builds run."""
+    pins = pinned.pins(project)
+    return {name: pins[name] for name in cached_lock(project).root.get(project.arch, [])}
+
+
+def _pins_list(pins: dict[str, Pin]) -> str:
+    """Return the file of the `pins` of an image: in it before its packages are installed, and so in its tag, another
+    image for other pins, rather than a layer of the cache of podman.
+    """
+    return "".join(f"{name} {pin.text()}\n" for name, pin in sorted(pins.items()))
+
+
+def _macro_files(project: Project) -> dict[str, str]:
+    """Return the files of the macros of the builds, by name, which the image has for its tools too, see parse.py, but
+    macros.archives, of the root only.
+    """
     macros = project.config.macros
     return {
-        "Containerfile": (BUILDENV / "Containerfile").read_text(),
         "rpmbuild": (BUILDENV / "rpmbuild").read_text(),
-        "macros.archives": (BUILDENV / "macros.archives").read_text(),
-        "pinned.repo": pinned.REPO_FILE,
-        # in the image before its packages are installed, and so in its tag: another image for other pins, rather than a
-        # layer of the cache of podman
-        "pins.list": "".join(f"{name} {pin.text()}\n" for name, pin in sorted(_image_pins(project).items())),
         "macros.xcraft": "".join(f"%{name} {value}\n" for name, value in sorted(macros.items()) if value is not False),
         "undefined.list": "".join(f"{name}\n" for name, value in sorted(macros.items()) if value is False),
     }
 
 
-def _image_definition(project: Project) -> tuple[str, dict[str, str], dict[str, str]]:
-    """Return the tag of the build environment image, with its build args and files.
+def _tools_definition(project: Project) -> tuple[str, dict[str, str], dict[str, str]]:
+    """Return the tag of the image of the tools of the platform, around the root of the builds, with its build args and
+    files: of the platforms the host runs only.
 
     The tag is a hash of its definition, which pins the versions of its packages,
     so it identifies the image across machines.
     """
     config = project.config
     args = {"BASE_IMAGE": config.base_image, "PACKAGES": " ".join(sorted({*config.packages, *PACKAGES}))}
-    files = _image_files(project)
+    files = {
+        "Containerfile": (BUILDENV / "Containerfile").read_text(),
+        "pinned.repo": pinned.REPO_FILE,
+        "pins.list": _pins_list(_image_pins(project)),
+        **_macro_files(project),
+    }
+    digest = hashlib.sha256(json.dumps([project.platform, args, files], sort_keys=True).encode()).hexdigest()
+    return f"{BUILD_IMAGE}:tools-{digest}", args, files
+
+
+def _image_definition(project: Project) -> tuple[str, dict[str, str], dict[str, str]]:
+    """Return the tag of the build environment image of the platform, its root on the image of its tools, see
+    _tools_project(), with its build args and files.
+    """
+    args = {
+        "TOOLS_IMAGE": _tools_definition(_tools_project(project))[0],
+        "ROOT_PACKAGES": " ".join(sorted(project.config.packages)),
+        "ARCH": project.arch,
+    }
+    files = {
+        "Containerfile": (BUILDENV / "Containerfile.root").read_text(),
+        "macros.archives": (BUILDENV / "macros.archives").read_text(),
+        "archives.lua": (BUILDENV / "archives.lua").read_text(),
+        "pins.list": _pins_list(_root_pins(project)),
+        **_macro_files(project),
+    }
     digest = hashlib.sha256(json.dumps([project.platform, args, files], sort_keys=True).encode()).hexdigest()
     return f"{BUILD_IMAGE}:{digest}", args, files
 
@@ -222,7 +267,11 @@ def checkout_images(project: Project) -> set[str]:
     """Return the tags of the images of the checkout, built or not: the build environment images of its platforms and
     of the host, and their side images.
     """
-    return {tag for p in _with_host(project) for tag in (image_tag(p), *(_side_tag(p, k) for k in SIDE_IMAGES))}
+    return {
+        tag
+        for p in _with_host(project)
+        for tag in (image_tag(p), _tools_definition(_tools_project(p))[0], *(_side_tag(p, k) for k in SIDE_IMAGES))
+    }
 
 
 def checkout_repositories(project: Project) -> set[str]:
@@ -232,7 +281,7 @@ def checkout_repositories(project: Project) -> set[str]:
     return {
         pinned.ident(pins)
         for p in _with_host(project)
-        for pins in (pinned.pins(p), _image_pins(p), *(_side_pins(p, k) for k in SIDE_IMAGES))
+        for pins in (pinned.pins(p), _image_pins(p), _root_pins(p), *(_side_pins(p, k) for k in SIDE_IMAGES))
     }
 
 
@@ -307,7 +356,7 @@ def _podman_build(
         process.run(["podman", "volume", "create", "--ignore", volume := _dnf_cache(project)], capture=True)
         inspect = ["podman", "volume", "inspect", "--format", "{{.Mountpoint}}", volume]
         cache = process.run(inspect, capture=True).stdout.strip()
-        cmd = ["podman", "build", "--platform", project.platform, "--security-opt", "label=disable"]
+        cmd = ["podman", "build", "--platform", _tools_project(project).platform, "--security-opt", "label=disable"]
         volumes = [f"{cache}:/var/cache/dnf:O", f"{pinned}:/pinned:ro"]
         cmd += [a for v in volumes for a in ("--volume", v)]
         cmd += build_args
@@ -347,7 +396,7 @@ def run_container(
     volumes = [*volumes, f"{BUILDENV}:/xcraft:ro", *([f"{pinned.repository(project)}:/pinned:ro"] if install else [])]
     cmd = [
         # replacing a container of a killed xcraft
-        "podman", "run", "--rm", "--replace", "--name", container, "--platform", project.platform,
+        "podman", "run", "--rm", "--replace", "--name", container, "--platform", _tools_project(project).platform,
         "--userns=keep-id:uid=1000,gid=1000", "--security-opt", "label=disable",
         *([] if network else ["--network", "none"]),
         # a terminal for a terminal only: the end of commands given otherwise ends the shell
@@ -403,13 +452,13 @@ def run(
             raise ContainerError(msg) from None
 
 
-def image_packages(project: Project, image: str) -> dict[str, Locked]:
-    """Return the upstream packages installed in `image`."""
+def image_packages(project: Project, image: str, root: str = "/") -> dict[str, Locked]:
+    """Return the upstream packages installed in `image`, or in its `root`, of the architecture of the platform."""
     with project.tmp_dir("record") as work:
         run(
             project,
             "record",
-            f"{DNF_LOCK} python3 /xcraft/record.py /work/record.json",
+            f"{DNF_LOCK} python3 /xcraft/record.py /work/record.json {root} {project.arch}",
             volumes=[f"{work}:/work"],
             show="recording the packages of the image",
             image=image,
@@ -418,26 +467,35 @@ def image_packages(project: Project, image: str) -> dict[str, Locked]:
         return {name: Locked.model_validate(p) for name, p in installed.items()}
 
 
-def _build_image(project: Project, tag: str, args: dict[str, str], files: dict[str, str]) -> None:
-    """Build the build environment image `tag`, from its build `args` and `files`, and check it has the packages
-    resolved for it: under a tag of its own until then, not to be used unchecked by other commands, even when this one
-    is killed.
+def _build_image(
+    project: Project,
+    tag: str,
+    args: dict[str, str],
+    files: dict[str, str],
+    *,
+    root: bool,
+) -> None:
+    """Build the image `tag` of the tools of the platform, or of its `root`, from its build `args` and `files`, and
+    check it has the packages resolved for it: under a tag of its own until then, not to be used unchecked by other
+    commands, even when this one is killed.
     """
+    what, pins = ("root", _root_pins(project)) if root else ("image", _image_pins(project))
     unchecked = f"{tag}-{os.getpid()}"
     _podman_build(
         project,
-        "image",
+        what,
         unchecked,
         files,
         args,
-        show="the build environment image",
-        pinned=pinned.repository(project, _image_pins(project)),  # its own only
+        show=f"the build environment {what}",
+        pinned=pinned.repository(project, pins),  # its own only
     )
     try:
-        resolved = {f"{n}-{p.evr}.{p.arch}" for n, p in _image_pins(project).items()}
-        installed = image_packages(project, unchecked)
+        resolved = {f"{n}-{p.evr}.{p.arch}" for n, p in pins.items()}
+        installed = image_packages(project, unchecked, ROOT if root else "/")
         if differences := changes(resolved, {f"{n}-{p.evr}.{p.arch}" for n, p in installed.items()}):
-            msg = f"the build environment image does not have the packages resolved for it: {', '.join(differences)}"
+            msg = f"the build environment {what} does not have the packages resolved for it: "
+            msg += ", ".join(differences)
             raise ContainerError(msg)
         process.run(["podman", "tag", unchecked, tag], capture=True)
     finally:  # only the tag once tagged `tag`, the image otherwise
@@ -445,7 +503,8 @@ def _build_image(project: Project, tag: str, args: dict[str, str], files: dict[s
 
 
 def built_image(project: Project) -> str:
-    """Return the tag of the build environment image, building it if needed.
+    """Return the tag of the build environment image, building it if needed: its root, on the image of its tools, see
+    _tools_project().
 
     A new image must have the packages resolved for it, or it is removed. Its
     packages must be locked: see resolution.prepare().
@@ -457,8 +516,11 @@ def built_image(project: Project) -> str:
         return tag
     try:
         with project.lock():
+            tools = _tools_project(project)
+            if not _exists(tools_tag := (definition := _tools_definition(tools))[0]):
+                _build_image(tools, tools_tag, *definition[1:], root=False)
             if not _exists(tag):
-                _build_image(project, tag, args, files)
+                _build_image(project, tag, args, files, root=True)
             return tag
     except ProjectLockedError as e:
         msg = f"{e}, and the build environment image must be built first: try again when it is done"

@@ -45,11 +45,11 @@ class Locked(BaseModel):
     sha256: str
 
 
-FORMAT = 3
+FORMAT = 4
 """The version of the format of the lock."""
-_READ = {1, 2, FORMAT}
-"""The versions of the formats this xcraft reads: 1, without the tables sign and unsigned, and 2, without lint,
-written in the current one."""
+_READ = {1, 2, 3, FORMAT}
+"""The versions of the formats this xcraft reads: 1, without the tables sign and unsigned, 2, without lint, and 3,
+without root, written in the current one."""
 
 
 class LockFormatError(RuntimeError):
@@ -141,9 +141,12 @@ class Lock(BaseModel):
     making the ISO and of the side images, by architecture, then by name."""
     image: dict[str, list[str]] = {}
     """The upstream binary packages of the build environment image, by architecture, pinned in binaries."""
+    root: dict[str, list[str]] = {}
+    """The upstream binary packages of the root of the image, its chroot, where the builds run, by architecture,
+    pinned in binaries."""
     roots: Recorded = Recorded()
-    """For each package of ours, the upstream binary packages of its build root, but those of the image, pinned in
-    binaries: with those ours replace in its build, like the image, see graph.build_deps()."""
+    """For each package of ours, the upstream binary packages of its build root, but those of the root, pinned in
+    binaries: with those ours replace in its build, like the root, see graph.build_deps()."""
     runtime: dict[str, list[str]] = {}
     """Upstream packages of the published repositories, by architecture: what our packages need at runtime, the extra
     ones, and the installer's, pinned in binaries."""
@@ -162,13 +165,17 @@ class Lock(BaseModel):
         """Check that the images, the build roots, the published repositories and the tools making the ISO have
         pinned binary packages only, of locked sources.
         """
-        arches = {*self.image, *self.roots.arches, *self.runtime, *self.iso, *self.sign, *self.lint, *self.unsigned}
+        arches = {
+            *self.image, *self.root, *self.roots.arches, *self.runtime, *self.iso, *self.sign, *self.lint,
+            *self.unsigned,
+        }  # fmt: skip
         if unpinned := sorted(arches - self.binaries.keys()):
             msg = f"architectures without pinned binary packages: {', '.join(unpinned)}"
             raise ValueError(msg)
         for arch, pins in self.binaries.items():
             names = {
-                *self.image.get(arch, []), *(n for names in self.roots.of(arch).values() for n in names),
+                *self.image.get(arch, []), *self.root.get(arch, []),
+                *(n for names in self.roots.of(arch).values() for n in names),
                 *self.runtime.get(arch, []), *self.iso.get(arch, []), *self.sign.get(arch, []),
                 *self.lint.get(arch, []), *self.unsigned.get(arch, []),
             }  # fmt: skip
@@ -260,7 +267,7 @@ def _entries(lock: Lock) -> set[str]:
             for package, values in entries.items()
             for value in values or ["(none)"]
         ),
-        *(f"{field}.{arch} {name}" for field in ("image", "runtime", "iso", "sign", "lint", "unsigned")
+        *(f"{field}.{arch} {name}" for field in ("image", "root", "runtime", "iso", "sign", "lint", "unsigned")
           for arch, names in getattr(lock, field).items() for name in names),
     }  # fmt: skip
 
@@ -293,10 +300,11 @@ def save_lock(project: Project, lock: Lock) -> None:
     for arch, pins in sorted(lock.binaries.items()):
         lines += ["", f"[binaries.{arch}]  # <evr> <arch> <sha256> <source>"]
         lines += [f"{json.dumps(name)} = {json.dumps(pin.text())}" for name, pin in sorted(pins.items())]
-    lines += _tables("roots", lock.roots.shared, "the upstream binary packages of the build roots, but the image's")
+    lines += _tables("roots", lock.roots.shared, "the upstream binary packages of the build roots, but the root's")
     for arch, entries in sorted(lock.roots.arches.items()):
         lines += _tables(f"roots.{arch}", entries)
     lines += _tables("image", lock.image, "the upstream binary packages of the build environment image")
+    lines += _tables("root", lock.root, "the upstream binary packages of the root of the image, where the builds run")
     lines += _tables("runtime", lock.runtime, "the upstream binary packages of the published repositories")
     lines += _tables("iso", lock.iso, "the upstream binary packages of the tools making the ISO, but the image's")
     lines += _tables("sign", lock.sign, "the upstream binary packages of the signing image, but the image's")

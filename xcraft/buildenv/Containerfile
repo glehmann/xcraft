@@ -3,7 +3,7 @@ FROM ${BASE_IMAGE}
 ARG PACKAGES
 RUN rm -f /etc/yum.repos.d/*.repo
 COPY pinned.repo /etc/yum.repos.d/
-COPY macros.xcraft macros.archives /etc/rpm/
+COPY macros.xcraft /etc/rpm/
 # the macros to undefine, which a macro file cannot: see rpmbuild and parse.py
 COPY undefined.list /etc/xcraft/
 COPY --chmod=755 rpmbuild /usr/local/bin/
@@ -11,11 +11,12 @@ COPY --chmod=755 rpmbuild /usr/local/bin/
 # a layer of the cache of podman
 COPY pins.list /etc/xcraft/
 # only the pinned packages, from their repository on /pinned, checked against their SHA-256 in the lock: the base
-# image packages get their pinned versions too
+# image packages get their pinned versions too, which install the repositories of the distribution again
 RUN echo keepcache=1 >> /etc/dnf/dnf.conf \
     && pinned="--disablerepo=* --enablerepo=xcraft-pinned" \
     && dnf -y $pinned distro-sync \
-    && dnf -y $pinned --setopt=install_weak_deps=False install ${PACKAGES} && dnf clean all
+    && dnf -y $pinned --setopt=install_weak_deps=False install ${PACKAGES} && dnf clean all \
+    && find /etc/yum.repos.d -name '*.repo' ! -name pinned.repo -delete
 # without the account check of PAM, whose helper cannot read /etc/shadow in some rootless containers, like in CI
 RUN useradd -u 1000 builder \
     && printf 'builder ALL=(ALL) NOPASSWD: ALL\nDefaults:builder !pam_acct_mgmt\n' > /etc/sudoers.d/builder

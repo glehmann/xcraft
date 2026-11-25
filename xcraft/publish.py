@@ -246,12 +246,13 @@ def _signed_build(project: Project, signer: Signer, name: str, key: str, *, stor
 def build_dependencies(project: Project) -> list[str]:
     """Return the upstream packages the builds of ours need, but those of the base repository.
 
-    Those are the packages of the image of the build environment and of the build roots, but the upstream ones ours
-    replace, like kernel-headers.
+    Those are the packages of the image of the build environment, of its root and of the build roots, but the
+    upstream ones ours replace, like kernel-headers.
     """
     resolved, runtime = resolution.resolve(project), load_lock(project).runtime.get(project.arch, [])
     ours = {binary.name for package in project.packages.values() for binary in package.binaries}
-    return sorted({*resolved.image, *(n for names in resolved.buildroots.values() for n in names)} - ours - {*runtime})
+    needed = {*resolved.image, *resolved.root, *(n for names in resolved.buildroots.values() for n in names)}
+    return sorted(needed - ours - {*runtime})
 
 
 def _check_installable(project: Project, repos: list[Path]) -> None:

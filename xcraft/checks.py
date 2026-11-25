@@ -91,8 +91,8 @@ def _check_build_root(project: Project, name: str, installed: dict[str, Locked])
     """
     lock, arch, ours = load_lock(project), project.arch, resolution.resolve(project).ours[name]
     pins = lock.binaries.get(arch, {})
-    # but those of the image ours replace
-    upstream = [n for n in [*lock.image[arch], *lock.roots.of(arch).get(name, [])] if n not in ours]
+    # but those of the root ours replace
+    upstream = [n for n in [*lock.root[arch], *lock.roots.of(arch).get(name, [])] if n not in ours]
     expected = {f"{n} ({pins[n].evr}.{pins[n].arch})" for n in upstream} | {f"{n} (ours)" for n in ours}
     if differences := changes(
         expected, {f"{n} ({'ours' if p.repo == 'xcraft' else f'{p.evr}.{p.arch}'})" for n, p in installed.items()}

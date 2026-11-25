@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from xcraft import develop
 from xcraft.builds import load_builds, locked_packages
-from xcraft.container import BUILDENV, PACKAGES
+from xcraft.container import BUILDENV
 from xcraft.graph import build_deps, reachable
 from xcraft.localrepo import REPO_FILE
 from xcraft.lock import cached_lock
@@ -28,15 +28,18 @@ FORMAT = 1
 trees, see rpmbuild.prepare_tree(): changed with it, to build them all again."""
 SCRIPTS = (
     "Containerfile",
+    "Containerfile.root",
     "rpmbuild",
     "macros.archives",
-    "archives.py",
+    "archives.lua",
     "build.sh",
+    "chroot.py",
     "record.py",
     "made.py",
     "rpmdeps.py",
 )
-"""The Containerfile of the image and the scripts of the builds, in xcraft/buildenv/: see The recipe."""
+"""The Containerfiles of the image and of its root, and the scripts of the builds, in xcraft/buildenv/: see The
+recipe."""
 RECIPE = hashlib.sha256("".join([REPO_FILE, *((BUILDENV / s).read_text() for s in SCRIPTS)]).encode()).hexdigest()
 """What makes the builds, besides the settings of the image and the packages: a change to it rebuilds them all, but see
 _SAME_BUILDS."""
@@ -88,8 +91,8 @@ def recipe(project: Project) -> str:
             [
                 FORMAT,
                 recipe_key(),
-                config.base_image,
-                sorted({*config.packages, *PACKAGES}),
+                # the packages of the root, not those of the image around it: its tools do not make the builds
+                sorted(config.packages),
                 config.macros,
                 config.release_suffixes,
                 {name: extra.model_dump() for name, extra in config.extra_upstream.items()},
@@ -116,9 +119,9 @@ class Platform:
 
     @classmethod
     def of(cls, project: Project, lock: Lock, builds: Builds) -> Platform:
-        """Return what the keys cover of the architecture of `project`, with `lock`, its image, and `builds`."""
+        """Return what the keys cover of the architecture of `project`, with `lock`, its root, and `builds`."""
         packages = locked_packages(project.parsed, builds, project.arch)
-        deps = build_deps(packages, lock.image.get(project.arch, []), lock.roots.of(project.arch))
+        deps = build_deps(packages, lock.root.get(project.arch, []), lock.roots.of(project.arch))
         return cls(
             project.arch,
             {name: frozenset(needed) for name, needed in deps.items()},
@@ -152,7 +155,7 @@ def lock_inputs(
 
     return {
         platform.arch: [
-            pinned(platform.arch, lock.image.get(platform.arch, [])),
+            pinned(platform.arch, lock.root.get(platform.arch, [])),
             pinned(platform.arch, lock.roots.of(platform.arch).get(name, [])),
             builds.buildrequires.of(platform.arch).get(name, []),
             generated(platform),

@@ -125,7 +125,10 @@ def _published(project: Project) -> set[str]:
     lock, arch = load_lock(project), project.arch
     names = {*lock.runtime.get(arch, [])}
     if project.config.publish.build:
-        names |= {*lock.image.get(arch, []), *(n for names in lock.roots.of(arch).values() for n in names)}
+        names |= {
+            *lock.image.get(arch, []), *lock.root.get(arch, []),
+            *(n for names in lock.roots.of(arch).values() for n in names),
+        }  # fmt: skip
     return names
 
 

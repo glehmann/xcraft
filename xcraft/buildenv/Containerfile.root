@@ -1,0 +1,24 @@
+# the root the builds run in, see chroot.py, on the image of the tools: its packages only, of the architecture of the
+# builds, installed by the dnf of the tools, natively, from their repositories rather than those of the root, with the
+# macros and the rpmbuild of the builds, and the same user; the scriptlets of an emulated architecture run by qemu
+ARG TOOLS_IMAGE
+FROM ${TOOLS_IMAGE}
+ARG ROOT_PACKAGES
+ARG ARCH
+USER root
+# before installing them, for the pinned packages of other contents, but of the same versions, not to be installed by
+# a layer of the cache of podman
+COPY pins.list /etc/xcraft/root-pins.list
+RUN pinned="--disablerepo=* --enablerepo=xcraft-pinned" \
+    && root="--installroot=/buildroot --forcearch=$ARCH --setopt=reposdir=/etc/yum.repos.d" \
+    && release="$(rpm -q --qf '%{VERSION}' --whatprovides system-release)" \
+    && dnf -y $pinned $root --releasever="$release" --setopt=install_weak_deps=False install ${ROOT_PACKAGES} \
+    && dnf $root --releasever="$release" clean all \
+    && groupadd --root /buildroot -g 1000 builder \
+    && useradd --root /buildroot --create-home -u 1000 -g builder builder \
+    && mkdir -p /buildroot/etc/xcraft /buildroot/usr/local/bin /buildroot/usr/lib/xcraft
+COPY macros.xcraft macros.archives /buildroot/etc/rpm/
+COPY undefined.list /buildroot/etc/xcraft/
+COPY --chmod=755 rpmbuild /buildroot/usr/local/bin/
+COPY archives.lua /buildroot/usr/lib/xcraft/
+USER builder

@@ -13,7 +13,7 @@ from xcraft.host import Fix
 if TYPE_CHECKING:
     from pathlib import Path
 
-CONF = ":qemu-aarch64:M::\\x7fELF\\x02:\\xff\\xff:/usr/bin/qemu-aarch64-static:F\n"
+CONF = ":qemu-aarch64:M::\\x7fELF\\x02:\\xff\\xff:/usr/bin/qemu-aarch64-static:C\n"
 
 
 @pytest.fixture
@@ -33,31 +33,31 @@ def binfmt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def should_fix_the_emulation_flags_needed_to_run_sudo(binfmt: Path) -> None:
+def should_fix_the_emulation_flags_needed_to_run_the_build_roots(binfmt: Path) -> None:
     proc, etc = binfmt / "binfmt_misc", binfmt / "etc"
     (binfmt / "binfmt.d/qemu-aarch64-static.conf").write_text(CONF)
     assert host.emulation_problem("aarch64") == "the emulator of aarch64 is not registered in binfmt_misc"
-    (proc / "qemu-aarch64").write_text("disabled\ninterpreter /usr/bin/qemu-aarch64-static\nflags: F\n")
+    (proc / "qemu-aarch64").write_text("disabled\ninterpreter /usr/bin/qemu-aarch64-static\nflags: C\n")
     assert host.emulation_problem("aarch64") == "the emulator of aarch64 is not registered in binfmt_misc"
-    (proc / "qemu-aarch64").write_text("enabled\ninterpreter /usr/bin/qemu-aarch64-static\nflags: F\noffset 0\n")
-    assert (
-        host.emulation_problem("aarch64") == "the emulation of aarch64 cannot run sudo, qemu-aarch64 having no C flag"
+    (proc / "qemu-aarch64").write_text("enabled\ninterpreter /usr/bin/qemu-aarch64-static\nflags: C\noffset 0\n")
+    assert host.emulation_problem("aarch64") == (
+        "the emulation of aarch64 cannot run the binaries of a build root, qemu-aarch64 having no F flag"
     )
 
     # over the file of the distribution, registered by systemd-binfmt
     assert host.emulation_fix("aarch64") == [
-        Fix(["sudo", "tee", f"{etc}/qemu-aarch64-static.conf"], CONF.replace(":F\n", ":FOC\n")),
+        Fix(["sudo", "tee", f"{etc}/qemu-aarch64-static.conf"], CONF.replace(":C\n", ":CFO\n")),
         Fix(["sudo", "systemctl", "restart", "systemd-binfmt"]),
     ]
     # or directly, without systemd
     (binfmt / "systemd").rmdir()
     assert host.emulation_fix("aarch64")[1:] == [
         Fix(["sudo", "tee", f"{proc}/qemu-aarch64"], "-1\n"),
-        Fix(["sudo", "tee", f"{proc}/register"], CONF.replace(":F\n", ":FOC\n")),
+        Fix(["sudo", "tee", f"{proc}/register"], CONF.replace(":C\n", ":CFO\n")),
     ]
     # keeping the other flags of the distribution, like Debian's
-    (binfmt / "binfmt.d/qemu-aarch64-static.conf").write_text(CONF.replace(":F\n", ":OPF\n"))
-    assert host.emulation_fix("aarch64")[0].input == CONF.replace(":F\n", ":OPFC\n")
+    (binfmt / "binfmt.d/qemu-aarch64-static.conf").write_text(CONF.replace(":C\n", ":OPC\n"))
+    assert host.emulation_fix("aarch64")[0].input == CONF.replace(":C\n", ":OPCF\n")
     (proc / "qemu-aarch64").write_text("enabled\ninterpreter /usr/bin/qemu-aarch64-static\nflags: OCF\n")
     assert host.emulation_problem("aarch64") == ""
     assert host.emulation_fix("aarch64") == []

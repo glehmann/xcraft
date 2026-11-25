@@ -72,12 +72,14 @@ class Resolved(BaseModel):
     """The upstream binary packages of the locked source packages, in their locked versions."""
     image: list[str] = []
     """The upstream packages of the build environment image."""
+    root: list[str] = []
+    """The upstream packages of the root of the image, its chroot, where the builds run: the build roots on it."""
     buildroots: dict[str, list[str]] = {}
-    """The upstream packages of the build root of each of our packages, the image's included."""
+    """The upstream packages of the build root of each of our packages, the root's included."""
     ours: dict[str, list[str]] = {}
     """The binary packages of ours of the build root of each of our packages, and the extra upstream ones."""
     errors: dict[str, str] = {}
-    """Why packages of ours, or the image, cannot be resolved."""
+    """Why packages of ours, the image, or its root, cannot be resolved."""
     unlocked: list[str] = []
     """The upstream source packages needed, not locked yet."""
     versions: dict[str, list[str]] = {}
@@ -116,7 +118,7 @@ class Resolved(BaseModel):
     """The binary packages, ours and upstream, of the repository of the ISO, iso, and of install.img."""
     why: dict[str, dict[str, list[str]]] = {}
     """By set, base, build, iso and install.img, why each package is there, by name: its kind, ours, extra, installer,
-    iso or image for the roots, requires or recommends by the package of `by`, or buildrequires by the package of ours
+    iso or root for the roots, requires or recommends by the package of `by`, or buildrequires by the package of ours
     of `by`, and the requirement, as [kind, by, requirement]; see xcraft.contents."""
 
     def image_packages(self) -> dict[str, Locked]:
@@ -124,8 +126,8 @@ class Resolved(BaseModel):
         return {name: self.packages[name] for name in self.image}
 
     def images(self) -> set[str]:
-        """Return the upstream packages of the image and of its side images."""
-        return {*self.image, *self.sign, *self.lint}
+        """Return the upstream packages of the image, of its root and of its side images."""
+        return {*self.image, *self.root, *self.sign, *self.lint}
 
 
 def _run(project: Project, data: dict, *, show: str, rpms: Sequence[Path] = (), quiet: bool = False) -> Resolved:
@@ -295,6 +297,7 @@ def _image_data(project: Project) -> dict:
         "suffixes": config.release_suffixes,
         "sources": cached_lock(project).sources,
         "image": sorted({*config.packages, *PACKAGES}),
+        "root": sorted(config.packages),
         "unchecked": sorted(name for name, repo in project.repos.items() if not repo.gpgcheck),
         "ours": [],
         "builds": {},
@@ -305,7 +308,7 @@ def available_versions(project: Project, sources: list[str]) -> tuple[dict[str, 
     """Return the available versions of the upstream source packages `sources` on the platform, oldest first, and the
     repositories of their binary packages, under the activity of latest_versions().
     """
-    data = {**_image_data(project), "base": [], "image": [], "versions": sources}
+    data = {**_image_data(project), "base": [], "image": [], "root": [], "versions": sources}
     resolved = _run(project, data, show="", quiet=True)
     return resolved.versions, resolved.repos
 
@@ -423,9 +426,10 @@ def resolve_image(project: Project) -> Resolved:
     Raise when the lock misses some: prepare() it first.
     """
     resolved = _locked(_image(project))
-    if error := resolved.errors.get("image"):
-        msg = f"the build environment image of {project.arch} cannot be resolved: {error}"
-        raise ResolutionError(msg)
+    for what in ("image", "root"):
+        if error := resolved.errors.get(what):
+            msg = f"the build environment {what} of {project.arch} cannot be resolved: {error}"
+            raise ResolutionError(msg)
     return resolved
 
 
@@ -634,15 +638,17 @@ def _record_image(platform: Project, lock: Lock) -> Resolved:
     to pin them from.
     """
     image = _locked(_image(platform))
-    if error := image.errors.get("image"):
-        msg = f"the build environment image cannot be resolved for {platform.arch}: {error}"
-        raise ResolutionError(msg)
+    for what in ("image", "root"):
+        if error := image.errors.get(what):
+            msg = f"the build environment {what} cannot be resolved for {platform.arch}: {error}"
+            raise ResolutionError(msg)
     for kind in SIDE_IMAGES:
         if error := getattr(image, f"{kind}_error"):
             msg = f"the {kind} image cannot be resolved for {platform.arch}: {error}"
             raise ResolutionError(msg)
         getattr(lock, kind)[platform.arch] = getattr(image, kind)
     lock.image[platform.arch] = sorted(image.image)
+    lock.root[platform.arch] = sorted(image.root)
     return image
 
 
@@ -680,7 +686,9 @@ def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
     drop_gone(project)
 
     def record(recorded: Lock, lock: Lock) -> None:
-        lock.image, lock.binaries, lock.runtime, lock.iso, lock.sign, lock.lint, lock.unsigned = ({} for _ in range(7))
+        lock.image, lock.root, lock.binaries, lock.runtime, lock.iso, lock.sign, lock.lint, lock.unsigned = (
+            {} for _ in range(8)
+        )
         lock.roots.keep({*project.package_dirs})
         lock.roots.arches = {}
         for platform in platforms:
@@ -690,7 +698,7 @@ def _record(project: Project, repin: frozenset[str] = frozenset()) -> None:
                 values = (
                     recorded.roots.of(platform.arch).get(name, [])
                     if name in roots.errors
-                    else sorted(set(roots.buildroots.get(name, [])) - {*image.image})
+                    else sorted(set(roots.buildroots.get(name, [])) - {*image.root})
                 )
                 lock.roots.record(platform.arch, project.first, name, values)
             _record_published(recorded, lock, platform.arch, roots)

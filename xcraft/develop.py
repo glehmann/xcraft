@@ -34,7 +34,8 @@ if TYPE_CHECKING:
 ARCHIVE = "xcraft-develop.tar"
 """The main archive of a package developed from a tree, in its SOURCES/: the tree, as git archive makes it."""
 SYNC = "develop.py"
-"""The script of BUILDENV synchronizing the directory of the sources with the archive, in %prep."""
+"""The script of BUILDENV synchronizing the directory of the sources with the archive before rpmbuild, out of the
+root, on the directories %prep names, see _setup()."""
 FORMAT = 3
 """The version of how a tree is staged, in the keys of its builds: changed with it, to build them again."""
 _TREES = TypeAdapter(dict[str, str])
@@ -142,8 +143,8 @@ def directory_hash(plain: str, developed: Tree | None) -> str:
 
 def _setup(line: str) -> list[str]:
     """Return the lines replacing the %setup or %autosetup `line` of a package developed from a tree, unless it does
-    not unpack the main archive, with -T: keeping its directory, synchronized with the archive, see SYNC, and unpacking
-    the other archives it unpacks, with -a and -b.
+    not unpack the main archive, with -T: keeping its directory, synchronized with the archive before rpmbuild, by SYNC,
+    which the line naming them, before, tells, and unpacking the other archives it unpacks, with -a and -b.
     """
     directory, others, tokens = "%{name}-%{version}", [], line.split()[1:]
     while tokens:
@@ -159,9 +160,8 @@ def _setup(line: str) -> list[str]:
                     others += [f"-{letter}", value]
                 break
     return [
-        f"mkdir -p %{{_builddir}}/{directory}",
+        f": xcraft develop %{{SOURCE0}} %{{_builddir}}/{directory}",
         " ".join(["%setup -q -T -D -n", directory, *others]),
-        f"python3 /xcraft/{SYNC} %{{SOURCE0}}",
     ]
 
 

@@ -48,8 +48,8 @@ architectures, and has, one line per package for readable diffs:
   with the tools making the ISO, or signing, or published, for the whole tree, and of these only. On each
   architecture, dnf only sees the binary packages of that version, but the `release_suffixes` of `xcraft.toml`, like
   `[".alma_altarch"]` of the packages AlmaLinux rebuilds for x86_64_v2.
-- `[image]`, by architecture, the upstream source packages of the build environment image, and `[roots]`, for each
-  package of ours, those of its build root but the image's, shared by the architectures but for their own entries, in
+- `[image]`, by architecture, the upstream source packages of the build environment image, `[root]`, those of its
+  root, where the builds run, and `[roots]`, for each package of ours, those of its build root but the root's, shared by the architectures but for their own entries, in
   `[roots.<arch>]`: as resolved, for all the architectures, by the commands resolving them, which record them when
   they change.
 - `[runtime]` and `[iso]`, by architecture: the upstream binary packages published, and those of the tools making the
@@ -69,7 +69,8 @@ An architecture which finds others has its own entries, which replace the shared
 So a bump of a package changes its spec and its `build` and `key` lines only.
 
 **Build roots, resolved.** Before building, dnf resolves the build environment image, from the base image and
-`packages` of `xcraft.toml`, and the build root of each package, from its `BuildRequires`, against the upstream
+`packages` of `xcraft.toml`, its root, from `packages` alone, and the build root of each package, on the root, from its
+`BuildRequires`, against the upstream
 repositories, in the locked versions, and a repository of the metadata of our binary packages, from their specs and
 what their builds found, without installing anything. It only reads metadata, so it runs natively, for all the
 architectures, in the base image of the host, with the specs parsed for each architecture, like `rpmbuild --target`:

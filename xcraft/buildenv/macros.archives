@@ -1,8 +1,8 @@
-# the static archives of the build root made deterministic, see archives.py: after brp-strip-static-archive, which
+# the static archives of the build root made deterministic, see archives.lua: after brp-strip-static-archive, which
 # writes them again with the time of the build, at the end of %__spec_install_post, as specs replace %__os_install_post
 %__spec_install_post\
     %{?__debug_package:%{__debug_install_post}}\
     %{__arch_install_post}\
     %{__os_install_post}\
-    /usr/bin/python3 -I /xcraft/archives.py "$RPM_BUILD_ROOT"\
+    /usr/bin/rpmlua /usr/lib/xcraft/archives.lua "$RPM_BUILD_ROOT"\
 %{nil}

@@ -41,8 +41,9 @@ def shell(
     """Open a shell in the build tree of a package, where rpmbuild -ba SPECS/<spec> builds it, with the network.
 
     Its build dependencies are installed, and its sources prepared. The build tree is .xcraft/build/<package>/ on the
-    host, where its files can be edited, and its packages are. sudo dnf install installs the other pinned upstream
-    packages, and ours, and sudo dnf --enablerepo='*' install those of the upstream repositories not pinned yet, to try
+    host, where its files can be edited, and its packages are. The builds run in the root of the image, whose shell
+    is root, and dnf install installs there the other pinned upstream packages, and ours, and
+    dnf --enablerepo='*' install those of the upstream repositories not pinned yet, to try
     them: a BuildRequires on them pins them.
 
     On the builder of the architecture, if any, see $XCRAFT_BUILDERS, unless --local: in a copy of the checkout there,

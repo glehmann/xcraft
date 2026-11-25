@@ -115,9 +115,10 @@ tree for each build, `.xcraft/build/<pkg>/`. For a package developed from a tree
   untracked ones too, but those git ignores, the same commit for the same files; its patches are dropped, as the tree
   has them, as commits;
 - each `%setup` or `%autosetup` of `%prep` unpacking it, without `-T`, becomes `%setup -q -T -D -n <dir>`, with the
-  other archives it unpacks, `-a` and `-b`, which neither unpacks the main archive nor removes the directory, then `develop.py` of the build environment synchronizes the directory with the archive: it writes the
-  files whose contents differ, removes those the tree no longer has, and leaves the others as they are, with their
-  times. The rest of `%prep` runs as usual.
+  other archives it unpacks, `-a` and `-b`, which neither unpacks the main archive nor removes the directory; before
+  `rpmbuild`, `develop.py` of the build environment, out of the root of the builds, synchronizes the directory, which a
+  line of `%prep` names, with the archive: it writes the files whose contents differ, removes those the tree no longer
+  has, and leaves the others as they are, with their times. The rest of `%prep` runs as usual.
 
 **In the directory of the builds of the spec.** The directory is the one of the `%setup` it replaces, with its `-n`,
 like `linux-%{usver}` for the kernel. ccache hashes the working directory of the compilations made with `-g`, which all

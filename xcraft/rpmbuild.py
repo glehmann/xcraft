@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from xcraft import ccache, develop, localrepo, resolution
 from xcraft.cache import BuildError, build_keys, deps_repo
-from xcraft.container import DNF_LOCK, local_repos, repo_file, run_container
+from xcraft.container import DNF_LOCK, ROOT, local_repos, repo_file, run_container
 from xcraft.sources import fetch_sources, parse_manifest
 from xcraft.specs import STAGED_TIME, hash_dir, main_spec
 
@@ -132,7 +132,7 @@ def run_build(
 ) -> None:
     """Run rpmbuild `rpmbuild_stage` (a: all, p: prep...) in the build tree of `name`, then the `after` commands.
 
-    The upstream packages of the image named in `replace` are replaced first by ours. `suffix` is the release suffix
+    The upstream packages of the root named in `replace` are replaced first by ours. `suffix` is the release suffix
     of the build, %autorev: its number, and its development build suffix, if any. With `nocheck`, rpmbuild skips
     %check. With `fast`, for the development builds, the binary packages are compressed with zstd at level 3 rather
     than 19: their packaging takes a third of the time, for packages a third bigger. With `cached_dune`, for the
@@ -149,6 +149,7 @@ def run_build(
         "replace": " ".join(replace),
         # the options of rpmbuild of build.sh, whose changes would build everything again: with --noclean, the
         # directory of the sources of a package developed from a tree is kept, which rpmbuild -ba removes at its end
+        "arch": project.arch,
         "nocheck": " ".join(
             filter(None, ["--nocheck" if nocheck else "", "--noclean" if name in develop.trees(project) else ""])
         ),
@@ -156,7 +157,7 @@ def run_build(
     script = "".join(f"{p}={shlex.quote(value)}\n" for p, value in parameters.items()) + f". /xcraft/build.sh\n{after}"
     if fast:
         # not in the recipe of the builds: the packages have the same contents, and development builds stay local
-        script = f"echo '%_binary_payload w3T.zstdio' >> ~/.rpmmacros\n{script}"
+        script = f"echo '%_binary_payload w3T.zstdio' >> {ROOT}$HOME/.rpmmacros\n{script}"
     if size := project.config.ccache_size.get(name):
         # not in the recipe of the builds: it does not change them
         script = f"export CCACHE_MAXSIZE={shlex.quote(size)}\n{script}"
@@ -181,16 +182,16 @@ def run_build(
             dune.rmdir()
 
 
-def image_replacements(resolved: Resolved, name: str) -> list[str]:
-    """Return the upstream packages of the image to replace by ours in the `resolved` build root of `name`."""
-    return sorted(set(resolved.ours.get(name, [])) & set(resolved.image))
+def root_replacements(resolved: Resolved, name: str) -> list[str]:
+    """Return the upstream packages of the root to replace by ours in the `resolved` build root of `name`."""
+    return sorted(set(resolved.ours.get(name, [])) & set(resolved.root))
 
 
 REFRESH = ".xcraft-refresh"
 """The file of the build tree of a package developed from a tree, see xcraft.develop, by which its shell asks for its
 archive again, see _refreshing(), and the host tells its error, in REFRESH.error, if any."""
 REFRESHED_RPMBUILD = f"""
-rpmbuild() {{
+rpmbuild() {{{{
     : > /build/{REFRESH}
     for _ in $(seq 600); do [ -e /build/{REFRESH} ] || break; sleep 0.1; done
     if [ -e /build/{REFRESH} ]; then
@@ -202,10 +203,11 @@ rpmbuild() {{
         rm -f /build/{REFRESH}.error
         return 1
     fi
-    command rpmbuild "$@"
-}}
+    python3 /xcraft/{develop.SYNC} /build/SPECS/{{spec}} {{arch}}-linux && command rpmbuild "$@"
+}}}}
 """
-"""The rpmbuild of the shell of a package developed from a tree: with the archive of the tree as it is then."""
+"""The rpmbuild of the shell of a package developed from a tree, with its `{spec}` and the RPM architecture of the
+root in `{arch}`: with the archive of the tree as it is then, its directories synchronized with it, like a build."""
 
 
 @contextlib.contextmanager
@@ -236,35 +238,58 @@ def _refreshing(project: Project, name: str, tree: Path) -> Generator[None]:
         thread.join()
 
 
+SHELL_COMMANDS = {
+    "rpmbuild": 'exec python3 /xcraft/chroot.py rpmbuild "$@"',
+    "dnf": f"exec sudo dnf --installroot={ROOT} --forcearch={{arch}} --setopt=reposdir=/etc/yum.repos.d"
+    ' --setopt=cachedir=/var/cache/dnf "$@"',
+    "root": 'exec python3 /xcraft/chroot.py bash -l "$@"',
+}
+"""The commands of the shell, before the others in its PATH, with the RPM architecture of the root in `{arch}`:
+rpmbuild in the root, like the builds, dnf of the image installing in the root, and a shell in the root."""
+
+
 def shell(project: Project, name: str) -> None:
     """Open a shell in the build tree of `name`, with its build dependencies installed and sources prepared.
 
-    rpmbuild works on the build tree there, like in the builds: rpmbuild -ba SPECS/<spec> builds it again, shown before
-    the prompt. The build tree is the one of the host, in .xcraft/build/, where its files can be edited, and its
+    The shell runs in the container, with the tools of the image, and its commands act on the root where the builds
+    run, see SHELL_COMMANDS: rpmbuild works on the build tree there, like in the builds, rpmbuild -ba SPECS/<spec>
+    builds it again, shown before the prompt, dnf install installs other packages in the root, and root opens a shell
+    in the root. The build tree is the one of the host, in .xcraft/build/, where its files can be edited, and its
     packages are. Its dependencies are their development builds, as last built, if any. dnf has the upstream
-    repositories too, disabled, to try the packages not pinned yet: sudo dnf --enablerepo='*' install <package>. For a
-    package developed from a tree, rpmbuild unpacks the tree as it is when it runs, see _refreshing().
+    repositories too, disabled, to try the packages not pinned yet: dnf --enablerepo='*' install <package>. For a
+    package developed from a tree, rpmbuild unpacks the tree as it is when it runs, see _refreshing() and
+    REFRESHED_RPMBUILD.
     """
     from xcraft.devbuilds import built_dev_suffixes  # noqa: PLC0415, which imports the builds
 
     repo = deps_repo(project, name, build_keys(project, built_dev_suffixes(project)))
     tree = prepare_tree(project, name)
-    replace = image_replacements(resolution.resolve(project), name)
+    replace = root_replacements(resolution.resolve(project), name)
     spec = main_spec(project.package_dirs[name]).name
     # the labels dim, the path bold, the command bold cyan: on a terminal, without NO_COLOR, like xcraft's console
     rows = [
         ("build tree", f"{tree}, on the host", "bold"),
         ("to build", f"rpmbuild -ba SPECS/{spec}", "cyan"),
-        ("not pinned", "sudo dnf --enablerepo='*' install <package>", "cyan"),
+        ("to install", "dnf install <package>, in the root of the builds", "cyan"),
+        ("not pinned", "dnf --enablerepo='*' install <package>", "cyan"),
+        ("in the root", "root, a shell where the builds run", "cyan"),
     ]
     upstream = repo_file(project, enabled=False)
     developed = name in develop.trees(project)
     after = (
-        # the repositories of the project only, rather than those of the distribution in the image, enabled
-        "sudo find /etc/yum.repos.d -name '*.repo' ! -name pinned.repo ! -name xcraft.repo -delete"
-        f" && printf %s {shlex.quote(upstream)} | sudo tee /etc/yum.repos.d/upstream.repo >/dev/null"
-        " && echo '%_topdir /build' > ~/.rpmmacros"
-        + (f" && printf %s {shlex.quote(REFRESHED_RPMBUILD)} >> ~/.bashrc" if developed else "")
+        f"printf %s {shlex.quote(upstream)} | sudo tee /etc/yum.repos.d/upstream.repo >/dev/null"
+        f" && echo '%_topdir /build' > {ROOT}$HOME/.rpmmacros && mkdir -p ~/bin"
+        + "".join(
+            f" && printf '#!/bin/bash\\n%s\\n' {shlex.quote(command.format(arch=project.arch))} > ~/bin/{name}"
+            f" && chmod +x ~/bin/{name}"
+            for name, command in SHELL_COMMANDS.items()
+        )
+        + """ && echo 'PATH=~/bin:$PATH' >> ~/.bashrc"""
+        + (
+            f" && printf %s {shlex.quote(REFRESHED_RPMBUILD.format(spec=spec, arch=project.arch))} >> ~/.bashrc"
+            if developed
+            else ""
+        )
         + " && cd /build"
         ' && dim= bold= cyan= off= && if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then'
         " dim=$'\\e[2m' bold=$'\\e[0;1m' cyan=$'\\e[0;1;36m' off=$'\\e[0m'; fi"

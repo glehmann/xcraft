@@ -58,7 +58,9 @@ def should_unpack_the_tree_instead_of_the_sources_and_patches() -> None:
     assert "Patch" not in spec
     assert "%patch" not in spec
     assert "%autopatch" not in spec
-    assert "%setup -q -T -D -n %{name}-%{version}\npython3 /xcraft/develop.py %{SOURCE0}\n" in spec
+    assert (
+        ": xcraft develop %{SOURCE0} %{_builddir}/%{name}-%{version}\n%setup -q -T -D -n %{name}-%{version}\n" in spec
+    )
     assert "cp hello.in hello.txt" in spec  # the rest as it is
     # in the directory of the builds of the package, for the cache of the compilers
     assert "%setup -q -T -D -n linux-%{usver}\n" in spec_text(SPEC.replace("-p1", "-p1 -n linux-%{usver}"))
@@ -69,7 +71,7 @@ def should_unpack_the_tree_instead_of_the_sources_and_patches() -> None:
     assert "%setup -q -T -D -n a -a 1\n" in spec
     assert "%setup -q -T -D -n b -a 1\n" in spec
     assert "%setup -q -D -T -n b -a 2\n" in spec
-    assert spec.count("python3 /xcraft/develop.py") == 2
+    assert spec.count(": xcraft develop %{SOURCE0}") == 2
     # the old syntax of %patch too
     assert "%patch" not in spec_text(SPEC.replace("%autosetup -p1", "%setup -q\n%patch0 -p1"))
     # without %setup: nothing to replace with the tree

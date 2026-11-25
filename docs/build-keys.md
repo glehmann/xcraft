@@ -81,22 +81,23 @@ of the JSON, keys sorted, of an array of:
    like the build trees: changed with it, to build them all again.
 2. **The image and the scripts of the builds**: `recipe_key()`, the SHA-256 of the concatenation of the template of the
    repository of our builds, `REPO_FILE`, and of the `Containerfile` of the build environment, `rpmbuild`,
-   `macros.archives`, `archives.py`, `build.sh`, `record.py`, `made.py` and `rpmdeps.py`, of
+   `macros.archives`, `archives.lua`, `build.sh`, `chroot.py`, `record.py`, `made.py` and `rpmdeps.py`, of
    `xcraft/buildenv/`. A change of them which makes the same packages, like a fix of how a build fails, or of a comment,
    maps its hash to the earliest one making the same packages, in `_SAME_BUILDS`, to keep the builds.
-3. `base_image` of `xcraft.toml`: the base image, pinned by digest.
-4. The packages installed in the image: those of `packages` of `xcraft.toml`, and those xcraft needs, sorted.
-5. `macros` of `xcraft.toml`: the RPM macros of the builds, and those they undefine.
-6. `release_suffixes` of `xcraft.toml`.
-7. `extra_upstream` of `xcraft.toml`: the URLs of the extra upstream RPMs, and their SHA-256, which the builds check.
-8. The repositories of `xcraft.toml`, all of them, whatever their architectures: their settings, as in `xcraft.toml`,
+3. The packages of the root of the image, where the builds run: `packages` of `xcraft.toml`, sorted. Not the base
+   image, nor the packages of the image around the root, the tools of xcraft, like dnf or Python, which make nothing of
+   the builds.
+4. `macros` of `xcraft.toml`: the RPM macros of the builds, and those they undefine.
+5. `release_suffixes` of `xcraft.toml`.
+6. `extra_upstream` of `xcraft.toml`: the URLs of the extra upstream RPMs, and their SHA-256, which the builds check.
+7. The repositories of `xcraft.toml`, all of them, whatever their architectures: their settings, as in `xcraft.toml`,
    but `source_baseurl`, where publishing gets their source packages from, and `fingerprints`, of the keys checking
    their signatures.
 
 The image has the macros, the repositories and the packages in an order of its own, by name, which their order in
 `xcraft.toml` does not change, like the recipe.
 
-The versions of the upstream packages of the image are not in the recipe, but in [the lock](#the-lock). See
+The versions of the upstream packages of the root are not in the recipe, but in [the lock](#the-lock). See
 `buildkey.recipe()` and `buildkey.recipe_key()`.
 
 ## The lock
@@ -104,8 +105,9 @@ The versions of the upstream packages of the image are not in the recipe, but in
 For each architecture, what `xcraft.lock`, and `xcraft.builds` for what the builds recorded, have for the package, an
 array of:
 
-1. **The image**: the upstream binary packages of the image of the architecture, by name, each as its pin in the lock.
-2. **The build root**: the upstream binary packages of its build root, but those of the image, by name, each as its
+1. **The root**: the upstream binary packages of the root of the image of the architecture, where the builds run, by
+   name, each as its pin in the lock.
+2. **The build root**: the upstream binary packages of its build root, but those of the root, by name, each as its
    pin in the lock.
 3. **Its dynamic BuildRequires**, those its `%generate_buildrequires` asks for, as recorded by its builds.
 4. **What rpm generated** for the binary packages of the packages it is built against, directly or not, on that
@@ -117,10 +119,10 @@ array of:
 The pin of a binary package is an array of its epoch-version-release, its architecture, the SHA-256 of its RPM, and
 the name of its source package: the RPM the builds get, whatever the repositories have now. For `xcraft reuse --built-against`,
 the pins of the binary packages of the source packages it ignores the updates of are only their architectures and
-their source packages: their names stay in the image and the build root, so an update adding or removing a binary
+their source packages: their names stay in the root and the build root, so an update adding or removing a binary
 package is not reused.
 
-The image and the build roots are resolved from the specs and the lock by dnf, for each architecture, on any
+The root and the build roots are resolved from the specs and the lock by dnf, for each architecture, on any
 machine, and pinned in the lock, see `resolution.prepare()`: the key covers what the build environment installs,
 without resolving anything. A pin stays until `xcraft lock --update` pins it again, even when the repositories publish
 other contents for it: a build then fails, rather than getting another RPM. A resolution of another version or

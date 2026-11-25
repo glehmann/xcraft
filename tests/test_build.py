@@ -207,8 +207,8 @@ def should_refuse_a_binary_package_made_by_two_packages(root: Path) -> None:
 
 def should_build_without_network_privileges_or_broken_pipes(root: Path) -> None:
     # without network but its loopback interface, without privileges, and with the pipes closed by their reader killing
-    # their writer, as outside of rpmbuild
-    write_spec(root, "sandboxed")
+    # their writer, as outside of rpmbuild; with sudo, which the root has not either, to try
+    write_spec(root, "sandboxed", requires="python3 sudo")
     spec = root / "base/sandboxed/sandboxed.spec"
     network = (
         "import socket\n"
@@ -234,10 +234,28 @@ def should_build_without_network_privileges_or_broken_pipes(root: Path) -> None:
     assert '"no new privileges" flag is set' in log
 
 
+def should_build_in_a_root_of_the_build_requirements_only(root: Path) -> None:
+    # python3, which the image has for xcraft, only in the build roots requiring it
+    write_spec(root, "needy")
+    spec = root / "base/needy/needy.spec"
+    # with the group of the builder named, as the archives the builds make have it, and namespaces of its own, like
+    # the sandboxes of bwrap that opam makes
+    build = '%build\npython3 -c pass\ntest "$(id -gn)" = builder\nunshare --user --map-root-user true\n'
+    spec.write_text(spec.read_text().replace("%install\n", f"{build}%install\n"))
+    code, output = xcraft("build", "needy")
+    assert code == 1, output
+    assert "python3: command not found" in (root / ".xcraft/logs/needy.log").read_text()
+    spec.write_text(spec.read_text().replace("BuildArch: noarch\n", "BuildArch: noarch\nBuildRequires: python3\n"))
+    code, output = xcraft("build", "needy")
+    assert code == 0, output
+
+
 def should_install_the_upstream_packages_not_pinned_from_the_shell(root: Path) -> None:
     # typed in the shell: toyarch, of the upstream repository of the toys, is in no build root, so not pinned
     typed = root / "typed"
-    typed.write_text("sudo dnf -q -y --enablerepo='*' install toyarch && rpm -q toyarch > /build/installed\nexit\n")
+    typed.write_text(
+        "dnf -q -y --enablerepo='*' install toyarch && root -c 'rpm -q toyarch' > /build/installed\nexit\n"
+    )
     stdin = os.dup(0)
     with typed.open() as commands:
         os.dup2(commands.fileno(), 0)

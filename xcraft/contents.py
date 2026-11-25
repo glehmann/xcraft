@@ -35,6 +35,7 @@ _ROOTS = {
     "installer": "in [iso] installer",
     "iso": "in [iso] packages",
     "image": "in the build environment image",
+    "root": "in the build root",
     "buildrequires": "a build requirement of {by}",
 }
 

@@ -60,10 +60,10 @@ def should_save_the_lock_in_a_readable_format(tmp_path: Path) -> None:
     # one line per package, for readable diffs, and the differences of an architecture in its own table
     assert '[sources]\n"glibc" = "2.39-145.el10_2"\n' in text
     assert '[roots.aarch64]\n"qemu" = [\n    "glibc",\n    "pixman",\n]\n' in text
-    assert '[roots]  # the upstream binary packages of the build roots, but the image\'s\n"qemu" = [\n' in text
+    assert '[roots]  # the upstream binary packages of the build roots, but the root\'s\n"qemu" = [\n' in text
     # the binary packages, pinned by architecture, in a format of its own
     assert text.startswith(
-        "# written by xcraft: the versions of the upstream packages, for all the architectures\n\nversion = 3\n"
+        "# written by xcraft: the versions of the upstream packages, for all the architectures\n\nversion = 4\n"
     )
     assert f'"glibc" = "2.39-145.el10_2 aarch64 {"ab" * 32} glibc"\n' in text
 
@@ -101,17 +101,17 @@ def should_reject_invalid_locks(tmp_path: Path) -> None:
         with pytest.raises(ValueError, match=problem):
             Lock.model_validate({"sources": {"glibc": "1-1"}, **invalid})
     # a lock of another xcraft
-    lock_path(project).write_text('version = 4\n\n[sources]\n"glibc" = "1-1"\n')
-    with pytest.raises(LockFormatError, match="the lock has the format 4, not 3: of another xcraft"):
+    lock_path(project).write_text('version = 5\n\n[sources]\n"glibc" = "1-1"\n')
+    with pytest.raises(LockFormatError, match="the lock has the format 5, not 4: of another xcraft"):
         load_lock(project)
 
 
 def should_upgrade_locks_of_earlier_formats(tmp_path: Path) -> None:
     project = Project(tmp_path, config())
-    # without the tables sign, unsigned or lint: read, and written in the current one
+    # without the tables sign, unsigned, lint or root: read, and written in the current one
     lock_path(project).write_text('version = 1\n\n[sources]\n"glibc" = "1-1"\n')
     save_lock(project, load_lock(project))
-    assert lock_path(project).read_text().splitlines()[2] == "version = 3"
+    assert lock_path(project).read_text().splitlines()[2] == "version = 4"
 
 
 def should_share_entries_found_on_the_first_architecture() -> None:

@@ -3,7 +3,9 @@
 They are read from the database of rpm, without the metadata of the upstream repositories, which may not have them
 anymore: those built by xcraft have the repository ``xcraft``, those of the repository of our builds, whose id in the
 containers is ``xcraft-<project id>``, the others ``upstream``, without their SHA-256, which only their downloads
-checked, see xcraft.pinned. Run as root in the build environment, with the dnf python API: ``record.py <output>``.
+checked, see xcraft.pinned. Run as root in the build environment, with the dnf python API: ``record.py <output>
+[<root> <arch>]``, those of its root, /buildroot, of the RPM architecture of the platform, or of the image, /, by
+default.
 """
 
 import json
@@ -17,7 +19,12 @@ def main() -> None:
     """Record the installed packages."""
     base = dnf.Base()
     base.conf.read()
-    base.read_all_repos()
+    base.read_all_repos()  # of the image, not those of the root
+    if len(sys.argv) > 2:  # noqa: PLR2004, the root
+        base.conf.installroot = sys.argv[2]
+        # those of ours of its architecture, which the host may only emulate
+        base.conf.substitutions["arch"] = sys.argv[3]
+        base.conf.substitutions["basearch"] = dnf.rpm.basearch(sys.argv[3])
     for repo in base.repos.iter_enabled():
         if not repo.id.startswith("xcraft-") or repo.id == "xcraft-pinned":
             repo.disable()

@@ -1,8 +1,8 @@
 """The host: what xcraft needs on it, which xcraft doctor checks, and the commands fixing what it misses.
 
-The containers of a platform the host cannot run are emulated by qemu-user, which the kernel runs through its
-binfmt_misc registrations. They need the C flag, for sudo, which dnf runs with in the containers: without it, the
-kernel ignores the setuid bit of the emulated binaries.
+The build roots of a platform the host cannot run are emulated by qemu-user, which the kernel runs through its
+binfmt_misc registrations, while the tools around them run natively. They need the F flag, which opens the emulator
+when registered: the build roots, chroots, do not have it.
 """
 
 from __future__ import annotations
@@ -262,8 +262,8 @@ def emulation_problem(arch: str) -> str:
         if not emulator(arch):
             return f"no emulation of {arch}, to build for it: install its qemu-user emulator, statically linked"
         return f"the emulator of {arch} is not registered in binfmt_misc"
-    if "C" not in entry[1]:
-        return f"the emulation of {arch} cannot run sudo, {entry[0]} having no C flag"
+    if "F" not in entry[1]:
+        return f"the emulation of {arch} cannot run the binaries of a build root, {entry[0]} having no F flag"
     return ""
 
 
