@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import typer
 
+from xcraft import build as builder
 from xcraft import buildid
+from xcraft.cache import build_keys, cached_build
 from xcraft.commands import BuiltAgainst, Packages, prepared_project
 from xcraft.display import console
 from xcraft.project import Project
@@ -15,6 +17,27 @@ def _ours(project: Project, names: list[str]) -> dict[str, str]:
     """Return those of `names` that are packages of ours, by package or binary name, with their packages."""
     binaries = {b.name: name for name, package in project.packages.items() for b in package.binaries}
     return {n: n if n in project.packages else binaries[n] for n in names if n in project.packages or n in binaries}
+
+
+def _missing(project: Project, names: list[str]) -> dict[str, list[str]]:
+    """Return the architectures of the project whose builds of `names` reused are neither cached nor in the remote
+    storage, by name: a reused build is never made again, and fails to build there, as the main branch never had it.
+    Not those whose specs exclude an architecture.
+    """
+    keys, missing = build_keys(project), dict[str, list[str]]()
+    for platform in project.all_platforms():
+        wanted = [
+            n
+            for n in names
+            if n in platform.parsed
+            and not platform.parsed[n].excluded
+            and not cached_build(platform, n, keys[n]).exists()
+        ]
+        found = builder.stored(platform, wanted, keys) if wanted and project.config.remote else {}
+        for name in wanted:
+            if not found.get(f"{name}/{keys[name]}"):
+                missing.setdefault(name, []).append(platform.arch)
+    return missing
 
 
 def reuse(packages: Packages = None, built_against: BuiltAgainst = None) -> None:
@@ -38,10 +61,18 @@ def reuse(packages: Packages = None, built_against: BuiltAgainst = None) -> None
         changed = buildid.reuse(project, packages, sources, sorted({*ours.values()}))
         ids, branch = buildid.read(project), buildid.fork_branch(project)
         forked = base.ids if (base := buildid.base(project)) else {}
+        reused = sorted(n for n in {*changed, *packages} if (i := ids.get(n)) and i.accepts)
+        missing = _missing(project, reused) if reused else {}
         for name in sorted({*changed, *packages}):
             if not (i := ids.get(name)):
                 continue
-            if i.accepts:
+            if i.accepts and (arches := missing.get(name)):
+                console.print(
+                    f"[yellow]warning[/]: {name}: reuses its build {i.build}, which {branch} has not for "
+                    f"{', '.join(arches)}, neither cached nor in the remote storage: it fails to build there, as a "
+                    "reused build is never made again; change its release rather than reuse it"
+                )
+            elif i.accepts:
                 console.print(f"[bold]{name}[/]: reuses its build {i.build}")
             elif i.same(forked.get(name)):
                 console.print(f"{name}: has the build of {branch} already, {i.build}")

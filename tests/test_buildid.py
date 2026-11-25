@@ -17,7 +17,8 @@ from tests import ARCH, TOML, commit_base, config, edit, git, ours, xcraft
 from xcraft import build as builder
 from xcraft import buildid, buildkey, devbuilds
 from xcraft.builds import BuildId, builds_path, load_builds, save_builds
-from xcraft.cache import build_keys
+from xcraft.cache import build_keys, cached_build
+from xcraft.commands import reuse as reuse_command
 from xcraft.iso import checkout_iso, dev_suffixes, iso_key, iso_name
 from xcraft.lock import Lock, load_lock, save_lock
 from xcraft.project import Project
@@ -37,6 +38,18 @@ def should_give_the_same_build_ids_on_all_architectures(root: Path) -> None:
     # and the cache keys of their development builds, built against them on any architecture
     autorev = {"trivial": "~1.dev", "with-deps": "~1.dev"}
     assert build_keys(projects[0], autorev, ids=ids) == build_keys(projects[1], autorev, ids=ids)
+
+
+def built_on_all_architectures() -> None:
+    """Copy the builds of the host's architecture to the caches of the others, like CI builds them on each: those of
+    the main branch, which reusing them needs on all.
+    """
+    project = Project.find()
+    keys = build_keys(project)
+    for other in (p for p in project.all_platforms() if p.arch != project.arch):
+        for name in project.packages:
+            if (build := cached_build(project, name, keys[name])).exists():
+                shutil.copytree(build, cached_build(other, name, keys[name]), dirs_exist_ok=True)
 
 
 def update() -> dict[str, int | str]:
@@ -665,6 +678,7 @@ def should_reuse_the_main_branch_build_until_its_inputs_change(root: Path) -> No
     assert code == 1
     assert "reusing builds needs the main branch, master, in a git repository" in output
     assert xcraft("build")[0] == 0  # the builds of the main branch
+    built_on_all_architectures()
     commit_base(root)
     base = buildid.read(Project.find())
     git(root, "checkout", "-qb", "feature")
@@ -724,10 +738,20 @@ def should_reuse_the_builds_built_against_a_changed_package_of_ours(root: Path) 
     assert update() == {"trivial": 2, "with-deps": 2}
     code, output = xcraft("reuse", "--built-against", "trivial")
     assert code == 0, output
-    assert output.splitlines()[-1] == "with-deps: reuses its build 1"
-    deps = buildid.read(Project.find())["with-deps"]
+    # the main branch built it for the host's architecture only: it fails on the other, where it is never made again
+    project = Project.find()
+    other = next(p for p in project.all_platforms() if p.arch != ARCH)
+    assert output.splitlines()[-1].startswith(
+        f"warning: with-deps: reuses its build 1, which master has not for {other.arch}, neither cached nor in the "
+        "remote storage"
+    ), output
+    deps = buildid.read(project)["with-deps"]
     assert (deps.number, deps.key) == (1, base["with-deps"].key)
     assert deps.accepts
+    # not once it has it, like built on a host of the architecture, and fetched
+    key = build_keys(project)["with-deps"]
+    shutil.copytree(cached_build(project, "with-deps", key), cached_build(other, "with-deps", key))
+    assert reuse_command._missing(project, ["with-deps"]) == {}
     # trivial itself is built again
     assert update() == {"trivial": 2, "with-deps": 1}
     # not a package changed otherwise
@@ -811,6 +835,7 @@ def should_reuse_builds_across_upstream_updates(root: Path, monkeypatch: pytest.
     lock.sources["toyrun"] = "1-1"
     save_lock(Project.find(), lock)
     assert xcraft("build", "with-deps")[0] == 0
+    built_on_all_architectures()
     commit_base(root)
     git(root, "checkout", "-qb", "feature")
     assert xcraft("lock", "--update", "toyrun")[0] == 0

@@ -109,8 +109,9 @@ The build ID then has the number and the key of the reused build, and the key it
 the maintainer, in its `accepts` line. It holds while the key is the accepted one: another change
 gives another key, and the package a new number, as usual. The packages built against a reused one have its reused key
 in theirs, so they keep their builds too, unless they changed otherwise. A reused build is never made again: it is the
-one of the main branch, cached, or in the remote storage, on each architecture. Reusing builds needs the main branch,
-in a git repository.
+one of the main branch, cached, or in the remote storage, on each architecture: `xcraft reuse` warns when it is
+neither for an architecture the spec does not exclude, where it would fail to build, like a newly added one. Change
+the release of the package instead. Reusing builds needs the main branch, in a git repository.
 
 The builds reuse a build of the main branch by themselves when they make it again: a package given another build ID,
 but with the same directory as there, like after a change of a package it is built against, is built, then compared to
