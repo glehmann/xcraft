@@ -905,9 +905,9 @@ def should_update_the_build_ids_without_building(root: Path) -> None:
     assert "--ids updates the build IDs of all the packages" in " ".join(output.replace("│", "").split())
 
 
-def should_keep_the_dune_cache_of_development_builds(root: Path) -> None:
+def should_keep_the_dune_cache_of_development_builds_asking_for_it(root: Path) -> None:
     # the cache of dune of trivial, which writes in it like dune: kept on this machine, for the development builds
-    # only, but for the builds without dune
+    # with --dune-cache only, but for the builds without dune
     spec = root / "base/trivial/trivial.spec"
     spec.write_text(
         spec.read_text().replace(
@@ -923,7 +923,12 @@ def should_keep_the_dune_cache_of_development_builds(root: Path) -> None:
     assert not caches.exists() or not any(caches.iterdir())
     git(root, "checkout", "-qb", "feature")
     spec.write_text(f"# changed\n{spec.read_text()}")
+    # not by default: the builds with the cache are never the same as those of the main branch, to reuse
     code, output = xcraft("build")
+    assert code == 0, output
+    assert not (caches / "trivial/entry").exists()
+    spec.write_text(f"# changed again\n{spec.read_text()}")
+    code, output = xcraft("build", "--dune-cache")
     assert code == 0, output
     assert (caches / "trivial/entry").read_text() == "enabled copy\n"
     assert [p.name for p in caches.iterdir()] == ["trivial"]  # not with-deps, without dune

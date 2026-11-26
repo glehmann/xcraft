@@ -20,7 +20,7 @@ writing of the packages; *after* is what xcraft does once rpmbuild is done.
 | ocaml | 478 | 6 | 70 | 1 | 4 | 296 | 97 | 2 |
 | openvswitch | 812 | 10 | 541 | 5 | 12 | 213 | 28 | 2 |
 
-xapi and ocaml were compiled without the cache of dune, which an iteration has: with it, a build of xapi compiles in
+xapi and ocaml were compiled without the cache of dune, which an iteration gets with `--dune-cache`: with it, a build of xapi compiles in
 4 s, and runs its tests in 2 s. The kernel was not measured there: its compiler cache and its build tree do not fit
 in the 16 GB of `/tmp` the measurements used. It was later, with blktap, built from their trees: see
 [Incremental builds](#incremental-builds-xcraft-develop).

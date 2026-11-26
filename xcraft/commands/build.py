@@ -128,6 +128,14 @@ def build(
             "reusing those: when another architecture lacks them, like one being added.",
         ),
     ] = False,
+    dune_cache: Annotated[
+        bool,
+        typer.Option(
+            "--dune-cache",
+            help="Give the development builds the cache of dune, for a developer iterating on a package: faster, but "
+            "never the same as the builds of the main branch, so never reusing them.",
+        ),
+    ] = False,
     dev: Dev = None,
     final: Final = False,
     nocheck: NoCheck = False,
@@ -161,6 +169,7 @@ def build(
             "--verbose": verbose,
             "--locked": locked,
             "--no-reuse": no_reuse,
+            "--dune-cache": dune_cache,
             "--nocheck": nocheck,
             "--fetch": fetch,
             "--key": key or "",
@@ -187,6 +196,7 @@ def build(
             fetch=fetch,
             lint_dev=lint_dev,
             reuse=not no_reuse,
+            dune_cache=dune_cache,
             jobs=jobs,
         )
     if dev_built := [r.name for r in results if r.name in autorev and r.status == "built"]:

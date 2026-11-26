@@ -4,6 +4,7 @@
 |---|---|
 | `xcraft build [<pkg>...]` | Build packages, all by default, and the packages they need, skipping what is already built |
 | `xcraft build <pkg> --no-deps` | Build only the given packages |
+| `xcraft build <pkg> --dune-cache` | Build with the cache of dune, for the development builds of a developer iterating on a package: faster, but never the same as the builds of the main branch, nor reusing them |
 | `xcraft build [<pkg>...] --jobs 2` (`-j`) | Build two packages at once, those independent of each other, see [Builds at once](builds.md#builds-at-once) |
 | `xcraft build [<pkg>...] --local` | Build here, rather than on the builder of the architecture, see [Remote builders](builds.md#remote-builders) |
 | `xcraft build <pkg> --dependents` | Also build the packages built against them |

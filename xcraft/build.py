@@ -391,6 +391,8 @@ class _Run:
     lint_dev: bool = False
     reuse: bool = True
     """Whether the rebuilds the same as the builds of the main branch reuse those, see _reproduced()."""
+    dune_cache: bool = False
+    """Whether the development builds have the cache of dune, see rpmbuild.DUNE_CACHE."""
     jobs: int = 1
     """How many packages build at once, see build()."""
     results: dict[str, Result] = field(default_factory=dict)
@@ -591,6 +593,7 @@ class _Run:
             suffix=started.suffix,
             nocheck=self._nocheck(name),
             fast=name in self.autorev,
+            cached_dune=self.dune_cache and name in self.autorev,
             log=project.log(name),
             on_line=started.on_line,
         )
@@ -907,6 +910,7 @@ def build(
     build_missing: bool = True,
     lint_dev: bool = False,
     reuse: bool = True,
+    dune_cache: bool = False,
     jobs: int | None = None,
 ) -> tuple[list[Result], dict[str, str], dict[str, str]]:
     """Build `targets` and, unless `with_deps` is false, what they need, skipping what is cached, and return how
@@ -928,7 +932,8 @@ def build(
     rpmlint lints the specs of the packages to build first, and the binary packages of the final builds, or of all
     with `lint_dev`, see xcraft.lint: its errors fail the final builds, and only show for the development builds.
 
-    A rebuild the same as the build of the main branch reuses it, unless not `reuse`, see _Run._reproduced().
+    A rebuild the same as the build of the main branch reuses it, unless not `reuse`, see _Run._reproduced(). With
+    `dune_cache`, the development builds have the cache of dune, which makes them faster, but never the same.
 
     `jobs` packages build at once, default_jobs() by default, those independent of each other, see _Run.build().
     """
@@ -955,6 +960,7 @@ def build(
             build_missing=build_missing,
             lint_dev=lint_dev,
             reuse=reuse,
+            dune_cache=dune_cache,
             jobs=jobs or default_jobs(),
         )
         with _marking(_queue_file(project)):

@@ -9,7 +9,6 @@ from xcraft import build as builder
 from xcraft import ccache
 from xcraft.cache import BuildError, cached_build, cached_builds, release_suffix
 from xcraft.graph import build_order
-from xcraft.rpmbuild import dune_cache
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -55,7 +54,7 @@ def _again(
         raise BuildError(msg)
     work = project.state / DIR / name
     shutil.rmtree(work, ignore_errors=True)
-    caches = [] if with_caches else [ccache.local_path(project, name), dune_cache(project, name)]
+    caches = [] if with_caches else [ccache.local_path(project, name)]
     aside: list[tuple[Path, Path]] = []
     try:
         for i, path in enumerate([*builds, *caches]):
@@ -65,7 +64,15 @@ def _again(
         built = aside[0][1]
         # alone, from the builds of its dependencies, cached: neither fetched, nor reused, nor their compiler caches
         results, keys, _ = builder.build(
-            project, [name], with_deps=False, dev=dev, nocheck=nocheck, verbose=verbose, fetch="none", reuse=False
+            project,
+            [name],
+            with_deps=False,
+            dev=dev,
+            nocheck=nocheck,
+            verbose=verbose,
+            fetch="none",
+            reuse=False,
+            dune_cache=with_caches,
         )
         if any(r.failed for r in results):
             return ["its build failed again"]
