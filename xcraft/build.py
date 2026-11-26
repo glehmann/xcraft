@@ -14,7 +14,7 @@ import shutil
 import time
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
@@ -173,17 +173,34 @@ def _shown(project: Project, name: str, tag: int, *, whole: bool = False) -> Gen
         yield on_line
 
 
-def fetch_build(project: Project, name: str, key: str) -> bool:
+def fetch_build(project: Project, name: str, key: str, on_line: Callable[[str], None] | None = None) -> bool:
     """Download the build of `name` with `key` from the remote storage into the cache, signed by the first key of
-    build_signers() it has, and return whether it has one.
+    build_signers() it has, and return whether it has one: shown, unless given `on_line`.
     """
-    with activity(f"downloading the build of {name}") as on_line:
+    with activity(f"downloading the build of {name}") if on_line is None else nullcontext(on_line) as shown:
         return any(
             remote.fetch_tree(
-                project, build_path(project, name, key, f), signed_build_dir(project, f, name, key), on_line, f
+                project, build_path(project, name, key, f), signed_build_dir(project, f, name, key), shown, f
             )
             for f in build_signers(project)
         )
+
+
+def fetched_builds(project: Project, names: list[str], keys: dict[str, str]) -> set[str]:
+    """Download the builds of `names` with `keys` from the remote storage into the cache, concurrently, and return
+    those it had, by `<name>/<key>`: not those it failed to download, asked again one by one then.
+    """
+
+    def fetched(name: str) -> bool:
+        on_line(name)
+        try:
+            return fetch_build(project, name, keys[name], lambda _: None)
+        except remote.RemoteError:
+            return False
+
+    # 4 at once, each downloading its files concurrently too
+    with activity(f"downloading the builds of {len(names)} packages", log=True) as on_line, thread_pool(4) as pool:
+        return {f"{n}/{keys[n]}" for n, found in zip(names, pool.map(fetched, names), strict=True) if found}
 
 
 def differences(project: Project, name: str, key: str, other: str) -> list[str]:
@@ -398,6 +415,8 @@ class _Run:
     results: dict[str, Result] = field(default_factory=dict)
     stored: dict[str, bool] = field(default_factory=dict)
     """Whether the remote storage has the builds, by `<name>/<key>`."""
+    prefetched: set[str] = field(default_factory=set, init=False)
+    """The builds fetched at the start, by `<name>/<key>`, shown as fetched at their turn, see _done()."""
     use_remote: bool = field(default=False, init=False)
     recorded: bytes = field(default=b"", init=False)
     """The state of the lock of the `keys`, see _lock_state()."""
@@ -432,9 +451,7 @@ class _Run:
         project = self.project
         self.use_remote = self.fetch != "none" and bool(project.config.remote)
         reused = {name for name, i in buildid.read(project).items() if i.accepts}
-        if self.use_remote and self.fetch == "needed":  # asked at once, with the keys of the start
-            missing = [name for name in plan if not cached_build(project, name, self.keys[name]).exists()]
-            self.stored = stored(project, missing, self.keys)
+        self._ask_storage(plan)
         self.recorded = _lock_state(project)
         self.step = 0
         self.steps = sum(self._to_build(name) for name in plan)
@@ -475,6 +492,18 @@ class _Run:
                 raise
         self._refresh()
         return self._recorded_again()
+
+    def _ask_storage(self, plan: list[str]) -> None:
+        """Ask the remote storage at once for the builds of `plan` not cached, with the keys of the start, which may
+        change after: which it has with `fetch` needed, see _from_storage(), and else fetched, but those of `autorev`.
+        """
+        if not self.use_remote:
+            return
+        missing = [name for name in plan if not cached_build(self.project, name, self.keys[name]).exists()]
+        if self.fetch == "needed":
+            self.stored = stored(self.project, missing, self.keys)
+        elif missing := [name for name in missing if name not in self.autorev and not self._cached(name)]:
+            self.prefetched = fetched_builds(self.project, missing, self.keys)
 
     def _startable(self, pending: list[str], plan: set[str], running: dict[Future[None], _Started]) -> str | None:
         """Return the first package of `pending` whose packages of the `plan` it needs are done, if any, or the first
@@ -652,7 +681,7 @@ class _Run:
 
     def _done(self, name: str) -> Result | None:
         """Return the result of `name` when it is not to build: failed, as it or one of its dependencies changed since
-        they had their `hashes`, or cached.
+        they had their `hashes`, fetched at the start, or cached.
         """
         project = self.project
         if edited := [
@@ -661,6 +690,8 @@ class _Run:
             error = BuildError(f"{', '.join(edited)} changed since the builds started: build again")
             _show_failure(project, name, error, verbose=self.verbose, tag=self.tag)
             return Result(name, "failed")
+        if f"{name}/{self.keys[name]}" in self.prefetched:
+            return self._fetched(name)
         return Result(name, "cached") if self._cached(name) else None  # nothing to show: only the counts
 
     def _to_build(self, name: str) -> bool:

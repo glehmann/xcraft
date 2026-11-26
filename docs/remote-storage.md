@@ -40,12 +40,13 @@ of `build_keys`, or the command's own.
   CI runs `xcraft fetch sources` to fetch and verify sources, then `xcraft push --to main` to upload the cached files to the main
   bucket. Push never fetches missing sources: it fails if an archive to upload is absent from the local cache.
   `xcraft push sources --to main --check` checks the main bucket and needs no credentials.
-- When a package is not built locally, the build downloads its build with the same key, when the storage has it: the
-  key covers everything the build depends on, so it is the same everywhere for the same commit. A build is a binary
-  people install, so only CI should push builds, after `xcraft build --locked`, which fails when a build would
-  change the lock, and so its key: `xcraft push builds`. Development builds are never pushed, nor fetched: `push
-  builds` and `fetch builds` skip the packages with ones, unless `--final`. With `--fetch=needed`, CI
-  leaves in the storage the builds it has, only fetching those of the dependencies of the packages it builds.
+- When a package is not built locally, the build downloads its build with the same key, when the storage has it, those
+  of all the packages at once, at the start, unless `--fetch=needed`: the key covers everything the build depends on,
+  so it is the same everywhere for the same commit. A build is a binary people install, so only CI should push builds,
+  after `xcraft build --locked`, which fails when a build would change the lock, and so its key: `xcraft push builds`.
+  Development builds are never pushed, nor fetched: `push builds` and `fetch builds` skip the packages with ones,
+  unless `--final`. With `--fetch=needed`, CI leaves in the storage the builds it has, only fetching those of the
+  dependencies of the packages it builds.
 - A build without the compiler cache of its package downloads the one of the storage first, unless `--fetch=none`: the
   one CI pushes after its builds, with `xcraft push ccache`, so that rebuilding a modified package, like the kernel
   with a patch, mostly finds its objects. The cache of a package is a signed tree, `.xcraft/ccache/<arch>/<package>/`,
