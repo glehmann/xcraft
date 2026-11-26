@@ -410,6 +410,8 @@ class _Run:
     """Whether the rebuilds the same as the builds of the main branch reuse those, see _reproduced()."""
     dune_cache: bool = False
     """Whether the development builds have the cache of dune, see rpmbuild.DUNE_CACHE."""
+    again: bool = False
+    """Whether the reused builds are made again too, rather than failing, like those xcraft reproduce compares."""
     jobs: int = 1
     """How many packages build at once, see build()."""
     results: dict[str, Result] = field(default_factory=dict)
@@ -450,7 +452,7 @@ class _Run:
         """
         project = self.project
         self.use_remote = self.fetch != "none" and bool(project.config.remote)
-        reused = {name for name, i in buildid.read(project).items() if i.accepts}
+        reused = {name for name, i in buildid.read(project).items() if i.accepts and not self.again}
         self._ask_storage(plan)
         self.recorded = _lock_state(project)
         self.step = 0
@@ -942,6 +944,7 @@ def build(
     lint_dev: bool = False,
     reuse: bool = True,
     dune_cache: bool = False,
+    again: bool = False,
     jobs: int | None = None,
 ) -> tuple[list[Result], dict[str, str], dict[str, str]]:
     """Build `targets` and, unless `with_deps` is false, what they need, skipping what is cached, and return how
@@ -964,7 +967,8 @@ def build(
     with `lint_dev`, see xcraft.lint: its errors fail the final builds, and only show for the development builds.
 
     A rebuild the same as the build of the main branch reuses it, unless not `reuse`, see _Run._reproduced(). With
-    `dune_cache`, the development builds have the cache of dune, which makes them faster, but never the same.
+    `dune_cache`, the development builds have the cache of dune, which makes them faster, but never the same. The
+    reused builds, which the main branch has, are never made again, but `again`, to compare them, see xcraft.reproduce.
 
     `jobs` packages build at once, default_jobs() by default, those independent of each other, see _Run.build().
     """
@@ -992,6 +996,7 @@ def build(
             lint_dev=lint_dev,
             reuse=reuse,
             dune_cache=dune_cache,
+            again=again,
             jobs=jobs or default_jobs(),
         )
         with _marking(_queue_file(project)):

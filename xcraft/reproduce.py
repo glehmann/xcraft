@@ -62,7 +62,8 @@ def _again(
                 (moved := work / "aside" / str(i)).parent.mkdir(parents=True, exist_ok=True)
                 aside.append((path, path.rename(moved)))
         built = aside[0][1]
-        # alone, from the builds of its dependencies, cached: neither fetched, nor reused, nor their compiler caches
+        # alone, from the builds of its dependencies, cached: neither fetched, nor reused, nor their compiler caches;
+        # even when it reuses the build of the main branch, which is never made again otherwise
         results, keys, _ = builder.build(
             project,
             [name],
@@ -73,6 +74,7 @@ def _again(
             fetch="none",
             reuse=False,
             dune_cache=with_caches,
+            again=True,
         )
         if any(r.failed for r in results):
             return ["its build failed again"]

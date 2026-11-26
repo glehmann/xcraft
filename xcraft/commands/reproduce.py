@@ -80,7 +80,10 @@ def reproduce(
         if not differences:
             console.print(f"[bold green]✓[/] {name}: built again the same")
             continue
-        console.print(f"[bold red]✗[/] {name}: built again differently, see .xcraft/{DIR}/{name}/again")
+        if (project.state / DIR / name / "again").exists():
+            console.print(f"[bold red]✗[/] {name}: built again differently, see .xcraft/{DIR}/{name}/again")
+        else:  # its rebuild failed, or changed its key: nothing to compare
+            console.print(f"[bold red]✗[/] {name}: not built again")
         for difference in differences[:20]:
             console.print(f"  {escape(difference)}")
         if len(differences) > 20:  # noqa: PLR2004
