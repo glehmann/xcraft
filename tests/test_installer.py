@@ -37,6 +37,8 @@ def made_iso(root: Path) -> Path:
     """Make the ISO of the checkout, signed by the developer's key, and return it."""
     code, output = xcraft("iso", "--output", str(root / "toy.iso"))
     assert code == 0, output
+    # from a snapshot without the source packages, which it does not have
+    assert not (root / ".xcraft/publish/base/Source").exists()
     # signed once made, with its detached signature next to it
     signer = dev_signer(Project.find())
     assert signer

@@ -1,7 +1,7 @@
 # Installation ISO
 
 `xcraft iso` makes the installation ISO of the distribution, from a snapshot like `xcraft publish --local` makes, of
-its architecture only, with nothing else to install, like
+its architecture only, without the source packages, which the ISO does not have, with nothing else to install, like
 [create-install-image](https://github.com/xcp-ng/create-install-image) does for XCP-ng:
 
 - `install.img`, the installer's root filesystem, is installed from the snapshot: its packages, `[iso] installer` in

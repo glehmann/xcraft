@@ -431,6 +431,8 @@ class _Assembler:
     sources: dict[str, str]
     """The SHA-256 of the source packages of the latest snapshot and of the upstream copy, by file name."""
     keep: bool = False
+    with_sources: bool = True
+    """Whether the snapshot has the source packages, which the ISOs do not need."""
     main: Remote | None = None
     """The main bucket, which the snapshot of another one copies our final builds from, in dev mode."""
     signers: dict[str, str] = field(default_factory=dict)
@@ -483,7 +485,7 @@ class _Assembler:
         sources.
         """
         arch = f"{REPO}/{project.arch}"
-        for repo in (arch, f"{REPO}/Source"):
+        for repo in (arch, f"{REPO}/Source") if self.with_sources else (arch,):
             (self.dest / repo).mkdir(parents=True, exist_ok=True)
         local: dict[str | None, list[str]] = {}  # by public key
         signing = self.signer and not self.keep
@@ -508,12 +510,12 @@ class _Assembler:
         """Add the build of `name` with `key`, of the platform of `project`, and return the public key of its signer,
         if any, with the files put in the directory of the snapshot: those the storage misses.
         """
-        repos = {"RPMS": f"{REPO}/{project.arch}", "SRPMS": f"{REPO}/Source"}
+        repos = {"RPMS": f"{REPO}/{project.arch}"} | ({"SRPMS": f"{REPO}/Source"} if self.with_sources else {})
         tree, files, fingerprint = self._build_files(project, name, key)
         local = []
         for path, digest in sorted(files.items()):
             repo, file = repos.get(path.split("/")[0]), Path(path).name
-            if not repo or (repo == repos["SRPMS"] and self.has(repo, file)):
+            if not repo or (repo == repos.get("SRPMS") and self.has(repo, file)):
                 continue
             at = (
                 tree / path
@@ -577,7 +579,7 @@ class _Assembler:
         """Add the upstream packages `names` to `repo`, and their sources to `source`, checking the signatures of
         those the storage misses: those it has were when added. Signed by `signer` in final mode, unless `keep`: their
         sources keep their signatures. With the `extra` RPMs, neither ours nor from the repositories, trusted by the
-        SHA-256 of xcraft.toml, without sources, signed too.
+        SHA-256 of xcraft.toml, without sources, signed too. Their sources are not added without `with_sources`.
         """
         locked, unsigned = pinned.pins(project), pinned.unsigned(project)
         rpms = {name: _rpm_name(locked, name) for name in names}
@@ -603,23 +605,24 @@ class _Assembler:
                 for rpm in _upstream_rpms(project, missing, on_line):
                     localrepo.link(rpm, self.dest / repo / rpm.name)
             added = [f"{repo}/{rpms[name]}" for name in missing if name not in unsigned]
-        srpms = {
-            name: repodata.sourcerpm(self.known[digest][0])
-            for name in names
-            if (digest := locked[name].sha256) in self.known
-        }
-        with activity(f"getting their sources, for {source}", log=True) as on_line:
-            srpms |= _srpm_names(project, [name for name in names if not srpms.get(name)])
-            new = {
-                srpm: _nevra(locked, name)
-                for name, srpm in srpms.items()
-                if not self.has(source, srpm) and not self.reuse(source, srpm, self.sources.get(srpm, ""))
+        if self.with_sources:
+            srpms = {
+                name: repodata.sourcerpm(self.known[digest][0])
+                for name in names
+                if (digest := locked[name].sha256) in self.known
             }
-            cache = _download(project, new, on_line, source=True)
-            (self.dest / source).mkdir(parents=True, exist_ok=True)
-            for srpm in new:
-                localrepo.link(cache / srpm, self.dest / source / srpm)
-            added += [f"{source}/{srpm}" for name, srpm in srpms.items() if srpm in new and name not in unsigned]
+            with activity(f"getting their sources, for {source}", log=True) as on_line:
+                srpms |= _srpm_names(project, [name for name in names if not srpms.get(name)])
+                new = {
+                    srpm: _nevra(locked, name)
+                    for name, srpm in srpms.items()
+                    if not self.has(source, srpm) and not self.reuse(source, srpm, self.sources.get(srpm, ""))
+                }
+                cache = _download(project, new, on_line, source=True)
+                (self.dest / source).mkdir(parents=True, exist_ok=True)
+                for srpm in new:
+                    localrepo.link(cache / srpm, self.dest / source / srpm)
+                added += [f"{source}/{srpm}" for name, srpm in srpms.items() if srpm in new and name not in unsigned]
         check_signatures(project, self.dest, added, what="upstream packages")
 
     def _add_signed_upstream(
@@ -765,6 +768,7 @@ def snapshot(
     nocheck: bool = False,
     keep: bool = False,
     only: list[str] | None = None,
+    sources: bool = True,
 ) -> tuple[list[tuple[Project, dict[str, str]]], dict[str, Stored], Checkout]:
     """Make the snapshot of the `platforms` in `dest`, and return them with the keys of their packages, the
     packages of `storage`, by path in the snapshot, with their paths there and SHA-256: they are not in `dest`, see
@@ -782,7 +786,8 @@ def snapshot(
     the identifier of the
     development builds, those of the packages whose build ID is not the main branch's are, for local snapshots, without
     `storage`, and with `nocheck`, those built skip the tests of their specs, unlike the final builds. With `only`, a
-    partial snapshot: of those packages built only, and of the latest builds of the others, see partial_keys().
+    partial snapshot: of those packages built only, and of the latest builds of the others, see partial_keys(). Without
+    `sources`, the snapshot has no source packages, for an ISO.
     """
     project = platforms[0]
     start = current_checkout(project)
@@ -795,6 +800,7 @@ def snapshot(
         storage,
         *(_with_copy(platforms, storage, signer, main) if storage else ({}, {})),
         keep=keep,
+        with_sources=sources,
         main=main,
     )
     fetch: Fetch = "needed" if storage else "all"
@@ -810,7 +816,7 @@ def snapshot(
                 platform, build_dependencies(platform), f"{BUILD}/{platform.arch}", f"{BUILD}/Source"
             )
             _check_installable(platform, [assembler.dest / arch, assembler.index(f"{BUILD}/{platform.arch}")])
-    for repo in (REPO, BUILD) if build else (REPO,):
+    for repo in ((REPO, BUILD) if build else (REPO,)) if sources else ():
         assembler.index(f"{repo}/Source")
     if signer:
         (dest / KEY_FILE).write_text(signer.public_key())

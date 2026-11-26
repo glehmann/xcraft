@@ -637,7 +637,16 @@ def checkout_iso(
         resolution.prepare(project)
         dest = (project.state / "publish").absolute()
         built, _, checkout = publish.snapshot(
-            [project], dest, signer=signer, storage=None, build=False, dev=dev, nocheck=nocheck, keep=keep, only=only
+            [project],
+            dest,
+            signer=signer,
+            storage=None,
+            build=False,
+            dev=dev,
+            nocheck=nocheck,
+            keep=keep,
+            only=only,
+            sources=False,
         )
         return _snapshot_iso(
             project,
