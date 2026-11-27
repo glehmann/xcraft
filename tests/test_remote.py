@@ -35,6 +35,7 @@ from tests import (
     WEB_PORT,
     cache_image,
     commit_base,
+    edit,
     free_port,
     garage,
     git,
@@ -474,6 +475,38 @@ def should_keep_embargoed_builds_in_the_private_storage(
         xcraft("push", "--from", "private", "--to", "main")[1].splitlines()[-1]
         == "0 source archives and 0 builds copied"
     )
+
+
+def should_push_to_the_private_storage_only_what_the_main_one_has_not(
+    root: Path, monkeypatch: pytest.MonkeyPatch, build_signer: tuple[str, Path]
+) -> None:
+    garage("bucket", "create", bucket := f"xcraft-private-{secrets.token_hex(4)}")
+    garage("bucket", "allow", "--read", "--write", bucket, "--key", "test")
+    branches = 'maintenance_branches = ["maint/*", "embargo/*"]\nembargo_branches = ["embargo/*"]\n'
+    private = f'[remote.private]\ns3_endpoint = "http://localhost:{S3_PORT}"\nbucket = "{bucket}"\n'
+    (root / "xcraft.toml").write_text(f'{branches}{unsigned(REMOTE)}{private}build_keys = ["{build_signer[0]}"]\n')
+    (root / ".gitignore").write_text(".xcraft/\n")
+    commit_base(root)
+    monkeypatch.setenv("GNUPGHOME", str(build_signer[1]))
+    # the release, in the main bucket
+    assert xcraft("build")[0] == 0
+    assert xcraft("push", "builds", "--key", build_signer[0], "--to", "main")[0] == 0
+    # a fix of with-deps under embargo, built by its CI, which never fetched trivial, unchanged
+    git(root, "checkout", "-qb", "embargo/xsa-123")
+    edit(root, "fixed", name="with-deps")
+    git(root, "commit", "-qam", "Fix with-deps")
+    remote.forget()  # for a new command
+    assert xcraft("build", "with-deps", "--final", "--key", build_signer[0])[0] == 0
+    for build in root.glob(f".xcraft/cache/builds/*/{ARCH}/trivial"):
+        shutil.rmtree(build)
+    code, output = xcraft("push", "builds", "--final", "--key", build_signer[0], "--to", "private")
+    assert code == 0, output
+    assert output.splitlines()[-1] == "1 pushed, 1 already in the remote storage", output
+    project = Project.find()
+    keys = build_keys(project)
+    private_storage = project.config.remote["private"]
+    assert remote.tree_exists(private_storage, build_path(project, "with-deps", keys["with-deps"], build_signer[0]))
+    assert not remote.tree_exists(private_storage, build_path(project, "trivial", keys["trivial"], build_signer[0]))
 
 
 def should_share_builds_between_checkouts_with_their_rpm_dependencies(

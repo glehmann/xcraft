@@ -269,7 +269,9 @@ The private bucket is read through S3, with the credentials of its server, rathe
 `unpublish` to main or dev fail, but the copies of `xcraft push --from private`. So the guard follows the branch: a
 developer cannot forget it. The builds, the compiler caches and the resolutions are fetched from the main bucket first,
 then from the private one. So are the sources: a new upstream
-archive, like the release fixing the vulnerability, is pushed to the private bucket only.
+archive, like the release fixing the vulnerability, is pushed to the private bucket only. `xcraft push --to private`
+pushes only what the main bucket does not have: the builds of the packages the branch changed, and their new archives,
+not those of the release, which its CI never fetched.
 
 **The signing key.** The private CI signs with a key of its own, in `build_keys` of the private remote, and of the main
 one, committed on master beforehand: a public key reveals nothing. The builds copied keep their signatures, trusted
