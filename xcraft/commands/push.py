@@ -184,8 +184,9 @@ def everything(
     uploads their final builds, with the pages of the directories of what is pushed: xcraft push index makes them all;
     the resolutions of the project, see xcraft push resolutions; then the pinned upstream packages, see xcraft push
     upstream.
-    The sources not in the source cache, like those of the packages which did not build, the packages not built, and
-    the upstream ones found nowhere, do not keep the others from being pushed, then fail it.
+    The sources are those of the packages of the architecture, not of those their specs exclude, which another
+    architecture pushes. Those not in the source cache, like those of the packages which did not build, the packages
+    not built, and the upstream ones found nowhere, do not keep the others from being pushed, then fail it.
     """
     if ctx.invoked_subcommand:
         if from_:
@@ -202,7 +203,8 @@ def everything(
         )
         return
     storage = remote_storage(project, to)
-    absent = _push_sources(project, storage, None)
+    # those of the packages of the architecture: the others' are not fetched here, nor needed
+    absent = _push_sources(project, storage, sorted(project.packages))
     signer = key_signer(project, key)
     not_built = _push_builds(project, storage, None, signer=signer, final=final)
     _push_resolutions(project, storage, signer=signer)

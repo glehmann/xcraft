@@ -359,6 +359,18 @@ def should_push_to_main_only_the_developer_source_archives_of_their_manifest(roo
     assert not remote.exists(storage, path)
 
 
+def should_push_only_the_source_archives_of_the_packages_of_the_architecture(root: Path) -> None:
+    # one of another architecture, whose archives that one fetches and pushes: not here
+    other = "aarch64" if ARCH == "x86_64_v2" else "x86_64"
+    write_spec(root, "elsewhere")
+    spec = root / "base/elsewhere/elsewhere.spec"
+    spec.write_text(spec.read_text().replace("BuildArch: noarch\n", f"ExclusiveArch: {other}\n") + "%changelog\n")
+    write_manifest(root / "base/elsewhere/sources", {"elsewhere-1.0.tar.gz": "0" * 64})
+    code, output = xcraft("push", "--to", "main")
+    assert code == 1, output  # not built
+    assert "elsewhere-1.0.tar.gz" not in output, output
+
+
 def _dev_only(root: Path) -> tuple[str, Signer]:
     """Configure the project with the dev bucket only, and return that configuration, and the developer's key made."""
     config = re.sub(r"\[remote.main\]\n.*?(?=\[remote.dev\])", "", unsigned(REMOTE), flags=re.DOTALL)
