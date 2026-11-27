@@ -184,7 +184,9 @@ of the bucket: what is published stays a starting point for a fix, its builds ke
 `snapshot_days`, and the grace period covers a publication failing, its builds waiting for the next one. A latest
 snapshot without its manifest, while a cumulative one changes, keeps its builds by what it was made from. The ISOs
 keep no builds of their own: they are made from the packages of a snapshot of the repositories, and one kept longer
-than it is not a starting point anymore. The files of the earlier generations of the trees go too. `-n` shows what
+than it is not a starting point anymore. The ISOs pushed, by `xcraft push isos`, go the same way, but those the
+snapshots of the ISOs copy, dated or latest, and those pushed in the grace period: each expired snapshot would leave
+its ISOs otherwise, the largest files of the storage. The files of the earlier generations of the trees go too. `-n` shows what
 would go, and the space it would free. Like two publications, it must not run during one, which may copy a build it
 removes.
 

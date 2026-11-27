@@ -358,6 +358,8 @@ rebuilds only the patched package.
     bucket;
   - **removed:** the other build trees, their manifest, their generations and their public key, and the generations
     of the kept trees that their last manifest does not have, which are garbage already;
+  - **the ISOs pushed,** `isos/` of the internal tree, which the snapshots of the ISOs copy, the same way: kept by
+    the snapshots of the ISOs, dated or latest, and their inputs, which have them by SHA-256, and by the grace period;
   - **the other inputs of a starting point** follow the same rule: the source archives of `sources/` the manifests of
     the marked builds list. The upstream originals and their signed copies are kept anyway; the images and the
     resolutions are made again from the lock;

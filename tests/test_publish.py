@@ -691,7 +691,39 @@ def should_prune_the_builds_no_publication_has(root: Path, tmp_path: Path) -> No
     # nothing more to prune
     code, output = xcraft("prune", "--to", "main", "--keep-days", "0")
     assert code == 0, output
-    assert "removed 0 builds, 0 files" in output
+    assert "removed 0 builds, 0 ISOs, 0 files" in output
+
+
+@needs_gpg
+def should_prune_the_pushed_isos_no_snapshot_has(root: Path, tmp_path: Path) -> None:
+    garage("bucket", "create", bucket := f"xcraft-prune-{secrets.token_hex(4)}")
+    garage("bucket", "allow", "--read", "--write", bucket, "--key", "test")
+    garage("bucket", "website", "--allow", bucket)
+    web = f"http://{bucket}.web.garage.localhost:{WEB_PORT}"
+    (root / "xcraft.toml").write_text(REMOTE.replace(WEB, web).replace('bucket = "xcraft"\n', f'bucket = "{bucket}"\n'))
+    project = Project.find()
+    storage, signer = project.config.remote["main"], release_signer(project)
+    assert signer
+    # two ISOs pushed, the first one copied in a snapshot of the ISOs, the second in none
+    published, unpublished = (f"{prune.ISOS}/{ARCH}/{name}" for name in ("published", "unpublished"))
+    for tree, content in ((published, "first"), (unpublished, "second")):
+        (tmp_path / "image.iso").write_text(content)
+        remote.upload_tree(storage, tree, tmp_path, ["image.iso"], signer=signer)
+    (tmp_path / "xcp-ng.iso").write_text("first")
+    remote.upload_tree(storage, "isos/9.0/incoming/2026-01-01", tmp_path, ["xcp-ng.iso"], signer=signer)
+    written = remote.modified(storage, f"{unpublished}/{remote.MANIFEST}")
+    assert written
+    between = written + timedelta(seconds=1)  # the dates of the storage are in seconds
+    # kept in the grace period, removed after it
+    assert prune.pruned(storage, 1, between).trees == []
+    assert prune.pruned(storage, 0, between).trees == [unpublished]
+    time.sleep(max(0, (between - datetime.now(UTC)).total_seconds()))
+    code, output = xcraft("prune", "--to", "main", "--keep-days", "0")
+    assert code == 0, output
+    assert "removed 0 builds, 1 ISOs" in output
+    assert not remote.listing(storage, f"{unpublished}/")
+    remote.forget()
+    assert remote.tree_exists(storage, published, trusted=signer)
 
 
 def _stats(directory: Path) -> dict[str, tuple[int, float, int]]:
