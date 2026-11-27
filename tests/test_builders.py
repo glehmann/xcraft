@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -66,6 +67,36 @@ def should_build_on_the_builder_of_the_architecture_with_this_xcraft(
     code, output = xcraft("status", "--full", "trivial")
     assert code == 0, output
     assert " ready" in output
+
+
+def should_send_the_builder_the_development_builds_and_the_source_archives_it_lacks(
+    root: Path, builder: Path, build_environment: Path
+) -> None:
+    # development builds, which the remote storage never has
+    commit_base(root)
+    git(root, "checkout", "-qb", "feature")
+    edit(root, "changed")
+    copy = builder / builders.ROOT / Project.find().id
+    copy_project(copy, build_environment)
+    # an archive of trivial cached here, like one of git LFS, which the remote storage does not have
+    archive = b"an archive"
+    digest = hashlib.sha256(archive).hexdigest()
+    (root / f".xcraft/cache/sources/{digest}").mkdir(parents=True)
+    (root / f".xcraft/cache/sources/{digest}/trivial-1.0.tar.gz").write_bytes(archive)
+    (root / "base/trivial/sources").write_text(f"{digest}  trivial-1.0.tar.gz\n")
+    code, output = xcraft("build", "trivial", "--local")
+    assert code == 0, output
+    # with-deps, built against trivial there, which the builder takes from here, rather than build it again
+    code, output = xcraft("build", "with-deps")
+    assert code == 0, output
+    project = Project.find()
+    keys = json.loads(xcraft("keys", "--dev", "dev")[1])["keys"]
+    assert "~" in keys["trivial"]
+    assert (copy / cached_build(project, "trivial", keys["trivial"]).relative_to(root)).is_dir()
+    assert not (copy / ".xcraft/logs/trivial.log").exists()
+    assert (copy / f".xcraft/cache/sources/{digest}/trivial-1.0.tar.gz").read_bytes() == archive
+    assert not list((copy / ".xcraft/cache/incoming").iterdir())
+    assert cached_build(project, "with-deps", keys["with-deps"]).exists()
 
 
 @needs_gpg

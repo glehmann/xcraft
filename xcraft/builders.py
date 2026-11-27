@@ -4,6 +4,7 @@ on a copy of the checkout, see docs/remote-builders-design.md.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import importlib.metadata
 import json
@@ -22,10 +23,13 @@ import watchfiles
 from pydantic import BaseModel, ConfigDict
 
 import xcraft
-from xcraft import buildid, buildkey, develop, process
+from xcraft import buildid, buildkey, develop, process, remote
+from xcraft.cache import cached_builds, release_suffix
 from xcraft.display import activity, console
 from xcraft.hosts import Host, connected, ssh_host
 from xcraft.iso import cached_iso
+from xcraft.project import INTERNAL
+from xcraft.sources import read_manifest
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator
@@ -398,6 +402,92 @@ def _copy_back(project: Project, name: str, copy: _Copy, logs_there: str) -> Non
         _rsync(host, "--ignore-missing-args", f"{destination}/xcraft.builds", f"{project.root}/")
 
 
+_MISSING = """mkdir -p {cache} {incoming} && cd {cache} || exit 1
+while IFS= read -r path; do
+    [ -e "$path" ] || printf '%s\\n' "$path"
+done
+"""
+"""Which of the paths given on its input, one by line, relative to a cache of a copy, it lacks, with the incoming
+directory of the cache made."""
+
+_PLACE = """incoming=$PWD/{incoming}
+cd {cache} || exit 1
+while IFS= read -r path; do
+    [ -e "$path" ] || {{ mkdir -p "${{path%/*}}" && mv "$incoming/$path" "$path"; }}
+done
+rm -rf "$incoming"
+"""
+"""Move the paths given on its input, sent to the incoming directory of a cache of a copy, into the cache, whole, once
+all came: a directory in the cache is a finished build, or an archive, by its SHA-256."""
+
+
+def _lacking(copy: _Copy, cache: str, paths: list[str]) -> list[str]:
+    """Return those of the `paths` of the cache `cache` the copy `copy` lacks, with its incoming directory made, for
+    _send().
+    """
+    there = f"{copy.remote}/.xcraft/cache"
+    script = _MISSING.format(cache=shlex.quote(f"{there}/{cache}"), incoming=shlex.quote(f"{there}/incoming/{cache}"))
+    return process.run(copy.host.ssh(script), capture=True, input="".join(f"{p}\n" for p in paths)).stdout.split()
+
+
+def _send(project: Project, name: str, copy: _Copy, cache: str, paths: list[str], what: str) -> None:
+    """Send to the copy of the checkout on the builder `name` the `paths` of its cache `cache` here, which it lacks,
+    `what` they are, like builds: to an incoming directory, then moved into the cache once all came.
+    """
+    with activity(f"sending {len(paths)} {what} to {name}"):
+        here = project.state / "cache" / cache
+        _rsync(
+            copy.host,
+            "--relative",
+            *(f"{here}/./{p}" for p in paths),
+            f"{copy.destination}/.xcraft/cache/incoming/{cache}/",
+        )
+        there = f"{copy.remote}/.xcraft/cache"
+        script = _PLACE.format(cache=shlex.quote(f"{there}/{cache}"), incoming=shlex.quote(f"{there}/incoming/{cache}"))
+        process.run(copy.host.ssh(script), capture=True, input="".join(f"{p}\n" for p in paths))
+
+
+def _send_builds(project: Project, name: str, copy: _Copy, dev: str) -> None:
+    """Send to the copy of the checkout on the builder `name` the development builds of `dev` here, of the keys of the
+    packages there, which it lacks, like those of the dependencies made here, or brought back from another copy,
+    rather than make them again there: the remote storage never has them.
+    """
+    keys = copy.keys("--dev", dev, "--arch", project.arch)["keys"]
+    cache = project.state / "cache/builds"
+    builds = [
+        str(path.relative_to(cache))
+        for package, key in keys.items()
+        if "~" in release_suffix(key)
+        for path in cached_builds(project, package, key)
+    ]
+    if builds and (lacking := _lacking(copy, "builds", builds)):
+        _send(project, name, copy, "builds", lacking, "builds")
+
+
+def _send_sources(project: Project, name: str, copy: _Copy) -> None:
+    """Send to the copy of the checkout on the builder `name` the source archives of the packages here which it lacks
+    and the remote storage does not have, like those of the packages imported here, from git LFS, not pushed yet: it
+    downloads the others.
+    """
+    archives = sorted(
+        {
+            f"{digest}/{filename}"
+            for directory in project.package_dirs.values()
+            if (manifest := directory / "sources").exists()
+            for filename, digest in read_manifest(manifest).items()
+            if (project.source_cache / digest / filename).exists()
+        }
+    )
+    if not archives or not (lacking := _lacking(copy, "sources", archives)):
+        return
+    stored: set[str] = set()
+    for storage in remote.storages(project):
+        with contextlib.suppress(remote.RemoteError, OSError):  # unreachable: sent
+            stored |= remote.existing(storage, [f"{INTERNAL}/sources/{a}" for a in lacking])
+    if unstored := [a for a in lacking if f"{INTERNAL}/sources/{a}" not in stored]:
+        _send(project, name, copy, "sources", unstored, "source archives")
+
+
 def _started(copy: _Copy) -> str:
     """Mark the start of a command in the copy `copy`, for _copy_back(), and return the directory of its logs."""
     logs_there = f"{copy.remote}/.xcraft/logs"
@@ -405,12 +495,15 @@ def _started(copy: _Copy) -> str:
     return logs_there
 
 
-def build(project: Project, name: str, args: list[str], keys: list[str]) -> tuple[int, dict[str, str]]:
+def build(project: Project, name: str, args: list[str], keys: list[str], dev: str) -> tuple[int, dict[str, str]]:
     """Build with xcraft build and its `args` on the builder `name` of the architecture of `project`, from a copy of
-    the checkout, see _copied(), and copy back what it made, see _copy_back(): return its exit code, and once built,
-    the cache keys of the builds of the packages `keys` there, the `args` of xcraft keys.
+    the checkout, see _copied(), with the development builds of `dev` here, see _send_builds(), and copy back what it
+    made, see _copy_back(): return its exit code, and once built, the cache keys of the builds of the packages `keys`
+    there, the `args` of xcraft keys.
     """
     with _copied(project, name) as copy:
+        _send_sources(project, name, copy)
+        _send_builds(project, name, copy, dev)
         logs_there = _started(copy)
         code = copy.run("build", *args)
         _copy_back(project, name, copy, logs_there)
@@ -418,13 +511,16 @@ def build(project: Project, name: str, args: list[str], keys: list[str]) -> tupl
     return code, built
 
 
-def iso(project: Project, name: str, args: list[str], key: Callable[[], str]) -> int:
+def iso(project: Project, name: str, args: list[str], key: Callable[[], str], dev: str) -> int:
     """Make the ISO with xcraft iso and its `args` on the builder `name` of the architecture of `project`, from a copy
-    of the checkout, see _copied(), natively, rather than with the programs of its packages emulated here, and return
+    of the checkout, see _copied(), with the development builds of `dev` here, see _send_builds(), natively, rather
+    than with the programs of its packages emulated here, and return
     its exit code: copy back the builds it made, see _copy_back(), and its lock, which it may pin the ISO's packages
     in, then the cached ISO of the `key` of the ISO of the checkout here, computed with them.
     """
     with _copied(project, name) as copy:
+        _send_sources(project, name, copy)
+        _send_builds(project, name, copy, dev)
         logs_there = _started(copy)
         code = copy.run("iso", *args)
         _copy_back(project, name, copy, logs_there)

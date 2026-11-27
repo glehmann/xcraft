@@ -77,13 +77,19 @@ Through one SSH connection, with its control socket, like `xcraft repo --host`:
    host when it changed; or the command of `$XCRAFT_BUILDER_XCRAFT`, for an xcraft installed there otherwise. Before
    building, both compare the hash of the recipe, `buildkey.recipe()`, which the hidden `xcraft keys --recipe` gives
    there: another xcraft would make builds of other keys, which fails the command.
-4. **The build.** `xcraft build --arch aarch64 <packages> --dev <ident> --local`, with the options of the command,
+4. **The development builds.** Those here of the keys the packages have there, which `xcraft keys --dev <ident>`
+   gives, that the host lacks, like those of the dependencies built here, or brought back from it before its caches
+   were cleaned, are sent to it: the remote storage never has them, and the host would make them again. So are the
+   source archives of the packages it lacks that the remote storage does not have either, like those imported here,
+   from git LFS, not pushed yet, which it could not download. They go to `.xcraft/cache/incoming/<cache>/`, then into
+   their cache once all came, as a directory there is a finished build, or an archive of its SHA-256.
+5. **The build.** `xcraft build --arch aarch64 <packages> --dev <ident> --local`, with the options of the command,
    over SSH, its output streamed, with `XCRAFT_PROJECT` set, and `--maintenance` naming the branch the builds are
    numbered against when the checkout names one, like a bookmark of jj, which the copy, without `.jj/`, cannot tell.
    The host fetches what it needs as any checkout: the source archives, the final builds of the dependencies and the
    resolutions from the remote storage, its credentials not needed for that; the compiler caches too. It keeps its
    caches: the next build of the kernel finds its objects.
-5. **The results.** The build trees of aarch64, in `.xcraft/cache/builds/<fingerprint>/aarch64/`, are copied back
+6. **The results.** The build trees of aarch64, in `.xcraft/cache/builds/<fingerprint>/aarch64/`, are copied back
    with rsync, with the logs of the builds, `.xcraft/dev-builds.json` and `xcraft.builds`, with what the builds
    recorded, see [Recording](#recording). `xcraft keys` gives the cache keys of the builds there, which the local side
    checks came back: without preparing the project, nor building the image of the host, which a slow machine would
@@ -146,6 +152,7 @@ held during the whole build, keeps from changing meanwhile. With `--locked`, the
 | The same xcraft on the host, by its recipe, and its builds checked once back, by the keys it gives | `builders.py`, `commands/build.py` | done |
 | The developer's key copied | `builders.py` | done |
 | `xcraft.builds` taken back | `builders.py` | done |
+| The development builds and the source archives here the host lacks, not in the remote storage, sent to it | `builders.py` | done |
 | The SSH helpers of `xcraft repo --host` shared | `hosts.py`, new | done |
 | The lock of the remote checkout | `builders.py` | done |
 | `xcraft status` showing the builds running on the builder, from their markers there, read by `flock` over SSH, and those it made, not back yet, by their directories: neither a copy, which would change the checkout under the build, nor xcraft, which would wait for the lock the build holds | `builders.py`, `commands/status.py` | done |

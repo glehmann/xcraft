@@ -55,7 +55,7 @@ def made_iso(
             )
 
         with project.lock():
-            if code := builders.iso(project, host, args, made):
+            if code := builders.iso(project, host, args, made, ident):
                 raise typer.Exit(code)
     return checkout_iso(
         project,

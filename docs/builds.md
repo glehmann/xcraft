@@ -270,7 +270,10 @@ aarch64 = "ssh://builder@arm64.example"
 the counters of the development builds and the developer's key, runs the same xcraft there, with `uv tool run`, a
 wheel of the local one for a development version, or `$XCRAFT_BUILDER_XCRAFT`, and copies its builds back into the
 cache, with their logs and `xcraft.builds`: the same builds as local ones, of the same keys, which the other commands
-use as they are. The trees the packages are developed from, see
+use as they are. The development builds here the builder lacks, of the keys the packages have there, are sent to it
+first, rather than made again there, like those of the dependencies built here: the remote storage never has them. So
+are the source archives here it lacks that the remote storage does not have either, like those of the packages
+imported here, from git LFS, not pushed yet. The trees the packages are developed from, see
 [Developing from a project's tree](#developing-from-a-projects-tree), are copied too, the same way, in the state of the
 copy there, which their builds use: the same files and HEAD make the same commits there, and so the same keys. The
 builder keeps its caches, and needs podman, rootless, gpg, git, uv, rsync and flock only, which

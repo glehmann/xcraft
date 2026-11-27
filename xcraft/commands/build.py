@@ -60,7 +60,7 @@ def _build_remotely(
     if keys:
         sign_builds(project, None, final=False)  # the developer's key, made here, for the builder to sign with it
     with project.lock():
-        code, built = builders.build(project, host, args, keys)
+        code, built = builders.build(project, host, args, keys, ident)
     if code:
         raise typer.Exit(code)
     if missing := sorted(name for name, key in built.items() if not cached_build(project, name, key).exists()):
