@@ -57,7 +57,7 @@ Key = Annotated[
 ]
 
 
-To = Annotated[Destination, typer.Option("--to", help="Bucket to upload to.")]
+To = Annotated[Destination, typer.Option("--to", help="Bucket to upload to: a remote of xcraft.toml, [remote.<name>].")]
 
 
 def complete_arch(incomplete: str) -> list[str]:

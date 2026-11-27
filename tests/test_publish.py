@@ -24,6 +24,7 @@ from tests import (
     ARCH,
     PLATFORM,
     REMOTE,
+    S3_PORT,
     STAGE,
     TOYS,
     WEB,
@@ -190,6 +191,41 @@ def should_publish_only_what_the_storage_has_with_fetch_only(root: Path) -> None
     assert code == 0, output
     assert f"published repos/9.0/{STAGE}-ci/" in output
     assert "trivial built" not in output
+
+
+def should_publish_releases_with_the_builds_of_main_signed_again_by_the_release_key(root: Path) -> None:
+    # any remote of xcraft.toml, by its name, like a bucket of the releases of a major version
+    garage("bucket", "create", bucket := f"xcraft-release-{secrets.token_hex(4)}")
+    garage("bucket", "allow", "--read", "--write", bucket, "--key", "test")
+    garage("bucket", "website", "--allow", bucket)
+    code, output = xcraft("publish", "repos", "--to", "main")
+    assert code == 0, output
+    project = Project.find()
+    main = project.config.remote["main"]
+    release = create_dev_key(project, "Release <release@example.com>")
+    try:
+        (root / "xcraft.toml").write_text(
+            f'{REMOTE}[remote.release-9]\nurl = "http://{bucket}.web.garage.localhost:{WEB_PORT}"\n'
+            f's3_endpoint = "http://localhost:{S3_PORT}"\nbucket = "{bucket}"\nbuild_keys = ["{release.key}"]\n'
+        )
+        # from the builds of the main bucket alone, without building
+        shutil.rmtree(root / ".xcraft/cache/builds")
+        stage = f"{STAGE}-release"
+        code, output = xcraft("publish", "repos", "--to", "nope", "--dev-key", "--stage", stage)
+        assert code == 2
+        assert "no nope remote storage: see [remote.nope] in xcraft.toml" in " ".join(output.replace("│", "").split())
+        code, output = xcraft("publish", "repos", "--to", "release-9", "--dev-key", "--stage", stage, "--fetch-only")
+        assert code == 0, output
+        storage = Project.find().config.remote["release-9"]
+        assert remote.tree_exists(storage, f"repos/9.0/{stage}/latest", trusted=release)
+        # the release bucket has the builds and the upstream packages signed by the release key only
+        assert {f.split("/")[0] for f in remote.listing(storage, ".xcraft/builds/")} == {release.key}
+        assert {f.split("/")[0] for f in remote.listing(storage, ".xcraft/upstream-signed/")} <= {release.key}
+        assert not remote.listing(storage, ".xcraft/upstream/")
+        # and the main bucket nothing of it
+        assert not remote.listing(main, f".xcraft/builds/{release.key}/")
+    finally:
+        subprocess.run(["gpgconf", "--homedir", str(release.gnupghome), "--kill", "gpg-agent"], check=False)
 
 
 def should_lock_what_is_published_when_preparing(root: Path) -> None:

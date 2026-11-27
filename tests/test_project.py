@@ -191,6 +191,15 @@ def should_refuse_embargo_branches_that_are_not_maintenance_ones() -> None:
         )
 
 
+def should_accept_remotes_of_any_plain_name() -> None:
+    remote = {"url": "https://example/", "s3_endpoint": "https://s3.example/", "bucket": "b"}
+    config = Config.model_validate({**tomllib.loads(TOML), "remote": {"release-9": remote}})
+    assert config.remote["release-9"].bucket == "b"
+    for name in ("Release", "../other", "a/b", "-a", ""):
+        with pytest.raises(ValidationError, match="remote names are lowercase letters"):
+            Config.model_validate({**tomllib.loads(TOML), "remote": {name: remote}})
+
+
 def should_reject_stages_that_are_not_plain_names(unprepared_root: Path) -> None:
     for stage in ("", ".", "..", "../other", "/absolute", "a/b"):
         with pytest.raises(ValidationError):

@@ -176,6 +176,8 @@ only those of the lock updates.
 
 ### The releases
 
+Status: implemented, `xcraft publish --to release`, see [Publishing](publishing.md).
+
 A release is the publication of an incoming snapshot, tested, in the release bucket, with the release key of its
 major version: the same packages, the same inputs, our builds signed again into `builds/<release key>/` and the
 upstream packages into the copies of the release key, and the same layout as incoming. The release key signs what

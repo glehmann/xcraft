@@ -106,7 +106,10 @@ _HOST: dict[str, Platform] = {"x86_64": "linux/amd64", "aarch64": "linux/arm64"}
 """The platform of each machine, for a host running none of the project's."""
 
 
-Destination = Literal["main", "dev", "private"]
+Destination = str
+"""The name of a remote storage, [remote.<name>] of xcraft.toml: main, dev and private, which the builds are fetched
+from, private on the embargo branches only, or any other, like release, only written by the commands, see
+Config.remote."""
 
 
 INTERNAL = ".xcraft"
@@ -308,9 +311,20 @@ class Config(BaseModel):
 
     import_: Import = Field(default=Import(), alias="import")
     remote: dict[Destination, Remote] = {}
-    """The independent main and developer buckets, each with its own public URL and S3 settings, and the private one,
-    of the embargo branches, read through S3, with credentials, without url: used on them only, where the commands
-    write to no other bucket, but the copies of xcraft push --from private."""
+    """The remote storages, by name: the independent main and developer buckets, each with its own public URL and S3
+    settings, and the private one, of the embargo branches, read through S3, with credentials, without url: used on
+    them only, where the commands write to no other bucket, but the copies of xcraft push --from private. Any other,
+    like release, is only written, never read for the builds: by publish and push isos, with --to, like a bucket of
+    releases, whose builds and upstream packages are those of the main bucket, signed again by its key."""
+
+    @field_validator("remote")
+    @classmethod
+    def _remote_names(cls, remotes: dict[str, Remote]) -> dict[str, Remote]:
+        if bad := [name for name in remotes if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", name)]:
+            msg = f"remote names are lowercase letters, digits, _ and -: {', '.join(bad)}"
+            raise ValueError(msg)
+        return remotes
+
     logo: str | None = None
     """Link to the logo image of the project, shown at the top of the pages of the remote storage."""
     publish: Publish = Field(default_factory=Publish)

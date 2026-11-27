@@ -165,6 +165,21 @@ A snapshot published to the storage is of all the architectures, unless `--arch`
 given: it replaces the latest one, whose other architectures would be gone. In CI, after `xcraft push builds`,
 `xcraft publish --locked` fails rather than change the lock.
 
+`xcraft publish --to release --key <release key>` publishes a release, in the release bucket, `[remote.release]`:
+the builds of the main bucket, fetched from there, signed again by the release key, into `builds/<release key>/`,
+and pushed there, once, like the copies of the upstream packages; the release bucket has nothing else, nothing
+signed by another key, and is never read for the builds. With `--fetch-only`, nothing is built: a promotion of what
+the main bucket has. Its ISOs, which have the key of their packages, are made for it, natively, by `xcraft iso --final
+--key <release key>`, and pushed there by `xcraft push isos --to release`, before the publication, which takes them:
+
+```toml
+[remote.release]
+url = "https://releases.example/"
+s3_endpoint = "https://s3.example/"
+bucket = "xcraft-release"
+build_keys = ["<fingerprint of the release key>"]
+```
+
 `xcraft publish --dev ID` publishes in dev mode, like the CI of a pull request: its snapshot has the development
 builds of `ID`, see [development builds](builds.md#development-builds), which are files of the stage only, never
 pushed as builds, and the final builds and upstream packages the main bucket has, copied from it server-side, when
