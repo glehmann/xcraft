@@ -89,12 +89,12 @@ SIDE_TOOLS = {
     "lint": {
         "rpmls": {
             "x86_64": Tool(
-                "https://github.com/glehmann/rpmls/releases/download/0.3.0/rpmls-0.3.0-x86_64-unknown-linux-musl.tar.gz",
-                "14a783d09b25289fb60372b6cd9252e4751007ebf82898bb8143a85a1704c9fa",
+                "https://github.com/glehmann/rpmls/releases/download/0.4.0/rpmls-0.4.0-x86_64-unknown-linux-musl.tar.gz",
+                "c719ec437833301685368cb9fa9d6e00cdf39ebe6fe0627b4245eaf518558c38",
             ),
             "aarch64": Tool(
-                "https://github.com/glehmann/rpmls/releases/download/0.3.0/rpmls-0.3.0-aarch64-unknown-linux-musl.tar.gz",
-                "94331c37c2b556525e037c72e78015f1d3c3bf9a7de65676984bfe0ceb278e9c",
+                "https://github.com/glehmann/rpmls/releases/download/0.4.0/rpmls-0.4.0-aarch64-unknown-linux-musl.tar.gz",
+                "f0481c9c605b4f1a6aaa0ff093599209ad9c5386b5bd455baf952b1c52c5ed91",
             ),
         },
     }
