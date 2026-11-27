@@ -51,6 +51,20 @@ def should_report_the_errors_of_the_specs(root: Path) -> None:
     assert "not in the directory of a package" in output
 
 
+def should_report_the_errors_of_rpm_on_their_line_of_the_spec(root: Path) -> None:
+    # which rpmlint reports without it, as specfile-error
+    spec = root / "base/trivial/trivial.spec"
+    replace(spec, "* Mon Jul 10", "* Web Jul 10")
+    code, output = xcraft("lint", "--spec", str(spec))
+    assert code == 1, output
+    assert f"{spec}:27: E: specfile-error error: bad date in %changelog: Web Jul 10" in output
+    replace(spec, "* Web Jul 10", "* Mon Jul 10")
+    replace(spec, "License: MIT\n", "License: MIT\nFoo: bar\n")
+    code, output = xcraft("lint", "--spec", str(spec))
+    assert code == 1, output
+    assert f"{spec}:6: E: specfile-error error: line 6: Unknown tag: Foo: bar" in output
+
+
 def should_report_the_build_directories_named_after_the_version(root: Path) -> None:
     # which the compiler cache does not find again with the next version, at the %setup setting it
     spec = root / "base/trivial/trivial.spec"

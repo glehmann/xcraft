@@ -384,5 +384,7 @@ language-servers = ["xcraft"]
 
 `xcraft lint --spec <file>` lints one spec, of a package, as it is on disk, with the same rules, and only prints what
 rpmlint finds in it, `<spec>:<line>: <E|W>: <check> <details>`, or without the line for the whole spec, for the scripts,
-like the hooks of git: in under a second, as it neither resolves the packages, nor lints the builds. It fails on
+like the hooks of git, and the editors, through a linter wrapper like efm-langserver. rpm's errors parsing the spec,
+which rpmlint reports as `specfile-error` without their line, get the line rpm gives, like `line 12: Unknown tag`, or
+the one rpm quotes, like the changelog entry of `bad date in %changelog`: in under a second, as it neither resolves the packages, nor lints the builds. It fails on
 errors.

@@ -33,8 +33,23 @@ if TYPE_CHECKING:
 LINT_DIR = "lint"
 """The directory of the configuration of rpmlint, in the project."""
 
-_FINDING = re.compile(r"([^\s:]+)((?::\d+)?: ([EW]): .*)")
+_FINDING = re.compile(r"([^\s:]+)(:\d+)?(: [EW]: .*)")
 """A line of what rpmlint found: an error or a warning, after the package, or the name of the spec and its line."""
+
+_RPM_LINE = re.compile(r"\bline (\d+): ")
+"""The line of the spec an error of rpm gives, in the message of rpmlint's specfile-error."""
+
+
+def _line(spec: Path, finding: str) -> str:
+    """Return the line of `spec`, ``:<number>``, of `finding`, ``: E: <message>`` of rpmlint without one, for the
+    editors: the one rpm's error gives, like ``line 12: Unknown tag``, or the one it ends with, like ``bad date in
+    %changelog: <the entry>``, without its ``*``, if any, else nothing.
+    """
+    if match := _RPM_LINE.search(finding):
+        return f":{match[1]}"
+    lines = [line.strip().removeprefix("*").lstrip() for line in spec.read_text(errors="replace").splitlines()]
+    found = next((i for i, line in enumerate(lines, 1) if line and finding.endswith(f": {line}")), None)
+    return f":{found}" if found else ""
 
 
 def spec(project: Project, name: str) -> Path:
@@ -101,7 +116,7 @@ def findings(
     native = project.on_host()
     image = side_image(native, "lint")
     mounts = {d: f"/in/{i}" for i, d in enumerate(sorted({f.parent for paths in files.values() for f in paths}))}
-    specs = {f.name: _shown(f) for paths in files.values() for f in paths if f.suffix == ".spec"}
+    specs = {f.name: f for paths in files.values() for f in paths if f.suffix == ".spec"}
     with project.tmp_dir("lint") as work, activity(show) as progress:
         config_dir(project, work / "config")
         script = []
@@ -123,7 +138,8 @@ def findings(
                 # after the name of the package, like the warnings of the builds
                 shown = tagged(current.rsplit(" (", 1)[0] if tag else "", width, _out())
             elif match := _FINDING.match(line.rstrip("\n")):
-                shown(f"{specs.get(match[1], match[1])}{match[2]}")
+                spec = specs.get(match[1])
+                shown(f"{_shown(spec)}{match[2] or _line(spec, match[3])}{match[3]}" if spec else match[0])
 
         container.run(
             native,
