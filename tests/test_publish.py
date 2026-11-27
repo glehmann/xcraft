@@ -175,6 +175,23 @@ def should_publish_dated_and_latest_snapshots_of_all_architectures(root: Path) -
         assert sorted(p.name for p in (root / ".xcraft/publish/base").iterdir()) == ["Source", "x86_64"]
 
 
+def should_publish_only_what_the_storage_has_with_fetch_only(root: Path) -> None:
+    (root / "xcraft.toml").write_text(REMOTE)
+    # nothing built yet: it fails, rather than building
+    code, output = xcraft("publish", "repos", "--to", "main", "--fetch-only")
+    assert code != 0
+    assert f"not built for {ARCH}: trivial" in output
+    assert not list((root / ".xcraft/cache/builds").glob(f"*/{ARCH}/trivial/*"))
+    code, output = xcraft("publish", "repos", "--to", "main")
+    assert code == 0, output
+    # promoted to another stage from the builds of the storage alone, without the local ones
+    shutil.rmtree(root / ".xcraft/cache/builds")
+    code, output = xcraft("publish", "repos", "--to", "main", "--stage", f"{STAGE}-ci", "--fetch-only", "--locked")
+    assert code == 0, output
+    assert f"published repos/9.0/{STAGE}-ci/" in output
+    assert "trivial built" not in output
+
+
 def should_lock_what_is_published_when_preparing(root: Path) -> None:
     # what our packages need at runtime, like the build roots
     (root / "xcraft.toml").write_text(f'{REMOTE}extra = ["bc"]\n')

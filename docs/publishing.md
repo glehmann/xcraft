@@ -89,7 +89,10 @@ The mirrors sync with `rsync -a --delay-updates --delete-after`: the files chang
 end.
 
 - Our packages are built or fetched, but only fetched for the architectures the host emulates: those are built by
-  native builders, which push them. The publish fails when the remote storage misses one of their builds.
+  native builders, which push them. The publish fails when the remote storage misses one of their builds. With
+  `--fetch-only`, all of them are only fetched, and the ISOs only taken from the storage, pushed: a promotion, which
+  publishes to a stage the commit another one published, builds nothing, and fails rather than build what the storage
+  misses, like the builds pruned since.
 
 - What our packages need at runtime is in the lock, in `runtime`, pinned like the build roots: dnf resolves it with
   them, before building, for all the architectures, for each of our binary packages alone, on an empty system,

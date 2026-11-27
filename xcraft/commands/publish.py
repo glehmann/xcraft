@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from xcraft import contents, develop, remote
 from xcraft import publish as publisher
 from xcraft.build import update_build_ids
-from xcraft.cache import build_keys, cached_build, release_suffix
+from xcraft.cache import BuildError, build_keys, cached_build, release_suffix
 from xcraft.commands import Key, To, choose_signer, complete_arch, prepared_project, remote_storage, sign_builds
 from xcraft.display import console
 from xcraft.iso import check_iso_config, fetch_isos, push_isos, pushed_isos, snapshot_isos
@@ -53,6 +53,14 @@ Summary = Annotated[
         help="Write in this file, as Markdown, where the snapshot is published, how a host uses its repositories, and "
         "its development builds, like for the comment of a pull request.",
         show_default=False,
+    ),
+]
+FetchOnly = Annotated[
+    bool,
+    typer.Option(
+        "--fetch-only",
+        help="Fail rather than build a package, or make an ISO, the remote storage misses: for a promotion, which "
+        "publishes the builds of another stage.",
     ),
 ]
 Arch = Annotated[
@@ -222,9 +230,10 @@ def _publish(  # noqa: C901, PLR0912, PLR0915
     arch: str | None,
     dev: str | None,
     summary: Path | None,
+    fetch_only: bool,
 ) -> None:
     """Publish the repositories and the ISOs of a snapshot, or `only` the repos or the isos, of dev mode with `dev`,
-    with a `summary` of where it is published.
+    with a `summary` of where it is published; only of what the storage has with `fetch_only`.
     """
     if dev is not None and not re.fullmatch(r"[a-zA-Z0-9]{1,16}", dev):
         msg = f"the development build ID must be 1 to 16 letters and digits: {dev}"
@@ -274,7 +283,14 @@ def _publish(  # noqa: C901, PLR0912, PLR0915
             return
         console.print("assembling the snapshot")
         built, stored, checkout = snapshot(
-            platforms, dest, signer=signer, storage=storage, build=build, dev=dev, keep=dev is not None
+            platforms,
+            dest,
+            signer=signer,
+            storage=storage,
+            build=build,
+            dev=dev,
+            keep=dev is not None,
+            build_missing=not fetch_only,
         )
         if storage and output is not None:  # all of it, in the directory asked
             for repo in sorted({path.rsplit("/", 1)[0] for path in stored}):
@@ -287,6 +303,9 @@ def _publish(  # noqa: C901, PLR0912, PLR0915
                     f"[bold green]✓[/] the ISOs of {platform.arch}, pushed: {', '.join(sorted(pushed[platform.arch]))}"
                 )
                 continue
+            if fetch_only:
+                msg = f"the ISOs of {platform.arch} are not in the remote storage: see xcraft push isos"
+                raise BuildError(msg)
             console.print(f"getting the ISOs for {platform.arch}")
             # made from its packages, unless made already
             if storage and stored and not fetch_isos(platform, signer=signer, dev=dev):
@@ -337,6 +356,7 @@ def everything(
     arch: Arch = None,
     dev: PublishDev = None,
     summary: Summary = None,
+    fetch_only: FetchOnly = False,
 ) -> None:
     r"""Publish a snapshot of the distribution in the remote storage, as the latest one, for all the architectures.
 
@@ -365,6 +385,7 @@ def repos(
     arch: Arch = None,
     dev: PublishDev = None,
     summary: Summary = None,
+    fetch_only: FetchOnly = False,
 ) -> None:
     """Publish repositories as repos/<release>/<stage>/<date>/, and as the stage's latest snapshot."""
     _publish("repos", **ctx.params)
@@ -383,6 +404,7 @@ def isos(
     arch: Arch = None,
     dev: PublishDev = None,
     summary: Summary = None,
+    fetch_only: FetchOnly = False,
 ) -> None:
     """Publish signed packages and netinstall ISOs as isos/<release>/<stage>/<date>/, and as the stage's latest ones.
 

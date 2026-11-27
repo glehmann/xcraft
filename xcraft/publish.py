@@ -309,9 +309,16 @@ def partial_keys(project: Project, only: list[str], dev: str | None) -> tuple[di
 
 
 def _built(
-    project: Project, *, fetch: Fetch, dev: str | None, nocheck: bool, only: list[str] | None = None
+    project: Project,
+    *,
+    fetch: Fetch,
+    dev: str | None,
+    nocheck: bool,
+    only: list[str] | None = None,
+    build_missing: bool = True,
 ) -> dict[str, str]:
-    """Build or fetch our packages, but only fetch them on the platforms the host emulates, and return their keys: with
+    """Build or fetch our packages, but only fetch them on the platforms the host emulates, or without
+    `build_missing`, and return their keys: with
     the development builds of the identifier `dev`, if any, without the tests of their specs with `nocheck`. Those
     whose specs exclude the platform are not built there, though keyed like on the others. With `only`, those packages
     only, but those without any build, without what they are built against: the others are their latest builds, see
@@ -323,7 +330,7 @@ def _built(
         project,
         names,
         with_deps=only is None,
-        build_missing=project.native,
+        build_missing=project.native and build_missing,
         fetch=fetch,
         dev=dev,
         nocheck=nocheck,
@@ -339,14 +346,23 @@ def _built(
 
 
 def _built_all(
-    platforms: list[Project], *, fetch: Fetch, dev: str | None, nocheck: bool, only: list[str] | None = None
+    platforms: list[Project],
+    *,
+    fetch: Fetch,
+    dev: str | None,
+    nocheck: bool,
+    only: list[str] | None = None,
+    build_missing: bool = True,
 ) -> list[dict[str, str]]:
     """Return the keys of our packages of all the `platforms`, built or fetched like _built(), again until the lock of
     the builds stops changing: what the builds of a platform record changes the keys of the others.
     """
     for _ in range(3):
         recorded = load_builds(platforms[0])
-        keys = [_built(platform, fetch=fetch, dev=dev, nocheck=nocheck, only=only) for platform in platforms]
+        keys = [
+            _built(platform, fetch=fetch, dev=dev, nocheck=nocheck, only=only, build_missing=build_missing)
+            for platform in platforms
+        ]
         if load_builds(platforms[0]) == recorded:
             return keys
     msg = "the lock of the builds keeps changing, with the builds of each architecture"
@@ -769,6 +785,7 @@ def snapshot(
     keep: bool = False,
     only: list[str] | None = None,
     sources: bool = True,
+    build_missing: bool = True,
 ) -> tuple[list[tuple[Project, dict[str, str]]], dict[str, Stored], Checkout]:
     """Make the snapshot of the `platforms` in `dest`, and return them with the keys of their packages, the
     packages of `storage`, by path in the snapshot, with their paths there and SHA-256: they are not in `dest`, see
@@ -787,7 +804,8 @@ def snapshot(
     development builds, those of the packages whose build ID is not the main branch's are, for local snapshots, without
     `storage`, and with `nocheck`, those built skip the tests of their specs, unlike the final builds. With `only`, a
     partial snapshot: of those packages built only, and of the latest builds of the others, see partial_keys(). Without
-    `sources`, the snapshot has no source packages, for an ISO.
+    `sources`, the snapshot has no source packages, for an ISO. Without `build_missing`, a package neither cached nor
+    in the storage fails, rather than being built, as for the platforms the host emulates.
     """
     project = platforms[0]
     start = current_checkout(project)
@@ -804,7 +822,13 @@ def snapshot(
         main=main,
     )
     fetch: Fetch = "needed" if storage else "all"
-    built = list(zip(platforms, _built_all(platforms, fetch=fetch, dev=dev, nocheck=nocheck, only=only), strict=True))
+    built = list(
+        zip(
+            platforms,
+            _built_all(platforms, fetch=fetch, dev=dev, nocheck=nocheck, only=only, build_missing=build_missing),
+            strict=True,
+        )
+    )
     checkout = start._replace(locks=_locks(project))
     for platform, keys in built:
         arch = f"{REPO}/{platform.arch}"
