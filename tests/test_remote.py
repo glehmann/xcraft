@@ -477,7 +477,7 @@ def should_keep_embargoed_builds_in_the_private_storage(
     )
 
 
-def should_push_to_the_private_storage_only_what_the_main_one_has_not(
+def should_copy_to_the_private_storage_what_the_main_one_has(
     root: Path, monkeypatch: pytest.MonkeyPatch, build_signer: tuple[str, Path]
 ) -> None:
     garage("bucket", "create", bucket := f"xcraft-private-{secrets.token_hex(4)}")
@@ -501,12 +501,17 @@ def should_push_to_the_private_storage_only_what_the_main_one_has_not(
         shutil.rmtree(build)
     code, output = xcraft("push", "builds", "--final", "--key", build_signer[0], "--to", "private")
     assert code == 0, output
+    # trivial copied from the main bucket, server-side, then with-deps uploaded
+    assert "0 source archives and 1 builds copied" in output, output
     assert output.splitlines()[-1] == "1 pushed, 1 already in the remote storage", output
     project = Project.find()
     keys = build_keys(project)
     private_storage = project.config.remote["private"]
-    assert remote.tree_exists(private_storage, build_path(project, "with-deps", keys["with-deps"], build_signer[0]))
-    assert not remote.tree_exists(private_storage, build_path(project, "trivial", keys["trivial"], build_signer[0]))
+    for name in ("trivial", "with-deps"):  # all those of the checkout, like any storage
+        assert remote.tree_exists(private_storage, build_path(project, name, keys[name], build_signer[0]))
+    # nothing more the next time
+    code, output = xcraft("push", "builds", "--final", "--key", build_signer[0], "--to", "private")
+    assert "0 source archives and 0 builds copied" in output, output
 
 
 def should_share_builds_between_checkouts_with_their_rpm_dependencies(

@@ -22,24 +22,8 @@ from xcraft.sources import has_cached_source, read_manifest, sha256_of, source_p
 app = typer.Typer()
 
 
-def _read_first(project: Project, to: Destination) -> Remote | None:
-    """Return the storage read before the bucket `to`, whose sources and builds it needs not have: the main one, for
-    the private one, from which the embargo branches fetch what they did not change, see docs/embargo-design.md.
-    """
-    return project.config.remote.get("main") if to == "private" else None
-
-
-def _push_sources(
-    project: Project,
-    storage: Remote,
-    packages: list[str] | None,
-    *,
-    check: bool = False,
-    first: Remote | None = None,
-) -> list[str]:
-    """Upload cached sources to `storage`, or only check it, and return those missing from it and the source cache:
-    but those of the storage `first`, read before it.
-    """
+def _push_sources(project: Project, storage: Remote, packages: list[str] | None, *, check: bool = False) -> list[str]:
+    """Upload cached sources to `storage`, or only check it, and return those missing from it and the source cache."""
     archives = {
         source_path(filename, digest): (filename, digest)
         for name in packages or sorted(project.package_dirs)
@@ -48,8 +32,6 @@ def _push_sources(
     }
     with activity("checking the remote storage"):
         present = remote.existing(storage, list(archives))
-        if first:
-            present |= remote.existing(first, [p for p in archives if p not in present])
     missing = [archive for path, archive in sorted(archives.items()) if path not in present]
     if check:
         for filename, _ in missing:
@@ -72,18 +54,11 @@ def _push_sources(
 
 
 def _push_builds(
-    project: Project,
-    storage: Remote,
-    packages: list[str] | None,
-    *,
-    signer: Signer | None,
-    final: bool,
-    first: Remote | None = None,
+    project: Project, storage: Remote, packages: list[str] | None, *, signer: Signer | None, final: bool
 ) -> list[str]:
     """Upload the current builds of `packages`, all by default, signed by `signer`, signing again those of other keys,
-    and return those not built: the final builds, but of the packages with development builds, unless `final`, and
-    but those of the storage `first`, read before it. The builds without the tests of their specs, see
-    xcraft.cache.untested(), are not built for it.
+    and return those not built: the final builds, but of the packages with development builds, unless `final`. The
+    builds without the tests of their specs, see xcraft.cache.untested(), are not built for it.
     """
     develop.check_none(project, "pushing builds")
     signer = remote.required_signer(signer)
@@ -94,11 +69,11 @@ def _push_builds(
     paths = {name: build_path(project, name, keys[name], signer.key) for name in names}
 
     # first: a build of xcraft build --fetch=needed may be in the storage only
-    def stored(path: str) -> bool:
-        return any(remote.tree_exists(s, path, trusted=signer, signer=signer.key) for s in (storage, first) if s)
-
     with activity("checking the remote storage"), thread_pool(remote.REQUESTS) as pool:
-        present = [name for name, exists in zip(paths, pool.map(stored, paths.values()), strict=True) if exists]
+        found = pool.map(
+            lambda path: remote.tree_exists(storage, path, trusted=signer, signer=signer.key), paths.values()
+        )
+        present = [name for name, exists in zip(paths, found, strict=True) if exists]
     if without_tests := [n for n in paths if n not in present and untested(project, n, keys[n])]:
         console.print(f"built without their tests, with --nocheck, not pushed: {', '.join(without_tests)}")
     not_built = [
@@ -117,14 +92,16 @@ def _push_builds(
     return not_built
 
 
-def _copy(project: Project, source: Remote, storage: Remote) -> None:
-    """Copy from `source` to `storage`, server-side, the source archives and the final builds of the packages of the
-    checkout `storage` does not have, those signed by a key it trusts: the builds of a maintenance branch, made in
-    private, released as they are, see docs/embargo-design.md.
+def _copy(project: Project, source: Remote, storage: Remote, packages: list[str] | None = None) -> None:
+    """Copy from `source` to `storage`, server-side, the source archives and the final builds of `packages`, all those
+    of the checkout by default, `storage` does not have, those signed by a key it trusts: the builds of a maintenance
+    branch, made in private, released as they are, or those of the release it starts from, which its private bucket
+    has as well, see docs/embargo-design.md.
     """
+    names = packages or sorted(project.packages)
     archives = sorted(
         source_path(filename, digest)
-        for directory in project.package_dirs.values()
+        for directory in (project.package_dirs[name] for name in names)
         if (manifest := directory / "sources").exists()
         for filename, digest in read_manifest(manifest).items()
     )
@@ -136,7 +113,7 @@ def _copy(project: Project, source: Remote, storage: Remote) -> None:
     keys, trusted = build_keys(project), source.model_copy(update={"build_keys": storage.build_keys})
     paths = {
         (name, fingerprint): build_path(project, name, keys[name], fingerprint)
-        for name in sorted(project.packages)
+        for name in names
         for fingerprint in storage.build_keys
     }
     with activity("checking the remote storages"), thread_pool(remote.REQUESTS) as pool:
@@ -154,6 +131,15 @@ def _copy(project: Project, source: Remote, storage: Remote) -> None:
                 project, storage, [*(f"{p.rsplit('/', 1)[0]}/" for p in archives), *(f"{p}/" for p in copied)]
             )
     console.print(f"{len(archives)} source archives and {len(copied)} builds copied")
+
+
+def _copy_to_private(project: Project, to: Destination, packages: list[str] | None = None) -> None:
+    """Copy to the private bucket, `to`, what the main one has of `packages`, all by default, which it does not: the
+    sources and builds of the release an embargo branch starts from, for it to have all those of its checkout, like the
+    others, rather than only those of the packages the branch changed.
+    """
+    if to == "private" and (main := project.config.remote.get("main")):
+        _copy(project, main, remote_storage(project, to), packages)
 
 
 def _push_resolutions(project: Project, storage: Remote, *, signer: Signer | None) -> None:
@@ -228,11 +214,12 @@ def everything(
             project, remote_storage(project, from_, write=False), remote_storage(project, to, write=from_ != "private")
         )
         return
-    storage, first = remote_storage(project, to), _read_first(project, to)
+    storage = remote_storage(project, to)
+    _copy_to_private(project, to)
     # those of the packages of the architecture: the others' are not fetched here, nor needed
-    absent = _push_sources(project, storage, sorted(project.packages), first=first)
+    absent = _push_sources(project, storage, sorted(project.packages))
     signer = key_signer(project, key)
-    not_built = _push_builds(project, storage, None, signer=signer, final=final, first=first)
+    not_built = _push_builds(project, storage, None, signer=signer, final=final)
     _push_resolutions(project, storage, signer=signer)
     copied = _push_upstream(project, storage)
     if problems := [
@@ -254,8 +241,9 @@ def sources(
 ) -> None:
     """Upload cached sources to the selected bucket, or only check it with --check."""
     project = unprepared_project(packages, arch=arch)
-    storage, first = remote_storage(project, to, write=not check), _read_first(project, to)
-    if absent := _push_sources(project, storage, packages, check=check, first=first):
+    if not check:
+        _copy_to_private(project, to, packages)
+    if absent := _push_sources(project, remote_storage(project, to, write=not check), packages, check=check):
         msg = f"not in the source cache: {', '.join(absent)}"
         raise RuntimeError(msg)
 
@@ -269,9 +257,8 @@ def builds(packages: Packages = None, final: Final = False, arch: Arch = None, k
     """
     project = prepared_project(packages, arch=arch)
     storage, signer = remote_storage(project, to), key_signer(project, key)
-    if not_built := _push_builds(
-        project, storage, packages, signer=signer, final=final, first=_read_first(project, to)
-    ):
+    _copy_to_private(project, to, packages)
+    if not_built := _push_builds(project, storage, packages, signer=signer, final=final):
         msg = f"not built: {', '.join(not_built)}"
         raise RuntimeError(msg)
 
